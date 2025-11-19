@@ -804,3 +804,329 @@ def test_flatten_allof_with_anyof_commands() -> None:
             'additionalProperties': False,
         }
     )
+
+
+def test_merge_additional_properties_multiple_dict_schemas() -> None:
+    """Test merging when all additionalProperties are dict schemas (no False)."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'additionalProperties': {'type': 'string'},
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'string'}},
+                'additionalProperties': {'type': 'number'},
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # Multiple dict schemas can't be easily merged, so return True
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'properties': {'b': {'type': 'string'}},
+            'additionalProperties': True,
+        }
+    )
+
+
+def test_filter_by_restricted_property_sets_removes_properties() -> None:
+    """Test that restricted property sets filter out properties not in intersection."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
+                'additionalProperties': False,
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'string'}, 'c': {'type': 'string'}},
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # Only 'b' is in both restricted sets
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'properties': {'b': {'type': 'string'}},
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_filter_incompatible_properties_with_false_additional() -> None:
+    """Test filtering properties when a member has additionalProperties: False."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'additionalProperties': {'type': 'string'},
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'integer'}},
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # 'a' is not in second member's properties and second has additionalProperties: False
+    # 'b' is integer, not compatible with first member's additionalProperties: {'type': 'string'}
+    # Result should be empty
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_filter_incompatible_properties_removes_all_properties() -> None:
+    """Test that filtering incompatible properties can remove all properties."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'required': ['a'],
+                'additionalProperties': {'type': 'string'},
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'integer'}},
+                'required': ['b'],
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # All properties are incompatible, so both properties and required should be removed
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_merge_additional_properties_true_values() -> None:
+    """Test merging when additionalProperties are True values (not False, not dict) - covers line 218."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'additionalProperties': True,  # Explicitly set to True
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'string'}},
+                'additionalProperties': True,  # Explicitly set to True
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # When all values are True (not False, not dict), line 218 returns True
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'a': {'type': 'string'},
+                'b': {'type': 'string'},
+            },
+            'additionalProperties': True,
+        }
+    )
+
+
+def test_filter_by_restricted_property_sets_no_required() -> None:
+    """Test filtering when properties exist but required doesn't."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
+                'additionalProperties': False,
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'string'}, 'c': {'type': 'string'}},
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # Only 'b' is in both restricted sets, no required field
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'properties': {'b': {'type': 'string'}},
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_filter_incompatible_properties_removes_required_only() -> None:
+    """Test that filtering incompatible properties can remove required while keeping some properties."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
+                'required': ['a', 'b'],
+                'additionalProperties': {'type': 'string'},
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'string'}},
+                'required': ['b'],
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # 'a' is incompatible (not in second member's properties, second has additionalProperties: False)
+    # 'b' is compatible (in both, both are strings)
+    # So 'a' should be removed from both properties and required
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'properties': {'b': {'type': 'string'}},
+            'required': ['b'],
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_filter_incompatible_properties_removes_required_to_empty() -> None:
+    """Test that filtering incompatible properties can remove all required fields while keeping properties."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
+                'required': ['a'],
+                'additionalProperties': {'type': 'string'},
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'string'}},
+                # No required field
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # 'a' is incompatible (not in second member's properties, second has additionalProperties: False)
+    # 'b' is compatible (in both, both are strings)
+    # So 'a' should be removed from properties, and required should become empty and be removed
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'properties': {'b': {'type': 'string'}},
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_filter_incompatible_properties_with_list_type() -> None:
+    """Test filtering properties when additionalProperties has list type (covers _get_type_set with list)."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'additionalProperties': {'type': ['string', 'number']},
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'boolean'}},
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # 'a' is string, compatible with ['string', 'number']
+    # 'b' is boolean, not compatible with ['string', 'number'], and second has additionalProperties: False
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_filter_incompatible_properties_with_no_type_in_additional() -> None:
+    """Test filtering when additionalProperties schema has no type field (covers _get_type_set with no type)."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'additionalProperties': {'properties': {'x': {'type': 'string'}}},  # No type field
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'string'}},
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    transformer = FlattenAllofTransformer(schema)
+    flattened = transformer.walk()
+
+    # When additionalProperties has no type, _get_type_set returns None, so type check passes
+    # But 'a' is not in second member's properties and second has additionalProperties: False
+    # 'b' is not in first member's properties and first's additionalProperties has no type (None)
+    assert flattened == snapshot(
+        {
+            'type': 'object',
+            'properties': {'b': {'type': 'string'}},
+            'additionalProperties': False,
+        }
+    )
