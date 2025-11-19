@@ -7,7 +7,9 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from os import PathLike
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeAlias, cast, overload
 
 import pydantic
 import pydantic_core
@@ -1062,6 +1064,26 @@ class FilePart:
         """Return `True` if the file content is non-empty."""
         return bool(self.content)  # pragma: no cover
 
+    @classmethod
+    def from_path(cls, path: PathLike[str]) -> Self:
+        """Create a `BinaryContent` from a path.
+
+        Defaults to 'application/octet-stream' if the media type cannot be inferred.
+
+        Raises:
+            FileNotFoundError: if the file does not exist.
+            PermissionError: if the file cannot be read.
+        """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f'File not found: {path}')
+        media_type, _ = guess_type(path.as_posix())
+        if media_type is None:
+            media_type = 'application/octet-stream'
+
+        binary_content = BinaryContent(data=path.read_bytes(), media_type=media_type)
+        return cls(content=binary_content)
+            
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 

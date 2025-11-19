@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
@@ -605,3 +606,20 @@ def test_binary_content_validation_with_optional_identifier():
             'identifier': 'foo',
         }
     )
+
+
+def test_file_part_from_path(tmp_path: Path):
+    # test normal file
+    test_xml_file = tmp_path / 'test.xml'
+    test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
+    file_part = FilePart.from_path(test_xml_file)
+    assert file_part == snapshot(
+        FilePart(
+            content=BinaryContent(data=b'<think>about trains</think>', media_type='application/xml')
+        )
+    )
+
+    # test non-existent file
+    non_existent_file = tmp_path / 'non-existent.txt'
+    with pytest.raises(FileNotFoundError, match='File not found:'):
+        FilePart.from_path(non_existent_file)
