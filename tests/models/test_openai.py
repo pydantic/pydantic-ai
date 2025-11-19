@@ -3146,6 +3146,7 @@ async def test_count_tokens(
     assert usage_result.input_tokens == expected_token_count
 
 
+@pytest.mark.vcr()
 async def test_openai_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     openai_api_key: str,
@@ -3159,10 +3160,12 @@ async def test_openai_model_usage_limit_not_exceeded(
         usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
     )
     assert result.output == snapshot(
-        """This statement is a pangram, meaning it contains every letter of the English alphabet at least once. Fun fact: it is often used to display different types of fonts because it uses all the letters."""
+        'This statement is a pangram, meaning it contains every letter of the English alphabet at least once. '
+        'Fun fact: it is often used to display different types of fonts because it uses all the letters.'
     )
 
 
+@pytest.mark.vcr()
 async def test_openai_model_usage_limit_exceeded(
     allow_model_requests: None,
     openai_api_key: str,
@@ -3180,6 +3183,7 @@ async def test_openai_model_usage_limit_exceeded(
     assert 'exceed the input_tokens_limit of' in str(exc_info.value)
 
 
+@pytest.mark.vcr()
 async def test_openai_model_usage_unsupported_model(
     allow_model_requests: None,
     openai_api_key: str,
