@@ -354,8 +354,9 @@ async def mcp_server_instructions():
     return server.instructions
 
 async def main():
-    result = await agent.run('Use the server tools to help me')
+    result = await agent.run('What is 7 plus 5?')
     print(result.output)
+    #> The answer is 12.
 ```
 
 ## Tool metadata
