@@ -835,13 +835,30 @@ class AnthropicModel(Model):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> BetaToolParam:
-        return {
+    def _map_tool_definition(self, f: ToolDefinition) -> BetaToolParam:
+        """Map tool definition to Anthropic format with strict mode support.
+
+        Follows the same pattern as OpenAI (line 768): checks if f.strict is truthy,
+        not just checking if it's not None (which was PR #3457's critical mistake).
+
+        Args:
+            f: Tool definition to map
+
+        Returns:
+            BetaToolParam with strict mode set if applicable
+        """
+        tool_param: BetaToolParam = {
             'name': f.name,
             'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
+
+        # ✅ CRITICAL: Use truthy check (same as OpenAI line 768)
+        # NOT checking "is not None" (PR #3457's mistake)
+        if f.strict:
+            tool_param['strict'] = True  # type: ignore[typeddict-item]
+
+        return tool_param
 
 
 def _map_usage(

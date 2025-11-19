@@ -6516,3 +6516,98 @@ async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
 
     with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+
+def test_anthropic_json_schema_transformer():
+    """
+    Test AnthropicJsonSchemaTransformer removes unsupported fields.
+    """
+    from pydantic_ai.profiles.anthropic import AnthropicJsonSchemaTransformer
+
+    schema = {
+        'type': 'object',
+        'title': 'testSchema',
+        '$schema': 'http://json-schema.org/draft-07/schema#',
+        'discriminator': 'some_value',
+        'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+        'required': ['name'],
+    }
+
+    transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
+    result = transformer.walk()
+
+    assert 'title' not in result
+    assert '$schema' not in result
+    assert 'discriminator' not in result
+    assert result['type'] == 'object'
+    assert result['additionalProperties'] is False
+    assert result['properties'] == schema['properties']
+    assert result['required'] == schema['required']
+    assert transformer.is_strict_compatible is True
+
+    # test auto-detect mode (strict=False)
+    schema2 = {
+        'type': 'object',
+        'properties': {'id': {'type': 'integer'}},
+        'required': ['id'],
+    }
+    transformer2 = AnthropicJsonSchemaTransformer(schema2, strict=False)
+    result2 = transformer2.walk()
+    assert result2['additionalProperties'] is False
+    assert transformer2.is_strict_compatible is True
+
+
+def test_anthropic_strict_mode_tool_mapping():
+    """
+    Test AnthropicModel._map_tool_definition() supports strict mode.
+    """
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.tools import ToolDefinition
+
+    model = AnthropicModel('claude-sonnet-4-5')
+
+    tool_def_strict = ToolDefinition(
+        name='test_tool',
+        description='a test tool',
+        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+        strict=True,
+    )
+
+    result_strict = model._map_tool_definition(tool_def_strict)  # pyright: ignore[reportPrivateUsage]
+
+    assert result_strict['strict'] is True  # pyright: ignore[reportGeneralTypeIssues]
+    assert result_strict['name'] == 'test_tool'
+    assert result_strict.get('description') == 'a test tool'
+
+    tool_def_no_strict = ToolDefinition(
+        name='test_tool',
+        description='a test tool',
+        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+        strict=False,
+    )
+
+    result_no_strict = model._map_tool_definition(tool_def_no_strict)  # pyright: ignore[reportPrivateUsage]
+    assert 'strict' not in result_no_strict
+    assert result_no_strict['name'] == 'test_tool'
+    assert result_no_strict.get('description') == 'a test tool'
+
+
+async def test_anthropic_strucutred_output_with_test_model():
+    from pydantic import BaseModel
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    class CityInfo(BaseModel):
+        city: str
+        country: str
+        population: int
+
+    test_model = TestModel(custom_output_args={'city': 'Tokyo', 'country': 'Japan', 'population': 14000000})
+    agent = Agent(test_model, output_type=CityInfo)
+
+    result = await agent.run('Tell me about Tokyo')
+    assert isinstance(result.output, CityInfo)
+    assert result.output.city == 'Tokyo'
+    assert result.output.country == 'Japan'
+    assert result.output.population == 14000000
