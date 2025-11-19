@@ -7442,3 +7442,52 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
             },
         ]
     )
+
+
+async def test_openai_responses_runs_with_deps_only_and_sends_input(
+    allow_model_requests: None,
+):
+    from pydantic import BaseModel
+
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    class Payload(BaseModel):
+        topic: str
+        sentences: int
+
+    payload = Payload(topic='artificial intelligence', sentences=3)
+
+    agent = Agent(model=model, instructions='Generate an article.', deps_type=Payload)
+
+    @agent.instructions
+    def instr(ctx: Any) -> str:
+        # no explicit input passed to run(); this uses ctx.deps
+        return f'Topic: {ctx.deps.topic}\nSentences: {ctx.deps.sentences}'
+
+    # Run with only deps
+    result = await agent.run(deps=payload)
+    assert result.output == 'ok'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs, 'Responses API was not called'
+
+    kw = response_kwargs[0]
+    assert 'input' in kw or 'text' in kw, "Expected 'input' or 'text' in responses.create kwargs"
+
+    if 'input' in kw:
+        assert kw['input'], "Responses 'input' should not be empty when deps are provided"
+    else:
+        assert kw['text'], "Responses 'text' config should be set when no input messages were built"
