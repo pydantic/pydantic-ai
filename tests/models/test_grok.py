@@ -64,16 +64,16 @@ pytestmark = [
 
 
 def test_grok_init():
-    m = GrokModel('grok-4-fast-non-reasoning', api_key='foobar')
+    m = GrokModel('grok-4-1-fast-non-reasoning', api_key='foobar')
     # Check model properties without accessing private attributes
-    assert m.model_name == 'grok-4-fast-non-reasoning'
+    assert m.model_name == 'grok-4-1-fast-non-reasoning'
     assert m.system == 'xai'
 
 
 async def test_grok_request_simple_success(allow_model_requests: None):
     response = create_response(content='world')
     mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -94,7 +94,7 @@ async def test_grok_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-1-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -107,7 +107,7 @@ async def test_grok_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-1-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -124,7 +124,7 @@ async def test_grok_request_simple_usage(allow_model_requests: None):
         usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1),
     )
     mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -142,7 +142,7 @@ async def test_grok_image_input(allow_model_requests: None):
     """Test that Grok model handles image inputs (text is extracted from content)."""
     response = create_response(content='done')
     mock_client = MockGrok.create_mock(response)
-    model = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    model = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(model)
 
     image_url = ImageUrl('https://example.com/image.png')
@@ -160,7 +160,7 @@ async def test_grok_request_structured_response(allow_model_requests: None):
     )
     response = create_response(tool_calls=[tool_call])
     mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
@@ -179,7 +179,7 @@ async def test_grok_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-1-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -214,7 +214,7 @@ async def test_grok_request_tool_call(allow_model_requests: None):
         create_response(content='final response'),
     ]
     mock_client = MockGrok.create_mock(responses)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -247,7 +247,7 @@ async def test_grok_request_tool_call(allow_model_requests: None):
                     input_tokens=2,
                     output_tokens=1,
                 ),
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-1-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -277,7 +277,7 @@ async def test_grok_request_tool_call(allow_model_requests: None):
                     input_tokens=3,
                     output_tokens=2,
                 ),
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-1-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -297,7 +297,7 @@ async def test_grok_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='grok-4-fast-non-reasoning',
+                model_name='grok-4-1-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -369,7 +369,7 @@ def grok_reasoning_text_chunk(
 async def test_grok_stream_text(allow_model_requests: None):
     stream = [grok_text_chunk('hello '), grok_text_chunk('world')]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -387,7 +387,7 @@ async def test_grok_stream_text_finish_reason(allow_model_requests: None):
         grok_text_chunk('.', 'stop'),
     ]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -402,7 +402,7 @@ async def test_grok_stream_text_finish_reason(allow_model_requests: None):
                     ModelResponse(
                         parts=[TextPart(content='hello world.')],
                         usage=RequestUsage(input_tokens=2, output_tokens=1),
-                        model_name='grok-4-fast-non-reasoning',
+                        model_name='grok-4-1-fast-non-reasoning',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                         provider_response_id='grok-123',
@@ -479,7 +479,7 @@ async def test_grok_stream_structured(allow_model_requests: None):
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -500,7 +500,7 @@ async def test_grok_stream_structured_finish_reason(allow_model_requests: None):
         grok_tool_chunk(None, None, finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -518,7 +518,7 @@ async def test_grok_stream_native_output(allow_model_requests: None):
         grok_text_chunk('}'),
     ]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m, output_type=NativeOutput(MyTypedDict))
 
     async with agent.run_stream('') as result:
@@ -537,7 +537,7 @@ async def test_grok_stream_tool_call_with_empty_text(allow_model_requests: None)
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m, output_type=[str, MyTypedDict])
 
     async with agent.run_stream('') as result:
@@ -554,7 +554,7 @@ async def test_grok_no_delta(allow_model_requests: None):
         grok_text_chunk('world'),
     ]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -571,7 +571,7 @@ async def test_grok_none_delta(allow_model_requests: None):
         grok_text_chunk('world'),
     ]
     mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -597,7 +597,7 @@ async def test_grok_parallel_tool_calls(allow_model_requests: None, parallel_too
     )
     response = create_response(content='', tool_calls=[tool_call], finish_reason='tool_calls')
     mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     await agent.run('Hello')
@@ -607,7 +607,7 @@ async def test_grok_parallel_tool_calls(allow_model_requests: None, parallel_too
 async def test_grok_penalty_parameters(allow_model_requests: None) -> None:
     response = create_response(content='test response')
     mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
 
     settings = ModelSettings(
         temperature=0.7,
@@ -631,7 +631,7 @@ async def test_grok_penalty_parameters(allow_model_requests: None) -> None:
 async def test_grok_image_url_input(allow_model_requests: None):
     response = create_response(content='world')
     mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     result = await agent.run(
@@ -647,7 +647,7 @@ async def test_grok_image_url_input(allow_model_requests: None):
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
 async def test_grok_image_url_tool_response(allow_model_requests: None, xai_api_key: str):
-    m = GrokModel('grok-4-fast-non-reasoning', api_key=xai_api_key)
+    m = GrokModel('grok-4-1-fast-non-reasoning', api_key=xai_api_key)
     agent = Agent(m)
 
     @agent.tool_plain
@@ -684,7 +684,7 @@ async def test_grok_image_url_tool_response(allow_model_requests: None, xai_api_
 async def test_grok_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, xai_api_key: str
 ):
-    m = GrokModel('grok-4-fast-non-reasoning', api_key=xai_api_key)
+    m = GrokModel('grok-4-1-fast-non-reasoning', api_key=xai_api_key)
     agent = Agent(m)
 
     @agent.tool_plain
@@ -724,7 +724,7 @@ async def test_grok_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, xai_api_key: str
 ):
     """Test passing binary image content directly as input (not from a tool)."""
-    m = GrokModel('grok-4-fast-non-reasoning', api_key=xai_api_key)
+    m = GrokModel('grok-4-1-fast-non-reasoning', api_key=xai_api_key)
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
@@ -923,7 +923,7 @@ async def test_grok_model_retries(allow_model_requests: None):
     success_response = create_response(content='Success after retry')
 
     mock_client = MockGrok.create_mock(success_response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.output == 'Success after retry'
@@ -933,7 +933,7 @@ async def test_grok_model_settings(allow_model_requests: None):
     """Test Grok model with various settings."""
     response = create_response(content='response with settings')
     mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(
         m,
         model_settings=ModelSettings(
@@ -965,7 +965,7 @@ async def test_grok_model_multiple_tool_calls(allow_model_requests: None):
     ]
 
     mock_client = MockGrok.create_mock(responses)
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     @agent.tool_plain
@@ -995,7 +995,7 @@ async def test_grok_stream_with_tool_calls(allow_model_requests: None):
     ]
 
     mock_client = MockGrok.create_mock_stream([stream1, stream2])
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1017,14 +1017,14 @@ async def test_grok_stream_with_tool_calls(allow_model_requests: None):
 async def test_grok_model_invalid_api_key():
     """Test Grok model with invalid API key."""
     with pytest.raises(ValueError, match='XAI API key is required'):
-        GrokModel('grok-4-fast-non-reasoning', api_key='')
+        GrokModel('grok-4-1-fast-non-reasoning', api_key='')
 
 
 async def test_grok_model_properties():
     """Test Grok model properties."""
-    m = GrokModel('grok-4-fast-non-reasoning', api_key='test-key')
+    m = GrokModel('grok-4-1-fast-non-reasoning', api_key='test-key')
 
-    assert m.model_name == 'grok-4-fast-non-reasoning'
+    assert m.model_name == 'grok-4-1-fast-non-reasoning'
     assert m.system == 'xai'
 
 

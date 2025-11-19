@@ -175,6 +175,8 @@ KnownModelName = TypeAliasType(
         'grok:grok-3-mini-fast',
         'grok:grok-4',
         'grok:grok-4-0709',
+        'grok:grok-4-1-fast-non-reasoning',
+        'grok:grok-4-1-fast-reasoning',
         'grok:grok-4-fast-non-reasoning',
         'grok:grok-4-fast-reasoning',
         'grok:grok-code-fast-1',

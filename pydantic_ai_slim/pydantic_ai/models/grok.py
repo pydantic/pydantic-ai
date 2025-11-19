@@ -63,7 +63,7 @@ class GrokModel(Model):
         """Initialize the Grok model.
 
         Args:
-            model_name: The name of the Grok model to use (e.g., "grok-3", "grok-4-fast-non-reasoning")
+            model_name: The name of the Grok model to use (e.g., "grok-4-1-fast-non-reasoning")
             api_key: The xAI API key. If not provided, uses XAI_API_KEY environment variable.
             client: Optional AsyncClient instance for testing. If provided, api_key is ignored.
             settings: Optional model settings.
