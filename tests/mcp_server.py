@@ -16,7 +16,7 @@ from mcp.types import (
 )
 from pydantic import AnyUrl, BaseModel
 
-mcp = FastMCP('Pydantic AI MCP Server')
+mcp = FastMCP('Pydantic AI MCP Server', instructions='Be a helpful assistant.')
 log_level = 'unset'
 
 

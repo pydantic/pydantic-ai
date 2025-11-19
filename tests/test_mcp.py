@@ -1757,6 +1757,15 @@ async def test_server_info(mcp_server: MCPServerStdio) -> None:
         assert mcp_server.server_info.name == 'Pydantic AI MCP Server'
 
 
+async def test_instructions(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
+    ):
+        mcp_server.instructions
+    async with mcp_server:
+        assert mcp_server.instructions == 'Be a helpful assistant.'
+
+
 async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):
     server = MCPServerStreamableHTTP(url='https://mcp.deepwiki.com/mcp', timeout=30)
     agent = Agent(model, toolsets=[server], instructions='Be concise.')
