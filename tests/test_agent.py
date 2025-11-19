@@ -5155,6 +5155,35 @@ async def test_wrapper_agent():
     assert wrapper_agent.name == 'wrapped'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+    assert wrapper_agent.output_json_schema() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'final_result'},
+                                'data': {
+                                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}},
+                                    'required': ['a', 'b'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'final_result',
+                            'description': 'The final response which ends this conversation',
+                        }
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
+    )
+    assert wrapper_agent.output_json_schema(output_type=str) == snapshot({'type': 'string'})
 
     bar_toolset = FunctionToolset()
 
@@ -6151,19 +6180,13 @@ def test_message_history_cannot_start_with_model_response():
 
 
 async def test_text_output_json_schema():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('')])
-
-    agent = Agent(FunctionModel(llm))
+    agent = Agent('test')
     assert agent.output_json_schema() == snapshot({'type': 'string'})
 
 
 async def test_tool_output_json_schema():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('')])
-
     agent = Agent(
-        FunctionModel(llm),
+        'test',
         output_type=[ToolOutput(bool, name='alice', description='Dreaming...')],
     )
     assert agent.output_json_schema() == snapshot(
@@ -6196,7 +6219,7 @@ async def test_tool_output_json_schema():
     )
 
     agent = Agent(
-        FunctionModel(llm),
+        'test',
         output_type=[ToolOutput(bool, name='alice'), ToolOutput(bool, name='bob')],
     )
     assert agent.output_json_schema() == snapshot(
@@ -6245,11 +6268,8 @@ async def test_tool_output_json_schema():
 
 
 async def test_native_output_json_schema():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('')])
-
     agent = Agent(
-        FunctionModel(llm),
+        'test',
         output_type=NativeOutput([bool], name='native_output_name', description='native_output_description'),
     )
     assert agent.output_json_schema() == snapshot(
@@ -6258,11 +6278,8 @@ async def test_native_output_json_schema():
 
 
 async def test_prompted_output_json_schema():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('')])
-
     agent = Agent(
-        FunctionModel(llm),
+        'test',
         output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description'),
     )
     assert agent.output_json_schema() == snapshot(
@@ -6271,9 +6288,6 @@ async def test_prompted_output_json_schema():
 
 
 async def test_custom_output_json_schema():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('')])
-
     HumanDict = StructuredDict(
         {
             'type': 'object',
@@ -6283,7 +6297,7 @@ async def test_custom_output_json_schema():
         name='Human',
         description='A human with a name and age',
     )
-    agent = Agent(FunctionModel(llm), output_type=HumanDict)
+    agent = Agent('test', output_type=HumanDict)
     assert agent.output_json_schema() == snapshot(
         {
             'type': 'object',
@@ -6315,12 +6329,9 @@ async def test_custom_output_json_schema():
 
 
 async def test_override_output_json_schema():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('')])
-
-    agent = Agent(FunctionModel(llm))
+    agent = Agent('test')
     assert agent.output_json_schema() == snapshot({'type': 'string'})
-    output_type = ([ToolOutput(bool, name='alice', description='Dreaming...')],)
+    output_type = [ToolOutput(bool, name='alice', description='Dreaming...')]
     assert agent.output_json_schema(output_type=output_type) == snapshot(
         {
             'type': 'object',

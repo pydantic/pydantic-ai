@@ -124,7 +124,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def output_json_schema(self, output_type: OutputSpec[OutputDataT] | None = None) -> JsonSchema:
+    def output_json_schema(self, output_type: OutputSpec[RunOutputDataT] | None = None) -> JsonSchema:
         """The output JSON schema."""
         raise NotImplementedError
 

@@ -948,7 +948,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
 
-    def output_json_schema(self, output_type: OutputSpec[OutputDataT] | None = None) -> JsonSchema:
+    def output_json_schema(self, output_type: OutputSpec[RunOutputDataT] | None = None) -> JsonSchema:
         """The output JSON schema."""
         output_schema = self._prepare_output_schema(output_type)
         return output_schema.dump()
