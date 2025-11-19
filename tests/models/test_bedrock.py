@@ -39,12 +39,8 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
-from pydantic_ai.providers.bedrock import BedrockProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -52,7 +48,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -1638,25 +1634,39 @@ async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provi
 
 
 @pytest.mark.vcr()
-async def test_bedrock_cache_point_adds_cache_control(allow_model_requests: None, bedrock_provider: BedrockProvider):
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-lite-v1:0', id='nova-lite'),
+    ],
+)
+async def test_bedrock_cache_point_adds_cache_control(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
     """Record a real Bedrock call to confirm cache points reach AWS (requires ~1k tokens)."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model)
-    long_context = 'long prompt' * 600  # More tokens to activate a cache
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    long_context = 'ONLY SINGLE NUMBER IN RESPONSE\n' * 100  # More tokens to activate a cache
 
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
-    assert result.usage() == snapshot(RunUsage(input_tokens=15, output_tokens=5, cache_write_tokens=1203, requests=1))
+    # Different tokens usage depending on a model
+    assert result.usage().cache_write_tokens >= 1000
+    assert result.usage().input_tokens <= 20
 
 
 @pytest.mark.vcr()
 async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Integration test covering tool and instruction caching using a recorded cassette."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
-    system_prompt = 'YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50  # More tokens to activate a cache
     agent = Agent(
         model,
-        system_prompt=system_prompt,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
         model_settings=BedrockModelSettings(
             bedrock_cache_tool_definitions=True,
             bedrock_cache_instructions=True,
@@ -1700,7 +1710,7 @@ async def test_bedrock_cache_point_as_first_content_raises_error(
 async def test_bedrock_cache_point_after_binary_content_workaround(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -1751,7 +1761,7 @@ async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, 
 
 
 async def test_bedrock_cache_tool_definitions(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=bedrock_provider)
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
     params = ModelRequestParameters(
         function_tools=[
             ToolDefinition(name='tool_one'),
