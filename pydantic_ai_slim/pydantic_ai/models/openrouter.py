@@ -20,12 +20,13 @@ from ..messages import (
     ToolCallPart,
 )
 from ..profiles import ModelProfileSpec
+from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
 from . import ModelRequestParameters
 
 try:
-    from openai import APIError
+    from openai import APIError, AsyncOpenAI
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk
 
@@ -471,7 +472,7 @@ class OpenRouterModel(OpenAIChatModel):
         self,
         model_name: str,
         *,
-        provider: OpenRouterProvider | None = None,
+        provider: Literal['openrouter'] | Provider[AsyncOpenAI] = 'openrouter',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):

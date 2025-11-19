@@ -102,6 +102,24 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        """Configure the provider with either an API key or prebuilt client.
+
+        Args:
+            api_key: OpenRouter API key. Falls back to ``OPENROUTER_API_KEY``
+                when omitted and required unless ``openai_client`` is provided.
+            http_referer: Optional attribution header, falling back to
+                ``OPENROUTER_HTTP_REFERER``.
+            x_title: Optional attribution header, falling back to
+                ``OPENROUTER_X_TITLE``.
+            openai_client: Existing ``AsyncOpenAI`` client to reuse instead of
+                creating one internally.
+            http_client: Custom ``httpx.AsyncClient`` to pass into the
+                ``AsyncOpenAI`` constructor when building a client.
+
+        Raises:
+            UserError: If no API key is available and no ``openai_client`` is
+                provided.
+        """
         api_key = api_key or os.getenv('OPENROUTER_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
