@@ -1,0 +1,178 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '538'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about London, UK with population 9 million
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          description: A city and its country.
+          properties:
+            city:
+              type: string
+            country:
+              anyOf:
+              - type: string
+              - type: 'null'
+              default: null
+            population:
+              anyOf:
+              - type: integer
+              - type: 'null'
+              default: null
+          required:
+          - city
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '729'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=823
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.0001410765398759395
+        content:
+          parts:
+          - text: |-
+              {
+                "city": "London",
+                "country": "UK",
+                "population": 9000000
+              }
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: -pMcaeacKpS3vdIPuPm34Ak
+      usageMetadata:
+        candidatesTokenCount: 32
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 32
+        promptTokenCount: 11
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 11
+        totalTokenCount: 43
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '514'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: 'Just tell me a city: Paris'
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          description: A city and its country.
+          properties:
+            city:
+              type: string
+            country:
+              anyOf:
+              - type: string
+              - type: 'null'
+              default: null
+            population:
+              anyOf:
+              - type: integer
+              - type: 'null'
+              default: null
+          required:
+          - city
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '728'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=790
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.01739397644996643
+        content:
+          parts:
+          - text: |-
+              {
+                "city": "Paris",
+                "country": "France",
+                "population": 2141000
+              }
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: -5McabrTIuX-vdIPoJuZsAs
+      usageMetadata:
+        candidatesTokenCount: 32
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 32
+        promptTokenCount: 7
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        totalTokenCount: 39
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -83,8 +83,8 @@ agent = Agent(model)
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides three ways to use prompt caching:
 
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
-2. **Cache System Instructions**: Enable the [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] [model setting](../agents.md#model-run-settings) to cache your system prompt
-3. **Cache Tool Definitions**: Enable the [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] [model setting](../agents.md#model-run-settings) to cache your tool definitions
+2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 
 You can combine all three strategies for maximum savings:
 
@@ -96,8 +96,9 @@ agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Detailed instructions...',
     model_settings=AnthropicModelSettings(
+        # Use True for default 5m TTL, or specify '5m' / '1h' directly
         anthropic_cache_instructions=True,
-        anthropic_cache_tool_definitions=True,
+        anthropic_cache_tool_definitions='1h',  # Longer cache for tool definitions
     ),
 )
 
@@ -134,7 +135,7 @@ agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Instructions...',
     model_settings=AnthropicModelSettings(
-        anthropic_cache_instructions=True
+        anthropic_cache_instructions=True  # Default 5m TTL
     ),
 )
 

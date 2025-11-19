@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '560'
+      - '519'
       content-type:
       - application/json
       host:
@@ -17,34 +17,37 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is the largest city in Mexico?
+        - text: Create a config named "api-config" with metadata author="Alice" and version="1.0"
         role: user
       generationConfig:
+        responseJsonSchema:
+          description: A response with configuration metadata.
+          properties:
+            metadata:
+              additionalProperties:
+                type: string
+              type: object
+            name:
+              type: string
+          required:
+          - name
+          - metadata
+          title: ConfigResponse
+          type: object
+        responseMimeType: application/json
         responseModalities:
         - TEXT
-      systemInstruction:
-        parts:
-        - text: |2
-
-            Always respond with a JSON object that's compatible with this schema:
-
-            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-            Don't include any text or Markdown fencing before or after.
-        role: user
-      tools:
-      - urlContext: {}
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '626'
+      - '631'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=873
+      - gfet4t7; dur=1379
       transfer-encoding:
       - chunked
       vary:
@@ -55,21 +58,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: '{"city": "Mexico City", "country": "Mexico"}'
+          - text: '{"name": "api-config", "metadata": {"author": "Alice", "version": "1.0"}}'
           role: model
         finishReason: STOP
-        groundingMetadata: {}
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 0f4caf7iM-mgz7IPtLeryAc
+      responseId: CZMUacOtKv2SxN8Pi7TrsAs
       usageMetadata:
-        candidatesTokenCount: 13
-        promptTokenCount: 85
+        candidatesTokenCount: 25
+        promptTokenCount: 23
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 85
-        thoughtsTokenCount: 32
-        totalTokenCount: 130
+          tokenCount: 23
+        thoughtsTokenCount: 158
+        totalTokenCount: 206
     status:
       code: 200
       message: OK

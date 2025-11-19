@@ -151,19 +151,21 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
     """
 
-    anthropic_cache_tool_definitions: bool
+    anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last tool definition.
 
     When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing Anthropic to cache tool definitions and reduce costs.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
-    anthropic_cache_instructions: bool
+    anthropic_cache_instructions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last system prompt block.
 
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -476,9 +478,11 @@ class AnthropicModel(Model):
         ]
 
         # Add cache_control to the last tool if enabled
-        if tools and model_settings.get('anthropic_cache_tool_definitions'):
+        if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
+            # If True, use '5m'; otherwise use the specified ttl value
+            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = tools[-1]
-            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
         return tools
 
@@ -580,7 +584,7 @@ class AnthropicModel(Model):
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
-                                self._add_cache_control_to_last_param(user_content_params)
+                                self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
@@ -744,10 +748,14 @@ class AnthropicModel(Model):
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
-        if system_prompt and model_settings.get('anthropic_cache_instructions'):
+        if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
+            # If True, use '5m'; otherwise use the specified ttl value
+            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
             system_prompt_blocks = [
                 BetaTextBlockParam(
-                    type='text', text=system_prompt, cache_control=BetaCacheControlEphemeralParam(type='ephemeral')
+                    type='text',
+                    text=system_prompt,
+                    cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
                 )
             ]
             return system_prompt_blocks, anthropic_messages
@@ -755,7 +763,7 @@ class AnthropicModel(Model):
         return system_prompt, anthropic_messages
 
     @staticmethod
-    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam]) -> None:
+    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m') -> None:
         """Add cache control to the last content block param.
 
         See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
@@ -776,7 +784,7 @@ class AnthropicModel(Model):
             raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
 
         # Add cache_control to the last param
-        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
     @staticmethod
     async def _map_user_prompt(

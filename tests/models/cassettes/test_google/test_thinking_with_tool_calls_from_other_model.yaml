@@ -1,0 +1,372 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '330'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of the country?
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3534'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2957'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1763507707
+      error: null
+      id: resp_04b26c9215811c7900691cfdfbd87c81a3b0091d3922488718
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpHP3-7jMMMgFGJNuuDSXmU7RorU0Yc4KcvOzmB5E7vahRvUJ110C0d9qXQwPpzKk17FyP7QlCbsxAuuDmx4FFO8DXpmeRyf_AHnOmluIn9E7RCPaJUeYd9u7QcTxuLryGhv0wCwhKnwrcAjnDbbSXkh1U9hNCIrhaq0W4z2mDBbIwa8jCYprDpb_3rRj-vNsslcVfhP6PSJuZiHTpeGgeuOgSaBGNbGE-r51wSIU_Re0XSu4Wy1UUNrKTMKyks2JoiKjfE3kWpAh7Ycm0JSbFrnoGXPiThLGS12dMzrL_4rSlFm8fgqHcQ1PP4KG9tT7l6r5Cq4VP2SbC9W68P-2dVSztNm1lbkgAmyl9KW88l9qZkTXY087qnC_tJ0_AXwPnn_WBVK__1liZsiaPEzTXQO7xsiBGSDubvz_nQR0Xi36lLAwim4-f5Vqsa-WQCUE1z33qSSIofCIwKtU7y4NqLrqKVjNzjUkavxHRd65gZmTWnlzGJnv5GXSGRPDyk9OhO0QoHTXlSIxbuskytYjZ2nMgblS6jGGR69Purq-90yLr2635D_Zjx95N7ZHkp7ckHVZYgPtTyXzMVzjI82n_YFvR0KQjBUhV8ubAW_AwiV7ml8S0PU5UU1VSTRC5JF1D9ZxsHFIlvgPbe7xAp8ulxBkaCG8VeeM_suNK8ehBTfCduNq0l1Spt7O9KUmzgUlpzx1oDTNO75heUNKNPVhCFsjCDl9pMG1XFJmsFROpMb82blwYyb8C3N4JJm3j0a23YN7jrokOpMIWd4zXyHnfsyVvXe-qaaXFZ9j25n-FTTZ2wLGHPog2M1SwJF5b8Vu2hpNTtsW05WEhddTMDMgg8YvZkuxxmIES9X6E4WnLEMUcyoG5k32ytkP-yF3nayKsg0xCXNRZZTtJUQUZQfimQEDc9OOjZOj6ggj4Y_K3vj7flwhQ9P-ZZ5YSGPSjN1LdGGYY7OJd-bSSFSdIOvROTnJ_2-Fghe6rykx4DVTw2pp8iapm9zfCKdEpa7AenjskBNn3YYRZ4sn0nxt_5wrZSbnyhkDz-NQ1IYwWjyBU97Sb1bmJyZ-2dKnvv7sKIyxyp_1pYQYTPJs12cfndLEcoiKLRJGWzK61-CtA6q18H6kSNW0BerJT3EFWRHliQWhoJOq5wQnlqtaexg6aRYA6FKcv38SLMYDUiOOHGS9ojmtoT3FMS81uO36SiHWNG_iCpkHvX3q2fsH1Q76VGWwGdvM7orV7AXlWYGonsKOa-vUkqBliAzITGu95G2ZvNEmecrqV9XuMgTCH5FULP9jnaU8J7bNiiUFEEMnJZiQL2cvdtPK9soAPZXGKSESVCvLnk52mkyLlVPrmVsiN19QRT84l8PpsifvgNMuQ1hKjjSamJvPC3UnWg0RQ4BFXmEu2tLAgedZ_5D5zhx63ZFE_QXYFZz3nM-M6cAig1lil2z6Yw4xE2gA7gK_Y2akNg3irvnXXBFIq2SkipIJpzrBwCUfqN4UFnJTWzgoUx6u3OCLP_GNiYGbMFeGYhVnPjHeJrGoepeAyXkq-F7FvCEO2ClONAixMz0fMJbVr3lGlzvwKeKOK7oVPTtZSrgVbhmcws8J3KExEg7izNhZgdt5udxPpnj0txsgLaYzWEb_LdubeAgyJocayhMoqzbmw0kK9uTZlrsLtZkDA4xfJ4Q8AbhSEwZucGM0ROEz3w94yYjq1--YxfQ7FeyTHj_lIthAa6-YhiQD-IuxjgUFu1cXbCCKaEw==
+        id: rs_04b26c9215811c7900691cfdfc923481a3aa441c74099dbb41
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_hmYRgPAT7F1QVPF4fYgzZiKd
+        id: fc_04b26c9215811c7900691cfdfe98e081a3b7846f465ec0b0ae
+        name: get_country
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 37
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 144
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 181
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2470'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=r14Om.0DpcmrBz8tj783Gvs33gasNZ7UaG7IFdlsArQ-1763507710-1.0.1.1-7fYQrFuRizqyG6XcvzHeCVzY0kHno5odRJ6wg2X4Jj1pV71CuuweXXiZvlKPD_QM7udr729mUbkdhIH2yP_nTjA8Jn4kbWZn5lDf91YBEmo;
+        _cfuvid=fZKvzCKZ4uj3gJktc4vJo.lRIUxZCVLJ78epmTIYXj0-1763507710828-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of the country?
+        role: user
+      - encrypted_content: gAAAAABpHP3-7jMMMgFGJNuuDSXmU7RorU0Yc4KcvOzmB5E7vahRvUJ110C0d9qXQwPpzKk17FyP7QlCbsxAuuDmx4FFO8DXpmeRyf_AHnOmluIn9E7RCPaJUeYd9u7QcTxuLryGhv0wCwhKnwrcAjnDbbSXkh1U9hNCIrhaq0W4z2mDBbIwa8jCYprDpb_3rRj-vNsslcVfhP6PSJuZiHTpeGgeuOgSaBGNbGE-r51wSIU_Re0XSu4Wy1UUNrKTMKyks2JoiKjfE3kWpAh7Ycm0JSbFrnoGXPiThLGS12dMzrL_4rSlFm8fgqHcQ1PP4KG9tT7l6r5Cq4VP2SbC9W68P-2dVSztNm1lbkgAmyl9KW88l9qZkTXY087qnC_tJ0_AXwPnn_WBVK__1liZsiaPEzTXQO7xsiBGSDubvz_nQR0Xi36lLAwim4-f5Vqsa-WQCUE1z33qSSIofCIwKtU7y4NqLrqKVjNzjUkavxHRd65gZmTWnlzGJnv5GXSGRPDyk9OhO0QoHTXlSIxbuskytYjZ2nMgblS6jGGR69Purq-90yLr2635D_Zjx95N7ZHkp7ckHVZYgPtTyXzMVzjI82n_YFvR0KQjBUhV8ubAW_AwiV7ml8S0PU5UU1VSTRC5JF1D9ZxsHFIlvgPbe7xAp8ulxBkaCG8VeeM_suNK8ehBTfCduNq0l1Spt7O9KUmzgUlpzx1oDTNO75heUNKNPVhCFsjCDl9pMG1XFJmsFROpMb82blwYyb8C3N4JJm3j0a23YN7jrokOpMIWd4zXyHnfsyVvXe-qaaXFZ9j25n-FTTZ2wLGHPog2M1SwJF5b8Vu2hpNTtsW05WEhddTMDMgg8YvZkuxxmIES9X6E4WnLEMUcyoG5k32ytkP-yF3nayKsg0xCXNRZZTtJUQUZQfimQEDc9OOjZOj6ggj4Y_K3vj7flwhQ9P-ZZ5YSGPSjN1LdGGYY7OJd-bSSFSdIOvROTnJ_2-Fghe6rykx4DVTw2pp8iapm9zfCKdEpa7AenjskBNn3YYRZ4sn0nxt_5wrZSbnyhkDz-NQ1IYwWjyBU97Sb1bmJyZ-2dKnvv7sKIyxyp_1pYQYTPJs12cfndLEcoiKLRJGWzK61-CtA6q18H6kSNW0BerJT3EFWRHliQWhoJOq5wQnlqtaexg6aRYA6FKcv38SLMYDUiOOHGS9ojmtoT3FMS81uO36SiHWNG_iCpkHvX3q2fsH1Q76VGWwGdvM7orV7AXlWYGonsKOa-vUkqBliAzITGu95G2ZvNEmecrqV9XuMgTCH5FULP9jnaU8J7bNiiUFEEMnJZiQL2cvdtPK9soAPZXGKSESVCvLnk52mkyLlVPrmVsiN19QRT84l8PpsifvgNMuQ1hKjjSamJvPC3UnWg0RQ4BFXmEu2tLAgedZ_5D5zhx63ZFE_QXYFZz3nM-M6cAig1lil2z6Yw4xE2gA7gK_Y2akNg3irvnXXBFIq2SkipIJpzrBwCUfqN4UFnJTWzgoUx6u3OCLP_GNiYGbMFeGYhVnPjHeJrGoepeAyXkq-F7FvCEO2ClONAixMz0fMJbVr3lGlzvwKeKOK7oVPTtZSrgVbhmcws8J3KExEg7izNhZgdt5udxPpnj0txsgLaYzWEb_LdubeAgyJocayhMoqzbmw0kK9uTZlrsLtZkDA4xfJ4Q8AbhSEwZucGM0ROEz3w94yYjq1--YxfQ7FeyTHj_lIthAa6-YhiQD-IuxjgUFu1cXbCCKaEw==
+        id: rs_04b26c9215811c7900691cfdfc923481a3aa441c74099dbb41
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_hmYRgPAT7F1QVPF4fYgzZiKd
+        id: fc_04b26c9215811c7900691cfdfe98e081a3b7846f465ec0b0ae
+        name: get_country
+        type: function_call
+      - call_id: call_hmYRgPAT7F1QVPF4fYgzZiKd
+        output: Mexico
+        type: function_call_output
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3750'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '3371'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1763507711
+      error: null
+      id: resp_04b26c9215811c7900691cfdfefa5481a3a94e859e7afcb43c
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpHP4CsHT1-L3kzyepL4Oz3mHNvIJJoUUjWV7PncjSfecCWhKX-0AC50bNWjIXIeZp6NlTJUqJ5hF8xEP1IP_XvUGdAlsu9tm-CxS0ZTr4gFn1T1hG0PqE3sfICs_JOq2XODZ0MYCu78kxMpFElPa1MFuVt4TsQDNGIo-Xg_XYsfcjqMrS5oPfa52OolINUVkyIAv_pDu3VszrUXr_TS22rSQ2JdwegXMM-0Foq0pqZbxbp-NEmnN4duBh6SewhYBgE7iuy6_Tq7R3oPb8YGZEaWBhnNEtnO6cM1gdMHpceb7ngQNpkMkwDjpwDkLBFuJNLiGLyt2AL5-2e7C7oXiRYGWqh470-UeQHSFrbWKklzVVdEZYBvmqCmSen56D8pZcfjqA7KqceR3el85QN1Zg2HIDlkT1aAff_QfclfykfM3MN0ZUHVM2_1kRoJDsZYA-bbA9zoF5j_oabO2dWa5ftLjhCjZ7IKUNJRNGsFFj_U1URDbLfnDvcIgzWiO4LtjehsXkQR82BA0NPKJwPCsCQRzvLJ6qBNelVg027ccX5B7qVoUkfORDNZ8_6O-XBV4GNAP5gpjOpa8jkV_81MWFy5pFpuHYF5s5cx83DkAEZXdcamP0YtFQjamm63UErbhtyHqsEkElDSHutAGEU2c4KZiAXBq5JoDK6IO6b2u8im2Pp9-fXHJu0GL4pfpcW5ipRwG67HpOjAdMm5OZBEtqKuFlHMdBc2byrVkxDetXy0Dw1V696hgKx1nyHPZxMhvUkebTZhet58r2qubkoPtLn9lsxmaL81OZ1wpkYbyZg2vcyMbV2YxQYzbHkYjk4Fm7r1RApLzNuIxuzVohuzX8AoX7BqOgdp1lmuumWROFaTxdz1kIMPCKoLrNcMc4W0gSXneHCIWPkxN1xObnt_KmNRROEg6SK0YsM3nvJjfcf-7EZ03S_f7E7b1k15NYTQKx0GpcFQwKqw3rTO2hRsiM0jiAk3JqxTZAoBQkbobUOea78mY-bOQDIk7Lxo4C2O4or9uOQ7HtODk07M4ZN-KtuqyFiF-Fg5XgFyVzqP0_VfmyXYP9WJSD2SJWpAGBe-AJ9-f0Cts_zL13NPTcVLPGyO7vOCuUOqa44nXdmS-xJi9NELknARbI5C3q2pN9bI97tHqviqEjGDxIEZ7yvsCcpuSdxhC73Vb_YYwLJLbzB-qJ4pc6oix69bIZsOQ2k9oxHPOWy2cFgXYU9zpV8xRpSov3s6QmOzh0FM_ZnAFZRN32mZ6qkFxCMGPsZfriyaATCzrrvfkKPOKnAQAevo6tTsOLBARrkDv6LeWDzaFRGYXXdAyyflbwTxHahzkO1mGTfHWTpW7hK7HQFkKAvvG2nxh6RHsuv9Job4QUIqvXR6aRooZdEdr9FlSq6bAH39NgrL4u9Zf9bDeXendQaY6KAVE2j4-p2wCOGx2-e613FR-w7XnbU3XsK45fDgyI-E0H559RJxs4HURWQ94PBxpnM_c8fbK6KroVxLmlIaMyOmVBeH5wgdvoREgK4zxpXr6zfBem7qPoJbw0oGTtocbxTWKsjqJJRnKapyfK3zvdKNSa6leKwL1PmEIEVAbX52wYL0jhXm9OaSqv8jjmprZlZ56IevbWKllcXLoWUh_Yqa0-gJrotKe4censDhgS8qwRB0WQVX1M55Ad-nC89s9K-mbZBIWwqRaEQ4wZWM7ojlsFpZTFAdMEvHTbS4gSlrXQOYYbRZgD_iK0uI2iqEBnZoahWsS_dp9WGYuPDlee3VS_nLAkjSV7VzBurSkwHnZZBmslJEnmA778QZ5tX7iRALPepcXD6i1eAgTkXkcO2PDzs80ZU4DFAPnIsvSnf3ynwtRu
+        id: rs_04b26c9215811c7900691cfdff96fc81a380dd7550e3e883a2
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Mexico City (Ciudad de México).
+          type: output_text
+        id: msg_04b26c9215811c7900691cfe021a5c81a39010d5c07746a330
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 206
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 141
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 347
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1061'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of the country?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: call_hmYRgPAT7F1QVPF4fYgzZiKd
+            name: get_country
+          thoughtSignature: Y29udGV4dF9lbmdpbmVlcmluZ19pc190aGVfd2F5X3RvX2dv
+        role: model
+      - parts:
+        - functionResponse:
+            id: call_hmYRgPAT7F1QVPF4fYgzZiKd
+            name: get_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_country
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            title: CityLocation
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1259'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1935
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Mexico City
+                country: Mexico
+              name: final_result
+            thoughtSignature: EsYCCsMCAdHtim/P+x13Eq3lUYgRDz8XYnqaHKD/Bt4GaUssLGOXQTU60cCcqOb1SnqKi8PD5bcVc0yBYidk4of+SP4M3clu75M3zQ5GS24SImMIimCKguTc+O6MiWvZezzkBDi1x74eBlDz0uOMz8EnMpSSyGSuB447xD/TAXkuUJr7B4PTgs+nDvfd36/tqufLL5Rk/GwBNKcsFNv4EBQP+AyjjC/Q4L6UDpRfLA4gyIjQdJf5cktxujhr+tzaQ5KNUIx3hCyzmw8jYio+kOUXqcEEzhGeHyWS9XzciyBWB6KSHc+UhgrjG7O6SGTFOZ7gW6590Z9acd1+DfM+CCZnWmzKz/fCOaRBTaVMlpagiOoAHzhGYclO4HY2czKOvFo8YUUpY6HgDGzBLvuNC4LSdOsJnq/kQYWGR8mxp4tEvQKEsOPa01E=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-pro-preview
+      responseId: BP4caYjhKs2Fz7IP_IXfgAk
+      usageMetadata:
+        candidatesTokenCount: 23
+        promptTokenCount: 114
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 114
+        thoughtsTokenCount: 68
+        totalTokenCount: 205
+    status:
+      code: 200
+      message: OK
+version: 1

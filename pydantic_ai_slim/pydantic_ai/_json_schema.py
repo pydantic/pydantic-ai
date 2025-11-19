@@ -25,7 +25,7 @@ class JsonSchemaTransformer(ABC):
         *,
         strict: bool | None = None,
         prefer_inlined_defs: bool = False,
-        simplify_nullable_unions: bool = False,
+        simplify_nullable_unions: bool = False,  # TODO (v2): Remove this, no longer used
     ):
         self.schema = schema
 
@@ -146,10 +146,9 @@ class JsonSchemaTransformer(ABC):
 
         handled = [self._handle(member) for member in members]
 
-        # convert nullable unions to nullable types
+        # TODO (v2): Remove this feature, no longer used
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
-
         if len(handled) == 1:
             # In this case, no need to retain the union
             return handled[0] | schema
@@ -161,7 +160,7 @@ class JsonSchemaTransformer(ABC):
 
     @staticmethod
     def _simplify_nullable_union(cases: list[JsonSchema]) -> list[JsonSchema]:
-        # TODO: Should we move this to relevant subclasses? Or is it worth keeping here to make reuse easier?
+        # TODO (v2): Remove this method, no longer used
         if len(cases) == 2 and {'type': 'null'} in cases:
             # Find the non-null schema
             non_null_schema = next(
