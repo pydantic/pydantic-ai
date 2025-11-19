@@ -6184,6 +6184,38 @@ async def test_text_output_json_schema():
     assert agent.output_json_schema() == snapshot({'type': 'string'})
 
 
+async def test_auto_output_json_schema():
+    agent = Agent('test', output_type=bool)
+    assert agent.output_json_schema() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'final_result'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'final_result',
+                            'description': 'The final response which ends this conversation',
+                        }
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
+    )
+
+
 async def test_tool_output_json_schema():
     agent = Agent(
         'test',
