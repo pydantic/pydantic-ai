@@ -18,7 +18,7 @@ from ._output import (
     TextOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._tool_manager import ToolManager
+from ._tool_manager import ToolManager, build_validation_context
 from .messages import ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
@@ -197,8 +197,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     # not part of the final result output, so we reset the accumulated text
                     text = ''
 
+            validation_context = build_validation_context(self._tool_manager.validation_ctx, self._run_ctx)
+
             result_data = await text_processor.process(
-                text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                text, self._run_ctx, validation_context, allow_partial=allow_partial, wrap_validation_errors=False
             )
             for validator in self._output_validators:
                 result_data = await validator.validate(
