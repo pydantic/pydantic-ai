@@ -393,11 +393,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self._deps_type
 
     @property
-    def output_json_schema(self) -> JsonSchema:
-        """The output JSON schema."""
-        return self._output_schema.dump()
-
-    @property
     def output_type(self) -> OutputSpec[OutputDataT]:
         """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         return self._output_type
@@ -952,6 +947,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             assert not dynamic, "dynamic can't be True in this case"
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
+
+    def output_json_schema(self, output_type: OutputSpec[OutputDataT] | None = None) -> JsonSchema:
+        """The output JSON schema."""
+        output_schema = self._prepare_output_schema(output_type)
+        return output_schema.dump()
 
     @overload
     def output_validator(

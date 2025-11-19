@@ -104,12 +104,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @property
     @abstractmethod
-    def output_json_schema(self) -> JsonSchema:
-        """The output JSON schema."""
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
     def output_type(self) -> OutputSpec[OutputDataT]:
         """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         raise NotImplementedError
@@ -127,6 +121,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         Output tools are not included.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def output_json_schema(self, output_type: OutputSpec[OutputDataT] | None = None) -> JsonSchema:
+        """The output JSON schema."""
         raise NotImplementedError
 
     @overload

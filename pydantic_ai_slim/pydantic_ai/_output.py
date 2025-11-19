@@ -228,6 +228,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     def allows_text(self) -> bool:
         return self.text_processor is not None
 
+    @abstractmethod
     def dump(self) -> JsonSchema:
         raise NotImplementedError()
 
@@ -452,6 +453,9 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'image'
+
+    def dump(self) -> JsonSchema:
+        raise NotImplementedError()
 
 
 @dataclass(init=False)
