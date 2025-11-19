@@ -189,4 +189,5 @@ async def main():
         'Context 3', CachePoint(),  # Automatically removed (oldest)
         'Question'
     ])
+    print(result.output)
 ```
