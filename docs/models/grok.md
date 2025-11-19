@@ -12,6 +12,8 @@ pip/uv-add "pydantic-ai-slim[grok]"
 
 To use Grok from [xAI](https://x.ai/api) through their API, go your [console.x.ai](https://console.x.ai/team/default/api-keys) and follow your nose until you find the place to create an API key.
 
+`GrokModelName` contains a list of available Grok models.
+
 ## Environment variable
 
 Once you have the API key, you can set it as an environment variable:
