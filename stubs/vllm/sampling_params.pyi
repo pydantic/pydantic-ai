@@ -8,7 +8,7 @@ class SamplingParams:
     presence_penalty: float | None
     frequency_penalty: float | None
     logit_bias: dict[int, float] | None
-    extra_body: dict[str, Any] | None
+    extra_args: dict[str, Any] | None
 
     def __init__(
         self,
@@ -19,7 +19,7 @@ class SamplingParams:
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[int, float] | None = None,
-        extra_body: dict[str, Any] | None = None,
+        extra_args: dict[str, Any] | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None: ...
