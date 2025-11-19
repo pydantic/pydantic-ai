@@ -1,33 +1,31 @@
-# Groq
+# Grok
 
 ## Install
 
-To use `GroqModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `groq` optional group:
+To use `GrokModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `grok` optional group:
 
 ```bash
-pip/uv-add "pydantic-ai-slim[groq]"
+pip/uv-add "pydantic-ai-slim[grok]"
 ```
 
 ## Configuration
 
-To use [Groq](https://groq.com/) through their API, go to [console.groq.com/keys](https://console.groq.com/keys) and follow your nose until you find the place to generate an API key.
-
-`GroqModelName` contains a list of available Groq models.
+To use Grok from [xAI](https://x.ai/api) through their API, go to [console.x.ai]https://console.x.ai) and follow your nose until you find the place to create an API key.
 
 ## Environment variable
 
 Once you have the API key, you can set it as an environment variable:
 
 ```bash
-export GROQ_API_KEY='your-api-key'
+export XAI_API_KEY='your-api-key'
 ```
 
-You can then use `GroqModel` by name:
+You can then use `GrokModel` by name:
 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('groq:llama-3.3-70b-versatile')
+agent = Agent('grok:grok-4-fast-non-reasoning')
 ...
 ```
 
@@ -35,43 +33,34 @@ Or initialise the model directly with just the model name:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.models.grok import GrokModel
 
-model = GroqModel('llama-3.3-70b-versatile')
+model = GrokModel('grok-4-fast-non-reasoning')
 agent = Agent(model)
 ...
 ```
 
-## `provider` argument
-
-You can provide a custom `Provider` via the `provider` argument:
+You can provide your own `api_key` inline like so:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.groq import GroqModel
-from pydantic_ai.providers.groq import GroqProvider
+from pydantic_ai.models.grok import GrokModel
 
-model = GroqModel(
-    'llama-3.3-70b-versatile', provider=GroqProvider(api_key='your-api-key')
-)
+model = GrokModel('grok-4-fast-non-reasoning', api_key='your-api-key')
 agent = Agent(model)
 ...
 ```
 
-You can also customize the `GroqProvider` with a custom `httpx.AsyncHTTPClient`:
+You can also customize the `GrokModel` with a custom `xai_sdk.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from xai_sdk import AsyncClient
+async_client = AsyncClient(api_key='your-api-key')
 
 from pydantic_ai import Agent
-from pydantic_ai.models.groq import GroqModel
-from pydantic_ai.providers.groq import GroqProvider
+from pydantic_ai.models.grok import GrokModel
 
-custom_http_client = AsyncClient(timeout=30)
-model = GroqModel(
-    'llama-3.3-70b-versatile',
-    provider=GroqProvider(api_key='your-api-key', http_client=custom_http_client),
-)
+model = GrokModel('grok-4-fast-non-reasoning', client=async_client)
 agent = Agent(model)
 ...
 ```
