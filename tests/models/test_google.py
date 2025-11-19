@@ -10,6 +10,7 @@ import pytest
 from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -43,7 +44,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -57,6 +58,7 @@ from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
+    from google.genai import errors
     from google.genai.types import (
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
@@ -2388,7 +2390,7 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
@@ -2789,6 +2791,37 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
         await agent.run('What is the largest city in Mexico?')
 
     # Will default to prompted output
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+
+async def test_google_native_output_with_builtin_tools_gemini_3(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Google does not support output tools and built-in tools at the same time. Use `output_type=NativeOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in Mexico?')
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    # Will default to native output
     agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
 
     result = await agent.run('What is the largest city in Mexico?')
@@ -3514,3 +3547,178 @@ async def test_cache_point_filtering():
     assert len(content) == 2
     assert content[0] == {'text': 'text before'}
     assert content[1] == {'text': 'text after'}
+
+
+async def test_thinking_with_tool_calls_from_other_model(
+    allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
+):
+    openai_model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent()
+
+    @agent.tool_plain
+    def get_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the capital of the country?', model=openai_model)
+    assert result.output == snapshot('Mexico City (Ciudad de México).')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of the country?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=37, output_tokens=144, details={'reasoning_tokens': 128}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='Mexico City (Ciudad de México).',
+                        id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=206, output_tokens=141, details={'reasoning_tokens': 128}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    result = await agent.run(model=model, message_history=messages[:-1], output_type=CityLocation)
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+    assert result.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'city': 'Mexico City', 'country': 'Mexico'},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=114, output_tokens=91, details={'thoughts_tokens': 68, 'text_prompt_tokens': 114}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'error_class,error_response,expected_status',
+    [
+        (
+            errors.ServerError,
+            {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}},
+            503,
+        ),
+        (
+            errors.ClientError,
+            {'error': {'code': 400, 'message': 'Invalid request parameters', 'status': 'INVALID_ARGUMENT'}},
+            400,
+        ),
+        (
+            errors.ClientError,
+            {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}},
+            429,
+        ),
+    ],
+)
+async def test_google_api_errors_are_handled(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    error_class: type[errors.APIError],
+    error_response: dict[str, Any],
+    expected_status: int,
+):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    mocked_error = error_class(expected_status, error_response)
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('This prompt will trigger the mocked error.')
+
+    assert exc_info.value.status_code == expected_status
+    assert error_response['error']['message'] in str(exc_info.value.body)
