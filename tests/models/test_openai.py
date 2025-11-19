@@ -1936,14 +1936,22 @@ def test_openai_transformer_with_recursive_ref() -> None:
 
     # The transformer should resolve the $ref and use the transformed schema from $defs
     # (not the original self.defs, which was the bug we fixed)
-    assert isinstance(result, dict)
-    # In strict mode, all properties should be required
-    assert 'properties' in result
-    assert 'required' in result
-    # The transformed schema should have strict mode applied (additionalProperties: False)
-    assert result.get('additionalProperties') is False
-    # All properties should be in required list (strict mode requirement)
-    assert 'foo' in result['required']
+    assert result == snapshot(
+        {
+            '$defs': {
+                'MyModel': {
+                    'type': 'object',
+                    'properties': {'foo': {'type': 'string'}},
+                    'required': ['foo'],
+                    'additionalProperties': False,
+                }
+            },
+            'type': 'object',
+            'properties': {'foo': {'type': 'string'}},
+            'required': ['foo'],
+            'additionalProperties': False,
+        }
+    )
 
 
 def test_openai_transformer_fallback_when_defs_missing() -> None:
@@ -1951,11 +1959,45 @@ def test_openai_transformer_fallback_when_defs_missing() -> None:
 
     This tests the safety net fallback that shouldn't happen in normal flow.
     The fallback uses self.defs (original schema) when the transformed $defs
-    doesn't contain the root_key. This edge case is simulated using a mock.
-    """
-    from unittest.mock import patch
+    doesn't contain the root_key.
 
+    We test this by creating a custom transformer subclass that overrides the base
+    class walk() to return a result without the root_key, allowing us to test the
+    actual fallback code path in OpenAIJsonSchemaTransformer.walk().
+    """
+    from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    # Create a custom transformer that overrides walk() to intercept super().walk()
+    # and manipulate the result, then call the actual OpenAIJsonSchemaTransformer.walk()
+    # logic which will hit the fallback path
+    class TestTransformer(OpenAIJsonSchemaTransformer):
+        def __init__(self, schema: dict[str, Any], *, strict: bool | None = None):
+            JsonSchemaTransformer.__init__(self, schema, strict=strict, flatten_allof=True)
+            self.root_ref = schema.get('$ref')
+
+        def walk(self) -> JsonSchema:
+            # Store the original base class walk method
+            base_walk = JsonSchemaTransformer.walk
+
+            # Create a wrapper that manipulates the result to simulate the edge case
+            def wrapped_walk(self_instance: TestTransformer) -> JsonSchema:
+                result = base_walk(self_instance)
+                # Remove root_key from $defs to simulate the edge case
+                if '$defs' in result and 'MyModel' in result.get('$defs', {}):
+                    result['$defs'].pop('MyModel')
+                return result
+
+            # Temporarily replace the base class walk method for this instance
+            JsonSchemaTransformer.walk = wrapped_walk  # type: ignore[assignment]
+            try:
+                # Now call the actual OpenAIJsonSchemaTransformer.walk() method
+                # which will call super().walk() (our wrapped version) and then
+                # hit the fallback path at lines 164-165
+                return super().walk()
+            finally:
+                # Restore the original method
+                JsonSchemaTransformer.walk = base_walk
 
     schema: dict[str, Any] = {
         '$ref': '#/$defs/MyModel',
@@ -1968,19 +2010,17 @@ def test_openai_transformer_fallback_when_defs_missing() -> None:
         },
     }
 
-    transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+    transformer = TestTransformer(schema, strict=True)
+    # Call walk() which will execute the actual OpenAIJsonSchemaTransformer.walk() logic
+    # and hit the fallback path at line 164-165
+    result = transformer.walk()
 
-    # Simulate edge case: super().walk() returns $defs without root_key
-    # This shouldn't happen in normal flow, but we test the fallback path
-    with patch.object(
-        transformer.__class__.__bases__[0],
-        'walk',
-        return_value={'$defs': {'OtherModel': {'type': 'object'}}},
-    ):
-        result = transformer.walk()
-        # Fallback should use self.defs.get(root_key) which contains MyModel
-        assert isinstance(result, dict)
-        assert 'properties' in result or 'type' in result
+    # Verify the fallback worked: result should have MyModel's properties from self.defs
+    # Note: The fallback uses the original, untransformed schema, so it won't have
+    # additionalProperties: False applied (that transformation happens in transform())
+    assert result == snapshot(
+        {'$defs': {}, 'type': 'object', 'properties': {'foo': {'type': 'string'}}, 'required': ['foo']}
+    )
 
 
 def test_openai_transformer_flattens_allof() -> None:

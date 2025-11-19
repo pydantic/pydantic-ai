@@ -10,7 +10,7 @@ from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 
-__all__ = ['JsonSchemaTransformer', 'InlineDefsJsonSchemaTransformer', 'flatten_allof']
+__all__ = ['JsonSchemaTransformer', 'InlineDefsJsonSchemaTransformer']
 
 
 @dataclass(init=False)
@@ -81,7 +81,7 @@ class JsonSchemaTransformer(ABC):
     def _handle(self, schema: JsonSchema) -> JsonSchema:
         # Flatten allOf if requested, before processing the schema
         if self.flatten_allof:
-            schema = flatten_allof(schema)
+            schema = _recurse_flatten_allof(schema)
 
         nested_refs = 0
         if self.prefer_inlined_defs:
@@ -209,9 +209,123 @@ def _allof_is_object_like(member: JsonSchema) -> bool:
 
 
 def _merge_additional_properties_values(values: list[Any]) -> bool | JsonSchema:
+    # If any value is False, return False (most restrictive)
+    if any(v is False for v in values):
+        return False
+    # If any value is a dict schema, we can't easily merge multiple schemas, so return True
     if any(isinstance(v, dict) for v in values):
         return True
-    return False if values and all(v is False for v in values) else True
+    # Default to True (allow additional properties)
+    return True
+
+
+def _collect_member_data(
+    processed_members: list[JsonSchema],
+) -> tuple[
+    dict[str, JsonSchema],
+    set[str],
+    dict[str, JsonSchema],
+    list[Any],
+    list[set[str]],
+    list[dict[str, JsonSchema]],
+    list[Any],
+]:
+    """Collect properties, required, patternProperties, and additionalProperties from all members."""
+    properties: dict[str, JsonSchema] = {}
+    required: set[str] = set()
+    pattern_properties: dict[str, JsonSchema] = {}
+    additional_values: list[Any] = []
+    restricted_property_sets: list[set[str]] = []
+    members_properties: list[dict[str, JsonSchema]] = []
+    members_additional_props: list[Any] = []
+
+    for m in processed_members:
+        member_properties_raw = m.get('properties')
+        member_properties: dict[str, JsonSchema] = (
+            cast(dict[str, JsonSchema], member_properties_raw) if isinstance(member_properties_raw, dict) else {}
+        )
+        members_properties.append(member_properties)
+        members_additional_props.append(m.get('additionalProperties'))
+
+        if member_properties:
+            properties.update(member_properties)
+        if isinstance(m.get('required'), list):
+            required.update(m['required'])
+        if isinstance(m.get('patternProperties'), dict):
+            pattern_properties.update(m['patternProperties'])
+        if 'additionalProperties' in m:
+            additional_values.append(m['additionalProperties'])
+            if m['additionalProperties'] is False:
+                restricted_property_sets.append(set(member_properties.keys()))
+
+    return (
+        properties,
+        required,
+        pattern_properties,
+        additional_values,
+        restricted_property_sets,
+        members_properties,
+        members_additional_props,
+    )
+
+
+def _filter_by_restricted_property_sets(merged: JsonSchema, restricted_property_sets: list[set[str]]) -> None:
+    """Filter properties to only those allowed by all members with additionalProperties: False."""
+    if not restricted_property_sets:
+        return
+
+    allowed_names = restricted_property_sets[0].copy()
+    for prop_set in restricted_property_sets[1:]:
+        allowed_names &= prop_set
+
+    if 'properties' in merged:
+        merged['properties'] = {k: v for k, v in merged['properties'].items() if k in allowed_names}
+        if not merged['properties']:
+            merged.pop('properties')
+    if 'required' in merged:
+        merged['required'] = [k for k in merged['required'] if k in allowed_names]
+        if not merged['required']:
+            merged.pop('required')
+
+
+def _filter_incompatible_properties(
+    merged: JsonSchema,
+    members_properties: list[dict[str, JsonSchema]],
+    members_additional_props: list[Any],
+) -> None:
+    """Filter properties that are incompatible with additionalProperties constraints."""
+    if 'properties' not in merged:
+        return
+
+    incompatible_props: set[str] = set()
+    for prop_name, prop_schema in merged['properties'].items():
+        prop_types = _get_type_set(prop_schema)
+        for member_props, member_additional in zip(members_properties, members_additional_props):
+            if prop_name in member_props:
+                member_prop_types = _get_type_set(member_props[prop_name])
+                if prop_types and member_prop_types and not prop_types & member_prop_types:
+                    incompatible_props.add(prop_name)
+                    break
+                continue
+
+            if member_additional is False:
+                incompatible_props.add(prop_name)
+                break
+
+            if isinstance(member_additional, dict):
+                allowed_types = _get_type_set(cast(JsonSchema, member_additional))
+                if prop_types and allowed_types and not prop_types <= allowed_types:
+                    incompatible_props.add(prop_name)
+                    break
+
+    if incompatible_props:
+        merged['properties'] = {k: v for k, v in merged['properties'].items() if k not in incompatible_props}
+        if not merged['properties']:
+            merged.pop('properties')
+        if 'required' in merged:
+            merged['required'] = [k for k in merged['required'] if k not in incompatible_props]
+            if not merged['required']:
+                merged.pop('required')
 
 
 def _flatten_current_level(s: JsonSchema) -> JsonSchema:
@@ -230,24 +344,31 @@ def _flatten_current_level(s: JsonSchema) -> JsonSchema:
     merged: JsonSchema = {k: v for k, v in s.items() if k != 'allOf'}
     merged['type'] = 'object'
 
+    # Collect initial properties from merged schema
     properties: dict[str, JsonSchema] = {}
     if isinstance(merged.get('properties'), dict):
         properties.update(merged['properties'])
 
     required: set[str] = set(merged.get('required', []) or [])
     pattern_properties: dict[str, JsonSchema] = dict(merged.get('patternProperties', {}) or {})
-    additional_values: list[Any] = []
 
-    for m in processed_members:
-        if isinstance(m.get('properties'), dict):
-            properties.update(m['properties'])
-        if isinstance(m.get('required'), list):
-            required.update(m['required'])
-        if isinstance(m.get('patternProperties'), dict):
-            pattern_properties.update(m['patternProperties'])
-        if 'additionalProperties' in m:
-            additional_values.append(m['additionalProperties'])
+    # Collect data from all members
+    (
+        member_properties,
+        member_required,
+        member_pattern_properties,
+        additional_values,
+        restricted_property_sets,
+        members_properties,
+        members_additional_props,
+    ) = _collect_member_data(processed_members)
 
+    # Merge all collected data
+    properties.update(member_properties)
+    required.update(member_required)
+    pattern_properties.update(member_pattern_properties)
+
+    # Apply merged properties, required, and patternProperties
     if properties:
         merged['properties'] = {k: _recurse_flatten_allof(v) for k, v in properties.items()}
     if required:
@@ -255,10 +376,32 @@ def _flatten_current_level(s: JsonSchema) -> JsonSchema:
     if pattern_properties:
         merged['patternProperties'] = {k: _recurse_flatten_allof(v) for k, v in pattern_properties.items()}
 
+    # Filter by restricted property sets (additionalProperties: False)
+    _filter_by_restricted_property_sets(merged, restricted_property_sets)
+
+    # Merge additionalProperties
     if additional_values:
         merged['additionalProperties'] = _merge_additional_properties_values(additional_values)
 
+    # Filter incompatible properties based on additionalProperties constraints
+    _filter_incompatible_properties(merged, members_properties, members_additional_props)
+
     return merged
+
+
+def _get_type_set(schema: JsonSchema | None) -> set[str] | None:
+    if not schema:
+        return None
+    schema_type = schema.get('type')
+    if isinstance(schema_type, list):
+        result: set[str] = set()
+        type_list: list[Any] = cast(list[Any], schema_type)
+        for t in type_list:
+            result.add(str(t))
+        return result
+    if isinstance(schema_type, str):
+        return {schema_type}
+    return None
 
 
 def _recurse_children(s: JsonSchema) -> JsonSchema:
@@ -292,14 +435,3 @@ def _recurse_flatten_allof(schema: JsonSchema) -> JsonSchema:
     s = _flatten_current_level(s)
     s = _recurse_children(s)
     return s
-
-
-def flatten_allof(schema: JsonSchema) -> JsonSchema:
-    """Flatten simple object-only allOf combinations by merging object members.
-
-    - Merges properties and unions required lists.
-    - Combines additionalProperties conservatively: only False if all are False; otherwise True.
-    - Recurses into nested object/array members.
-    - Leaves non-object allOfs untouched.
-    """
-    return _recurse_flatten_allof(schema)
