@@ -8,12 +8,12 @@ from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Any, TypeVar, cast
+from typing import Annotated, Any, TypeVar, cast
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -589,6 +589,26 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
     # System instructions should have 5m TTL
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
+async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
+    """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
+    c = completion_message(
+        [BetaTextBlock(text='Done', type='text')],
+        usage=BetaUsage(input_tokens=8, output_tokens=3),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def constrained_tool(value: Annotated[str, Field(min_length=2)]) -> str:  # pragma: no cover - not executed
+        return value
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'strict' not in completion_kwargs['tools'][0]
 
 
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):

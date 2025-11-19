@@ -978,6 +978,10 @@ def get_user_agent() -> str:
 
 
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
+    """Customize the tool definition using the given transformer.
+
+    If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
+    """
     schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
     parameters_json_schema = schema_transformer.walk()
     return replace(
