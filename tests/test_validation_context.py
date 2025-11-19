@@ -120,3 +120,28 @@ def test_agent_output_validator_with_validation_context():
 
     result = agent.run_sync('', deps=Deps(increment=10))
     assert result.output.x == snapshot(10)
+
+
+def test_agent_output_validator_with_intermediary_deps_change_and_validation_context():
+    """Test that the validation context is updated as run dependencies are mutated."""
+
+    agent = Agent(
+        'test',
+        output_type=Value,
+        deps_type=Deps,
+        validation_context=lambda ctx: ctx.deps.increment,
+    )
+
+    @agent.tool
+    def bump_increment(ctx: RunContext[Deps]):
+        assert ctx.validation_context == snapshot(10)  # validation ctx was first computed using the original deps
+        ctx.deps.increment += 5  # update the deps
+
+    @agent.output_validator
+    def identity(ctx: RunContext[Deps], v: Value) -> Value:
+        assert ctx.validation_context == snapshot(15)  # validation ctx was re-computed after deps update from tool call
+
+        return v
+
+    result = agent.run_sync('', deps=Deps(increment=10))
+    assert result.output.x == snapshot(15)
