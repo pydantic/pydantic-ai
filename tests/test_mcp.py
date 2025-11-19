@@ -1763,7 +1763,6 @@ async def test_instructions(mcp_server: MCPServerStdio) -> None:
     ):
         mcp_server.instructions
     async with mcp_server:
-        # The test server doesn't provide instructions, so it should be None
         assert mcp_server.instructions == 'Be a helpful assistant.'
 
 
