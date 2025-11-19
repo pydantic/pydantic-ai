@@ -466,13 +466,11 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
                 'name': 'tool_one',
                 'description': '',
                 'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'strict': True,
             },
             {
                 'name': 'tool_two',
                 'description': '',
                 'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'strict': True,
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
         ]
@@ -547,7 +545,6 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
                     'required': ['value'],
                     'type': 'object',
                 },
-                'strict': True,
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
