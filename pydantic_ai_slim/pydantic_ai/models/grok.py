@@ -1,7 +1,7 @@
 """Grok model implementation using xAI SDK."""
 
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +31,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -308,6 +309,26 @@ class GrokModel(Model):
 
         parts: list[ModelResponsePart] = []
 
+        # Add reasoning/thinking content first if present
+        if hasattr(response, 'reasoning_content') and response.reasoning_content:
+            # reasoning_content is the human-readable summary
+            parts.append(
+                ThinkingPart(
+                    content=response.reasoning_content,
+                    signature=None,
+                    provider_name='xai',
+                )
+            )
+        elif hasattr(response, 'encrypted_content') and response.encrypted_content:
+            # encrypted_content is a signature that can be sent back for reasoning continuity
+            parts.append(
+                ThinkingPart(
+                    content='',  # No readable content for encrypted-only reasoning
+                    signature=response.encrypted_content,
+                    provider_name='xai',
+                )
+            )
+
         # Add tool calls (both client-side and server-side) first
         # For server-side tools, these were executed before generating the final content
         for tool_call in response.tool_calls:
@@ -358,10 +379,8 @@ class GrokModel(Model):
         if response.content:
             parts.append(TextPart(content=response.content))
 
-        # Convert usage - try to access attributes, default to 0 if not available
-        input_tokens = getattr(response.usage, 'input_tokens', 0)
-        output_tokens = getattr(response.usage, 'output_tokens', 0)
-        usage = RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+        # Convert usage with detailed token information
+        usage = self._map_usage(response)
 
         # Map finish reason
         finish_reason_map = {
@@ -388,6 +407,69 @@ class GrokModel(Model):
             finish_reason=finish_reason,
         )
 
+    def _map_usage(self, response: chat_types.Response) -> RequestUsage:
+        """Extract usage information from xAI SDK response, including reasoning tokens and cache tokens."""
+        return GrokModel.extract_usage(response)
+
+    @staticmethod
+    def extract_usage(response: chat_types.Response) -> RequestUsage:
+        """Extract usage information from xAI SDK response.
+
+        Extracts token counts and additional usage details including:
+        - reasoning_tokens: Tokens used for model reasoning/thinking
+        - cache_read_tokens: Tokens read from prompt cache
+        - server_side_tools_used: Count of server-side (built-in) tools executed
+        """
+        if not hasattr(response, 'usage'):
+            return RequestUsage()
+
+        usage_obj = getattr(response, 'usage', None)
+        if not usage_obj:
+            return RequestUsage()
+
+        prompt_tokens = getattr(usage_obj, 'prompt_tokens', 0)
+        completion_tokens = getattr(usage_obj, 'completion_tokens', 0)
+
+        # Build details dict for additional usage metrics
+        details: dict[str, int] = {}
+
+        # Add reasoning tokens if available
+        if hasattr(usage_obj, 'reasoning_tokens'):
+            reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', 0)
+            if reasoning_tokens:
+                details['reasoning_tokens'] = reasoning_tokens
+
+        # Add cached prompt tokens if available
+        if hasattr(usage_obj, 'cached_prompt_text_tokens'):
+            cached_tokens = getattr(usage_obj, 'cached_prompt_text_tokens', 0)
+            if cached_tokens:
+                details['cache_read_tokens'] = cached_tokens
+
+        # Add server-side tools used count if available
+        if hasattr(usage_obj, 'server_side_tools_used'):
+            server_side_tools = getattr(usage_obj, 'server_side_tools_used', None)
+            # server_side_tools_used is a repeated field (list-like) in the real SDK
+            # but may be an int in mocks for simplicity
+            if server_side_tools:
+                if isinstance(server_side_tools, int):
+                    tools_count = server_side_tools
+                else:
+                    tools_count = len(server_side_tools)
+                if tools_count:
+                    details['server_side_tools_used'] = tools_count
+
+        if details:
+            return RequestUsage(
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                details=details,
+            )
+        else:
+            return RequestUsage(
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+            )
+
 
 @dataclass
 class GrokStreamedResponse(StreamedResponse):
@@ -398,89 +480,134 @@ class GrokStreamedResponse(StreamedResponse):
     _timestamp: Any
     _provider_name: str
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Iterate over streaming events from xAI SDK."""
+    def _update_response_state(self, response: Any) -> None:
+        """Update response state including usage, response ID, and finish reason."""
         from typing import cast
 
+        # Update usage
+        if hasattr(response, 'usage'):
+            self._usage = GrokModel.extract_usage(response)
+
+        # Set provider response ID
+        if hasattr(response, 'id') and self.provider_response_id is None:
+            self.provider_response_id = response.id
+
+        # Handle finish reason
+        if hasattr(response, 'finish_reason') and response.finish_reason:
+            finish_reason_map = {
+                'stop': 'stop',
+                'length': 'length',
+                'content_filter': 'content_filter',
+                'max_output_tokens': 'length',
+                'cancelled': 'error',
+                'failed': 'error',
+            }
+            mapped_reason = finish_reason_map.get(response.finish_reason, 'stop')
+            self.finish_reason = cast(FinishReason, mapped_reason)
+
+    def _handle_reasoning_content(self, response: Any, reasoning_handled: bool) -> Iterator[ModelResponseStreamEvent]:
+        """Handle reasoning content (both readable and encrypted)."""
+        if reasoning_handled:
+            return
+
+        if hasattr(response, 'reasoning_content') and response.reasoning_content:
+            # reasoning_content is the human-readable summary
+            thinking_part = ThinkingPart(
+                content=response.reasoning_content,
+                signature=None,
+                provider_name='xai',
+            )
+            yield self._parts_manager.handle_part(vendor_part_id='reasoning', part=thinking_part)
+        elif hasattr(response, 'encrypted_content') and response.encrypted_content:
+            # encrypted_content is a signature that can be sent back for reasoning continuity
+            thinking_part = ThinkingPart(
+                content='',  # No readable content for encrypted-only reasoning
+                signature=response.encrypted_content,
+                provider_name='xai',
+            )
+            yield self._parts_manager.handle_part(vendor_part_id='encrypted_reasoning', part=thinking_part)
+
+    def _handle_text_delta(self, chunk: Any) -> Iterator[ModelResponseStreamEvent]:
+        """Handle text content delta from chunk."""
+        if hasattr(chunk, 'content') and chunk.content:
+            event = self._parts_manager.handle_text_delta(
+                vendor_part_id='content',
+                content=chunk.content,
+            )
+            if event is not None:
+                yield event
+
+    def _handle_single_tool_call(self, tool_call: Any) -> Iterator[ModelResponseStreamEvent]:
+        """Handle a single tool call, routing to server-side or client-side handler."""
+        if not (hasattr(tool_call.function, 'name') and tool_call.function.name):
+            return
+
+        # Determine if this is a server-side (built-in) tool
+        is_server_side_tool = False
+        if hasattr(tool_call, 'type'):
+            try:
+                tool_type = get_tool_call_type(tool_call)
+                is_server_side_tool = tool_type != 'client_side_tool'
+            except Exception:
+                pass  # Treat as client-side if we can't determine
+
+        if is_server_side_tool:
+            # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
+            # These tools are already executed by xAI's infrastructure
+            call_part = BuiltinToolCallPart(
+                tool_name=tool_call.function.name,
+                args=tool_call.function.arguments,
+                tool_call_id=tool_call.id,
+                provider_name='xai',
+            )
+            yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
+
+            # Immediately yield the return part since the tool was already executed
+            return_part = BuiltinToolReturnPart(
+                tool_name=tool_call.function.name,
+                content={'status': 'completed'},
+                tool_call_id=tool_call.id,
+                provider_name='xai',
+            )
+            yield self._parts_manager.handle_part(vendor_part_id=f'{tool_call.id}_return', part=return_part)
+        else:
+            # Client-side tools - use standard handler
+            yield self._parts_manager.handle_tool_call_part(
+                vendor_part_id=tool_call.id,
+                tool_name=tool_call.function.name,
+                args=tool_call.function.arguments,
+                tool_call_id=tool_call.id,
+            )
+
+    def _handle_tool_calls(self, response: Any) -> Iterator[ModelResponseStreamEvent]:
+        """Handle tool calls (both client-side and server-side)."""
+        if not hasattr(response, 'tool_calls'):
+            return
+
+        for tool_call in response.tool_calls:
+            yield from self._handle_single_tool_call(tool_call)
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Iterate over streaming events from xAI SDK."""
+        reasoning_handled = False  # Track if we've already handled reasoning content
+
         async for response, chunk in self._response:
-            # Update usage if available
-            if hasattr(response, 'usage'):
-                input_tokens = getattr(response.usage, 'input_tokens', 0)
-                output_tokens = getattr(response.usage, 'output_tokens', 0)
-                self._usage = RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+            self._update_response_state(response)
 
-            # Set provider response ID
-            if hasattr(response, 'id') and self.provider_response_id is None:
-                self.provider_response_id = response.id
-
-            # Handle finish reason
-            if hasattr(response, 'finish_reason') and response.finish_reason:
-                finish_reason_map = {
-                    'stop': 'stop',
-                    'length': 'length',
-                    'content_filter': 'content_filter',
-                    'max_output_tokens': 'length',
-                    'cancelled': 'error',
-                    'failed': 'error',
-                }
-                mapped_reason = finish_reason_map.get(response.finish_reason, 'stop')
-                self.finish_reason = cast(FinishReason, mapped_reason)
-
-            # Handle text content
-            if hasattr(chunk, 'content') and chunk.content:
-                event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=chunk.content,
-                )
-                if event is not None:
+            # Handle reasoning content (only emit once)
+            reasoning_events = list(self._handle_reasoning_content(response, reasoning_handled))
+            if reasoning_events:
+                reasoning_handled = True
+                for event in reasoning_events:
                     yield event
 
-            # Handle tool calls (both client-side and server-side)
-            # Note: We use the accumulated Response tool calls, not the Chunk deltas,
-            # because pydantic validation needs complete JSON, not partial deltas
-            if hasattr(response, 'tool_calls'):
-                for tool_call in response.tool_calls:
-                    if hasattr(tool_call.function, 'name') and tool_call.function.name:
-                        # Check if this is a server-side (built-in) tool
-                        is_server_side_tool = False
-                        if hasattr(tool_call, 'type'):
-                            try:
-                                tool_type = get_tool_call_type(tool_call)
-                                # If it's not a client-side tool, it's a server-side tool
-                                is_server_side_tool = tool_type != 'client_side_tool'
-                            except Exception:
-                                # If we can't determine the type, treat as client-side
-                                pass
+            # Handle text content delta
+            for event in self._handle_text_delta(chunk):
+                yield event
 
-                        if is_server_side_tool:
-                            # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
-                            # These tools are already executed by xAI's infrastructure
-                            call_part = BuiltinToolCallPart(
-                                tool_name=tool_call.function.name,
-                                args=tool_call.function.arguments,
-                                tool_call_id=tool_call.id,
-                                provider_name='xai',
-                            )
-                            yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
-
-                            # Immediately yield the return part since the tool was already executed
-                            return_part = BuiltinToolReturnPart(
-                                tool_name=tool_call.function.name,
-                                content={'status': 'completed'},
-                                tool_call_id=tool_call.id,
-                                provider_name='xai',
-                            )
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{tool_call.id}_return', part=return_part
-                            )
-                        else:
-                            # Client-side tools - use standard handler
-                            yield self._parts_manager.handle_tool_call_part(
-                                vendor_part_id=tool_call.id,
-                                tool_name=tool_call.function.name,
-                                args=tool_call.function.arguments,
-                                tool_call_id=tool_call.id,
-                            )
+            # Handle tool calls
+            for event in self._handle_tool_calls(response):
+                yield event
 
     @property
     def model_name(self) -> str:

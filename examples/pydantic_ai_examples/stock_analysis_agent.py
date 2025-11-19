@@ -136,6 +136,7 @@ async def main():
     print(f'\nAnalysis: {result.output.analysis}')
 
     # Get the final response message for metadata
+    print(result.all_messages())
     final_message = result.all_messages()[-1]
     if isinstance(final_message, ModelResponse):
         print('\n🆔 Response Metadata:')

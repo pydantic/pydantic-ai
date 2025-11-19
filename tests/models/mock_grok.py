@@ -124,6 +124,14 @@ class MockGrokResponse:
     tool_calls: list[Any] = field(default_factory=list)
     finish_reason: str = 'stop'
     usage: Any | None = None  # Would be usage_pb2.SamplingUsage in real xai_sdk
+    reasoning_content: str = ''  # Human-readable reasoning trace
+    encrypted_content: str = ''  # Encrypted reasoning signature
+
+    # Note: The real xAI SDK usage object uses protobuf fields:
+    # - prompt_tokens (not input_tokens)
+    # - completion_tokens (not output_tokens)
+    # - reasoning_tokens
+    # - cached_prompt_text_tokens
 
 
 @dataclass
@@ -147,6 +155,8 @@ def create_response(
     tool_calls: list[Any] | None = None,
     finish_reason: str = 'stop',
     usage: Any | None = None,
+    reasoning_content: str = '',
+    encrypted_content: str = '',
 ) -> chat_types.Response:
     """Create a mock Response object for testing.
 
@@ -160,6 +170,8 @@ def create_response(
             tool_calls=tool_calls or [],
             finish_reason=finish_reason,
             usage=usage,
+            reasoning_content=reasoning_content,
+            encrypted_content=encrypted_content,
         ),
     )
 

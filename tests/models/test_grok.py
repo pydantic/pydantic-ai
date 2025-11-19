@@ -21,6 +21,7 @@ from pydantic_ai import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -120,7 +121,7 @@ async def test_grok_request_simple_success(allow_model_requests: None):
 async def test_grok_request_simple_usage(allow_model_requests: None):
     response = create_response(
         content='world',
-        usage=SimpleNamespace(input_tokens=2, output_tokens=1),
+        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1),
     )
     mock_client = MockGrok.create_mock(response)
     m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
@@ -204,11 +205,11 @@ async def test_grok_request_tool_call(allow_model_requests: None):
     responses = [
         create_response(
             tool_calls=[create_tool_call(id='1', name='get_location', arguments={'loc_name': 'San Fransisco'})],
-            usage=SimpleNamespace(input_tokens=2, output_tokens=1),
+            usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1),
         ),
         create_response(
             tool_calls=[create_tool_call(id='2', name='get_location', arguments={'loc_name': 'London'})],
-            usage=SimpleNamespace(input_tokens=3, output_tokens=2),
+            usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2),
         ),
         create_response(content='final response'),
     ]
@@ -331,7 +332,35 @@ def grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.
         content=text,  # This will be accumulated by the streaming handler
         tool_calls=[],
         finish_reason=finish_reason if finish_reason else '',
-        usage=SimpleNamespace(input_tokens=2, output_tokens=1) if finish_reason else None,
+        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
+    )
+
+    return (cast(chat_types.Response, response), chunk)
+
+
+def grok_reasoning_text_chunk(
+    text: str, reasoning_content: str = '', encrypted_content: str = '', finish_reason: str = 'stop'
+) -> tuple[chat_types.Response, Any]:
+    """Create a text streaming chunk for Grok with reasoning content.
+
+    Args:
+        text: The text content delta
+        reasoning_content: The reasoning trace (accumulated, not a delta)
+        encrypted_content: The encrypted reasoning signature (accumulated, not a delta)
+        finish_reason: The finish reason
+    """
+    # Create chunk (delta) - just this piece of text
+    chunk = MockGrokResponseChunk(content=text, tool_calls=[])
+
+    # Create response (accumulated) - includes reasoning content
+    response = MockGrokResponse(
+        id='grok-123',
+        content=text,
+        tool_calls=[],
+        finish_reason=finish_reason if finish_reason else '',
+        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
     )
 
     return (cast(chat_types.Response, response), chunk)
@@ -431,7 +460,7 @@ def grok_tool_chunk(
         content='',
         tool_calls=[response_tool_call] if (effective_tool_name is not None or accumulated_args) else [],
         finish_reason=finish_reason,
-        usage=SimpleNamespace(input_tokens=20, output_tokens=1) if finish_reason else None,
+        usage=SimpleNamespace(prompt_tokens=20, completion_tokens=1) if finish_reason else None,
     )
 
     return (cast(chat_types.Response, response), chunk)
@@ -719,15 +748,15 @@ async def test_grok_builtin_web_search_tool(allow_model_requests: None, xai_api_
     m = GrokModel('grok-4-fast', api_key=xai_api_key)
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
-    result = await agent.run('What is the weather in San Francisco today?')
-
-    # Verify the response
+    result = await agent.run('Return just the day of week for the date of Jan 1 in 2026?')
     assert result.output
-    messages = result.all_messages()
-    assert len(messages) >= 2
+    assert result.output.lower() == 'thursday'
 
-    # TODO: Add validation for built-in tool call parts once response parsing is fully tested
-    # Server-side tools are executed by xAI's infrastructure
+    # Verify that server-side tools were used
+    usage = result.usage()
+    assert usage.details is not None
+    assert 'server_side_tools_used' in usage.details
+    assert usage.details['server_side_tools_used'] > 0
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
@@ -1000,6 +1029,404 @@ async def test_grok_model_properties():
 
     assert m.model_name == 'grok-4-fast-non-reasoning'
     assert m.system == 'xai'
+
+
+# Tests for reasoning/thinking content (similar to OpenAI Responses tests)
+
+
+async def test_grok_reasoning_simple(allow_model_requests: None):
+    """Test Grok model with simple reasoning content."""
+    response = create_response(
+        content='The answer is 4',
+        reasoning_content='Let me think: 2+2 equals 4',
+        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=20),
+    )
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run('What is 2+2?')
+    assert result.output == 'The answer is 4'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2+2?', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='Let me think: 2+2 equals 4', signature=None, provider_name='xai'),
+                    TextPart(content='The answer is 4'),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=20),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_grok_encrypted_content_only(allow_model_requests: None):
+    """Test Grok model with encrypted content (signature) only."""
+    response = create_response(
+        content='4',
+        encrypted_content='abc123signature',
+        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+    )
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run('What is 2+2?')
+    assert result.output == '4'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2+2?', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', signature='abc123signature', provider_name='xai'),
+                    TextPart(content='4'),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_grok_reasoning_without_summary(allow_model_requests: None):
+    """Test Grok model with encrypted content but no reasoning summary."""
+    response = create_response(
+        content='4',
+        encrypted_content='encrypted123',
+    )
+    mock_client = MockGrok.create_mock(response)
+    model = GrokModel('grok-3', client=mock_client)
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', signature='encrypted123', provider_name='xai'),
+                    TextPart(content='4'),
+                ],
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_grok_reasoning_with_tool_calls(allow_model_requests: None):
+    """Test Grok model with reasoning content and tool calls."""
+    responses = [
+        create_response(
+            tool_calls=[create_tool_call(id='1', name='calculate', arguments={'expression': '2+2'})],
+            reasoning_content='I need to use the calculate tool to solve this',
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=30),
+        ),
+        create_response(
+            content='The calculation shows that 2+2 equals 4',
+            usage=SimpleNamespace(prompt_tokens=15, completion_tokens=10),
+        ),
+    ]
+    mock_client = MockGrok.create_mock(responses)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def calculate(expression: str) -> str:
+        return '4'
+
+    result = await agent.run('What is 2+2?')
+    assert result.output == 'The calculation shows that 2+2 equals 4'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2+2?', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='I need to use the calculate tool to solve this', signature=None, provider_name='xai'
+                    ),
+                    ToolCallPart(
+                        tool_name='calculate',
+                        args={'expression': '2+2'},
+                        tool_call_id='1',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=30),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='calculate',
+                        content='4',
+                        tool_call_id='1',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The calculation shows that 2+2 equals 4')],
+                usage=RequestUsage(input_tokens=15, output_tokens=10),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_grok_reasoning_with_encrypted_and_tool_calls(allow_model_requests: None):
+    """Test Grok model with encrypted reasoning content and tool calls."""
+    responses = [
+        create_response(
+            tool_calls=[create_tool_call(id='1', name='get_weather', arguments={'city': 'San Francisco'})],
+            encrypted_content='encrypted_reasoning_abc123',
+            usage=SimpleNamespace(prompt_tokens=20, completion_tokens=40),
+        ),
+        create_response(
+            content='The weather in San Francisco is sunny',
+            usage=SimpleNamespace(prompt_tokens=25, completion_tokens=12),
+        ),
+    ]
+    mock_client = MockGrok.create_mock(responses)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return 'sunny'
+
+    result = await agent.run('What is the weather in San Francisco?')
+    assert result.output == 'The weather in San Francisco is sunny'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What is the weather in San Francisco?', timestamp=IsNow(tz=timezone.utc))
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', signature='encrypted_reasoning_abc123', provider_name='xai'),
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args={'city': 'San Francisco'},
+                        tool_call_id='1',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=20, output_tokens=40),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='sunny',
+                        tool_call_id='1',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The weather in San Francisco is sunny')],
+                usage=RequestUsage(input_tokens=25, output_tokens=12),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_grok_stream_with_reasoning(allow_model_requests: None):
+    """Test Grok streaming with reasoning content."""
+    stream = [
+        grok_reasoning_text_chunk('The answer', reasoning_content='Let me think about this...', finish_reason=''),
+        grok_reasoning_text_chunk(' is 4', reasoning_content='Let me think about this...', finish_reason='stop'),
+    ]
+    mock_client = MockGrok.create_mock_stream(stream)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('What is 2+2?') as result:
+        assert not result.is_complete
+        text_chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert text_chunks == snapshot(['The answer', 'The answer is 4'])
+        assert result.is_complete
+
+    # Verify the final response includes both reasoning and text
+    messages = result.all_messages()
+    assert len(messages) == 2
+    assert isinstance(messages[1], ModelResponse)
+    assert len(messages[1].parts) == 2
+    assert isinstance(messages[1].parts[0], ThinkingPart)
+    assert messages[1].parts[0].content == 'Let me think about this...'
+    assert isinstance(messages[1].parts[1], TextPart)
+    assert messages[1].parts[1].content == 'The answer is 4'
+
+
+async def test_grok_stream_with_encrypted_reasoning(allow_model_requests: None):
+    """Test Grok streaming with encrypted reasoning content."""
+    stream = [
+        grok_reasoning_text_chunk('The weather', encrypted_content='encrypted_abc123', finish_reason=''),
+        grok_reasoning_text_chunk(' is sunny', encrypted_content='encrypted_abc123', finish_reason='stop'),
+    ]
+    mock_client = MockGrok.create_mock_stream(stream)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    async with agent.run_stream('What is the weather?') as result:
+        assert not result.is_complete
+        text_chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert text_chunks == snapshot(['The weather', 'The weather is sunny'])
+        assert result.is_complete
+
+    # Verify the final response includes both encrypted reasoning and text
+    messages = result.all_messages()
+    assert len(messages) == 2
+    assert isinstance(messages[1], ModelResponse)
+    assert len(messages[1].parts) == 2
+    assert isinstance(messages[1].parts[0], ThinkingPart)
+    assert messages[1].parts[0].content == ''  # No readable content for encrypted-only
+    assert messages[1].parts[0].signature == 'encrypted_abc123'
+    assert isinstance(messages[1].parts[1], TextPart)
+    assert messages[1].parts[1].content == 'The weather is sunny'
+
+
+async def test_grok_usage_with_reasoning_tokens(allow_model_requests: None):
+    """Test that Grok model properly extracts reasoning_tokens and cache_read_tokens from usage."""
+    # Create a mock usage object with reasoning_tokens and cached_prompt_text_tokens
+    mock_usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=50,
+        reasoning_tokens=25,
+        cached_prompt_text_tokens=30,
+    )
+    response = create_response(
+        content='The answer is 42',
+        reasoning_content='Let me think deeply about this...',
+        usage=mock_usage,
+    )
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run('What is the meaning of life?')
+    assert result.output == 'The answer is 42'
+
+    # Verify usage includes details
+    usage = result.usage()
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 50
+    assert usage.total_tokens == 150
+    assert usage.details == snapshot({'reasoning_tokens': 25, 'cache_read_tokens': 30})
+
+
+async def test_grok_usage_without_details(allow_model_requests: None):
+    """Test that Grok model handles usage without reasoning_tokens or cached tokens."""
+    mock_usage = SimpleNamespace(
+        prompt_tokens=20,
+        completion_tokens=10,
+    )
+    response = create_response(
+        content='Simple answer',
+        usage=mock_usage,
+    )
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-3', client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run('Simple question')
+    assert result.output == 'Simple answer'
+
+    # Verify usage without details
+    usage = result.usage()
+    assert usage.input_tokens == 20
+    assert usage.output_tokens == 10
+    assert usage.total_tokens == 30
+    # details should be empty dict when no additional usage info is provided
+    assert usage.details == snapshot({})
+
+
+async def test_grok_usage_with_server_side_tools(allow_model_requests: None):
+    """Test that Grok model properly extracts server_side_tools_used from usage."""
+    # Create a mock usage object with server_side_tools_used
+    # Note: In the real SDK, server_side_tools_used is a repeated field (list-like),
+    # but we use an int in mocks for simplicity
+    mock_usage = SimpleNamespace(
+        prompt_tokens=50,
+        completion_tokens=30,
+        server_side_tools_used=2,
+    )
+    response = create_response(
+        content='The answer based on web search',
+        usage=mock_usage,
+    )
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-4-fast', client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run('Search for something')
+    assert result.output == 'The answer based on web search'
+
+    # Verify usage includes server_side_tools_used in details
+    usage = result.usage()
+    assert usage.input_tokens == 50
+    assert usage.output_tokens == 30
+    assert usage.total_tokens == 80
+    assert usage.details == snapshot({'server_side_tools_used': 2})
 
 
 # End of tests
