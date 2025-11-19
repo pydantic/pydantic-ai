@@ -327,23 +327,7 @@ allowing it to pull up-to-date information from the web.
 
 ### Usage
 
-```py {title="web_fetch_anthropic.py"}
-from pydantic_ai import Agent, WebFetchTool
-
-agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[WebFetchTool()])
-
-result = agent.run_sync('What is the first sentence on https://ai.pydantic.dev?')
-print(result.output)
-"""
-Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
-"""
-```
-
-_(This example is complete, it can be run "as is")_
-
-With Google, you can also use `WebFetchTool`:
-
-```py {title="web_fetch_google.py"}
+```py {title="web_fetch_basic.py"}
 from pydantic_ai import Agent, WebFetchTool
 
 agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[WebFetchTool()])
