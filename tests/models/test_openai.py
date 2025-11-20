@@ -3022,7 +3022,7 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
 
 
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
-    m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))  # type: ignore[arg-type]
+    m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')
@@ -3034,7 +3034,7 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
         city: str
         country: str
 
-    m = OpenAIChatModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))  # type: ignore[arg-type]
+    m = OpenAIChatModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m, output_type=Location)
 
     result = await agent.run('What is the capital of France?')
@@ -3042,7 +3042,7 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
 
 
 async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None, cerebras_api_key: str):
-    m = OpenAIChatModel('gpt-oss-120b', provider=CerebrasProvider(api_key=cerebras_api_key))  # type: ignore[arg-type]
+    m = OpenAIChatModel('gpt-oss-120b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')
