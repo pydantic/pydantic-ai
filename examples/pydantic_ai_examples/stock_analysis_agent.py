@@ -22,7 +22,7 @@ logfire.instrument_pydantic_ai()
 # The model will automatically use XaiProvider with the API key from the environment
 
 # Create the model using XaiModel with server-side tools
-model = XaiModel('grok-4-fast')
+model = XaiModel('grok-4-1-fast-non-reasoning')
 
 
 class StockAnalysis(BaseModel):

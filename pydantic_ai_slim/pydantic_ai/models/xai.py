@@ -12,7 +12,7 @@ try:
 
     # Import xai_sdk components
     from xai_sdk import AsyncClient
-    from xai_sdk.chat import assistant, image, system, tool, tool_result, user
+    from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
 except ImportError as _import_error:
     raise ImportError(
@@ -25,9 +25,12 @@ from .._utils import now_utc
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
+    DocumentUrl,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -43,11 +46,13 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    download_item,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -100,20 +105,20 @@ class XaiModel(Model):
         """The model provider."""
         return 'xai'
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[chat_types.chat_pb2.Message]:
+    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat_types.chat_pb2.Message]:
         """Convert pydantic_ai messages to xAI SDK messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                xai_messages.extend(self._map_request_parts(message.parts))
+                xai_messages.extend(await self._map_request_parts(message.parts))
             elif isinstance(message, ModelResponse):
                 if response_msg := self._map_response_parts(message.parts):
                     xai_messages.append(response_msg)
 
         return xai_messages
 
-    def _map_request_parts(self, parts: Sequence[ModelRequestPart]) -> list[chat_types.chat_pb2.Message]:
+    async def _map_request_parts(self, parts: Sequence[ModelRequestPart]) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
 
@@ -121,7 +126,7 @@ class XaiModel(Model):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
-                if user_msg := self._map_user_prompt(part):
+                if user_msg := await self._map_user_prompt(part):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
                 xai_messages.append(tool_result(part.model_response_str()))
@@ -137,7 +142,20 @@ class XaiModel(Model):
 
         return xai_messages
 
-    def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:
+    async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
+        """Upload a file to xAI files API and return the file ID.
+
+        Args:
+            data: The file content as bytes
+            filename: The filename to use for the upload
+
+        Returns:
+            The file ID from xAI
+        """
+        uploaded_file = await self._provider.client.files.upload(data, filename=filename)
+        return uploaded_file.id
+
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:  # noqa: C901
         """Map a UserPromptPart to an xAI user message."""
         if isinstance(part.content, str):
             return user(part.content)
@@ -158,9 +176,33 @@ class XaiModel(Model):
                 if item.is_image:
                     # Convert binary content to data URI and use image()
                     content_items.append(image(item.data_uri, detail='auto'))
-                else:
-                    # xAI SDK doesn't support non-image binary content yet
-                    pass
+                elif item.is_audio:
+                    raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
+                elif item.is_document:
+                    # Upload document to xAI files API and reference it
+                    filename = item.identifier or f'document.{item.format}'
+                    file_id = await self._upload_file_to_xai(item.data, filename)
+                    content_items.append(file(file_id))
+                else:  # pragma: no cover
+                    raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+            elif isinstance(item, AudioUrl):
+                raise NotImplementedError('AudioUrl is not supported by xAI SDK')
+            elif isinstance(item, DocumentUrl):
+                # Download and upload to xAI files API
+                downloaded = await download_item(item, data_format='bytes')
+                filename = item.identifier or 'document'
+                if 'data_type' in downloaded and downloaded['data_type']:
+                    filename = f'{filename}.{downloaded["data_type"]}'
+
+                file_id = await self._upload_file_to_xai(downloaded['data'], filename)
+                content_items.append(file(file_id))
+            elif isinstance(item, VideoUrl):
+                raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+            elif isinstance(item, CachePoint):
+                # xAI doesn't support prompt caching via CachePoint, so we filter it out
+                pass
+            else:
+                assert_never(item)
 
         if content_items:
             return user(*content_items)
@@ -225,7 +267,7 @@ class XaiModel(Model):
         client = self._provider.client
 
         # Convert messages to xAI format
-        xai_messages = self._map_messages(messages)
+        xai_messages = await self._map_messages(messages)
 
         # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
         tools: list[chat_types.chat_pb2.Tool] = []
@@ -277,7 +319,7 @@ class XaiModel(Model):
         client = self._provider.client
 
         # Convert messages to xAI format
-        xai_messages = self._map_messages(messages)
+        xai_messages = await self._map_messages(messages)
 
         # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
         tools: list[chat_types.chat_pb2.Tool] = []

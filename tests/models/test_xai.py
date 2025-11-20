@@ -12,8 +12,10 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -25,6 +27,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.result import RunUsage
@@ -739,6 +742,82 @@ async def test_xai_image_as_binary_content_input(
     assert 'kiwi' in response_text or 'fruit' in response_text
 
 
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (live API test)')
+async def test_xai_document_url_input(allow_model_requests: None, xai_api_key: str):
+    """Test passing a document URL to the xAI model."""
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    print(result.all_messages())
+    assert result.output
+    # The document contains "Dummy PDF file"
+    response_text = result.output.lower()
+    assert 'dummy' in response_text or 'pdf' in response_text
+
+
+async def test_xai_binary_content_document_input(allow_model_requests: None):
+    """Test passing a document as BinaryContent to the xAI model."""
+    response = create_response(content='The document discusses testing.')
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    document_content = BinaryContent(
+        data=b'%PDF-1.4\nTest document content',
+        media_type='application/pdf',
+    )
+
+    result = await agent.run(['What is in this document?', document_content])
+
+    # Verify the response
+    assert result.output == 'The document discusses testing.'
+
+
+async def test_xai_audio_url_not_supported(allow_model_requests: None):
+    """Test that AudioUrl raises NotImplementedError."""
+    response = create_response(content='This should not be reached')
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    audio_url = AudioUrl(url='https://example.com/audio.mp3')
+
+    with pytest.raises(NotImplementedError, match='AudioUrl is not supported by xAI SDK'):
+        await agent.run(['What is in this audio?', audio_url])
+
+
+async def test_xai_video_url_not_supported(allow_model_requests: None):
+    """Test that VideoUrl raises NotImplementedError."""
+    response = create_response(content='This should not be reached')
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    video_url = VideoUrl(url='https://example.com/video.mp4')
+
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported by xAI SDK'):
+        await agent.run(['What is in this video?', video_url])
+
+
+async def test_xai_binary_content_audio_not_supported(allow_model_requests: None):
+    """Test that BinaryContent with audio raises NotImplementedError."""
+    response = create_response(content='This should not be reached')
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    audio_content = BinaryContent(
+        data=b'fake audio data',
+        media_type='audio/mpeg',
+    )
+
+    with pytest.raises(NotImplementedError, match='AudioUrl/BinaryContent with audio is not supported by xAI SDK'):
+        await agent.run(['What is in this audio?', audio_content])
+
+
 # Grok built-in tools tests
 # Built-in tools are executed server-side by xAI's infrastructure
 # Based on: https://github.com/xai-org/xai-sdk-python/blob/main/examples/aio/server_side_tools.py
@@ -749,7 +828,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_api_k
     """Test Grok's built-in web_search tool."""
     from pydantic_ai import WebSearchTool
 
-    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('Return just the day of week for the date of Jan 1 in 2026?')
@@ -773,7 +852,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_api_key
     #     """X (Twitter) search tool - specific to Grok."""
     #     kind: str = 'x_search'
     #
-    # m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
+    # m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     # agent = Agent(m, builtin_tools=[XSearchTool()])
     # result = await agent.run('What is the latest post from @elonmusk?')
     # assert result.output
@@ -785,7 +864,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_a
     """Test Grok's built-in code_execution tool."""
     from pydantic_ai import CodeExecutionTool
 
-    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # Use a simpler calculation similar to OpenAI tests
@@ -808,7 +887,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None, xai_api_ke
     """Test using multiple built-in tools together."""
     from pydantic_ai import CodeExecutionTool, WebSearchTool
 
-    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -830,7 +909,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
     """Test mixing Grok's built-in tools with custom (client-side) tools."""
     from pydantic_ai import WebSearchTool
 
-    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     @agent.tool_plain
@@ -854,7 +933,7 @@ async def test_xai_builtin_tools_wiring(allow_model_requests: None):
 
     response = create_response(content='Built-in tools are registered')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-fast', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
         builtin_tools=[
@@ -883,7 +962,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_api_k
     from pydantic_ai import MCPServerTool
 
     linear_token = os.getenv('LINEAR_ACCESS_TOKEN')
-    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1418,7 +1497,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
         usage=mock_usage,
     )
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-fast', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Search for something')

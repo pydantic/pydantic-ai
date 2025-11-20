@@ -32,6 +32,11 @@ class MockXai:
         """Create mock chat interface."""
         return type('Chat', (), {'create': self.chat_create})
 
+    @cached_property
+    def files(self) -> Any:
+        """Create mock files interface."""
+        return type('Files', (), {'upload': self.files_upload})
+
     @classmethod
     def create_mock(
         cls, responses: MockResponse | Sequence[MockResponse], api_key: str = 'test-api-key'
@@ -57,6 +62,11 @@ class MockXai:
             index=self.index,
             parent=self,
         )
+
+    async def files_upload(self, data: bytes, filename: str) -> Any:
+        """Mock the files.upload method."""
+        # Return a mock uploaded file object with an id
+        return type('UploadedFile', (), {'id': f'file-{filename}'})()
 
 
 @dataclass
