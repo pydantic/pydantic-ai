@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from . import exceptions, messages
 
@@ -13,9 +13,6 @@ except ImportError as _import_error:
         'Please install the `mcp` package to use the MCP server, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
-
-if TYPE_CHECKING:
-    from .mcp import Resource, ResourceTemplate, ServerCapabilities
 
 
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
@@ -126,56 +123,3 @@ def map_from_sampling_content(
         return messages.TextPart(content=content.text)
     else:
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
-
-
-def map_from_mcp_resource(mcp_resource: mcp_types.Resource) -> Resource:
-    """Convert from MCP Resource to native Pydantic AI Resource."""
-    from .mcp import Resource, ResourceAnnotations
-
-    return Resource(
-        uri=str(mcp_resource.uri),
-        name=mcp_resource.name,
-        title=mcp_resource.title,
-        description=mcp_resource.description,
-        mime_type=mcp_resource.mimeType,
-        size=mcp_resource.size,
-        annotations=(
-            ResourceAnnotations(audience=mcp_resource.annotations.audience, priority=mcp_resource.annotations.priority)
-            if mcp_resource.annotations
-            else None
-        ),
-        metadata=mcp_resource.meta,
-    )
-
-
-def map_from_mcp_resource_template(mcp_template: mcp_types.ResourceTemplate) -> ResourceTemplate:
-    """Convert from MCP ResourceTemplate to native Pydantic AI ResourceTemplate."""
-    from .mcp import ResourceAnnotations, ResourceTemplate
-
-    return ResourceTemplate(
-        uri_template=mcp_template.uriTemplate,
-        name=mcp_template.name,
-        title=mcp_template.title,
-        description=mcp_template.description,
-        mime_type=mcp_template.mimeType,
-        annotations=(
-            ResourceAnnotations(audience=mcp_template.annotations.audience, priority=mcp_template.annotations.priority)
-            if mcp_template.annotations
-            else None
-        ),
-        metadata=mcp_template.meta,
-    )
-
-
-def map_from_mcp_server_capabilities(mcp_capabilities: mcp_types.ServerCapabilities) -> ServerCapabilities:
-    """Convert from MCP ServerCapabilities to native Pydantic AI ServerCapabilities."""
-    from .mcp import ServerCapabilities
-
-    return ServerCapabilities(
-        experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
-        logging=mcp_capabilities.logging is not None,
-        prompts=mcp_capabilities.prompts is not None,
-        resources=mcp_capabilities.resources is not None,
-        tools=mcp_capabilities.tools is not None,
-        completions=mcp_capabilities.completions is not None,
-    )

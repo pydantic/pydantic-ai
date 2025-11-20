@@ -114,6 +114,15 @@ class ResourceAnnotations:
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
+    @classmethod
+    def from_mcp_sdk(cls, mcp_annotations: mcp_types.Annotations) -> ResourceAnnotations:
+        """Convert from MCP SDK Annotations to ResourceAnnotations.
+
+        Args:
+            mcp_annotations: The MCP SDK annotations object.
+        """
+        return cls(audience=mcp_annotations.audience, priority=mcp_annotations.priority)
+
 
 @dataclass(repr=False, kw_only=True)
 class BaseResource(ABC):
@@ -150,6 +159,26 @@ class Resource(BaseResource):
     size: int | None = None
     """The size of the raw resource content in bytes (before base64 encoding), if known."""
 
+    @classmethod
+    def from_mcp_sdk(cls, mcp_resource: mcp_types.Resource) -> Resource:
+        """Convert from MCP SDK Resource to PydanticAI Resource.
+
+        Args:
+            mcp_resource: The MCP SDK Resource object.
+        """
+        return cls(
+            uri=str(mcp_resource.uri),
+            name=mcp_resource.name,
+            title=mcp_resource.title,
+            description=mcp_resource.description,
+            mime_type=mcp_resource.mimeType,
+            size=mcp_resource.size,
+            annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
+            if mcp_resource.annotations
+            else None,
+            metadata=mcp_resource.meta,
+        )
+
 
 @dataclass(repr=False, kw_only=True)
 class ResourceTemplate(BaseResource):
@@ -157,6 +186,25 @@ class ResourceTemplate(BaseResource):
 
     uri_template: str
     """URI template (RFC 6570) for constructing resource URIs."""
+
+    @classmethod
+    def from_mcp_sdk(cls, mcp_template: mcp_types.ResourceTemplate) -> ResourceTemplate:
+        """Convert from MCP SDK ResourceTemplate to PydanticAI ResourceTemplate.
+
+        Args:
+            mcp_template: The MCP SDK ResourceTemplate object.
+        """
+        return cls(
+            uri_template=mcp_template.uriTemplate,
+            name=mcp_template.name,
+            title=mcp_template.title,
+            description=mcp_template.description,
+            mime_type=mcp_template.mimeType,
+            annotations=ResourceAnnotations.from_mcp_sdk(mcp_template.annotations)
+            if mcp_template.annotations
+            else None,
+            metadata=mcp_template.meta,
+        )
 
 
 @dataclass(repr=False, kw_only=True)
@@ -182,6 +230,22 @@ class ServerCapabilities:
     """Whether the server offers autocompletion suggestions for prompts and resources."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(cls, mcp_capabilities: mcp_types.ServerCapabilities) -> ServerCapabilities:
+        """Convert from MCP SDK ServerCapabilities to PydanticAI ServerCapabilities.
+
+        Args:
+            mcp_capabilities: The MCP SDK ServerCapabilities object.
+        """
+        return cls(
+            experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
+            logging=mcp_capabilities.logging is not None,
+            prompts=mcp_capabilities.prompts is not None,
+            resources=mcp_capabilities.resources is not None,
+            tools=mcp_capabilities.tools is not None,
+            completions=mcp_capabilities.completions is not None,
+        )
 
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
@@ -486,7 +550,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 result = await self._client.list_resources()
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk_error(e) from e
-        return [_mcp.map_from_mcp_resource(r) for r in result.resources]
+        return [Resource.from_mcp_sdk(r) for r in result.resources]
 
     async def list_resource_templates(self) -> list[ResourceTemplate]:
         """Retrieve resource templates that are currently present on the server.
@@ -501,7 +565,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 result = await self._client.list_resource_templates()
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk_error(e) from e
-        return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
+        return [ResourceTemplate.from_mcp_sdk(t) for t in result.resourceTemplates]
 
     @overload
     async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
@@ -564,7 +628,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     with anyio.fail_after(self.timeout):
                         result = await self._client.initialize()
                         self._server_info = result.serverInfo
-                        self._server_capabilities = _mcp.map_from_mcp_server_capabilities(result.capabilities)
+                        self._server_capabilities = ServerCapabilities.from_mcp_sdk(result.capabilities)
                         self._instructions = result.instructions
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
