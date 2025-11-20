@@ -2193,6 +2193,27 @@ def test_temporal_run_context_preserves_run_id():
     assert reconstructed.run_id == 'run-123'
 
 
+def test_temporal_run_context_serializes_usage():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(
+            requests=2,
+            tool_calls=1,
+            input_tokens=123,
+            output_tokens=456,
+            details={'foo': 1},
+        ),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['usage'] == ctx.usage
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.usage == ctx.usage
+
+
 fastmcp_agent = Agent(
     model,
     name='fastmcp_agent',
