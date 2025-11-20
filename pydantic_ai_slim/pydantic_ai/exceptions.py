@@ -70,18 +70,30 @@ class CallDeferred(Exception):
     """Exception to raise when a tool call should be deferred.
 
     See [tools docs](../deferred-tools.md#deferred-tools) for more information.
+
+    Args:
+        metadata: Optional dictionary of metadata to attach to the deferred tool call.
+            This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
     """
 
-    pass
+    def __init__(self, metadata: dict[str, Any] | None = None):
+        self.metadata = metadata
+        super().__init__()
 
 
 class ApprovalRequired(Exception):
     """Exception to raise when a tool call requires human-in-the-loop approval.
 
     See [tools docs](../deferred-tools.md#human-in-the-loop-tool-approval) for more information.
+
+    Args:
+        metadata: Optional dictionary of metadata to attach to the deferred tool call.
+            This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
     """
 
-    pass
+    def __init__(self, metadata: dict[str, Any] | None = None):
+        self.metadata = metadata
+        super().__init__()
 
 
 class UserError(RuntimeError):
