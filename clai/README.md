@@ -51,10 +51,50 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
+## Web Chat UI
+
+Launch a web-based chat interface for your agent:
+
+```bash
+clai web module:agent_variable
+```
+
+For example, if you have an agent defined in `my_agent.py`:
+
+```python
+from pydantic_ai import Agent
+
+my_agent = Agent('openai:gpt-5', system_prompt='You are a helpful assistant.')
+```
+
+Launch the web UI with:
+
+```bash
+clai web my_agent:my_agent
+```
+
+This will start a web server (default: http://127.0.0.1:8000) with a chat interface for your agent.
+
+### Web Command Options
+
+- `--host`: Host to bind the server to (default: 127.0.0.1)
+- `--port`: Port to bind the server to (default: 8000)
+- `--config`: Path to custom `agent_options.py` config file
+- `--no-auto-config`: Disable auto-discovery of `agent_options.py` in current directory
+
+You can also launch the web UI directly from an `Agent` instance using `Agent.to_web()`:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5')
+app = agent.to_web()  # Returns a FastAPI application
+```
+
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] {web} ... [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
 
 Pydantic AI CLI v...
 
@@ -65,8 +105,6 @@ Special prompts:
 * `/cp` - copy the last response to clipboard
 
 positional arguments:
-  {web}                 Available commands
-    web                 Launch web chat UI for discovered agents
   prompt                AI Prompt, if omitted fall into interactive mode
 
 options:

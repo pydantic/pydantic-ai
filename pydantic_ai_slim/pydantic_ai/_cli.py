@@ -106,6 +106,15 @@ def cli(  # noqa: C901
     args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5'
 ) -> int:
     """Run the CLI and return the exit code for the process."""
+    # Pre-check for web subcommand to avoid argparse conflict with prompt positional
+    check_args = args_list if args_list is not None else sys.argv[1:]
+    first_positional = next((arg for arg in check_args if not arg.startswith('-')), None)
+    is_web_subcommand = prog_name == 'clai' and first_positional == 'web'
+
+    # we don't want to autocomplete or list models that don't include the provider,
+    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+
     parser = argparse.ArgumentParser(
         prog=prog_name,
         description=f"""\
@@ -120,14 +129,16 @@ Special prompts:
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-
-    # Web subcommand (only available for clai)
-    if prog_name == 'clai':
-        web_parser = subparsers.add_parser('web', help='Launch web chat UI for discovered agents')
+    if is_web_subcommand:
+        # Web subcommand mode - add subparsers only
+        subparsers = parser.add_subparsers(dest='command', help='Available commands')
+        web_parser = subparsers.add_parser('web', help='Launch web chat UI for an agent')
+        web_parser.add_argument(
+            'agent',
+            help='Agent to load in "module:variable" format, e.g. "test_agent:my_agent"',
+        )
         web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind the server to (default: 127.0.0.1)')
         web_parser.add_argument('--port', type=int, default=8000, help='Port to bind the server to (default: 8000)')
-        web_parser.add_argument('--dir', type=Path, help='Directory to search for agents (default: current directory)')
         web_parser.add_argument(
             '--config', type=Path, help='Path to agent_options.py config file (overrides auto-discovery)'
         )
@@ -136,51 +147,50 @@ Special prompts:
             action='store_true',
             help='Disable auto-discovery of agent_options.py in current directory',
         )
+    else:
+        # Prompt mode - add prompt positional and flags
+        parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
 
-    parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
-    arg = parser.add_argument(
-        '-m',
-        '--model',
-        nargs='?',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
-    )
-    # we don't want to autocomplete or list models that don't include the provider,
-    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
-    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
-    arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
-    parser.add_argument(
-        '-a',
-        '--agent',
-        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
-    )
-    parser.add_argument(
-        '-l',
-        '--list-models',
-        action='store_true',
-        help='List all available models and exit',
-    )
-    parser.add_argument(
-        '-t',
-        '--code-theme',
-        nargs='?',
-        help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
-        default='dark',
-    )
-    parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
-    parser.add_argument('--version', action='store_true', help='Show version and exit')
+        arg = parser.add_argument(
+            '-m',
+            '--model',
+            nargs='?',
+            help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
+        )
+        arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
+        parser.add_argument(
+            '-a',
+            '--agent',
+            help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+        )
+        parser.add_argument(
+            '-l',
+            '--list-models',
+            action='store_true',
+            help='List all available models and exit',
+        )
+        parser.add_argument(
+            '-t',
+            '--code-theme',
+            nargs='?',
+            help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
+            default='dark',
+        )
+        parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+        parser.add_argument('--version', action='store_true', help='Show version and exit')
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
     # Handle web subcommand
-    if args.command == 'web':
+    if getattr(args, 'command', None) == 'web':
         try:
-            from clai.chat.cli import run_chat_command
+            from clai.web.cli import run_chat_command
         except ImportError:
             print('Error: clai web command is only available when clai is installed.')
             return 1
         return run_chat_command(
-            root_dir=args.dir,
+            agent_path=args.agent,
             host=args.host,
             port=args.port,
             config_path=args.config,

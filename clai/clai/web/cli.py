@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -9,8 +10,6 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.ui.web import AIModel, BuiltinTool, create_chat_app
-
-from .agent_discovery import AgentInfo, find_agents
 
 
 def load_agent_options(
@@ -47,89 +46,62 @@ def load_agent_options(
         return None, None, None
 
 
-def select_agent(agents: list[AgentInfo]) -> AgentInfo | None:
-    """Prompt user to select an agent from the list."""
-    if not agents:
-        print('No agents found in the current directory.')
-        return None
+def load_agent(agent_path: str) -> Agent | None:
+    """Load an agent from module path in uvicorn style.
 
-    if len(agents) == 1:
-        print(f'Found agent: {agents[0].agent_name} in {agents[0].file_path}')
-        return agents[0]
+    Args:
+        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
 
-    print('Multiple agents found:')
-    for i, agent_info in enumerate(agents, 1):
-        print(f'  {i}. {agent_info.agent_name} ({agent_info.file_path})')
-
-    while True:
-        try:
-            choice = input('\nSelect an agent (enter number): ').strip()
-            index = int(choice) - 1
-            if 0 <= index < len(agents):
-                return agents[index]
-            else:
-                print(f'Please enter a number between 1 and {len(agents)}')
-        except (ValueError, KeyboardInterrupt):
-            print('\nSelection cancelled.')
-            return None
-
-
-def load_agent(agent_info: AgentInfo) -> Agent | None:
-    """Load an agent from the given agent info."""
+    Returns:
+        Agent instance or None if loading fails
+    """
     sys.path.insert(0, str(Path.cwd()))
 
     try:
-        spec = importlib.util.spec_from_file_location(agent_info.module_path, agent_info.file_path)
-        if spec is None or spec.loader is None:
-            print(f'Error: Could not load module from {agent_info.file_path}')
-            return None
+        module_path, variable_name = agent_path.split(':')
+    except ValueError:
+        print('Error: Agent must be specified in "module:variable" format')
+        return None
 
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[agent_info.module_path] = module
-        spec.loader.exec_module(module)
+    try:
+        module = importlib.import_module(module_path)
+        agent = getattr(module, variable_name, None)
 
-        agent = getattr(module, agent_info.agent_name, None)
         if agent is None:
-            print(f'Error: Agent {agent_info.agent_name} not found in module')
+            print(f'Error: {variable_name} not found in module {module_path}')
             return None
 
         if not isinstance(agent, Agent):
-            print(f'Error: {agent_info.agent_name} is not an Agent instance')
+            print(f'Error: {variable_name} is not an Agent instance')
             return None
 
         return agent  # pyright: ignore[reportUnknownVariableType]
 
+    except ImportError as e:
+        print(f'Error: Could not import module {module_path}: {e}')
+        return None
     except Exception as e:
         print(f'Error loading agent: {e}')
         return None
 
 
 def run_chat_command(
-    root_dir: Path | None = None,
+    agent_path: str,
     host: str = '127.0.0.1',
     port: int = 8000,
     config_path: Path | None = None,
     auto_config: bool = True,
 ) -> int:
-    """Run the chat command to discover and serve an agent.
+    """Run the chat command to serve an agent via web UI.
 
     Args:
-        root_dir: Directory to search for agents (defaults to current directory)
+        agent_path: Agent path in 'module:variable' format, e.g. 'test_agent:my_agent'
         host: Host to bind the server to
         port: Port to bind the server to
         config_path: Path to agent_options.py config file
         auto_config: Auto-discover agent_options.py in current directory
     """
-    search_dir = root_dir or Path.cwd()
-
-    print(f'Searching for agents in {search_dir}...')
-    agents = find_agents(search_dir)
-
-    selected = select_agent(agents)
-    if selected is None:
-        return 1
-
-    agent = load_agent(selected)
+    agent = load_agent(agent_path)
     if agent is None:
         return 1
 
@@ -145,7 +117,7 @@ def run_chat_command(
 
     app = create_chat_app(agent, models=models, builtin_tools=builtin_tools, builtin_tool_defs=builtin_tool_defs)
 
-    print(f'\nStarting chat UI for {selected.agent_name}...')
+    print(f'\nStarting chat UI for {agent_path}...')
     print(f'Open your browser at: http://{host}:{port}')
     print('Press Ctrl+C to stop the server\n')
 
