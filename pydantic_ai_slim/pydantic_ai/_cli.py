@@ -185,11 +185,11 @@ Special prompts:
     # Handle web subcommand
     if getattr(args, 'command', None) == 'web':
         try:
-            from clai.web.cli import run_chat_command
+            from clai.web.cli import run_web_command
         except ImportError:
             print('Error: clai web command is only available when clai is installed.')
             return 1
-        return run_chat_command(
+        return run_web_command(
             agent_path=args.agent,
             host=args.host,
             port=args.port,
