@@ -45,7 +45,7 @@ def test_openrouter_provider():
 
 
 def test_openrouter_provider_with_app_attribution():
-    provider = OpenRouterProvider(api_key='api-key', http_referer='test.com', x_title='test')
+    provider = OpenRouterProvider(api_key='api-key', app_url='test.com', app_title='test')
     assert provider.name == 'openrouter'
     assert provider.base_url == 'https://openrouter.ai/api/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)

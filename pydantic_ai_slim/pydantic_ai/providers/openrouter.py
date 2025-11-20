@@ -82,10 +82,10 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_referer: str, x_title: str) -> None: ...
+    def __init__(self, *, api_key: str, app_url: str, app_title: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_referer: str, x_title: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, app_url: str, app_title: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
@@ -97,8 +97,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         self,
         *,
         api_key: str | None = None,
-        http_referer: str | None = None,
-        x_title: str | None = None,
+        app_url: str | None = None,
+        app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -107,10 +107,10 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         Args:
             api_key: OpenRouter API key. Falls back to ``OPENROUTER_API_KEY``
                 when omitted and required unless ``openai_client`` is provided.
-            http_referer: Optional attribution header, falling back to
-                ``OPENROUTER_HTTP_REFERER``.
-            x_title: Optional attribution header, falling back to
-                ``OPENROUTER_X_TITLE``.
+            app_url: Optional url for app attribution. Falls back to
+                ``OPENROUTER_APP_URL`` when omitted.
+            app_title: Optional title for app attribution. Falls back to
+                ``OPENROUTER_APP_TITLE`` when omitted.
             openai_client: Existing ``AsyncOpenAI`` client to reuse instead of
                 creating one internally.
             http_client: Custom ``httpx.AsyncClient`` to pass into the
@@ -128,9 +128,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             )
 
         attribution_headers: dict[str, str] = {}
-        if http_referer := http_referer or os.getenv('OPENROUTER_HTTP_REFERER'):
+        if http_referer := app_url or os.getenv('OPENROUTER_APP_URL'):
             attribution_headers['HTTP-Referer'] = http_referer
-        if x_title := x_title or os.getenv('OPENROUTER_X_TITLE'):
+        if x_title := app_title or os.getenv('OPENROUTER_APP_TITLE'):
             attribution_headers['X-Title'] = x_title
 
         if openai_client is not None:

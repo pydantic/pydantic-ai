@@ -708,7 +708,7 @@ class OpenAIChatModel(Model):
                 )
 
     @dataclass
-    class _MapModelResposeContext:
+    class _MapModelResponseContext:
         """Context object for mapping a `ModelResponse` to OpenAI chat completion parameters.
 
         This class is designed to be subclassed to add new fields for custom logic,
@@ -739,7 +739,7 @@ class OpenAIChatModel(Model):
                 message_param['tool_calls'] = self.tool_calls
             return message_param
 
-    def _map_response_text_part(self, ctx: _MapModelResposeContext, item: TextPart) -> None:
+    def _map_response_text_part(self, ctx: _MapModelResponseContext, item: TextPart) -> None:
         """Maps a `TextPart` to the response context.
 
         This method serves as a hook that can be overridden by subclasses
@@ -747,7 +747,7 @@ class OpenAIChatModel(Model):
         """
         ctx.texts.append(item.content)
 
-    def _map_response_thinking_part(self, ctx: _MapModelResposeContext, item: ThinkingPart) -> None:
+    def _map_response_thinking_part(self, ctx: _MapModelResponseContext, item: ThinkingPart) -> None:
         """Maps a `ThinkingPart` to the response context.
 
         This method serves as a hook that can be overridden by subclasses
@@ -759,7 +759,7 @@ class OpenAIChatModel(Model):
         start_tag, end_tag = self.profile.thinking_tags
         ctx.texts.append('\n'.join([start_tag, item.content, end_tag]))
 
-    def _map_response_tool_call_part(self, ctx: _MapModelResposeContext, item: ToolCallPart) -> None:
+    def _map_response_tool_call_part(self, ctx: _MapModelResponseContext, item: ToolCallPart) -> None:
         """Maps a `ToolCallPart` to the response context.
 
         This method serves as a hook that can be overridden by subclasses
@@ -768,7 +768,7 @@ class OpenAIChatModel(Model):
         ctx.tool_calls.append(self._map_tool_call(item))
 
     def _map_response_builtin_part(
-        self, ctx: _MapModelResposeContext, item: BuiltinToolCallPart | BuiltinToolReturnPart
+        self, ctx: _MapModelResponseContext, item: BuiltinToolCallPart | BuiltinToolReturnPart
     ) -> None:
         """Maps a built-in tool call or return part to the response context.
 
@@ -778,7 +778,7 @@ class OpenAIChatModel(Model):
         # OpenAI doesn't return built-in tool calls
         pass
 
-    def _map_response_file_part(self, ctx: _MapModelResposeContext, item: FilePart) -> None:
+    def _map_response_file_part(self, ctx: _MapModelResponseContext, item: FilePart) -> None:
         """Maps a `FilePart` to the response context.
 
         This method serves as a hook that can be overridden by subclasses
@@ -792,7 +792,7 @@ class OpenAIChatModel(Model):
 
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
-        ctx = self._MapModelResposeContext()
+        ctx = self._MapModelResponseContext()
         for item in message.parts:
             if isinstance(item, TextPart):
                 self._map_response_text_part(ctx, item)

@@ -74,7 +74,7 @@ What can I help you with today?\
     )
     assert response.provider_details is not None
     assert response.provider_details['downstream_provider'] == 'xAI'
-    assert response.provider_details['native_finish_reason'] == 'stop'
+    assert response.provider_details['finish_reason'] == 'stop'
 
 
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -95,9 +95,7 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
 
         _ = [chunk async for chunk in stream]
 
-        assert stream.provider_details == snapshot(
-            {'finish_reason': 'stop', 'downstream_provider': 'xAI', 'native_finish_reason': 'completed'}
-        )
+        assert stream.provider_details == snapshot({'finish_reason': 'completed', 'downstream_provider': 'xAI'})
         assert stream.finish_reason == snapshot('stop')
 
 
@@ -113,7 +111,7 @@ async def test_openrouter_stream_with_reasoning(allow_model_requests: None, open
         assert thinking_event_start.part == snapshot(
             ThinkingPart(
                 content='',
-                id='{"id":"rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f","format":"openai-responses-v1","index":0,"type":"reasoning.encrypted"}',
+                id='rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f',
                 provider_name='openrouter',
             )
         )
@@ -123,7 +121,7 @@ async def test_openrouter_stream_with_reasoning(allow_model_requests: None, open
         assert thinking_event_end.part == snapshot(
             ThinkingPart(
                 content='',
-                id='{"id":"rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f","format":"openai-responses-v1","index":0,"type":"reasoning.encrypted"}',
+                id='rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f',
                 provider_name='openrouter',
             )
         )
@@ -206,7 +204,7 @@ async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_
 
     thinking_part = response.parts[0]
     assert isinstance(thinking_part, ThinkingPart)
-    assert thinking_part.id == snapshot('{"id":null,"format":"unknown","index":0,"type":"reasoning.text"}')
+    assert thinking_part.id == snapshot(None)
     assert thinking_part.content is not None
     assert thinking_part.signature is None
 

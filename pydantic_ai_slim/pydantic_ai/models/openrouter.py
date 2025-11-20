@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from dataclasses import asdict, dataclass, field
+from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 from typing_extensions import TypedDict, assert_never, override
 
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -246,95 +246,69 @@ class _BaseReasoningDetail(BaseModel, frozen=True):
     id: str | None = None
     format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1'] | None
     index: int | None
-    type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
 
 
 class _ReasoningSummary(_BaseReasoningDetail, frozen=True):
     """Represents a high-level summary of the reasoning process."""
 
     type: Literal['reasoning.summary']
-    summary: str
+    summary: str = Field(validation_alias=AliasChoices('summary', 'content'))
 
 
 class _ReasoningEncrypted(_BaseReasoningDetail, frozen=True):
     """Represents encrypted reasoning data."""
 
     type: Literal['reasoning.encrypted']
-    data: str
+    data: str = Field(validation_alias=AliasChoices('data', 'signature'))
 
 
 class _ReasoningText(_BaseReasoningDetail, frozen=True):
     """Represents raw text reasoning."""
 
     type: Literal['reasoning.text']
-    text: str
+    text: str = Field(validation_alias=AliasChoices('text', 'content'))
     signature: str | None = None
 
 
-_OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
+_OpenRouterReasoningDetail = Annotated[
+    _ReasoningSummary | _ReasoningEncrypted | _ReasoningText, Field(discriminator='type')
+]
+_openrouter_reasoning_detail_adapter: TypeAdapter[_OpenRouterReasoningDetail] = TypeAdapter(_OpenRouterReasoningDetail)
 
 
 def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPart:
     provider_name = 'openrouter'
-    reasoning_id = reasoning.model_dump_json(include={'id', 'format', 'index', 'type'})
+    provider_details = reasoning.model_dump(include={'format', 'index', 'type'})
     if isinstance(reasoning, _ReasoningText):
         return ThinkingPart(
-            id=reasoning_id,
+            id=reasoning.id,
             content=reasoning.text,
             signature=reasoning.signature,
             provider_name=provider_name,
+            provider_details=provider_details,
         )
     elif isinstance(reasoning, _ReasoningSummary):
         return ThinkingPart(
-            id=reasoning_id,
-            content=reasoning.summary,
-            provider_name=provider_name,
+            id=reasoning.id, content=reasoning.summary, provider_name=provider_name, provider_details=provider_details
         )
     elif isinstance(reasoning, _ReasoningEncrypted):
         return ThinkingPart(
-            id=reasoning_id,
+            id=reasoning.id,
             content='',
             signature=reasoning.data,
             provider_name=provider_name,
+            provider_details=provider_details,
         )
     else:
         assert_never(reasoning)
 
 
 def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningDetail:
-    if thinking_part.id is None:  # pragma: lax no cover
-        raise UnexpectedModelBehavior('OpenRouter thinking part has no ID')
-
-    data = _BaseReasoningDetail.model_validate_json(thinking_part.id)
-
-    if data.type == 'reasoning.text':
-        return _ReasoningText(
-            type=data.type,
-            id=data.id,
-            format=data.format,
-            index=data.index,
-            text=thinking_part.content,
-            signature=thinking_part.signature,
-        )
-    elif data.type == 'reasoning.summary':
-        return _ReasoningSummary(
-            type=data.type,
-            id=data.id,
-            format=data.format,
-            index=data.index,
-            summary=thinking_part.content,
-        )
-    elif data.type == 'reasoning.encrypted':
-        assert thinking_part.signature is not None
-        return _ReasoningEncrypted(
-            type=data.type,
-            id=data.id,
-            format=data.format,
-            index=data.index,
-            data=thinking_part.signature,
-        )
-    else:
-        assert_never(data.type)
+    if thinking_part.provider_details is None:  # pragma: lax no cover
+        raise UnexpectedModelBehavior('OpenRouter thinking part has no provider_details')
+    thinking_part_dict = asdict(thinking_part)
+    thinking_part_dict.update(thinking_part_dict.pop('provider_details'))
+    return _openrouter_reasoning_detail_adapter.validate_python(thinking_part_dict)
 
 
 class _OpenRouterCompletionMessage(chat.ChatCompletionMessage):
@@ -363,7 +337,8 @@ class _OpenRouterChoice(chat_completion.Choice):
     """A wrapped chat completion message with OpenRouter specific attributes."""
 
 
-class _OpenRouterCostDetails(BaseModel):
+@dataclass
+class _OpenRouterCostDetails:
     """OpenRouter specific cost details."""
 
     upstream_inference_cost: int | None = None
@@ -417,7 +392,7 @@ def _map_openrouter_provider_details(
     provider_details: dict[str, Any] = {}
 
     provider_details['downstream_provider'] = response.provider
-    provider_details['native_finish_reason'] = response.choices[0].native_finish_reason
+    provider_details['finish_reason'] = response.choices[0].native_finish_reason
 
     if usage := response.usage:
         if cost := usage.cost:
@@ -517,7 +492,7 @@ class OpenRouterModel(OpenAIChatModel):
         return provider_details
 
     @dataclass
-    class _MapModelResposeContext(OpenAIChatModel._MapModelResposeContext):  # type: ignore[reportPrivateUsage]
+    class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list)
 
         def into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
@@ -527,8 +502,8 @@ class OpenRouterModel(OpenAIChatModel):
             return message_param
 
     @override
-    def _map_response_thinking_part(self, ctx: OpenAIChatModel._MapModelResposeContext, item: ThinkingPart) -> None:
-        assert isinstance(ctx, self._MapModelResposeContext)
+    def _map_response_thinking_part(self, ctx: OpenAIChatModel._MapModelResponseContext, item: ThinkingPart) -> None:
+        assert isinstance(ctx, self._MapModelResponseContext)
         if item.provider_name == self.system:
             ctx.reasoning_details.append(_into_reasoning_detail(item).model_dump())
         elif content := item.content:  # pragma: lax no cover
