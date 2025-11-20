@@ -802,11 +802,26 @@ class AnthropicModel(Model):
     ) -> None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
+        Anthropic enforces a maximum of 4 cache points per request. This method ensures
+        compliance by counting existing cache points and removing excess ones from messages.
+
         Strategy:
-        1. Keep the last cache point in system_prompt and tools (if present)
-        2. Count cache points already used in system_prompt and tools
-        3. Traverse messages from newest to oldest, keeping the most recent cache points
-           until the maximum limit is reached
+        1. Count cache points in system_prompt (can be multiple if list of blocks)
+        2. Count cache points in tools (can be in any position, not just last)
+        3. Raise UserError if system + tools already exceed MAX_CACHE_POINTS
+        4. Calculate remaining budget for message cache points
+        5. Traverse messages from newest to oldest, keeping the most recent cache points
+           within the remaining budget
+        6. Remove excess cache points from older messages to stay within limit
+
+        Cache point priority (always preserved):
+        - System prompt cache points
+        - Tool definition cache points
+        - Message cache points (newest first, oldest removed if needed)
+
+        Raises:
+            UserError: If system_prompt and tools combined already exceed MAX_CACHE_POINTS (4).
+                      This indicates a configuration error that cannot be auto-fixed.
         """
         MAX_CACHE_POINTS = 4
 
