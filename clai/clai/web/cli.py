@@ -85,7 +85,7 @@ def load_agent(agent_path: str) -> Agent | None:
         return None
 
 
-def run_chat_command(
+def run_web_command(
     agent_path: str,
     host: str = '127.0.0.1',
     port: int = 8000,
