@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from typing_extensions import assert_never
+
 try:
     import xai_sdk.chat as chat_types
 
@@ -34,6 +36,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -122,6 +125,15 @@ class XaiModel(Model):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
                 xai_messages.append(tool_result(part.model_response_str()))
+            elif isinstance(part, RetryPromptPart):
+                if part.tool_name is None:
+                    # Retry prompt as user message
+                    xai_messages.append(user(part.model_response()))
+                else:
+                    # Retry prompt as tool result
+                    xai_messages.append(tool_result(part.model_response()))
+            else:
+                assert_never(part)
 
         return xai_messages
 
