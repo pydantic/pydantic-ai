@@ -101,7 +101,10 @@ class MCPError(RuntimeError):
 
 @dataclass(repr=False, kw_only=True)
 class ResourceAnnotations:
-    """Additional properties describing MCP entities."""
+    """Additional properties describing MCP entities.
+
+    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
+    """
 
     audience: list[mcp_types.Role] | None = None
     """Intended audience for this entity."""
@@ -148,7 +151,10 @@ class BaseResource(ABC):
 
 @dataclass(repr=False, kw_only=True)
 class Resource(BaseResource):
-    """A resource that can be read from an MCP server."""
+    """A resource that can be read from an MCP server.
+
+    See the [resources in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+    """
 
     uri: str
     """The URI of the resource."""
@@ -179,7 +185,10 @@ class Resource(BaseResource):
 
 @dataclass(repr=False, kw_only=True)
 class ResourceTemplate(BaseResource):
-    """A template for parameterized resources on an MCP server."""
+    """A template for parameterized resources on an MCP server.
+
+    See the [resource templates in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#resource-templates).
+    """
 
     uri_template: str
     """URI template (RFC 6570) for constructing resource URIs."""
