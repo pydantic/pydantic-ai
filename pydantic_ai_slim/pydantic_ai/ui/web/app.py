@@ -21,7 +21,7 @@ AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
 
 
-def create_chat_app(
+def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: list[AIModel] | None = None,
     builtin_tools: dict[str, AbstractBuiltinTool] | None = None,

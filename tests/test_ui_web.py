@@ -12,7 +12,7 @@ with try_import() as fastapi_import_successful:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from pydantic_ai.ui.web import AI_MODELS, BUILTIN_TOOL_DEFS, BUILTIN_TOOLS, create_chat_app
+    from pydantic_ai.ui.web import AI_MODELS, BUILTIN_TOOL_DEFS, BUILTIN_TOOLS, create_web_app
 
 pytestmark = [
     pytest.mark.skipif(not fastapi_import_successful(), reason='fastapi not installed'),
@@ -22,7 +22,7 @@ pytestmark = [
 def test_create_chat_app_basic():
     """Test creating a basic chat app."""
     agent = Agent('test')
-    app = create_chat_app(agent)
+    app = create_web_app(agent)
 
     assert isinstance(app, FastAPI)
     assert app.state.agent is agent
@@ -40,7 +40,7 @@ def test_agent_to_web():
 def test_chat_app_health_endpoint():
     """Test the /api/health endpoint."""
     agent = Agent('test')
-    app = create_chat_app(agent)
+    app = create_web_app(agent)
 
     with TestClient(app) as client:
         response = client.get('/api/health')
@@ -51,7 +51,7 @@ def test_chat_app_health_endpoint():
 def test_chat_app_configure_endpoint():
     """Test the /api/configure endpoint."""
     agent = Agent('test')
-    app = create_chat_app(agent)
+    app = create_web_app(agent)
 
     with TestClient(app) as client:
         response = client.get('/api/configure')
@@ -68,7 +68,7 @@ def test_chat_app_configure_endpoint():
 def test_chat_app_index_endpoint():
     """Test that the index endpoint serves the UI from CDN."""
     agent = Agent('test')
-    app = create_chat_app(agent)
+    app = create_web_app(agent)
 
     with TestClient(app) as client:
         response = client.get('/')
