@@ -45,7 +45,6 @@ from pydantic_ai.models.gemini import (
     _gemini_streamed_response_ta,
     _GeminiCandidates,
     _GeminiContent,
-    _GeminiFunction,
     _GeminiFunctionCall,
     _GeminiFunctionCallingConfig,
     _GeminiFunctionCallPart,
@@ -55,7 +54,6 @@ from pydantic_ai.models.gemini import (
     _GeminiTextPart,
     _GeminiThoughtPart,
     _GeminiToolConfig,
-    _GeminiTools,
     _GeminiUsageMetaData,
     _metadata_as_usage,
 )
@@ -135,32 +133,35 @@ async def test_model_tools(allow_model_requests: None):
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
     assert tools == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='foo',
-                    description='This is foo',
-                    parameters={'type': 'object', 'properties': {'bar': {'type': 'number'}}},
-                ),
-                _GeminiFunction(
-                    name='apple',
-                    description='This is apple',
-                    parameters={
+        {
+            'function_declarations': [
+                {
+                    'name': 'foo',
+                    'description': 'This is foo',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {'bar': {'type': 'number'}},
+                    },
+                },
+                {
+                    'name': 'apple',
+                    'description': 'This is apple',
+                    'parameters': {
                         'type': 'object',
                         'properties': {'banana': {'type': 'array', 'items': {'type': 'number'}}},
                     },
-                ),
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
+                },
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
                         'type': 'object',
                         'properties': {'spam': {'type': 'number'}},
                         'required': ['spam'],
                     },
-                ),
+                },
             ]
-        )
+        }
     )
     assert tool_config is None
 
@@ -183,18 +184,15 @@ async def test_require_response_tool(allow_model_requests: None):
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
     assert tools == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
-                        'type': 'object',
-                        'properties': {'spam': {'type': 'number'}},
-                    },
-                ),
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {'type': 'object', 'properties': {'spam': {'type': 'number'}}},
+                }
             ]
-        )
+        }
     )
     assert tool_config == snapshot(
         _GeminiToolConfig(
@@ -282,45 +280,38 @@ async def test_json_def_replaced(allow_model_requests: None):
                     'parameters': {
                         'properties': {
                             'locations': {
-                                'items': {
-                                    'properties': {
-                                        'lat': {'type': 'number'},
-                                        'lng': {'default': 1.1, 'type': 'number'},
-                                        'chart': {
-                                            'properties': {
-                                                'x_axis': {
-                                                    'properties': {
-                                                        'label': {
-                                                            'default': '<unlabeled axis>',
-                                                            'description': 'The label of the axis',
-                                                            'type': 'string',
-                                                        }
-                                                    },
-                                                    'type': 'object',
-                                                },
-                                                'y_axis': {
-                                                    'properties': {
-                                                        'label': {
-                                                            'default': '<unlabeled axis>',
-                                                            'description': 'The label of the axis',
-                                                            'type': 'string',
-                                                        }
-                                                    },
-                                                    'type': 'object',
-                                                },
-                                            },
-                                            'required': ['x_axis', 'y_axis'],
-                                            'type': 'object',
-                                        },
-                                    },
-                                    'required': ['lat', 'chart'],
-                                    'type': 'object',
-                                },
+                                'items': {'$ref': '#/$defs/Location'},
                                 'type': 'array',
                             }
                         },
                         'required': ['locations'],
                         'type': 'object',
+                        '$defs': {
+                            'Axis': {
+                                'properties': {
+                                    'label': {
+                                        'default': '<unlabeled axis>',
+                                        'description': 'The label of the axis',
+                                        'type': 'string',
+                                    }
+                                },
+                                'type': 'object',
+                            },
+                            'Chart': {
+                                'properties': {'x_axis': {'$ref': '#/$defs/Axis'}, 'y_axis': {'$ref': '#/$defs/Axis'}},
+                                'required': ['x_axis', 'y_axis'],
+                                'type': 'object',
+                            },
+                            'Location': {
+                                'properties': {
+                                    'lat': {'type': 'number'},
+                                    'lng': {'default': 1.1, 'type': 'number'},
+                                    'chart': {'$ref': '#/$defs/Chart'},
+                                },
+                                'required': ['lat', 'chart'],
+                                'type': 'object',
+                            },
+                        },
                     },
                 }
             ]
@@ -379,13 +370,15 @@ async def test_json_def_enum(allow_model_requests: None):
                     'parameters': {
                         'properties': {
                             'progress': {
-                                'items': {'enum': ['100', '80', '60', '40', '20'], 'type': 'string'},
-                                'type': 'array',
-                                'nullable': True,
                                 'default': None,
+                                'anyOf': [
+                                    {'items': {'$ref': '#/$defs/ProgressEnum'}, 'type': 'array'},
+                                    {'type': 'null'},
+                                ],
                             }
                         },
                         'type': 'object',
+                        '$defs': {'ProgressEnum': {'enum': [100, 80, 60, 40, 20], 'type': 'integer'}},
                     },
                 }
             ]
@@ -425,69 +418,24 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                     'description': 'This is the tool for the final Result',
                     'parameters': {
                         'properties': {
-                            'op_location': {
+                            'op_location': {'default': None, 'anyOf': [{'$ref': '#/$defs/Location'}, {'type': 'null'}]}
+                        },
+                        'type': 'object',
+                        '$defs': {
+                            'Location': {
                                 'properties': {
                                     'lat': {'type': 'number'},
                                     'lng': {'type': 'number'},
                                 },
                                 'required': ['lat', 'lng'],
-                                'nullable': True,
                                 'type': 'object',
-                                'default': None,
                             }
                         },
-                        'type': 'object',
                     },
                 }
             ]
         }
     )
-
-
-async def test_json_def_recursive(allow_model_requests: None):
-    class Location(BaseModel):
-        lat: float
-        lng: float
-        nested_locations: list[Location]
-
-    json_schema = Location.model_json_schema()
-    assert json_schema == snapshot(
-        {
-            '$defs': {
-                'Location': {
-                    'properties': {
-                        'lat': {'title': 'Lat', 'type': 'number'},
-                        'lng': {'title': 'Lng', 'type': 'number'},
-                        'nested_locations': {
-                            'items': {'$ref': '#/$defs/Location'},
-                            'title': 'Nested Locations',
-                            'type': 'array',
-                        },
-                    },
-                    'required': ['lat', 'lng', 'nested_locations'],
-                    'title': 'Location',
-                    'type': 'object',
-                }
-            },
-            '$ref': '#/$defs/Location',
-        }
-    )
-
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    output_tool = ToolDefinition(
-        name='result',
-        description='This is the tool for the final Result',
-        parameters_json_schema=json_schema,
-    )
-    with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        mrp = ModelRequestParameters(
-            function_tools=[],
-            allow_text_output=True,
-            output_tools=[output_tool],
-            output_mode='text',
-            output_object=None,
-        )
-        mrp = m.customize_request_parameters(mrp)
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -527,24 +475,24 @@ async def test_json_def_date(allow_model_requests: None):
     )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    description='This is the tool for the final Result',
-                    name='result',
-                    parameters={
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
                         'properties': {
-                            'd': {'description': 'Format: date', 'type': 'string'},
-                            'dt': {'description': 'Format: date-time', 'type': 'string'},
+                            'd': {'type': 'string', 'description': 'Format: date'},
+                            'dt': {'type': 'string', 'description': 'Format: date-time'},
                             't': {'description': 'Format: time', 'type': 'string'},
                             'td': {'description': 'my timedelta (format: duration)', 'type': 'string'},
                         },
                         'required': ['d', 'dt', 't', 'td'],
                         'type': 'object',
                     },
-                )
+                }
             ]
-        )
+        }
     )
 
 
@@ -1449,19 +1397,18 @@ async def test_gemini_additional_properties_is_false(allow_model_requests: None,
 
 @pytest.mark.vcr()
 async def test_gemini_additional_properties_is_true(allow_model_requests: None, gemini_api_key: str):
+    """Test that additionalProperties with schemas now work natively (no warning since Nov 2025 announcement)."""
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
-    with pytest.warns(UserWarning, match='.*additionalProperties.*'):
+    @agent.tool_plain
+    async def get_temperature(location: dict[str, CurrentLocation]) -> float:  # pragma: no cover
+        return 20.0
 
-        @agent.tool_plain
-        async def get_temperature(location: dict[str, CurrentLocation]) -> float:  # pragma: no cover
-            return 20.0
-
-        result = await agent.run('What is the temperature in Tokyo?')
-        assert result.output == snapshot(
-            'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
-        )
+    result = await agent.run('What is the temperature in Tokyo?')
+    assert result.output == snapshot(
+        'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
+    )
 
 
 @pytest.mark.vcr()
