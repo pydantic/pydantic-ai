@@ -157,6 +157,9 @@ jobs:
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      # We only run the llama_cpp tests on the latest Python as they have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
+      # https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
+      RUN_LLAMA_CPP_TESTS: ${{ matrix.python-version == '3.13' && matrix.install.name == 'all-extras' }}
     steps:
       - uses: actions/checkout@v4
 
