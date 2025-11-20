@@ -588,8 +588,8 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
-async def test_anthropic_cache_all(allow_model_requests: None):
-    """Test that anthropic_cache_all caches both system instructions and last message."""
+async def test_anthropic_cache_messages(allow_model_requests: None):
+    """Test that anthropic_cache_messages caches only the last message."""
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
@@ -600,21 +600,19 @@ async def test_anthropic_cache_all(allow_model_requests: None):
         m,
         system_prompt='System instructions to cache.',
         model_settings=AnthropicModelSettings(
-            anthropic_cache_all=True,
+            anthropic_cache_messages=True,
         ),
     )
 
     await agent.run('User message')
 
-    # Verify both system and last message have cache_control
+    # Verify only last message has cache_control, not system
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     system = completion_kwargs['system']
     messages = completion_kwargs['messages']
 
-    # System should have cache_control
-    assert system == snapshot(
-        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
-    )
+    # System should NOT have cache_control (should be a plain string)
+    assert system == snapshot('System instructions to cache.')
 
     # Last message content should have cache_control
     assert messages[-1]['content'][-1] == snapshot(
@@ -622,8 +620,8 @@ async def test_anthropic_cache_all(allow_model_requests: None):
     )
 
 
-async def test_anthropic_cache_all_with_custom_ttl(allow_model_requests: None):
-    """Test that anthropic_cache_all supports custom TTL values."""
+async def test_anthropic_cache_messages_with_custom_ttl(allow_model_requests: None):
+    """Test that anthropic_cache_messages supports custom TTL values."""
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
@@ -634,23 +632,21 @@ async def test_anthropic_cache_all_with_custom_ttl(allow_model_requests: None):
         m,
         system_prompt='System instructions.',
         model_settings=AnthropicModelSettings(
-            anthropic_cache_all='1h',  # Custom 1h TTL
+            anthropic_cache_messages='1h',  # Custom 1h TTL
         ),
     )
 
     await agent.run('User message')
 
-    # Verify both use 1h TTL
+    # Verify use 1h TTL
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    system = completion_kwargs['system']
     messages = completion_kwargs['messages']
 
-    assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
     assert messages[-1]['content'][-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
 
 
-async def test_limit_cache_points_with_cache_all(allow_model_requests: None):
-    """Test that cache points are limited when using cache_all + CachePoint markers."""
+async def test_limit_cache_points_with_cache_messages(allow_model_requests: None):
+    """Test that cache points are limited when using cache_messages + CachePoint markers."""
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
@@ -661,12 +657,12 @@ async def test_limit_cache_points_with_cache_all(allow_model_requests: None):
         m,
         system_prompt='System instructions.',
         model_settings=AnthropicModelSettings(
-            anthropic_cache_all=True,  # Uses 2 cache points
+            anthropic_cache_messages=True,  # Uses 1 cache point
         ),
     )
 
-    # Add 3 CachePoint markers (total would be 5: 2 from cache_all + 3 from markers)
-    # Only 2 CachePoint markers should be kept (newest ones)
+    # Add 4 CachePoint markers (total would be 5: 1 from cache_messages + 4 from markers)
+    # Only 3 CachePoint markers should be kept (newest ones)
     await agent.run(
         [
             'Context 1',
@@ -674,6 +670,8 @@ async def test_limit_cache_points_with_cache_all(allow_model_requests: None):
             'Context 2',
             CachePoint(),  # Should be kept
             'Context 3',
+            CachePoint(),  # Should be kept
+            'Context 4',
             CachePoint(),  # Should be kept
             'Question',
         ]
@@ -689,12 +687,11 @@ async def test_limit_cache_points_with_cache_all(allow_model_requests: None):
             if 'cache_control' in block:
                 cache_count += 1
 
-    # anthropic_cache_all uses 2 cache points (system + last message)
-    # With 3 CachePoint markers, we'd have 5 total
+    # anthropic_cache_messages uses 1 cache point (last message only)
+    # With 4 CachePoint markers, we'd have 5 total
     # Limit is 4, so 1 oldest CachePoint should be removed
-    # Result: 2 cache points in messages (from the 2 newest CachePoints)
-    # The cache_all's last message cache is applied after limiting
-    assert cache_count == 2
+    # Result: 3 cache points from CachePoint markers + 1 from cache_messages = 4 total
+    assert cache_count == 4
 
 
 async def test_limit_cache_points_all_settings(allow_model_requests: None):

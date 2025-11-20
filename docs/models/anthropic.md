@@ -85,7 +85,7 @@ Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-wit
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
 2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
-4. **Cache All (Convenience)**: Set [`AnthropicModelSettings.anthropic_cache_all`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_all] to `True` to automatically cache both system instructions and the last user message
+4. **Cache Last Message (Convenience)**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache the last user message
 
 You can combine multiple strategies for maximum savings:
 
@@ -93,12 +93,12 @@ You can combine multiple strategies for maximum savings:
 from pydantic_ai import Agent, CachePoint, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
-# Option 1: Use anthropic_cache_all for convenience (caches system + last message)
+# Option 1: Use anthropic_cache_messages for convenience (caches last message only)
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Detailed instructions...',
     model_settings=AnthropicModelSettings(
-        anthropic_cache_all=True,  # Caches both system prompt and last message
+        anthropic_cache_messages=True,  # Caches the last user message
     ),
 )
 
@@ -159,35 +159,77 @@ async def main():
 
 ### Cache Point Limits
 
-Anthropic enforces a maximum of 4 cache points per request. Pydantic AI automatically manages this limit:
+Anthropic enforces a maximum of 4 cache points per request. Pydantic AI automatically manages this limit to ensure your requests always comply without errors.
 
-- **`anthropic_cache_all`**: Uses 2 cache points (system instructions + last message)
-- **`anthropic_cache_instructions`**: Uses 1 cache point
-- **`anthropic_cache_tool_definitions`**: Uses 1 cache point
-- **`CachePoint` markers**: Use remaining available cache points
+#### How Cache Points Are Allocated
 
-When the total exceeds 4 cache points, Pydantic AI automatically removes cache points from **older messages** (keeping the most recent ones), ensuring your requests always comply with Anthropic's limits without errors.
+Cache points can be placed in three locations:
+
+1. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to last system prompt block)
+2. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
+3. **Messages**: Via `CachePoint` markers or `anthropic_cache_messages` setting (adds cache points to message content)
+
+Each setting uses **at most 1 cache point**, but you can combine them:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
+# Example: Using all 3 cache point sources
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    system_prompt='Detailed instructions...',
+    model_settings=AnthropicModelSettings(
+        anthropic_cache_instructions=True,      # 1 cache point
+        anthropic_cache_tool_definitions=True,  # 1 cache point
+        anthropic_cache_messages=True,          # 1 cache point
+    ),
+)
+
+@agent.tool_plain
+def my_tool() -> str:
+    return 'result'
+
+async def main():
+    # This uses 3 cache points (instructions + tools + last message)
+    # You can add 1 more CachePoint marker before hitting the limit
+    result = await agent.run([
+        'Context', CachePoint(),  # 4th cache point - OK
+        'Question'
+    ])
+```
+
+#### Automatic Cache Point Limiting
+
+When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes excess cache points from **older message content** (keeping the most recent ones):
+
+```python {test="skip"}
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Instructions...',
     model_settings=AnthropicModelSettings(
-        anthropic_cache_all=True,  # Uses 2 cache points
+        anthropic_cache_instructions=True,      # 1 cache point
+        anthropic_cache_tool_definitions=True,  # 1 cache point
     ),
 )
 
+@agent.tool_plain
+def search() -> str:
+    return 'data'
+
 async def main():
-    # Even with multiple CachePoint markers, only 2 more will be kept
-    # (4 total limit - 2 from cache_all = 2 available)
+    # Already using 2 cache points (instructions + tools)
+    # Can add 2 more CachePoint markers (4 total limit)
     result = await agent.run([
-        'Context 1', CachePoint(),  # Will be kept
-        'Context 2', CachePoint(),  # Will be kept
-        'Context 3', CachePoint(),  # Automatically removed (oldest)
+        'Context 1', CachePoint(),  # Oldest - will be removed
+        'Context 2', CachePoint(),  # Will be kept (3rd point)
+        'Context 3', CachePoint(),  # Will be kept (4th point)
         'Question'
     ])
-    print(result.output)
+    # Final cache points: instructions + tools + Context 2 + Context 3 = 4
 ```
+
+**Key Points**:
+- System and tool cache points are **always preserved**
+- Message cache points are removed from oldest to newest when limit is exceeded
+- This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching

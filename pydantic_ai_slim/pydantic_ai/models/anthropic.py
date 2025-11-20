@@ -169,18 +169,15 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
-    anthropic_cache_all: bool | Literal['5m', '1h']
-    """Convenience setting to enable caching for both system instructions and the last user message.
+    anthropic_cache_messages: bool | Literal['5m', '1h']
+    """Convenience setting to enable caching for the last user message.
 
-    When enabled, this automatically adds cache points to:
-    1. The last system prompt block (system instructions)
-    2. The last content block in the final user message
-
-    This is equivalent to setting both `anthropic_cache_instructions` and adding a cache point
-    to the last message, but more convenient for common use cases.
+    When enabled, this automatically adds a cache point to the last content block
+    in the final user message, which is useful for caching conversation history
+    or context in multi-turn conversations.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
 
-    Note: Uses 2 of Anthropic's 4 available cache points per request. Any additional CachePoint
+    Note: Uses 1 of Anthropic's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
@@ -349,7 +346,7 @@ class AnthropicModel(Model):
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
-
+        self._limit_cache_points(system_prompt, anthropic_messages, tools)
         try:
             extra_headers = self._map_extra_headers(beta_features, model_settings)
 
@@ -392,7 +389,7 @@ class AnthropicModel(Model):
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
-
+        self._limit_cache_points(system_prompt, anthropic_messages, tools)
         try:
             extra_headers = self._map_extra_headers(beta_features, model_settings)
 
@@ -494,10 +491,7 @@ class AnthropicModel(Model):
         ]
 
         # Add cache_control to the last tool if enabled
-        if tools and (
-            cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')
-            or model_settings.get('anthropic_cache_all')
-        ):
+        if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
             # If True, use '5m'; otherwise use the specified ttl value
             ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = tools[-1]
@@ -766,9 +760,9 @@ class AnthropicModel(Model):
             system_prompt_parts.insert(0, instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
-        # Add cache_control to the last message content if anthropic_cache_all is enabled
-        if anthropic_messages and (cache_all := model_settings.get('anthropic_cache_all')):
-            ttl: Literal['5m', '1h'] = '5m' if cache_all is True else cache_all
+        # Add cache_control to the last message content if anthropic_cache_messages is enabled
+        if anthropic_messages and (cache_messages := model_settings.get('anthropic_cache_messages')):
+            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
             m = anthropic_messages[-1]
             content = m['content']
             if isinstance(content, str):
@@ -785,13 +779,8 @@ class AnthropicModel(Model):
                 content = cast(list[BetaContentBlockParam], content)
                 self._add_cache_control_to_last_param(content, ttl)
 
-        # Ensure total cache points don't exceed Anthropic's limit of 4
-        self._limit_cache_points(anthropic_messages, model_settings)
         # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
-        if system_prompt and (
-            cache_instructions := model_settings.get('anthropic_cache_instructions')
-            or model_settings.get('anthropic_cache_all')
-        ):
+        if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
             # If True, use '5m'; otherwise use the specified ttl value
             ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
             system_prompt_blocks = [
@@ -806,60 +795,57 @@ class AnthropicModel(Model):
         return system_prompt, anthropic_messages
 
     @staticmethod
-    def _limit_cache_points(messages: list[BetaMessageParam], model_settings: AnthropicModelSettings) -> None:
-        """Limit the number of cache points in messages to comply with Anthropic's 4-cache-point maximum.
+    def _limit_cache_points(
+        system_prompt: str | list[BetaTextBlockParam],
+        anthropic_messages: list[BetaMessageParam],
+        tools: list[BetaToolUnionParam],
+    ) -> None:
+        """Limit the number of cache points in the request to Anthropic's maximum.
 
-        Anthropic allows a maximum of 4 cache points per request. This method ensures compliance by:
-        1. Calculating how many cache points are already used by system-level settings
-           (anthropic_cache_instructions, anthropic_cache_tool_definitions, anthropic_cache_all)
-        2. Determining how many cache points remain available for message-level caching
-        3. Traversing messages from newest to oldest, keeping only the allowed number of cache points
-        4. Removing cache_control from older cache points that exceed the limit
-
-        This prioritizes recent cache points, which are typically more valuable for conversation continuity.
-
-        Args:
-            messages: List of message parameters to limit cache points in.
-            model_settings: Model settings containing cache configuration.
+        Strategy:
+        1. Keep the last cache point in system_prompt and tools (if present)
+        2. Count cache points already used in system_prompt and tools
+        3. Traverse messages from newest to oldest, keeping the most recent cache points
+           until the maximum limit is reached
         """
-        # Anthropic's maximum cache points per request
-        max_cache_points = 4
-        used_cache_points = 0
+        MAX_CACHE_POINTS = 4
 
-        # Calculate cache points used by system-level settings
-        if model_settings.get('anthropic_cache_all'):
-            # anthropic_cache_all adds cache points for both system instructions and last message
-            used_cache_points += 2
-        else:
-            if model_settings.get('anthropic_cache_instructions'):
+        # Count existing cache points in system prompt
+        used_cache_points = (
+            sum(1 for block in system_prompt if 'cache_control' in cast(dict[str, Any], block))
+            if isinstance(system_prompt, list)
+            else 0
+        )
+
+        # Count existing cache points in tools (any tool may have cache_control)
+        # Note: cache_control can be in the middle of tools list if builtin tools are added after
+        for tool in tools:
+            if 'cache_control' in tool:
                 used_cache_points += 1
-            if model_settings.get('anthropic_cache_tool_definitions'):
-                # Assume used one cache point for tool definitions
-                used_cache_points += 1
 
-        # Calculate remaining cache points available for message content
-        keep_cache_points = max_cache_points - used_cache_points
-
-        # Traverse messages from back to front (newest to oldest)
-        remaining_cache_points = keep_cache_points
-        for message in reversed(messages):
+        # Calculate remaining cache points budget for messages
+        remaining_budget = MAX_CACHE_POINTS - used_cache_points
+        if remaining_budget < 0:  # pragma: no cover
+            raise UserError(
+                f'Too many cache points for Anthropic request. '
+                f'System prompt and tool definitions already use {used_cache_points} cache points, '
+                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
+            )
+        # Remove excess cache points from messages (newest to oldest)
+        for message in reversed(anthropic_messages):
             content = message['content']
-            # Skip if content is a string or None
             if isinstance(content, str):  # pragma: no cover
                 continue
-            content = cast(list[BetaContentBlockParam], content)
-            # Traverse content blocks from back to front within each message
-            for block in reversed(content):
-                # Cast to dict for TypedDict manipulation
+
+            # Process content blocks in reverse order (newest first)
+            for block in reversed(cast(list[BetaContentBlockParam], content)):
                 block_dict = cast(dict[str, Any], block)
 
-                # Check if this block has cache_control
                 if 'cache_control' in block_dict:
-                    if remaining_cache_points > 0:
-                        # Keep this cache point (within limit)
-                        remaining_cache_points -= 1
+                    if remaining_budget > 0:
+                        remaining_budget -= 1
                     else:
-                        # Remove cache_control as we've exceeded the limit
+                        # Exceeded limit, remove this cache point
                         del block_dict['cache_control']
 
     @staticmethod
