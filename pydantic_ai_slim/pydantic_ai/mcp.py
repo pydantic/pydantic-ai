@@ -705,7 +705,6 @@ class MCPServer(AbstractToolset[Any], ABC):
             resource = part.resource
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            # read_resource will raise MCPError if the resource is not found or has any other error
             return await self.read_resource(str(part.uri))
         else:
             assert_never(part)
