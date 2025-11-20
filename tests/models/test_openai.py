@@ -3148,6 +3148,30 @@ async def test_count_tokens(
 
 
 @pytest.mark.vcr()
+async def test_count_tokens_with_non_string_values():
+    """Test token counting with messages that have non-string values (like content arrays)."""
+    test_messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Text content',
+                        ImageUrl(url='https://example.com/image.jpg'),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ],
+            run_id=IsStr(),
+        )
+    ]
+
+    chat_model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    usage_result: RequestUsage = await chat_model.count_tokens(test_messages, {}, ModelRequestParameters())
+
+    assert usage_result.input_tokens > 0
+
+
+@pytest.mark.vcr()
 async def test_openai_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     openai_api_key: str,
@@ -3182,3 +3206,27 @@ async def test_openai_model_usage_limit_exceeded(
         )
 
     assert 'exceed the input_tokens_limit of' in str(exc_info.value)
+
+
+@pytest.mark.vcr()
+async def test_openai_model_usage_unsupported_model(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    """Test token counting with messages that have non-string values (like content arrays)."""
+    test_messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content='Text content',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ],
+            run_id=IsStr(),
+        )
+    ]
+
+    chat_model = OpenAIChatModel('not-supported-model', provider=OpenAIProvider(api_key='foobar'))
+    usage_result: RequestUsage = await chat_model.count_tokens(test_messages, {}, ModelRequestParameters())
+
+    assert usage_result.input_tokens > 0
