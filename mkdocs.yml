@@ -30,6 +30,7 @@ nav:
           - models/anthropic.md
           - models/google.md
           - models/bedrock.md
+          - models/cerebras.md
           - models/cohere.md
           - models/groq.md
           - models/mistral.md
