@@ -922,8 +922,9 @@ class OpenAIChatModel(Model):
         if self.system != 'openai':
             raise NotImplementedError('Token counting is only supported for OpenAI system.')
 
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         openai_messages = await self._map_messages(messages, model_request_parameters)
-        token_count = num_tokens_from_messages(openai_messages, self.model_name)
+        token_count = _num_tokens_from_messages(openai_messages, self.model_name)
 
         return usage.RequestUsage(
             input_tokens=token_count,
@@ -1733,10 +1734,11 @@ class OpenAIResponsesModel(Model):
         if self.system != 'openai':
             raise NotImplementedError('Token counting is only supported for OpenAI system.')
 
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         _, openai_messages = await self._map_messages(
             messages, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
-        token_count = num_tokens_from_messages(openai_messages, self.model_name)
+        token_count = _num_tokens_from_messages(openai_messages, self.model_name)
 
         return usage.RequestUsage(
             input_tokens=token_count,
@@ -2376,7 +2378,7 @@ def _map_mcp_call(
     )
 
 
-def num_tokens_from_messages(
+def _num_tokens_from_messages(
     messages: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
     model: OpenAIModelName,
 ) -> int:
@@ -2385,34 +2387,15 @@ def num_tokens_from_messages(
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
         encoding = tiktoken.get_encoding('o200k_base')
-    if model in {
-        'gpt-3.5-turbo-0125',
-        'gpt-4-0314',
-        'gpt-4-32k-0314',
-        'gpt-4-0613',
-        'gpt-4-32k-0613',
-        'gpt-4o-mini-2024-07-18',
-        'gpt-4o-2024-08-06',
-    }:
+
+    if 'gpt-5' in model:
+        tokens_per_message = 3
+        final_primer = 2  # "reverse engineered" based on test cases
+    else:
+        # Adapted from https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken#6-counting-tokens-for-chat-completions-api-calls
         tokens_per_message = 3
         final_primer = 3  # every reply is primed with <|start|>assistant<|message|>
-    elif model in {
-        'gpt-5-2025-08-07',
-    }:
-        tokens_per_message = 3
-        final_primer = 2
-    elif 'gpt-3.5-turbo' in model:
-        return num_tokens_from_messages(messages, model='gpt-3.5-turbo-0125')
-    elif 'gpt-4o-mini' in model:
-        return num_tokens_from_messages(messages, model='gpt-4o-mini-2024-07-18')
-    elif 'gpt-4o' in model:
-        return num_tokens_from_messages(messages, model='gpt-4o-2024-08-06')
-    elif 'gpt-4' in model:
-        return num_tokens_from_messages(messages, model='gpt-4-0613')
-    elif 'gpt-5' in model:
-        return num_tokens_from_messages(messages, model='gpt-5-2025-08-07')
-    else:
-        raise NotImplementedError(f"""num_tokens_from_messages() is not implemented for model {model}.""")
+
     num_tokens = 0
     for message in messages:
         num_tokens += tokens_per_message

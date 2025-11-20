@@ -3161,8 +3161,8 @@ async def test_openai_model_usage_limit_not_exceeded(
         usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
     )
     assert result.output == snapshot(
-        'This statement is a pangram, meaning it contains every letter of the English alphabet at least once. '
-        'Fun fact: it is often used to display different types of fonts because it uses all the letters.'
+        "That sentence is a pangram, meaning it contains every letter of the English alphabet. It's often used to test "
+        'fonts or demonstrate handwriting, because it includes all the letters.'
     )
 
 
@@ -3182,21 +3182,3 @@ async def test_openai_model_usage_limit_exceeded(
         )
 
     assert 'exceed the input_tokens_limit of' in str(exc_info.value)
-
-
-@pytest.mark.vcr()
-async def test_openai_model_usage_unsupported_model(
-    allow_model_requests: None,
-    openai_api_key: str,
-):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    model = OpenAIResponsesModel('unsupported-model', provider=provider)
-    agent = Agent(model=model)
-
-    with pytest.raises(NotImplementedError) as exc_info:
-        _ = await agent.run(
-            'The quick brown fox jumps over the lazydog.',
-            usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
-        )
-
-    assert 'not implemented' in str(exc_info.value)
