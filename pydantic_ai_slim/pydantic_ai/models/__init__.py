@@ -800,7 +800,6 @@ def infer_model(  # noqa: C901
         'openai',
         'azure',
         'deepseek',
-        'cerebras',
         'fireworks',
         'github',
         'grok',
@@ -818,7 +817,11 @@ def infer_model(  # noqa: C901
     elif model_kind in ('google-gla', 'google-vertex'):
         model_kind = 'google'
 
-    if model_kind == 'openai-chat':
+    if model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'openai-chat':
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
