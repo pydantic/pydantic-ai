@@ -139,8 +139,8 @@ You can access multiple models with the same API key, as shown in the code snipp
 
     ```python {title="passing_api_key.py"}
     from pydantic_ai import Agent
-    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.gateway import gateway_provider
 
     provider = gateway_provider('openai', api_key='PYDANTIC_AI_GATEWAY_API_KEY')
     model = OpenAIChatModel('gpt-5', provider=provider)
@@ -159,8 +159,8 @@ You can access multiple models with the same API key, as shown in the code snipp
 
     ```python {title="routing_via_provider.py"}
     from pydantic_ai import Agent
-    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.gateway import gateway_provider
 
     provider = gateway_provider(
         'openai',
