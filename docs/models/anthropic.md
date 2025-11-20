@@ -197,6 +197,10 @@ async def main():
         'Context', CachePoint(),  # 4th cache point - OK
         'Question'
     ])
+    print(result.output)
+    usage = result.usage()
+    print(f'Cache write tokens: {usage.cache_write_tokens}')
+    print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 #### Automatic Cache Point Limiting
@@ -227,6 +231,10 @@ async def main():
         'Question'
     ])
     # Final cache points: instructions + tools + Context 2 + Context 3 = 4
+    print(result.output)
+    usage = result.usage()
+    print(f'Cache write tokens: {usage.cache_write_tokens}')
+    print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 **Key Points**:
