@@ -347,7 +347,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 f'The `{self.__class__.__name__}.capabilities` is only instantiated after initialization.'
             )
         return self._server_capabilities
-      
+
     @property
     def instructions(self) -> str | None:
         """Access the instructions sent by the MCP server during initialization."""
@@ -504,18 +504,16 @@ class MCPServer(AbstractToolset[Any], ABC):
         return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
     @overload
-    async def read_resource(
-        self, uri: str
-    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None: ...
+    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
 
     @overload
     async def read_resource(
         self, uri: Resource
-    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None: ...
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
 
     async def read_resource(
         self, uri: str | Resource
-    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None:
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
         """Read the contents of a specific resource by URI.
 
         Args:
@@ -524,25 +522,16 @@ class MCPServer(AbstractToolset[Any], ABC):
         Returns:
             The resource contents. If the resource has a single content item, returns that item directly.
             If the resource has multiple content items, returns a list of items.
-            Returns `None` if the server does not support resources or the resource is not found.
 
         Raises:
-            MCPError: If the server returns an error other than resource not found.
+            MCPError: If the server returns an error.
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
-            if not self.capabilities.resources:
-                return None
             try:
                 result = await self._client.read_resource(AnyUrl(resource_uri))
             except mcp_exceptions.McpError as e:
-                # As per https://modelcontextprotocol.io/specification/2025-06-18/server/resources#error-handling
-                if e.error.code == -32002:
-                    return None
                 raise MCPError.from_mcp_sdk_error(e) from e
-
-        if not result.contents:
-            return None
 
         return (
             self._get_content(result.contents[0])
@@ -646,12 +635,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             resource = part.resource
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            result = await self.read_resource(str(part.uri))
-            # Rather than hide an invalid resource link, we raise an error so it's consistent with any
-            # other error that could happen during resource reading.
-            if result is None:
-                raise MCPError(message=f'Invalid ResourceLink {part.uri} returned by tool', code=-32002)
-            return result
+            # read_resource will raise MCPError if the resource is not found or has any other error
+            return await self.read_resource(str(part.uri))
         else:
             assert_never(part)
 

@@ -1607,25 +1607,6 @@ async def test_read_resource_template(run_context: RunContext[int]):
         assert content == snapshot('Hello, Alice!')
 
 
-async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource returns None for MCP spec error code -32002 (resource not found).
-
-    As per https://modelcontextprotocol.io/specification/2025-06-18/server/resources#error-handling
-
-    Note: We mock this because FastMCP uses error code 0 instead of -32002, which is non-standard.
-    """
-    mcp_error = McpError(error=ErrorData(code=-32002, message='Resource not found'))
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'read_resource',
-            new=AsyncMock(side_effect=mcp_error),
-        ):
-            result = await mcp_server.read_resource('resource://missing')
-            assert result is None
-
-
 async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
     """Test that read_resource converts McpError to MCPError for generic errors."""
     mcp_error = McpError(
@@ -1648,7 +1629,7 @@ async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
 
 
 async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource returns None when server returns empty contents."""
+    """Test that read_resource returns empty list when server returns empty contents."""
     from mcp.types import ReadResourceResult
 
     # Mock a result with empty contents
@@ -1661,7 +1642,7 @@ async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
             new=AsyncMock(return_value=empty_result),
         ):
             result = await mcp_server.read_resource('resource://empty')
-            assert result is None
+            assert result == []
 
 
 async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
@@ -1961,7 +1942,7 @@ async def test_capabilities(mcp_server: MCPServerStdio) -> None:
 
 
 async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that resource methods return empty values when resources capability is not available."""
+    """Test that resource list methods return empty values when resources capability is not available."""
     async with mcp_server:
         # Mock the capabilities to not support resources
         mock_capabilities = ServerCapabilities(resources=False)
@@ -1974,9 +1955,7 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             result = await mcp_server.list_resource_templates()
             assert result == []
 
-            # read_resource should return None
-            result = await mcp_server.read_resource('resource://test')
-            assert result is None
+
 async def test_instructions(mcp_server: MCPServerStdio) -> None:
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
