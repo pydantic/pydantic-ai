@@ -1,17 +1,22 @@
-"""Grok model implementation using xAI SDK."""
+"""xAI model implementation using xAI SDK."""
 
-import os
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-import xai_sdk.chat as chat_types
+try:
+    import xai_sdk.chat as chat_types
 
-# Import xai_sdk components
-from xai_sdk import AsyncClient
-from xai_sdk.chat import assistant, image, system, tool, tool_result, user
-from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
+    # Import xai_sdk components
+    from xai_sdk import AsyncClient
+    from xai_sdk.chat import assistant, image, system, tool, tool_result, user
+    from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `xai-sdk` to use the xAI model, '
+        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
+    ) from _import_error
 
 from .._run_context import RunContext
 from .._utils import now_utc
@@ -41,42 +46,46 @@ from ..models import (
     ModelRequestParameters,
     StreamedResponse,
 )
+from ..profiles import ModelProfileSpec
+from ..providers import Provider, infer_provider
+from ..providers.grok import GrokModelName
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 
+# Type alias for consistency
+XaiModelName = GrokModelName
 
-class GrokModel(Model):
-    """A model that uses the xAI SDK to interact with Grok."""
+
+class XaiModel(Model):
+    """A model that uses the xAI SDK to interact with xAI models."""
 
     _model_name: str
-    _api_key: str
-    _client: AsyncClient | None
+    _provider: Provider[AsyncClient]
 
     def __init__(
         self,
-        model_name: str,
+        model_name: XaiModelName,
         *,
-        api_key: str | None = None,
-        client: AsyncClient | None = None,
+        provider: Literal['xai'] | Provider[AsyncClient] = 'xai',
+        profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
-        """Initialize the Grok model.
+        """Initialize the xAI model.
 
         Args:
-            model_name: The name of the Grok model to use (e.g., "grok-4-1-fast-non-reasoning")
-            api_key: The xAI API key. If not provided, uses XAI_API_KEY environment variable.
-            client: Optional AsyncClient instance for testing. If provided, api_key is ignored.
+            model_name: The name of the xAI model to use (e.g., "grok-4-1-fast-non-reasoning")
+            provider: The provider to use for API calls. Defaults to `'xai'`.
+            profile: Optional model profile specification. Defaults to a profile picked by the provider based on the model name.
             settings: Optional model settings.
         """
-        super().__init__(settings=settings)
         self._model_name = model_name
-        self._client = client
-        if client is None:
-            self._api_key = api_key or os.getenv('XAI_API_KEY') or ''
-            if not self._api_key:
-                raise ValueError('XAI API key is required')
-        else:
-            self._api_key = api_key or ''
+
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self._provider = provider
+        self.client = provider.client
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def model_name(self) -> str:
@@ -188,7 +197,7 @@ class GrokModel(Model):
                 )
             else:
                 raise UserError(
-                    f'`{builtin_tool.__class__.__name__}` is not supported by `GrokModel`. '
+                    f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
                     f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
                     f'If XSearchTool should be supported, please file an issue.'
                 )
@@ -200,9 +209,8 @@ class GrokModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Make a request to the Grok model."""
-        # Use injected client or create one in the current async context
-        client = self._client or AsyncClient(api_key=self._api_key)
+        """Make a request to the xAI model."""
+        client = self._provider.client
 
         # Convert messages to xAI format
         xai_messages = self._map_messages(messages)
@@ -253,9 +261,8 @@ class GrokModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Make a streaming request to the Grok model."""
-        # Use injected client or create one in the current async context
-        client = self._client or AsyncClient(api_key=self._api_key)
+        """Make a streaming request to the xAI model."""
+        client = self._provider.client
 
         # Convert messages to xAI format
         xai_messages = self._map_messages(messages)
@@ -294,7 +301,7 @@ class GrokModel(Model):
 
         # Stream the response
         response_stream = chat.stream()
-        streamed_response = GrokStreamedResponse(
+        streamed_response = XaiStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=response_stream,
@@ -409,7 +416,7 @@ class GrokModel(Model):
 
     def _map_usage(self, response: chat_types.Response) -> RequestUsage:
         """Extract usage information from xAI SDK response, including reasoning tokens and cache tokens."""
-        return GrokModel.extract_usage(response)
+        return XaiModel.extract_usage(response)
 
     @staticmethod
     def extract_usage(response: chat_types.Response) -> RequestUsage:
@@ -472,7 +479,7 @@ class GrokModel(Model):
 
 
 @dataclass
-class GrokStreamedResponse(StreamedResponse):
+class XaiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
 
     _model_name: str
@@ -486,7 +493,7 @@ class GrokStreamedResponse(StreamedResponse):
 
         # Update usage
         if hasattr(response, 'usage'):
-            self._usage = GrokModel.extract_usage(response)
+            self._usage = XaiModel.extract_usage(response)
 
         # Set provider response ID
         if hasattr(response, 'id') and self.provider_response_id is None:

@@ -63,6 +63,7 @@ def test_known_model_names():  # pragma: lax no cover
     google_names = [f'google-gla:{n}' for n in get_model_names(GoogleModelName)] + [
         f'google-vertex:{n}' for n in get_model_names(GoogleModelName)
     ]
+    xai_names = [f'xai:{n}' for n in get_model_names(GrokModelName)]
     grok_names = [f'grok:{n}' for n in get_model_names(GrokModelName)]
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
     moonshotai_names = [f'moonshotai:{n}' for n in get_model_names(MoonshotAIModelName)]
@@ -79,6 +80,7 @@ def test_known_model_names():  # pragma: lax no cover
         anthropic_names
         + cohere_names
         + google_names
+        + xai_names
         + grok_names
         + groq_names
         + mistral_names

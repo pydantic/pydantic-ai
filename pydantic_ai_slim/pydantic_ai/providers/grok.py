@@ -40,7 +40,7 @@ GrokModelName = Literal[
 
 
 class GrokProvider(Provider[AsyncOpenAI]):
-    """Provider for Grok API."""
+    """Provider for Grok API (OpenAI-compatible interface)."""
 
     @property
     def name(self) -> str:

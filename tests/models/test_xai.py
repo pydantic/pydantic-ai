@@ -32,10 +32,10 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
-from .mock_grok import (
-    MockGrok,
-    MockGrokResponse,
-    MockGrokResponseChunk,
+from .mock_xai import (
+    MockXai,
+    MockXaiResponse,
+    MockXaiResponseChunk,
     create_response,
     create_tool_call,
     get_mock_chat_create_kwargs,
@@ -44,7 +44,8 @@ from .mock_grok import (
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
 
-    from pydantic_ai.models.grok import GrokModel
+    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.providers.xai import XaiProvider
 
     MockResponse = chat_types.Response | Exception
     # xai_sdk streaming returns tuples of (Response, chunk) where chunk type is not explicitly defined
@@ -63,17 +64,20 @@ pytestmark = [
 ]
 
 
-def test_grok_init():
-    m = GrokModel('grok-4-1-fast-non-reasoning', api_key='foobar')
+def test_xai_init():
+    from pydantic_ai.providers.xai import XaiProvider
+
+    provider = XaiProvider(api_key='foobar')
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=provider)
     # Check model properties without accessing private attributes
     assert m.model_name == 'grok-4-1-fast-non-reasoning'
     assert m.system == 'xai'
 
 
-async def test_grok_request_simple_success(allow_model_requests: None):
+async def test_xai_request_simple_success(allow_model_requests: None):
     response = create_response(content='world')
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -118,13 +122,13 @@ async def test_grok_request_simple_success(allow_model_requests: None):
     )
 
 
-async def test_grok_request_simple_usage(allow_model_requests: None):
+async def test_xai_request_simple_usage(allow_model_requests: None):
     response = create_response(
         content='world',
         usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1),
     )
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -138,11 +142,11 @@ async def test_grok_request_simple_usage(allow_model_requests: None):
     )
 
 
-async def test_grok_image_input(allow_model_requests: None):
+async def test_xai_image_input(allow_model_requests: None):
     """Test that Grok model handles image inputs (text is extracted from content)."""
     response = create_response(content='done')
-    mock_client = MockGrok.create_mock(response)
-    model = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    model = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(model)
 
     image_url = ImageUrl('https://example.com/image.png')
@@ -152,15 +156,15 @@ async def test_grok_image_input(allow_model_requests: None):
     assert result.output == 'done'
 
 
-async def test_grok_request_structured_response(allow_model_requests: None):
+async def test_xai_request_structured_response(allow_model_requests: None):
     tool_call = create_tool_call(
         id='123',
         name='final_result',
         arguments={'response': [1, 2, 123]},
     )
     response = create_response(tool_calls=[tool_call])
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
@@ -201,7 +205,7 @@ async def test_grok_request_structured_response(allow_model_requests: None):
     )
 
 
-async def test_grok_request_tool_call(allow_model_requests: None):
+async def test_xai_request_tool_call(allow_model_requests: None):
     responses = [
         create_response(
             tool_calls=[create_tool_call(id='1', name='get_location', arguments={'loc_name': 'San Fransisco'})],
@@ -213,8 +217,8 @@ async def test_grok_request_tool_call(allow_model_requests: None):
         ),
         create_response(content='final response'),
     ]
-    mock_client = MockGrok.create_mock(responses)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(responses)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -323,11 +327,11 @@ def grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.
     and the delta as chunk.content.
     """
     # Create chunk (delta) - just this piece of text
-    chunk = MockGrokResponseChunk(content=text, tool_calls=[])
+    chunk = MockXaiResponseChunk(content=text, tool_calls=[])
 
     # Create response (accumulated) - for simplicity in mocks, we'll just use the same text
     # In real usage, the Response object would accumulate over multiple chunks
-    response = MockGrokResponse(
+    response = MockXaiResponse(
         id='grok-123',
         content=text,  # This will be accumulated by the streaming handler
         tool_calls=[],
@@ -350,10 +354,10 @@ def grok_reasoning_text_chunk(
         finish_reason: The finish reason
     """
     # Create chunk (delta) - just this piece of text
-    chunk = MockGrokResponseChunk(content=text, tool_calls=[])
+    chunk = MockXaiResponseChunk(content=text, tool_calls=[])
 
     # Create response (accumulated) - includes reasoning content
-    response = MockGrokResponse(
+    response = MockXaiResponse(
         id='grok-123',
         content=text,
         tool_calls=[],
@@ -366,10 +370,10 @@ def grok_reasoning_text_chunk(
     return (cast(chat_types.Response, response), chunk)
 
 
-async def test_grok_stream_text(allow_model_requests: None):
+async def test_xai_stream_text(allow_model_requests: None):
     stream = [grok_text_chunk('hello '), grok_text_chunk('world')]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -379,15 +383,15 @@ async def test_grok_stream_text(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
 
 
-async def test_grok_stream_text_finish_reason(allow_model_requests: None):
+async def test_xai_stream_text_finish_reason(allow_model_requests: None):
     # Create streaming chunks with finish reasons
     stream = [
         grok_text_chunk('hello ', ''),
         grok_text_chunk('world', ''),
         grok_text_chunk('.', 'stop'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -441,7 +445,7 @@ def grok_tool_chunk(
         )
 
     # Chunk (delta)
-    chunk = MockGrokResponseChunk(
+    chunk = MockXaiResponseChunk(
         content='',
         tool_calls=[chunk_tool_call] if chunk_tool_call else [],
     )
@@ -455,7 +459,7 @@ def grok_tool_chunk(
         ),
     )
 
-    response = MockGrokResponse(
+    response = MockXaiResponse(
         id='grok-123',
         content='',
         tool_calls=[response_tool_call] if (effective_tool_name is not None or accumulated_args) else [],
@@ -471,15 +475,15 @@ class MyTypedDict(TypedDict, total=False):
     second: str
 
 
-async def test_grok_stream_structured(allow_model_requests: None):
+async def test_xai_stream_structured(allow_model_requests: None):
     stream = [
         grok_tool_chunk('final_result', None, accumulated_args=''),
         grok_tool_chunk(None, '{"first": "One', accumulated_args='{"first": "One'),
         grok_tool_chunk(None, '", "second": "Two"', accumulated_args='{"first": "One", "second": "Two"'),
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -491,7 +495,7 @@ async def test_grok_stream_structured(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=1))
 
 
-async def test_grok_stream_structured_finish_reason(allow_model_requests: None):
+async def test_xai_stream_structured_finish_reason(allow_model_requests: None):
     stream = [
         grok_tool_chunk('final_result', None, accumulated_args=''),
         grok_tool_chunk(None, '{"first": "One', accumulated_args='{"first": "One'),
@@ -499,8 +503,8 @@ async def test_grok_stream_structured_finish_reason(allow_model_requests: None):
         grok_tool_chunk(None, '}', accumulated_args='{"first": "One", "second": "Two"}'),
         grok_tool_chunk(None, None, finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -511,14 +515,14 @@ async def test_grok_stream_structured_finish_reason(allow_model_requests: None):
         assert result.is_complete
 
 
-async def test_grok_stream_native_output(allow_model_requests: None):
+async def test_xai_stream_native_output(allow_model_requests: None):
     stream = [
         grok_text_chunk('{"first": "One'),
         grok_text_chunk('", "second": "Two"'),
         grok_text_chunk('}'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=NativeOutput(MyTypedDict))
 
     async with agent.run_stream('') as result:
@@ -529,15 +533,15 @@ async def test_grok_stream_native_output(allow_model_requests: None):
         assert result.is_complete
 
 
-async def test_grok_stream_tool_call_with_empty_text(allow_model_requests: None):
+async def test_xai_stream_tool_call_with_empty_text(allow_model_requests: None):
     stream = [
         grok_tool_chunk('final_result', None, accumulated_args=''),
         grok_tool_chunk(None, '{"first": "One', accumulated_args='{"first": "One'),
         grok_tool_chunk(None, '", "second": "Two"', accumulated_args='{"first": "One", "second": "Two"'),
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=[str, MyTypedDict])
 
     async with agent.run_stream('') as result:
@@ -548,13 +552,13 @@ async def test_grok_stream_tool_call_with_empty_text(allow_model_requests: None)
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
-async def test_grok_no_delta(allow_model_requests: None):
+async def test_xai_no_delta(allow_model_requests: None):
     stream = [
         grok_text_chunk('hello '),
         grok_text_chunk('world'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -564,14 +568,14 @@ async def test_grok_no_delta(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
 
 
-async def test_grok_none_delta(allow_model_requests: None):
+async def test_xai_none_delta(allow_model_requests: None):
     # Test handling of chunks without deltas
     stream = [
         grok_text_chunk('hello '),
         grok_text_chunk('world'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -589,25 +593,25 @@ async def test_grok_none_delta(allow_model_requests: None):
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
-async def test_grok_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
+async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
     tool_call = create_tool_call(
         id='123',
         name='final_result',
         arguments={'response': [1, 2, 3]},
     )
     response = create_response(content='', tool_calls=[tool_call], finish_reason='tool_calls')
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     await agent.run('Hello')
     assert get_mock_chat_create_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
 
 
-async def test_grok_penalty_parameters(allow_model_requests: None) -> None:
+async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     response = create_response(content='test response')
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
 
     settings = ModelSettings(
         temperature=0.7,
@@ -628,10 +632,10 @@ async def test_grok_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
-async def test_grok_image_url_input(allow_model_requests: None):
+async def test_xai_image_url_input(allow_model_requests: None):
     response = create_response(content='world')
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run(
@@ -646,8 +650,8 @@ async def test_grok_image_url_input(allow_model_requests: None):
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_image_url_tool_response(allow_model_requests: None, xai_api_key: str):
-    m = GrokModel('grok-4-1-fast-non-reasoning', api_key=xai_api_key)
+async def test_xai_image_url_tool_response(allow_model_requests: None, xai_api_key: str):
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -681,10 +685,10 @@ async def test_grok_image_url_tool_response(allow_model_requests: None, xai_api_
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_image_as_binary_content_tool_response(
+async def test_xai_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, xai_api_key: str
 ):
-    m = GrokModel('grok-4-1-fast-non-reasoning', api_key=xai_api_key)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -720,11 +724,11 @@ async def test_grok_image_as_binary_content_tool_response(
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_image_as_binary_content_input(
+async def test_xai_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, xai_api_key: str
 ):
     """Test passing binary image content directly as input (not from a tool)."""
-    m = GrokModel('grok-4-1-fast-non-reasoning', api_key=xai_api_key)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
@@ -741,11 +745,11 @@ async def test_grok_image_as_binary_content_input(
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_builtin_web_search_tool(allow_model_requests: None, xai_api_key: str):
+async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_api_key: str):
     """Test Grok's built-in web_search tool."""
     from pydantic_ai import WebSearchTool
 
-    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('Return just the day of week for the date of Jan 1 in 2026?')
@@ -760,7 +764,7 @@ async def test_grok_builtin_web_search_tool(allow_model_requests: None, xai_api_
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_builtin_x_search_tool(allow_model_requests: None, xai_api_key: str):
+async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_api_key: str):
     """Test Grok's built-in x_search tool (X/Twitter search)."""
     # Note: This test is skipped until XSearchTool is properly implemented
     # from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -769,7 +773,7 @@ async def test_grok_builtin_x_search_tool(allow_model_requests: None, xai_api_ke
     #     """X (Twitter) search tool - specific to Grok."""
     #     kind: str = 'x_search'
     #
-    # m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    # m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
     # agent = Agent(m, builtin_tools=[XSearchTool()])
     # result = await agent.run('What is the latest post from @elonmusk?')
     # assert result.output
@@ -777,11 +781,11 @@ async def test_grok_builtin_x_search_tool(allow_model_requests: None, xai_api_ke
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_builtin_code_execution_tool(allow_model_requests: None, xai_api_key: str):
+async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_api_key: str):
     """Test Grok's built-in code_execution tool."""
     from pydantic_ai import CodeExecutionTool
 
-    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # Use a simpler calculation similar to OpenAI tests
@@ -800,11 +804,11 @@ async def test_grok_builtin_code_execution_tool(allow_model_requests: None, xai_
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_builtin_multiple_tools(allow_model_requests: None, xai_api_key: str):
+async def test_xai_builtin_multiple_tools(allow_model_requests: None, xai_api_key: str):
     """Test using multiple built-in tools together."""
     from pydantic_ai import CodeExecutionTool, WebSearchTool
 
-    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -822,11 +826,11 @@ async def test_grok_builtin_multiple_tools(allow_model_requests: None, xai_api_k
 
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
-async def test_grok_builtin_tools_with_custom_tools(allow_model_requests: None, xai_api_key: str):
+async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, xai_api_key: str):
     """Test mixing Grok's built-in tools with custom (client-side) tools."""
     from pydantic_ai import WebSearchTool
 
-    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     @agent.tool_plain
@@ -844,13 +848,13 @@ async def test_grok_builtin_tools_with_custom_tools(allow_model_requests: None, 
     assert len(messages) >= 4  # Request, builtin response, request, custom tool response
 
 
-async def test_grok_builtin_tools_wiring(allow_model_requests: None):
+async def test_xai_builtin_tools_wiring(allow_model_requests: None):
     """Test that built-in tools are correctly wired to xAI SDK."""
     from pydantic_ai import CodeExecutionTool, MCPServerTool, WebSearchTool
 
     response = create_response(content='Built-in tools are registered')
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-fast', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
         builtin_tools=[
@@ -874,12 +878,12 @@ async def test_grok_builtin_tools_wiring(allow_model_requests: None):
     os.getenv('XAI_API_KEY') is None or os.getenv('LINEAR_ACCESS_TOKEN') is None,
     reason='Requires XAI_API_KEY and LINEAR_ACCESS_TOKEN (gRPC, no cassettes)',
 )
-async def test_grok_builtin_mcp_server_tool(allow_model_requests: None, xai_api_key: str):
+async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_api_key: str):
     """Test Grok's MCP server tool with Linear."""
     from pydantic_ai import MCPServerTool
 
     linear_token = os.getenv('LINEAR_ACCESS_TOKEN')
-    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    m = XaiModel('grok-4-fast', provider=XaiProvider(api_key=xai_api_key))
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -917,23 +921,23 @@ async def test_grok_builtin_mcp_server_tool(allow_model_requests: None, xai_api_
     )
 
 
-async def test_grok_model_retries(allow_model_requests: None):
+async def test_xai_model_retries(allow_model_requests: None):
     """Test Grok model with retries."""
     # Create error response then success
     success_response = create_response(content='Success after retry')
 
-    mock_client = MockGrok.create_mock(success_response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(success_response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.output == 'Success after retry'
 
 
-async def test_grok_model_settings(allow_model_requests: None):
+async def test_xai_model_settings(allow_model_requests: None):
     """Test Grok model with various settings."""
     response = create_response(content='response with settings')
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
         model_settings=ModelSettings(
@@ -951,7 +955,7 @@ async def test_grok_model_settings(allow_model_requests: None):
     assert len(kwargs) > 0
 
 
-async def test_grok_model_multiple_tool_calls(allow_model_requests: None):
+async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
     """Test Grok model with multiple tool calls in sequence."""
     # Three responses: two tool calls, then final answer
     responses = [
@@ -964,8 +968,8 @@ async def test_grok_model_multiple_tool_calls(allow_model_requests: None):
         create_response(content='Final processed result'),
     ]
 
-    mock_client = MockGrok.create_mock(responses)
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock(responses)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -982,7 +986,7 @@ async def test_grok_model_multiple_tool_calls(allow_model_requests: None):
     assert result.usage().tool_calls == 2
 
 
-async def test_grok_stream_with_tool_calls(allow_model_requests: None):
+async def test_xai_stream_with_tool_calls(allow_model_requests: None):
     """Test Grok streaming with tool calls."""
     # First stream: tool call
     stream1 = [
@@ -994,8 +998,8 @@ async def test_grok_stream_with_tool_calls(allow_model_requests: None):
         grok_text_chunk('Info retrieved: Info about test', finish_reason='stop'),
     ]
 
-    mock_client = MockGrok.create_mock_stream([stream1, stream2])
-    m = GrokModel('grok-4-1-fast-non-reasoning', client=mock_client)
+    mock_client = MockXai.create_mock_stream([stream1, stream2])
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1014,15 +1018,17 @@ async def test_grok_stream_with_tool_calls(allow_model_requests: None):
 
 # Test for error handling
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is not None, reason='Skipped when XAI_API_KEY is set')
-async def test_grok_model_invalid_api_key():
-    """Test Grok model with invalid API key."""
-    with pytest.raises(ValueError, match='XAI API key is required'):
-        GrokModel('grok-4-1-fast-non-reasoning', api_key='')
+async def test_xai_model_invalid_api_key():
+    """Test xAI provider with invalid API key."""
+    from pydantic_ai.exceptions import UserError
+
+    with pytest.raises(UserError, match='Set the `XAI_API_KEY` environment variable'):
+        XaiProvider(api_key='')
 
 
-async def test_grok_model_properties():
+async def test_xai_model_properties():
     """Test Grok model properties."""
-    m = GrokModel('grok-4-1-fast-non-reasoning', api_key='test-key')
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
 
     assert m.model_name == 'grok-4-1-fast-non-reasoning'
     assert m.system == 'xai'
@@ -1031,15 +1037,15 @@ async def test_grok_model_properties():
 # Tests for reasoning/thinking content (similar to OpenAI Responses tests)
 
 
-async def test_grok_reasoning_simple(allow_model_requests: None):
+async def test_xai_reasoning_simple(allow_model_requests: None):
     """Test Grok model with simple reasoning content."""
     response = create_response(
         content='The answer is 4',
         reasoning_content='Let me think: 2+2 equals 4',
         usage=SimpleNamespace(prompt_tokens=10, completion_tokens=20),
     )
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('What is 2+2?')
@@ -1067,15 +1073,15 @@ async def test_grok_reasoning_simple(allow_model_requests: None):
     )
 
 
-async def test_grok_encrypted_content_only(allow_model_requests: None):
+async def test_xai_encrypted_content_only(allow_model_requests: None):
     """Test Grok model with encrypted content (signature) only."""
     response = create_response(
         content='4',
         encrypted_content='abc123signature',
         usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
     )
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('What is 2+2?')
@@ -1103,14 +1109,14 @@ async def test_grok_encrypted_content_only(allow_model_requests: None):
     )
 
 
-async def test_grok_reasoning_without_summary(allow_model_requests: None):
+async def test_xai_reasoning_without_summary(allow_model_requests: None):
     """Test Grok model with encrypted content but no reasoning summary."""
     response = create_response(
         content='4',
         encrypted_content='encrypted123',
     )
-    mock_client = MockGrok.create_mock(response)
-    model = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    model = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
 
     agent = Agent(model=model)
     result = await agent.run('What is 2+2?')
@@ -1141,7 +1147,7 @@ async def test_grok_reasoning_without_summary(allow_model_requests: None):
     )
 
 
-async def test_grok_reasoning_with_tool_calls(allow_model_requests: None):
+async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
     """Test Grok model with reasoning content and tool calls."""
     responses = [
         create_response(
@@ -1154,8 +1160,8 @@ async def test_grok_reasoning_with_tool_calls(allow_model_requests: None):
             usage=SimpleNamespace(prompt_tokens=15, completion_tokens=10),
         ),
     ]
-    mock_client = MockGrok.create_mock(responses)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock(responses)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1214,7 +1220,7 @@ async def test_grok_reasoning_with_tool_calls(allow_model_requests: None):
     )
 
 
-async def test_grok_reasoning_with_encrypted_and_tool_calls(allow_model_requests: None):
+async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests: None):
     """Test Grok model with encrypted reasoning content and tool calls."""
     responses = [
         create_response(
@@ -1227,8 +1233,8 @@ async def test_grok_reasoning_with_encrypted_and_tool_calls(allow_model_requests
             usage=SimpleNamespace(prompt_tokens=25, completion_tokens=12),
         ),
     ]
-    mock_client = MockGrok.create_mock(responses)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock(responses)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1287,14 +1293,14 @@ async def test_grok_reasoning_with_encrypted_and_tool_calls(allow_model_requests
     )
 
 
-async def test_grok_stream_with_reasoning(allow_model_requests: None):
+async def test_xai_stream_with_reasoning(allow_model_requests: None):
     """Test Grok streaming with reasoning content."""
     stream = [
         grok_reasoning_text_chunk('The answer', reasoning_content='Let me think about this...', finish_reason=''),
         grok_reasoning_text_chunk(' is 4', reasoning_content='Let me think about this...', finish_reason='stop'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('What is 2+2?') as result:
@@ -1314,14 +1320,14 @@ async def test_grok_stream_with_reasoning(allow_model_requests: None):
     assert messages[1].parts[1].content == 'The answer is 4'
 
 
-async def test_grok_stream_with_encrypted_reasoning(allow_model_requests: None):
+async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
     """Test Grok streaming with encrypted reasoning content."""
     stream = [
         grok_reasoning_text_chunk('The weather', encrypted_content='encrypted_abc123', finish_reason=''),
         grok_reasoning_text_chunk(' is sunny', encrypted_content='encrypted_abc123', finish_reason='stop'),
     ]
-    mock_client = MockGrok.create_mock_stream(stream)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('What is the weather?') as result:
@@ -1342,7 +1348,7 @@ async def test_grok_stream_with_encrypted_reasoning(allow_model_requests: None):
     assert messages[1].parts[1].content == 'The weather is sunny'
 
 
-async def test_grok_usage_with_reasoning_tokens(allow_model_requests: None):
+async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     """Test that Grok model properly extracts reasoning_tokens and cache_read_tokens from usage."""
     # Create a mock usage object with reasoning_tokens and cached_prompt_text_tokens
     mock_usage = SimpleNamespace(
@@ -1356,8 +1362,8 @@ async def test_grok_usage_with_reasoning_tokens(allow_model_requests: None):
         reasoning_content='Let me think deeply about this...',
         usage=mock_usage,
     )
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('What is the meaning of life?')
@@ -1371,7 +1377,7 @@ async def test_grok_usage_with_reasoning_tokens(allow_model_requests: None):
     assert usage.details == snapshot({'reasoning_tokens': 25, 'cache_read_tokens': 30})
 
 
-async def test_grok_usage_without_details(allow_model_requests: None):
+async def test_xai_usage_without_details(allow_model_requests: None):
     """Test that Grok model handles usage without reasoning_tokens or cached tokens."""
     mock_usage = SimpleNamespace(
         prompt_tokens=20,
@@ -1381,8 +1387,8 @@ async def test_grok_usage_without_details(allow_model_requests: None):
         content='Simple answer',
         usage=mock_usage,
     )
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-3', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Simple question')
@@ -1397,7 +1403,7 @@ async def test_grok_usage_without_details(allow_model_requests: None):
     assert usage.details == snapshot({})
 
 
-async def test_grok_usage_with_server_side_tools(allow_model_requests: None):
+async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     """Test that Grok model properly extracts server_side_tools_used from usage."""
     # Create a mock usage object with server_side_tools_used
     # Note: In the real SDK, server_side_tools_used is a repeated field (list-like),
@@ -1411,8 +1417,8 @@ async def test_grok_usage_with_server_side_tools(allow_model_requests: None):
         content='The answer based on web search',
         usage=mock_usage,
     )
-    mock_client = MockGrok.create_mock(response)
-    m = GrokModel('grok-4-fast', client=mock_client)
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-fast', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Search for something')

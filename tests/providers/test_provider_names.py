@@ -37,6 +37,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.xai import XaiProvider
 
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
@@ -51,6 +52,7 @@ with try_import() as imports_successful:
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
         ('grok', GrokProvider, 'GROK_API_KEY'),
+        ('xai', XaiProvider, 'XAI_API_KEY'),
         ('moonshotai', MoonshotAIProvider, 'MOONSHOTAI_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),

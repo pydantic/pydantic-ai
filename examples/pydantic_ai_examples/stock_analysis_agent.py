@@ -5,8 +5,6 @@ This agent:
 2. Provides buy analysis for the user
 """
 
-import os
-
 import logfire
 from pydantic import BaseModel, Field
 
@@ -15,19 +13,16 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     WebSearchTool,
 )
-from pydantic_ai.models.grok import GrokModel
+from pydantic_ai.models.xai import XaiModel
 
 logfire.configure()
 logfire.instrument_pydantic_ai()
 
-# Configure for xAI API
-xai_api_key = os.getenv('XAI_API_KEY')
-if not xai_api_key:
-    raise ValueError('XAI_API_KEY environment variable is required')
+# Configure for xAI API - XAI_API_KEY environment variable is required
+# The model will automatically use XaiProvider with the API key from the environment
 
-
-# Create the model using GrokModel with server-side tools
-model = GrokModel('grok-4-fast', api_key=xai_api_key)
+# Create the model using XaiModel with server-side tools
+model = XaiModel('grok-4-fast')
 
 
 class StockAnalysis(BaseModel):
