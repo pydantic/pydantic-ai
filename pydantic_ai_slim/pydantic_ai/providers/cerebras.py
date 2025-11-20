@@ -31,7 +31,7 @@ class CerebrasProvider(Provider[AsyncCerebras]):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.cerebras.ai/v1'
+        return 'https://api.cerebras.ai'
 
     @property
     def client(self) -> AsyncCerebras:
@@ -83,7 +83,7 @@ class CerebrasProvider(Provider[AsyncCerebras]):
             self._client = cerebras_client
         else:
             api_key = api_key or os.getenv('CEREBRAS_API_KEY')
-            base_url = base_url or 'https://api.cerebras.ai/v1'
+            base_url = base_url or 'https://api.cerebras.ai'
 
             if not api_key:
                 raise UserError(
