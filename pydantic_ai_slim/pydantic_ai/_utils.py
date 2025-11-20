@@ -14,14 +14,11 @@ from functools import partial
 from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
 
+import anyio
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import (
-    ParamSpec,
-    TypeIs,
-    is_typeddict,
-)
+from typing_extensions import ParamSpec, TypeIs, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
@@ -113,8 +110,6 @@ Option: TypeAlias = Some[T] | None
 
 class Unset:
     """A singleton to represent an unset value."""
-
-    pass
 
 
 UNSET = Unset()
@@ -214,7 +209,8 @@ async def group_by_temporal(
                 group_start_time = None
 
     try:
-        yield async_iter_groups()
+        async with anyio.create_task_group() as tg:
+            yield async_iter_groups()
     finally:  # pragma: no cover
         # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
         if task:

@@ -1020,8 +1020,10 @@ async def _call_tools(
                     yield event
 
         else:
+            # TODO(Marcelo): We need to replace this with `anyio.as_completed()` from
+            # https://github.com/agronholm/anyio/pull/890.
             tasks = [
-                asyncio.create_task(
+                asyncio.create_task(  # noqa: TID251
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     name=call.tool_name,
                 )
