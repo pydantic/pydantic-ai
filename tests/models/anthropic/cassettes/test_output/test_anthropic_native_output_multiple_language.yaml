@@ -1,0 +1,107 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1162'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What language is spoken in the user country?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      output_format:
+        schema:
+          additionalProperties: false
+          properties:
+            result:
+              anyOf:
+              - additionalProperties: false
+                description: A city and its country.
+                properties:
+                  data:
+                    additionalProperties: false
+                    properties:
+                      city:
+                        type: string
+                      country:
+                        type: string
+                    required:
+                    - city
+                    - country
+                    type: object
+                  kind:
+                    description: '{const: CityLocation}'
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+              - additionalProperties: false
+                properties:
+                  data:
+                    additionalProperties: false
+                    properties:
+                      country:
+                        type: string
+                      language:
+                        type: string
+                    required:
+                    - country
+                    - language
+                    type: object
+                  kind:
+                    description: '{const: CountryLanguage}'
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+          required:
+          - result
+          type: object
+        type: json_schema
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+        strict: true
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '130'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        message: invalid x-api-key
+        type: authentication_error
+      request_id: req_011CVKJbTXMN68Pzm15QEJpK
+      type: error
+    status:
+      code: 401
+      message: Unauthorized
+version: 1

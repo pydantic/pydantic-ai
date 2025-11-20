@@ -53,18 +53,6 @@ def mock_sonnet_4_5(allow_model_requests: None) -> tuple[AnthropicModel, AsyncAn
     return model, mock_client
 
 
-@pytest.fixture
-def mock_sonnet_4_0(allow_model_requests: None) -> tuple[AnthropicModel, AsyncAnthropic]:
-    """Mock claude-sonnet-4-0 model for unit tests."""
-    c = completion_message(
-        [BetaTextBlock(text='response', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
-    return model, mock_client
-
-
 # Schema fixtures
 @pytest.fixture
 def city_location_schema() -> type[BaseModel]:

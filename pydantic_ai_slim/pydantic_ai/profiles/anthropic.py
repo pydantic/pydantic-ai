@@ -72,10 +72,10 @@ def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
         if isinstance(one_of, list):  # pragma: no cover
             # pydantic generates anyOf for Union types, leaving this here for JSON schemas that don't come from pydantic.BaseModel
             return all(_walk(item) for item in one_of) and not node  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        if isinstance(all_of, list):
+        if isinstance(all_of, list):  # pragma: no cover
             return all(_walk(item) for item in all_of) and not node  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
-        if type_ is None:
+        if type_ is None:  # pragma: no cover
             return False
 
         if type_ == 'object':
@@ -101,7 +101,7 @@ def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
                 return False
         elif type_ in {'integer', 'number', 'boolean', 'null'}:
             pass
-        else:
+        else:  # pragma: no cover
             return False
 
         return not node

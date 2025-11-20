@@ -77,6 +77,7 @@ with try_import() as imports_successful:
         BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
+        BetaMessageTokensCount,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -144,7 +145,7 @@ class MockAnthropic:
 
     @cached_property
     def messages(self) -> Any:
-        return type('Messages', (), {'create': self.messages_create})
+        return type('Messages', (), {'create': self.messages_create, 'count_tokens': self.messages_count_tokens})
 
     @classmethod
     def create_mock(cls, messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage]) -> AsyncAnthropic:
@@ -179,6 +180,11 @@ class MockAnthropic:
                 response = cast(BetaMessage, self.messages_)
         self.index += 1
         return response
+
+    async def messages_count_tokens(self, *_args: Any, **kwargs: Any) -> BetaMessageTokensCount:
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+        # Return a mock token count
+        return BetaMessageTokensCount(input_tokens=10)
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:

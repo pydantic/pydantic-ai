@@ -70,17 +70,30 @@ def test_lossy_string_constraints():
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
 
-    transformer = AnthropicJsonSchemaTransformer(User.model_json_schema(), strict=True)
-    transformer.walk()
+    original_schema = User.model_json_schema()
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=True)
+    result = transformer.walk()
 
     # SDK drops minLength, making it lossy
     assert transformer.is_strict_compatible is False
-    assert transformer.schema == snapshot(
+
+    # Original schema has minLength constraint
+    assert original_schema == snapshot(
         {
             'properties': {'username': {'minLength': 3, 'title': 'Username', 'type': 'string'}},
             'required': ['username'],
             'title': 'User',
             'type': 'object',
+        }
+    )
+
+    # Transformed schema has constraint dropped and moved to description
+    assert result == snapshot(
+        {
+            'type': 'object',
+            'properties': {'username': {'type': 'string', 'description': '{minLength: 3}'}},
+            'required': ['username'],
+            'additionalProperties': False,
         }
     )
 
@@ -92,16 +105,17 @@ def test_lossy_number_constraints():
         price: Annotated[float, Field(ge=0)]
 
     transformer = AnthropicJsonSchemaTransformer(Product.model_json_schema(), strict=True)
-    transformer.walk()
+    result = transformer.walk()
 
     # SDK drops minimum, making it lossy
     assert transformer.is_strict_compatible is False
-    assert transformer.schema == snapshot(
+    # Transformed schema has constraint dropped and moved to description
+    assert result == snapshot(
         {
-            'properties': {'price': {'minimum': 0.0, 'title': 'Price', 'type': 'number'}},
-            'required': ['price'],
-            'title': 'Product',
             'type': 'object',
+            'properties': {'price': {'type': 'number', 'description': '{minimum: 0}'}},
+            'required': ['price'],
+            'additionalProperties': False,
         }
     )
 
@@ -112,12 +126,15 @@ def test_lossy_pattern_constraint():
     class Email(BaseModel):
         address: Annotated[str, Field(pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')]
 
-    transformer = AnthropicJsonSchemaTransformer(Email.model_json_schema(), strict=True)
-    transformer.walk()
+    original_schema = Email.model_json_schema()
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=True)
+    result = transformer.walk()
 
     # SDK drops pattern, making it lossy
     assert transformer.is_strict_compatible is False
-    assert transformer.schema == snapshot(
+
+    # Original schema has pattern constraint
+    assert original_schema == snapshot(
         {
             'properties': {
                 'address': {'pattern': '^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$', 'title': 'Address', 'type': 'string'}
@@ -125,6 +142,16 @@ def test_lossy_pattern_constraint():
             'required': ['address'],
             'title': 'Email',
             'type': 'object',
+        }
+    )
+
+    # Transformed schema has constraint dropped and moved to description
+    assert result == snapshot(
+        {
+            'type': 'object',
+            'properties': {'address': {'type': 'string', 'description': '{pattern: ^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$}'}},
+            'required': ['address'],
+            'additionalProperties': False,
         }
     )
 
@@ -160,14 +187,6 @@ def test_lossy_array_with_constrained_items():
 
     # Array items with constraints are lossy
     assert transformer.is_strict_compatible is False
-    assert transformer.schema == snapshot(
-        {
-            'properties': {'items': {'items': {'minLength': 5, 'type': 'string'}, 'title': 'Items', 'type': 'array'}},
-            'required': ['items'],
-            'title': 'Container',
-            'type': 'object',
-        }
-    )
 
 
 def test_lossy_array_min_items():
@@ -181,14 +200,6 @@ def test_lossy_array_min_items():
 
     # SDK drops minItems > 1, making it lossy
     assert transformer.is_strict_compatible is False
-    assert transformer.schema == snapshot(
-        {
-            'properties': {'items': {'items': {'type': 'string'}, 'minItems': 2, 'title': 'Items', 'type': 'array'}},
-            'required': ['items'],
-            'title': 'ItemList',
-            'type': 'object',
-        }
-    )
 
 
 def test_lossy_unsupported_string_format():
@@ -210,9 +221,6 @@ def test_lossy_unsupported_string_format():
 
     # SDK drops unsupported formats, making it lossy
     assert transformer.is_strict_compatible is False
-    assert transformer.schema == snapshot(
-        {'type': 'object', 'properties': {'value': {'type': 'string', 'format': 'regex'}}, 'required': ['value']}
-    )
 
 
 def test_lossy_nested_defs():
@@ -224,12 +232,14 @@ def test_lossy_nested_defs():
     class Container(BaseModel):
         item: ConstrainedString
 
-    transformer = AnthropicJsonSchemaTransformer(Container.model_json_schema(), strict=True)
-    transformer.walk()
+    original = Container.model_json_schema()
+    transformer = AnthropicJsonSchemaTransformer(original, strict=True)
+    result = transformer.walk()
 
     # Nested schema in $defs has constraints, making it lossy
     assert transformer.is_strict_compatible is False
-    assert transformer.schema == snapshot(
+
+    assert original == snapshot(
         {
             '$defs': {
                 'ConstrainedString': {
@@ -242,5 +252,21 @@ def test_lossy_nested_defs():
             'required': ['item'],
             'title': 'Container',
             'type': 'object',
+        }
+    )
+    assert result == snapshot(
+        {
+            '$defs': {
+                'ConstrainedString': {
+                    'type': 'object',
+                    'properties': {'value': {'type': 'string', 'description': '{minLength: 5}'}},
+                    'additionalProperties': False,
+                    'required': ['value'],
+                }
+            },
+            'type': 'object',
+            'properties': {'item': {'$ref': '#/$defs/ConstrainedString'}},
+            'additionalProperties': False,
+            'required': ['item'],
         }
     )

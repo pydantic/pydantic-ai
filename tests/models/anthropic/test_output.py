@@ -221,6 +221,62 @@ def test_anthropic_native_output_strict_mode(
     assert betas == snapshot(['structured-outputs-2025-11-13'])
 
 
+def test_anthropic_native_output_merge_beta_headers(
+    allow_model_requests: None,
+    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
+    city_location_schema: type[BaseModel],
+    make_agent: MakeAgentType,
+):
+    """Test that custom anthropic-beta headers are merged with structured output beta features."""
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+    model, mock_client = mock_sonnet_4_5
+
+    # User provides their own beta feature via extra_headers
+    agent = make_agent(
+        model,
+        output_type=NativeOutput(city_location_schema),
+        model_settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-2025-01-01'}),
+    )
+    agent.run_sync('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    betas = completion_kwargs['betas']
+
+    # Should merge custom beta with structured-outputs beta
+    assert betas == snapshot(['custom-feature-2025-01-01', 'structured-outputs-2025-11-13'])
+
+
+def test_anthropic_native_output_merge_beta_headers_comma_separated(
+    allow_model_requests: None,
+    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
+    city_location_schema: type[BaseModel],
+    make_agent: MakeAgentType,
+):
+    """Test that comma-separated custom anthropic-beta headers are properly split and merged."""
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+    model, mock_client = mock_sonnet_4_5
+
+    # User provides multiple beta features via comma-separated header
+    agent = make_agent(
+        model,
+        output_type=NativeOutput(city_location_schema),
+        model_settings=AnthropicModelSettings(
+            extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2, custom-feature-3'}
+        ),
+    )
+    agent.run_sync('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    betas = completion_kwargs['betas']
+
+    # Should split comma-separated values and merge with structured-outputs beta (sorted)
+    assert betas == snapshot(
+        ['custom-feature-1', 'custom-feature-2', 'custom-feature-3', 'structured-outputs-2025-11-13']
+    )
+
+
 def test_anthropic_strict_tools_sonnet_4_5(allow_model_requests: None, weather_tool_responses: list[BetaMessage]):
     """Test that strict tool definitions are properly sent for supporting models."""
     mock_client = MockAnthropic.create_mock(weather_tool_responses)
@@ -306,6 +362,9 @@ async def test_anthropic_native_output_multiple(
     if isinstance(result.output, city_location_schema):
         assert result.output.city == 'Paris'  # type: ignore[attr-defined]
         assert result.output.country == 'France'  # type: ignore[attr-defined]
+    else:  # pragma: no cover
+        # This branch is not hit in this test, but we keep the structure for completeness
+        pass
 
 
 async def test_anthropic_auto_mode_sonnet_4_5(

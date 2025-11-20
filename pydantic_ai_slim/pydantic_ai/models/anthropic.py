@@ -330,23 +330,19 @@ class AnthropicModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
-        tools, strict_tools_requested = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, beta_features = self._add_builtin_tools(tools, model_request_parameters)
+        tools = self._get_tools(model_request_parameters, model_settings)
+        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
         native_format = self._native_output_format(model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
-        # Build betas list for SDK
-        betas: list[str] = list(beta_features)
-        if strict_tools_requested or native_format:
-            betas.append('structured-outputs-2025-11-13')
+        betas = self._get_required_betas(model_request_parameters)
+        betas.update(builtin_tool_betas)
 
         try:
-            # We use SDK's betas parameter instead of manual header manipulation
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
+            betas_list, extra_headers = self._prepare_betas_and_headers(betas, model_settings)
 
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -357,7 +353,7 @@ class AnthropicModel(Model):
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
                 output_format=native_format or OMIT,
-                betas=betas or OMIT,
+                betas=betas_list or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
@@ -383,15 +379,18 @@ class AnthropicModel(Model):
             raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
 
         # standalone function to make it easier to override
-        tools, _ = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, beta_features = self._add_builtin_tools(tools, model_request_parameters)
+        tools = self._get_tools(model_request_parameters, model_settings)
+        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
+        betas = self._get_required_betas(model_request_parameters)
+        betas.update(builtin_tool_betas)
+
         try:
-            extra_headers = self._map_extra_headers(beta_features, model_settings)
+            betas_list, extra_headers = self._prepare_betas_and_headers(betas, model_settings)
 
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -400,6 +399,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
+                betas=betas_list or OMIT,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
@@ -485,13 +485,10 @@ class AnthropicModel(Model):
 
     def _get_tools(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
-    ) -> tuple[list[BetaToolUnionParam], bool]:
+    ) -> list[BetaToolUnionParam]:
         tools: list[BetaToolUnionParam] = []
-        strict_tools_requested = False
         for tool_def in model_request_parameters.tool_defs.values():
             tools.append(self._map_tool_definition(tool_def))
-            if tool_def.strict and self.profile.supports_json_schema_output:
-                strict_tools_requested = True
 
         # Add cache_control to the last tool if enabled
         if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
@@ -500,12 +497,35 @@ class AnthropicModel(Model):
             last_tool = tools[-1]
             last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
-        return tools, strict_tools_requested
+        return tools
+
+    def _get_required_betas(self, model_request_parameters: ModelRequestParameters) -> set[str]:
+        """Determine which beta features are needed based on tools and output format.
+
+        Args:
+            model_request_parameters: Model request parameters containing tools and output settings
+
+        Returns:
+            Set of beta feature strings (naturally deduplicated)
+        """
+        betas: set[str] = set()
+
+        has_strict_tools = any(
+            tool_def.strict and self.profile.supports_json_schema_output
+            for tool_def in model_request_parameters.tool_defs.values()
+        )
+
+        has_native_output = model_request_parameters.output_mode == 'native'
+
+        if has_strict_tools or has_native_output:
+            betas.add('structured-outputs-2025-11-13')
+
+        return betas
 
     def _add_builtin_tools(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
-    ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], list[str]]:
-        beta_features: list[str] = []
+    ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
+        beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
@@ -522,14 +542,14 @@ class AnthropicModel(Model):
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
-                beta_features.append('code-execution-2025-05-22')
+                beta_features.add('code-execution-2025-05-22')
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
                 # Replace the memory tool definition with the built-in memory tool
                 tools = [tool for tool in tools if tool['name'] != 'memory']
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
-                beta_features.append('context-management-2025-06-27')
+                beta_features.add('context-management-2025-06-27')
             elif isinstance(tool, MCPServerTool) and tool.url:
                 mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
                     type='url',
@@ -544,7 +564,7 @@ class AnthropicModel(Model):
                 if tool.authorization_token:  # pragma: no cover
                     mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
                 mcp_servers.append(mcp_server_url_definition_param)
-                beta_features.append('mcp-client-2025-04-04')
+                beta_features.add('mcp-client-2025-04-04')
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
@@ -572,15 +592,33 @@ class AnthropicModel(Model):
 
             return tool_choice
 
-    def _map_extra_headers(self, beta_features: list[str], model_settings: AnthropicModelSettings) -> dict[str, str]:
-        """Apply beta_features to extra_headers in model_settings."""
+    def _prepare_betas_and_headers(
+        self, betas: set[str], model_settings: AnthropicModelSettings
+    ) -> tuple[list[str], dict[str, str]]:
+        """Prepare beta features list and extra headers for API request.
+
+        Handles merging custom anthropic-beta header from extra_headers into betas set
+        and ensuring User-Agent is set.
+
+        Args:
+            betas: Set of beta feature strings (naturally deduplicated)
+            model_settings: Model settings containing extra_headers
+
+        Returns:
+            Tuple of (betas list, extra_headers dict)
+        """
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
-        if beta_features:
-            if 'anthropic-beta' in extra_headers:
-                beta_features.insert(0, extra_headers['anthropic-beta'])
-            extra_headers['anthropic-beta'] = ','.join(beta_features)
-        return extra_headers
+
+        if 'anthropic-beta' in extra_headers:
+            beta_value = extra_headers['anthropic-beta']
+            for beta in beta_value.split(','):
+                beta_stripped = beta.strip()
+                if beta_stripped:
+                    betas.add(beta_stripped)
+            del extra_headers['anthropic-beta']
+
+        return sorted(betas), extra_headers
 
     async def _map_message(  # noqa: C901
         self,
