@@ -110,6 +110,10 @@ The situation is different for certain models:
 
 - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: if you provide a PDF document via `DocumentUrl`, the URL is sent directly in the API request, so no download happens on the user side.
 
+- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on GLA:
+    - YouTube video URLs are sent directly in the request to the model.
+    - Files uploaded to the [Files API](https://ai.google.dev/gemini-api/docs/files) (by prefix matching on `https://generativelanguage.googleapis.com/v1beta/files`)
+
 - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI: any URL provided using `ImageUrl`, `AudioUrl`, `VideoUrl`, or `DocumentUrl` is sent as-is in the API request and no data is downloaded beforehand.
 
   See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
@@ -120,4 +124,28 @@ The situation is different for certain models:
 
   However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct Pydantic AI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on GLA: YouTube video URLs are sent directly in the request to the model.
+## Example code for Gemini GLA
+
+Upload a file via Files API:
+
+```py {title="file_upload.py" test="skip" lint="skip"}
+from google import genai
+from pydantic_ai.messages import BinaryContent, DocumentUrl
+from io import BytesIO
+
+client = genai.Client(api_key=API_KEY)
+uploaded_file = client.files.upload(file=BytesIO(file_bytes), config={"mime_type": mimetype})
+user_prompt = ["Show me the money!", DocumentUrl(url=uploaded_file.uri, media_type=mimetype)]
+await agent.run(user_prompt)
+```
+
+Inline a file as a text part:
+
+```py {title="file_inline.py" test="skip" lint="skip"}
+from google import genai
+from pydantic_ai.messages import BinaryContent, DocumentUrl
+
+client = genai.Client(api_key=API_KEY)
+user_prompt = ["This seemed important at 3am", BinaryContent(data=file_bytes, media_type=mimetype)]
+await agent.run(user_prompt)
+```
