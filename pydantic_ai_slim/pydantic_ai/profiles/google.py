@@ -36,11 +36,6 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms the JSON Schema from Pydantic to be suitable for Gemini.
 
     Gemini supports [a subset of OpenAPI v3.0.3](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations).
-
-    Note: Gemini's tool calling system treats 'title' fields as callable function names,
-    causing MALFORMED_FUNCTION_CALL errors. This fixes issue #3483 where nested Pydantic models were
-    treated as tool calls instead of structured output schema. We remove 'title' from all schemas
-    since the function declaration name is set separately in the ToolDefinition.
     """
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -52,9 +47,7 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
         schema.pop('discriminator', None)
         schema.pop('examples', None)
 
-        # Remove 'title' - Gemini treats these as callable function names in tool calling mode,
-        # causing MALFORMED_FUNCTION_CALL errors. The title for the function declaration itself
-        # is set separately in the ToolDefinition, so we don't need it in the schema.
+        # Remove 'title' due to https://github.com/googleapis/python-genai/issues/1732
         schema.pop('title', None)
 
         type_ = schema.get('type')
