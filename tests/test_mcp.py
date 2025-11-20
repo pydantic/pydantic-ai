@@ -1977,6 +1977,13 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             # read_resource should return None
             result = await mcp_server.read_resource('resource://test')
             assert result is None
+async def test_instructions(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
+    ):
+        mcp_server.instructions
+    async with mcp_server:
+        assert mcp_server.instructions == 'Be a helpful assistant.'
 
 
 async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):
