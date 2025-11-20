@@ -38,7 +38,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GoogleModelProfile
+from ..profiles.google import GoogleJsonSchemaTransformer, GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -46,6 +46,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _customize_output_object,
+    _customize_tool_def,
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -244,6 +246,48 @@ class GoogleModel(Model):
                     f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        """Apply schema transformations, using inlining only for tools, not for NativeOutput."""
+        # Transform tools with inlining (default behavior of GoogleJsonSchemaTransformer)
+        model_request_parameters = replace(
+            model_request_parameters,
+            function_tools=[
+                _customize_tool_def(GoogleJsonSchemaTransformer, t) for t in model_request_parameters.function_tools
+            ],
+            output_tools=[
+                _customize_tool_def(GoogleJsonSchemaTransformer, t) for t in model_request_parameters.output_tools
+            ],
+        )
+
+        # For NativeOutput, use GoogleJsonSchemaTransformer with prefer_inlined_defs=False to keep $ref/$defs
+        if output_object := model_request_parameters.output_object:
+            from .._json_schema import JsonSchema
+
+            # Create a subclass that doesn't inline for output objects
+            class GoogleOutputSchemaTransformer(GoogleJsonSchemaTransformer):
+                def __init__(
+                    self,
+                    schema: JsonSchema,
+                    *,
+                    strict: bool | None = None,
+                    simplify_nullable_unions: bool = False,
+                ) -> None:
+                    # Call JsonSchemaTransformer.__init__ directly, skipping GoogleJsonSchemaTransformer.__init__
+                    # to avoid setting prefer_inlined_defs=True
+                    super(GoogleJsonSchemaTransformer, self).__init__(
+                        schema,
+                        strict=strict,
+                        prefer_inlined_defs=False,  # Don't inline for NativeOutput
+                        simplify_nullable_unions=simplify_nullable_unions,
+                    )
+
+            model_request_parameters = replace(
+                model_request_parameters,
+                output_object=_customize_output_object(GoogleOutputSchemaTransformer, output_object),
+            )
+
+        return model_request_parameters
 
     async def request(
         self,

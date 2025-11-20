@@ -36,7 +36,27 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms the JSON Schema from Pydantic to be suitable for Gemini.
 
     Gemini supports [a subset of OpenAPI v3.0.3](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations).
+
+    Note: Gemini's tool calling system treats 'title' fields in nested schemas as callable function names,
+    causing MALFORMED_FUNCTION_CALL errors. This fixes issue #3483 where nested Pydantic models were
+    treated as tool calls instead of structured output schema. We inline $ref definitions in tool schemas
+    so we can traverse and remove problematic titles.
     """
+
+    def __init__(
+        self,
+        schema: JsonSchema,
+        *,
+        strict: bool | None = None,
+        prefer_inlined_defs: bool = True,  # Inline by default for tools
+        simplify_nullable_unions: bool = False,
+    ):
+        super().__init__(
+            schema,
+            strict=strict,
+            prefer_inlined_defs=prefer_inlined_defs,
+            simplify_nullable_unions=simplify_nullable_unions,
+        )
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # Remove properties not supported by Gemini
@@ -46,6 +66,12 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
             schema['enum'] = [const]
         schema.pop('discriminator', None)
         schema.pop('examples', None)
+
+        # Remove 'title' from nested schemas - Gemini treats these as callable function names
+        # in tool calling mode, causing MALFORMED_FUNCTION_CALL errors for nested objects.
+        # Only keep title at the root level for the function declaration name.
+        if self.refs_stack:  # We're inside a nested schema
+            schema.pop('title', None)
 
         type_ = schema.get('type')
         if type_ == 'string' and (fmt := schema.pop('format', None)):
