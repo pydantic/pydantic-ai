@@ -54,7 +54,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -546,6 +546,8 @@ class OpenAIChatModel(Model):
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelHTTPError(status_code=0, model_name=self.model_name, body=str(e)) from e
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -1252,6 +1254,8 @@ class OpenAIResponsesModel(Model):
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelHTTPError(status_code=0, model_name=self.model_name, body=str(e)) from e
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)

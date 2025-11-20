@@ -570,6 +570,18 @@ async def test_fallback_condition_tuple() -> None:
     assert response.output == 'success'
 
 
+async def test_fallback_connection_error() -> None:
+    def connection_error_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=0, model_name='test-connection-model', body='Connection timed out')
+
+    connection_error_model = FunctionModel(connection_error_response)
+    fallback_model = FallbackModel(connection_error_model, success_model)
+    agent = Agent(model=fallback_model)
+
+    response = await agent.run('hello')
+    assert response.output == 'success'
+
+
 async def test_fallback_model_settings_merge():
     """Test that FallbackModel properly merges model settings from wrapped model and runtime settings."""
 

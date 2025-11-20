@@ -56,7 +56,7 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
@@ -1144,6 +1144,22 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")
+
+
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIConnectionError(
+            message='Connection to http://localhost:11434/v1 timed out',
+            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+        )
+    )
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.status_code == 0
+    assert exc_info.value.model_name == 'gpt-4o'
+    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.body)
 
 
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
