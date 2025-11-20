@@ -490,7 +490,7 @@ class AnthropicModel(Model):
         strict_tools_requested = False
         for tool_def in model_request_parameters.tool_defs.values():
             tools.append(self._map_tool_definition(tool_def))
-            if tool_def.strict:
+            if tool_def.strict and self.profile.supports_json_schema_output:
                 strict_tools_requested = True
 
         # Add cache_control to the last tool if enabled

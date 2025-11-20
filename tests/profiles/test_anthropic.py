@@ -1,3 +1,21 @@
+"""Tests for Anthropic JSON schema transformer and strict compatibility detection.
+
+The AnthropicJsonSchemaTransformer checks whether schemas are 'lossless' - meaning
+Anthropic's SDK won't drop validation constraints during transformation to their
+structured output format.
+
+When constraints would be dropped (making the schema 'lossy'), `is_strict_compatible`
+is set to False. This prevents automatic use of strict mode, which would make
+server-side validation impossible since the constraints wouldn't be enforced.
+
+Key concepts:
+- **Lossless**: Schema constraints are fully preserved by Anthropic's transformer
+- **Lossy**: SDK drops constraints (e.g., minLength, pattern, minItems > 1)
+- **Strict compatible**: Schema can safely use strict=True for guaranteed validation
+
+See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
+"""
+
 from __future__ import annotations as _annotations
 
 from typing import Annotated
@@ -57,6 +75,14 @@ def test_lossy_string_constraints():
 
     # SDK drops minLength, making it lossy
     assert transformer.is_strict_compatible is False
+    assert transformer.schema == snapshot(
+        {
+            'properties': {'username': {'minLength': 3, 'title': 'Username', 'type': 'string'}},
+            'required': ['username'],
+            'title': 'User',
+            'type': 'object',
+        }
+    )
 
 
 def test_lossy_number_constraints():
@@ -70,6 +96,14 @@ def test_lossy_number_constraints():
 
     # SDK drops minimum, making it lossy
     assert transformer.is_strict_compatible is False
+    assert transformer.schema == snapshot(
+        {
+            'properties': {'price': {'minimum': 0.0, 'title': 'Price', 'type': 'number'}},
+            'required': ['price'],
+            'title': 'Product',
+            'type': 'object',
+        }
+    )
 
 
 def test_lossy_pattern_constraint():
@@ -83,6 +117,16 @@ def test_lossy_pattern_constraint():
 
     # SDK drops pattern, making it lossy
     assert transformer.is_strict_compatible is False
+    assert transformer.schema == snapshot(
+        {
+            'properties': {
+                'address': {'pattern': '^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$', 'title': 'Address', 'type': 'string'}
+            },
+            'required': ['address'],
+            'title': 'Email',
+            'type': 'object',
+        }
+    )
 
 
 def test_transformer_output():

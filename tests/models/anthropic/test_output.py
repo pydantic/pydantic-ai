@@ -20,7 +20,7 @@ from ...conftest import IsNow, IsStr, try_import
 from ..test_anthropic import MockAnthropic, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropic
+    from anthropic import AsyncAnthropic, omit as OMIT
     from anthropic.types.beta import BetaMessage
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -268,7 +268,7 @@ def test_anthropic_strict_tools_sonnet_4_0(allow_model_requests: None, weather_t
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
-    betas = completion_kwargs.get('betas', [])
+    betas = completion_kwargs.get('betas')
     assert tools == snapshot(
         [
             {
@@ -283,7 +283,7 @@ def test_anthropic_strict_tools_sonnet_4_0(allow_model_requests: None, weather_t
             }
         ]
     )
-    assert betas == snapshot(['structured-outputs-2025-11-13'])
+    assert betas is OMIT
 
 
 async def test_anthropic_native_output_multiple(

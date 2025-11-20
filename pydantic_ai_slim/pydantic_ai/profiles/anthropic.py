@@ -9,7 +9,35 @@ from . import ModelProfile
 def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
     """Return True when `anthropic.transform_schema` won't need to drop constraints.
 
+    Anthropic's structured output API only supports a subset of JSON Schema features.
+    This function detects whether a schema uses only supported features, allowing us
+    to safely enable strict mode for guaranteed server-side validation.
+
     Checks are performed based on https://docs.claude.com/en/docs/build-with-claude/structured-outputs#how-sdk-transformation-works
+
+    Args:
+        schema: JSON Schema dictionary (typically from BaseModel.model_json_schema())
+
+    Returns:
+        True if schema is lossless (all constraints preserved), False if lossy
+
+    Examples:
+        Lossless schemas (constraints preserved):
+        >>> _schema_is_lossless({'type': 'string'})
+        True
+        >>> _schema_is_lossless({'type': 'object', 'properties': {'name': {'type': 'string'}}})
+        True
+
+        Lossy schemas (constraints dropped):
+        >>> _schema_is_lossless({'type': 'string', 'minLength': 5})
+        False
+        >>> _schema_is_lossless({'type': 'array', 'items': {'type': 'string'}, 'minItems': 2})
+        False
+
+    Note:
+        Some checks handle edge cases that rarely occur with Pydantic-generated schemas:
+        - oneOf: Pydantic generates anyOf for Union types
+        - Custom formats: Pydantic doesn't expose custom format generation in normal API
     """
     from anthropic.lib._parse._transform import SupportedStringFormats
 
