@@ -1532,9 +1532,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Then run with: uvicorn app:app --reload
             ```
         """
-        from ..ui.web import create_chat_app
+        from ..ui.web import create_web_app
 
-        return create_chat_app(self)
+        return create_web_app(self)
 
     @asynccontextmanager
     @deprecated(

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.ui.web import AIModel, BuiltinTool, create_chat_app
+from pydantic_ai.ui.web import AIModel, BuiltinTool, create_web_app
 
 
 def load_agent_options(
@@ -115,7 +115,7 @@ def run_web_command(
             print(f'Found config file: {default_config}')
             models, builtin_tools, builtin_tool_defs = load_agent_options(default_config)
 
-    app = create_chat_app(agent, models=models, builtin_tools=builtin_tools, builtin_tool_defs=builtin_tool_defs)
+    app = create_web_app(agent, models=models, builtin_tools=builtin_tools, builtin_tool_defs=builtin_tool_defs)
 
     print(f'\nStarting chat UI for {agent_path}...')
     print(f'Open your browser at: http://{host}:{port}')

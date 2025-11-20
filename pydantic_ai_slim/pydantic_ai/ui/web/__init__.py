@@ -10,10 +10,10 @@ from .agent_options import (
     BuiltinToolID,
 )
 from .api import create_api_router
-from .app import create_chat_app
+from .app import create_web_app
 
 __all__ = [
-    'create_chat_app',
+    'create_web_app',
     'create_api_router',
     'AI_MODELS',
     'BUILTIN_TOOL_DEFS',
