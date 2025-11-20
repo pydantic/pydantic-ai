@@ -41,6 +41,40 @@ print(result.output)
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
 ```
+```python {title="passing_api_key.py"}
+from pydantic_ai import Agent
+
+from pydantic_ai import Agent
+from pydantic_ai.providers.gateway import gateway_provider
+from pydantic_ai.models.openai import OpenAIChatModel
+
+provider = gateway_provider('openai', api_key='PYDANTIC_AI_GATEWAY_API_KEY')
+model = OpenAIChatModel('gpt-5', provider=provider)
+agent = Agent(model)
+
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
+```python {title="routing_via_provider.py"}
+from pydantic_ai import Agent
+
+from pydantic_ai import Agent
+from pydantic_ai.providers.gateway import gateway_provider
+from pydantic_ai.models.openai import OpenAIChatModel
+
+provider = gateway_provider('openai', api_key='PYDANTIC_AI_GATEWAY_API_KEY')
+model = OpenAIChatModel('gpt-5', provider=provider, route='modal-ai')
+agent = Agent(model)
+
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
 
 ## Quick Start
 
