@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import httpx
 import pytest
+import pytest_asyncio
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
@@ -303,7 +304,7 @@ def vcr_config():
     }
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     yield
     for provider in [
