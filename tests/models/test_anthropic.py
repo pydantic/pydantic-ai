@@ -6518,6 +6518,23 @@ This sentence is often used for testing typewriters, fonts, and keyboards becaus
     )
 
 
+async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
+    """Test that count_tokens is called on the mock client."""
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    assert result.output == 'hello world'
+    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert 'model' in count_tokens_kwargs
+    assert 'messages' in count_tokens_kwargs
+
+
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
     """Test that errors convert to ModelHTTPError."""

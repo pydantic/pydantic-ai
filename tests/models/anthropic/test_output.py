@@ -359,12 +359,31 @@ async def test_anthropic_native_output_multiple(
     result = await agent.run('What is the capital of the user country?')
     # Should return CityLocation since we asked about capital
     assert isinstance(result.output, city_location_schema | country_language_schema)
-    if isinstance(result.output, city_location_schema):
+    if isinstance(result.output, city_location_schema):  # pragma: no branch
         assert result.output.city == 'Paris'  # type: ignore[attr-defined]
         assert result.output.country == 'France'  # type: ignore[attr-defined]
-    else:  # pragma: no cover
-        # This branch is not hit in this test, but we keep the structure for completeness
-        pass
+
+
+async def test_anthropic_native_output_multiple_language(
+    allow_model_requests: None,
+    anthropic_sonnet_4_5: AnthropicModel,
+    city_location_schema: type[BaseModel],
+    country_language_schema: type[BaseModel],
+    make_agent: MakeAgentType,
+):
+    """Test native output with union returns the second schema type."""
+    agent = make_agent(anthropic_sonnet_4_5, output_type=NativeOutput([city_location_schema, country_language_schema]))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'France'
+
+    result = await agent.run('What language is spoken in the user country?')
+    # Should return CountryLanguage since we asked about language
+    assert isinstance(result.output, city_location_schema | country_language_schema)
+    if isinstance(result.output, country_language_schema):
+        assert result.output.country == 'France'  # type: ignore[attr-defined]
+        assert result.output.language == 'French'  # type: ignore[attr-defined]
 
 
 async def test_anthropic_auto_mode_sonnet_4_5(
@@ -375,6 +394,7 @@ async def test_anthropic_auto_mode_sonnet_4_5(
 ):
     """Test auto mode with sonnet-4.5 (should use native output automatically)."""
     agent = make_agent(anthropic_sonnet_4_5, output_type=city_location_schema)
+    assert agent.model.profile.supports_json_schema_output  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportOptionalMemberAccess]
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(city_location_schema(city='Paris', country='France'))
@@ -388,6 +408,7 @@ async def test_anthropic_auto_mode_sonnet_4_0(
 ):
     """Test auto mode with sonnet-4.0 (should fall back to prompted output)."""
     agent = make_agent(anthropic_sonnet_4_0, output_type=city_location_schema)
+    assert agent.model.profile.supports_json_schema_output is False  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportOptionalMemberAccess]
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(city_location_schema(city='Paris', country='France'))

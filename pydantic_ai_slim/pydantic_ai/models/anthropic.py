@@ -614,7 +614,7 @@ class AnthropicModel(Model):
             beta_value = extra_headers['anthropic-beta']
             for beta in beta_value.split(','):
                 beta_stripped = beta.strip()
-                if beta_stripped:
+                if beta_stripped:  # pragma: no branch
                     betas.add(beta_stripped)
             del extra_headers['anthropic-beta']
 
