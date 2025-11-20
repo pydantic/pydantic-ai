@@ -7480,11 +7480,101 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         )
 
         result = await agent.run('What is the capital of France?')
-        assert result.all_messages() == snapshot()
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['What is the capital of France?']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={'status': 'completed'},
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content='The capital of France is Paris.',
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=870, output_tokens=30, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
         messages = result.all_messages()
         result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
-        assert result.new_messages() == snapshot()
+        assert result.new_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Tell me about the Eiffel Tower.',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['Eiffel Tower']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={'status': 'completed'},
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content="""\
+I couldn't find any information about the Eiffel Tower in the provided documents. However, here's some general information:
+
+The Eiffel Tower is an iconic landmark located in Paris, France. It was designed by the engineer Gustave Eiffel and completed in 1889 for the World's Fair. Standing at 324 meters (1,063 feet), it was the tallest man-made structure in the world until the completion of the Chrysler Building in New York in 1930. The tower is a global cultural icon of France and one of the most recognizable structures in the world. It is also one of the most-visited paid monuments, attracting millions of tourists every year. \n\
+
+Would you like to know anything specific about the Eiffel Tower?\
+""",
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=887, output_tokens=160, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     finally:
         os.unlink(test_file_path)
@@ -7541,9 +7631,126 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
 
         assert agent_run.result is not None
         messages = agent_run.result.all_messages()
-        assert messages == snapshot()
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['What is the capital of France?']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={'status': 'completed'},
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content='The capital of France is Paris.',
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=1172, output_tokens=36, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
-        assert event_parts == snapshot()
+        assert event_parts == snapshot(
+            [
+                PartStartEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ),
+                PartDeltaEvent(
+                    index=0,
+                    delta=ToolCallPartDelta(
+                        args_delta={'queries': ['What is the capital of France?']},
+                        tool_call_id=IsStr(),
+                    ),
+                ),
+                PartEndEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'queries': ['What is the capital of France?']},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    next_part_kind='builtin-tool-return',
+                ),
+                PartStartEvent(
+                    index=1,
+                    part=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    previous_part_kind='builtin-tool-call',
+                ),
+                PartStartEvent(
+                    index=2,
+                    part=TextPart(content='The', id=IsStr()),
+                    previous_part_kind='builtin-tool-return',
+                ),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' capital')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' of')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' France')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' is')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' Paris')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='.')),
+                PartEndEvent(
+                    index=2,
+                    part=TextPart(
+                        content='The capital of France is Paris.',
+                        id=IsStr(),
+                    ),
+                ),
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'queries': ['What is the capital of France?']},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    )
+                ),
+                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                    result=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    )
+                ),
+            ]
+        )
 
     finally:
         os.unlink(test_file_path)

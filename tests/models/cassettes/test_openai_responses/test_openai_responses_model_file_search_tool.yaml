@@ -1,8 +1,8 @@
 interactions:
 - request:
-    body: "--fd762f12391a7b82b2e38f798aa375b2\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--fd762f12391a7b82b2e38f798aa375b2\r\nContent-Disposition:
-      form-data; name=\"file\"; filename=\"tmplnspxyy7.txt\"\r\nContent-Type: text/plain\r\n\r\nParis is the capital of France.
-      It is known for the Eiffel Tower.\r\n--fd762f12391a7b82b2e38f798aa375b2--\r\n"
+    body: "--ebe5e3e9ce6b7300181a8dbffc147456\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--ebe5e3e9ce6b7300181a8dbffc147456\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"tmppqk8yolf.txt\"\r\nContent-Type: text/plain\r\n\r\nParis is the capital of France.
+      It is known for the Eiffel Tower.\r\n--ebe5e3e9ce6b7300181a8dbffc147456--\r\n"
     headers:
       accept:
       - application/json
@@ -13,7 +13,7 @@ interactions:
       content-length:
       - '340'
       content-type:
-      - multipart/form-data; boundary=fd762f12391a7b82b2e38f798aa375b2
+      - multipart/form-data; boundary=ebe5e3e9ce6b7300181a8dbffc147456
       host:
       - api.openai.com
     method: POST
@@ -31,11 +31,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - gorka-vwlofr
+      - pydantic-28gund
       openai-processing-ms:
-      - '407'
+      - '299'
       openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -44,10 +44,10 @@ interactions:
       - chunked
     parsed_body:
       bytes: 65
-      created_at: 1763125403
+      created_at: 1763679014
       expires_at: null
-      filename: tmplnspxyy7.txt
-      id: file-TwEmVwerYdA9uxDAavz7Sm
+      filename: tmppqk8yolf.txt
+      id: file-5SYDnrNwrDK7shmFdZLZYJ
       object: file
       purpose: assistants
       status: processed
@@ -68,8 +68,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=RKNYJpF.fr83o29YtfWqR2P4pKtOyE38Hs2z.l1QtvY-1763125403-1.0.1.1-1JH38na3kg.cmXGkKy2P5EieFFvUuS9mvwsd6T_su4rO_.CgbjPMDuQyDAzA0cicp8YjnHmMXGubVV2GfmAlHcxGov67GEt_WxfMQKL7cMc;
-        _cfuvid=O30Q.z6fXVqgPZNxc8orj1BYvdZMYRJGfkty5ZTD8Gc-1763125403837-0.0.1.1-604800000
+      - __cf_bm=DsC.inynDkGDmfnXv4NNUqQLgIq84x95145.YA_FzXk-1763679014-1.0.1.1-Q_t53YBIxNllTEy7TRZ.UkqkFg3eq4iKBDhwwKVuVrFgLVuK1_1agn1NnbUsMNT0E9s3tRhKzmcJGOLy4e9NN7IFaWwdDAbCK7W0RaC7960;
+        _cfuvid=UicT82uY5GgDJp4DnxkfgSxnSIQ6nG3sk1pdJ.Fwr4M-1763679014585-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
@@ -89,11 +89,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - gorka-vwlofr
+      - pydantic-28gund
       openai-processing-ms:
-      - '459'
+      - '572'
       openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -101,7 +101,7 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1763125404
+      created_at: 1763679015
       description: null
       expires_after: null
       expires_at: null
@@ -111,8 +111,8 @@ interactions:
         failed: 0
         in_progress: 0
         total: 0
-      id: vs_6917289c55a8819195f653ab919e7a67
-      last_active_at: 1763125404
+      id: vs_691f9b2716c08191bd8a0d05c5008de1
+      last_active_at: 1763679015
       metadata: {}
       name: test-file-search
       object: vector_store
@@ -134,16 +134,16 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=RKNYJpF.fr83o29YtfWqR2P4pKtOyE38Hs2z.l1QtvY-1763125403-1.0.1.1-1JH38na3kg.cmXGkKy2P5EieFFvUuS9mvwsd6T_su4rO_.CgbjPMDuQyDAzA0cicp8YjnHmMXGubVV2GfmAlHcxGov67GEt_WxfMQKL7cMc;
-        _cfuvid=O30Q.z6fXVqgPZNxc8orj1BYvdZMYRJGfkty5ZTD8Gc-1763125403837-0.0.1.1-604800000
+      - __cf_bm=DsC.inynDkGDmfnXv4NNUqQLgIq84x95145.YA_FzXk-1763679014-1.0.1.1-Q_t53YBIxNllTEy7TRZ.UkqkFg3eq4iKBDhwwKVuVrFgLVuK1_1agn1NnbUsMNT0E9s3tRhKzmcJGOLy4e9NN7IFaWwdDAbCK7W0RaC7960;
+        _cfuvid=UicT82uY5GgDJp4DnxkfgSxnSIQ6nG3sk1pdJ.Fwr4M-1763679014585-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
       - assistants=v2
     method: POST
     parsed_body:
-      file_id: file-TwEmVwerYdA9uxDAavz7Sm
-    uri: https://api.openai.com/v1/vector_stores/vs_6917289c55a8819195f653ab919e7a67/files
+      file_id: file-5SYDnrNwrDK7shmFdZLZYJ
+    uri: https://api.openai.com/v1/vector_stores/vs_691f9b2716c08191bd8a0d05c5008de1/files
   response:
     headers:
       alt-svc:
@@ -155,11 +155,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - gorka-vwlofr
+      - pydantic-28gund
       openai-processing-ms:
-      - '1029'
+      - '958'
       openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -173,13 +173,13 @@ interactions:
           chunk_overlap_tokens: 400
           max_chunk_size_tokens: 800
         type: static
-      created_at: 1763125405
-      id: file-TwEmVwerYdA9uxDAavz7Sm
+      created_at: 1763679016
+      id: file-5SYDnrNwrDK7shmFdZLZYJ
       last_error: null
       object: vector_store.file
       status: in_progress
       usage_bytes: 0
-      vector_store_id: vs_6917289c55a8819195f653ab919e7a67
+      vector_store_id: vs_691f9b2716c08191bd8a0d05c5008de1
     status:
       code: 200
       message: OK
@@ -192,26 +192,27 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '237'
+      - '261'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=RKNYJpF.fr83o29YtfWqR2P4pKtOyE38Hs2z.l1QtvY-1763125403-1.0.1.1-1JH38na3kg.cmXGkKy2P5EieFFvUuS9mvwsd6T_su4rO_.CgbjPMDuQyDAzA0cicp8YjnHmMXGubVV2GfmAlHcxGov67GEt_WxfMQKL7cMc;
-        _cfuvid=O30Q.z6fXVqgPZNxc8orj1BYvdZMYRJGfkty5ZTD8Gc-1763125403837-0.0.1.1-604800000
+      - __cf_bm=DsC.inynDkGDmfnXv4NNUqQLgIq84x95145.YA_FzXk-1763679014-1.0.1.1-Q_t53YBIxNllTEy7TRZ.UkqkFg3eq4iKBDhwwKVuVrFgLVuK1_1agn1NnbUsMNT0E9s3tRhKzmcJGOLy4e9NN7IFaWwdDAbCK7W0RaC7960;
+        _cfuvid=UicT82uY5GgDJp4DnxkfgSxnSIQ6nG3sk1pdJ.Fwr4M-1763679014585-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - content: What is the capital of France according to my files?
+      - content: What is the capital of France?
         role: user
+      instructions: You are a helpful assistant.
       model: gpt-4o
       stream: false
       tool_choice: auto
       tools:
       - type: file_search
         vector_store_ids:
-        - vs_6917289c55a8819195f653ab919e7a67
+        - vs_691f9b2716c08191bd8a0d05c5008de1
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -220,29 +221,92 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '316'
+      - '2004'
       content-type:
       - application/json
       openai-organization:
-      - gorka-vwlofr
+      - pydantic-28gund
       openai-processing-ms:
-      - '5654'
+      - '2130'
       openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
     parsed_body:
-      error:
-        code: insufficient_quota
-        message: 'You exceeded your current quota, please check your plan and billing details. For more information on this
-          error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.'
-        param: null
-        type: insufficient_quota
+      background: false
+      billing:
+        payer: developer
+      created_at: 1763679019
+      error: null
+      id: resp_0807d60d5445886300691f9b2bc4148193b8e7221b12a9136b
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: fs_0807d60d5445886300691f9b2cc3f08193a11ab9cf8f735574
+        queries:
+        - What is the capital of France?
+        results: null
+        status: completed
+        type: file_search_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The capital of France is Paris.
+          type: output_text
+        id: msg_0807d60d5445886300691f9b2d7b708193a2e0789bcc41ef5f
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        max_num_results: 20
+        ranking_options:
+          ranker: auto
+          score_threshold: 0.0
+        type: file_search
+        vector_store_ids:
+        - vs_691f9b2716c08191bd8a0d05c5008de1
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 870
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 30
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 900
+      user: null
     status:
-      code: 429
-      message: Too Many Requests
+      code: 200
+      message: OK
 - request:
     headers:
       accept:
@@ -252,26 +316,31 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '237'
+      - '386'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=Fgv8VXYsVFkNpJoaV5k2xqRrnCT2E3AJPSombjem4qw-1763125414-1.0.1.1-pJyLvKftb9CXxtb.ALK9NbKLOTwSyzClLwrcF5AlkFFRgf5FAeFUpUsWdAN7dOA34DbQpPWLzxkTe5GAbiCgej2P_2GYd4Pe3ItN1F6quCM;
-        _cfuvid=r0QAZqilKF8jaeNpTZqoq8FdbnohvqTRdf_4Jf00qDk-1763125414734-0.0.1.1-604800000
+      - __cf_bm=E5f.uTRtWuVMWvVfIOlPnmO1VssA9e0wxm.ib6Am5PY-1763679021-1.0.1.1-Jy7.32_vn8tOGfOexRT6Q3s2w5kUE.99qJmB7KDtVCKlqpFuTCEJGwSFII_dqYG7CRuR_VO6mRShith0PiLMFsSsFMZHKSYYoxxSWDVGz3o;
+        _cfuvid=Qk6c2yE2yjyTQsPJH9hhq6EAYojWx242WTVJbNnFLLI-1763679021903-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - content: What is the capital of France according to my files?
+      - content: What is the capital of France?
         role: user
+      - content: The capital of France is Paris.
+        role: assistant
+      - content: Tell me about the Eiffel Tower.
+        role: user
+      instructions: You are a helpful assistant.
       model: gpt-4o
       stream: false
       tool_choice: auto
       tools:
       - type: file_search
         vector_store_ids:
-        - vs_6917289c55a8819195f653ab919e7a67
+        - vs_691f9b2716c08191bd8a0d05c5008de1
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -280,89 +349,98 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '316'
+      - '2662'
       content-type:
       - application/json
       openai-organization:
-      - gorka-vwlofr
+      - pydantic-28gund
       openai-processing-ms:
-      - '4833'
+      - '3916'
       openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
     parsed_body:
-      error:
-        code: insufficient_quota
-        message: 'You exceeded your current quota, please check your plan and billing details. For more information on this
-          error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.'
-        param: null
-        type: insufficient_quota
-    status:
-      code: 429
-      message: Too Many Requests
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '237'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=Fgv8VXYsVFkNpJoaV5k2xqRrnCT2E3AJPSombjem4qw-1763125414-1.0.1.1-pJyLvKftb9CXxtb.ALK9NbKLOTwSyzClLwrcF5AlkFFRgf5FAeFUpUsWdAN7dOA34DbQpPWLzxkTe5GAbiCgej2P_2GYd4Pe3ItN1F6quCM;
-        _cfuvid=r0QAZqilKF8jaeNpTZqoq8FdbnohvqTRdf_4Jf00qDk-1763125414734-0.0.1.1-604800000
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      input:
-      - content: What is the capital of France according to my files?
-        role: user
-      model: gpt-4o
-      stream: false
+      background: false
+      billing:
+        payer: developer
+      created_at: 1763679022
+      error: null
+      id: resp_048b7aacae0da42e00691f9b2e64008194bcd0b9ba860b2739
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: fs_048b7aacae0da42e00691f9b2efb188194b397bbe4e63570c8
+        queries:
+        - Eiffel Tower
+        results: null
+        status: completed
+        type: file_search_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "I couldn't find any information about the Eiffel Tower in the provided documents. However, here's some general
+            information:\n\nThe Eiffel Tower is an iconic landmark located in Paris, France. It was designed by the engineer
+            Gustave Eiffel and completed in 1889 for the World's Fair. Standing at 324 meters (1,063 feet), it was the tallest
+            man-made structure in the world until the completion of the Chrysler Building in New York in 1930. The tower is
+            a global cultural icon of France and one of the most recognizable structures in the world. It is also one of the
+            most-visited paid monuments, attracting millions of tourists every year. \n\nWould you like to know anything specific
+            about the Eiffel Tower?"
+          type: output_text
+        id: msg_048b7aacae0da42e00691f9b2fc864819481f12d02019a247b
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
       tool_choice: auto
       tools:
-      - type: file_search
+      - filters: null
+        max_num_results: 20
+        ranking_options:
+          ranker: auto
+          score_threshold: 0.0
+        type: file_search
         vector_store_ids:
-        - vs_6917289c55a8819195f653ab919e7a67
-    uri: https://api.openai.com/v1/responses
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '316'
-      content-type:
-      - application/json
-      openai-organization:
-      - gorka-vwlofr
-      openai-processing-ms:
-      - '5187'
-      openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-    parsed_body:
-      error:
-        code: insufficient_quota
-        message: 'You exceeded your current quota, please check your plan and billing details. For more information on this
-          error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.'
-        param: null
-        type: insufficient_quota
+        - vs_691f9b2716c08191bd8a0d05c5008de1
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 887
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 160
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 1047
+      user: null
     status:
-      code: 429
-      message: Too Many Requests
+      code: 200
+      message: OK
 - request:
     body: ''
     headers:
@@ -375,12 +453,12 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=Fgv8VXYsVFkNpJoaV5k2xqRrnCT2E3AJPSombjem4qw-1763125414-1.0.1.1-pJyLvKftb9CXxtb.ALK9NbKLOTwSyzClLwrcF5AlkFFRgf5FAeFUpUsWdAN7dOA34DbQpPWLzxkTe5GAbiCgej2P_2GYd4Pe3ItN1F6quCM;
-        _cfuvid=r0QAZqilKF8jaeNpTZqoq8FdbnohvqTRdf_4Jf00qDk-1763125414734-0.0.1.1-604800000
+      - __cf_bm=E5f.uTRtWuVMWvVfIOlPnmO1VssA9e0wxm.ib6Am5PY-1763679021-1.0.1.1-Jy7.32_vn8tOGfOexRT6Q3s2w5kUE.99qJmB7KDtVCKlqpFuTCEJGwSFII_dqYG7CRuR_VO6mRShith0PiLMFsSsFMZHKSYYoxxSWDVGz3o;
+        _cfuvid=Qk6c2yE2yjyTQsPJH9hhq6EAYojWx242WTVJbNnFLLI-1763679021903-0.0.1.1-604800000
       host:
       - api.openai.com
     method: DELETE
-    uri: https://api.openai.com/v1/files/file-TwEmVwerYdA9uxDAavz7Sm
+    uri: https://api.openai.com/v1/files/file-5SYDnrNwrDK7shmFdZLZYJ
   response:
     headers:
       access-control-allow-origin:
@@ -394,11 +472,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - gorka-vwlofr
+      - pydantic-28gund
       openai-processing-ms:
-      - '480'
+      - '653'
       openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -407,7 +485,7 @@ interactions:
       - chunked
     parsed_body:
       deleted: true
-      id: file-TwEmVwerYdA9uxDAavz7Sm
+      id: file-5SYDnrNwrDK7shmFdZLZYJ
       object: file
     status:
       code: 200
@@ -424,14 +502,14 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=zZriOwUmv1Y2.IdsgQfEu2.PbWWBSQAMzkiNmXbzdSw-1763125428-1.0.1.1-Dnu2P5fp9o9ejPoDFp_TEloLTeLBhjJqqv8doZjmD7UDgHoquLuxRgneQO.R5p0538sWc6ikJ1059hXubh16.MXcfUhzQZf8.R249I7IUYI;
-        _cfuvid=8VjGNOjHBN5czkSZDqqMq9_f_715Sefe7h9mgEAnpCI-1763125428093-0.0.1.1-604800000
+      - __cf_bm=Noytj27FWeTM2taPxfXsTMm3RZCX9WCVTg8bAHrfPd4-1763679027-1.0.1.1-paKZxZ9hNmxXkvQQ1kSO_t9ni6lkeTd4GWcSNMKnsiQHQeJ5LQJCYuj5Ql3jzk9QMMIMfcQvrkHjqXZgGSYUR6SNI._VvAuwCDFNdYXeFjo;
+        _cfuvid=HgTw7lpyYeugLiNgSJm_t2tP6c8Z6R2tauCQgk4jtt4-1763679027076-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
       - assistants=v2
     method: DELETE
-    uri: https://api.openai.com/v1/vector_stores/vs_6917289c55a8819195f653ab919e7a67
+    uri: https://api.openai.com/v1/vector_stores/vs_691f9b2716c08191bd8a0d05c5008de1
   response:
     headers:
       alt-svc:
@@ -443,11 +521,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - gorka-vwlofr
+      - pydantic-28gund
       openai-processing-ms:
-      - '1037'
+      - '1707'
       openai-project:
-      - proj_7T2nBX70yG13ymHaKhJZkfSd
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -456,7 +534,7 @@ interactions:
       - chunked
     parsed_body:
       deleted: true
-      id: vs_6917289c55a8819195f653ab919e7a67
+      id: vs_691f9b2716c08191bd8a0d05c5008de1
       object: vector_store.deleted
     status:
       code: 200
