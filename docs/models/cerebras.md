@@ -2,7 +2,7 @@
 
 ## Install
 
-To use `CerebrasModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `cerebras` optional group (which installs the `cerebras-cloud-sdk`):
+To use `CerebrasModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `cerebras` optional group (which installs `openai`):
 
 ```bash
 pip install "pydantic-ai-slim[cerebras]"

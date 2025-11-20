@@ -819,7 +819,7 @@ def infer_model(  # noqa: C901
     if model_kind == 'cerebras':
         from .cerebras import CerebrasModel
 
-        return CerebrasModel(model_name, provider=provider)
+        return CerebrasModel(model_name, provider=provider)  # type: ignore[arg-type]
     elif model_kind == 'openai-chat':
         from .openai import OpenAIChatModel
 
