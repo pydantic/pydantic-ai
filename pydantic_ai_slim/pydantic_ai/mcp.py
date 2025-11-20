@@ -83,14 +83,11 @@ class MCPError(RuntimeError):
         super().__init__(message)
 
     @classmethod
-    def from_mcp_sdk_error(cls, error: mcp_exceptions.McpError) -> MCPError:
+    def from_mcp_sdk(cls, error: mcp_exceptions.McpError) -> MCPError:
         """Create an MCPError from an MCP SDK McpError.
 
         Args:
             error: An McpError from the MCP SDK.
-
-        Returns:
-            A new MCPError instance with the error data.
         """
         # Extract error data from the McpError.error attribute
         error_data = error.error
@@ -549,7 +546,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             try:
                 result = await self._client.list_resources()
             except mcp_exceptions.McpError as e:
-                raise MCPError.from_mcp_sdk_error(e) from e
+                raise MCPError.from_mcp_sdk(e) from e
         return [Resource.from_mcp_sdk(r) for r in result.resources]
 
     async def list_resource_templates(self) -> list[ResourceTemplate]:
@@ -564,7 +561,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             try:
                 result = await self._client.list_resource_templates()
             except mcp_exceptions.McpError as e:
-                raise MCPError.from_mcp_sdk_error(e) from e
+                raise MCPError.from_mcp_sdk(e) from e
         return [ResourceTemplate.from_mcp_sdk(t) for t in result.resourceTemplates]
 
     @overload
@@ -595,7 +592,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             try:
                 result = await self._client.read_resource(AnyUrl(resource_uri))
             except mcp_exceptions.McpError as e:
-                raise MCPError.from_mcp_sdk_error(e) from e
+                raise MCPError.from_mcp_sdk(e) from e
 
         return (
             self._get_content(result.contents[0])
