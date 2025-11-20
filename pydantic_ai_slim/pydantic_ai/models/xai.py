@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 try:
     import xai_sdk.chat as chat_types
@@ -312,12 +312,10 @@ class XaiModel(Model):
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse."""
-        from typing import cast
-
         parts: list[ModelResponsePart] = []
 
         # Add reasoning/thinking content first if present
-        if hasattr(response, 'reasoning_content') and response.reasoning_content:
+        if response.reasoning_content:
             # reasoning_content is the human-readable summary
             parts.append(
                 ThinkingPart(
@@ -326,7 +324,7 @@ class XaiModel(Model):
                     provider_name='xai',
                 )
             )
-        elif hasattr(response, 'encrypted_content') and response.encrypted_content:
+        elif response.encrypted_content:
             # encrypted_content is a signature that can be sent back for reasoning continuity
             parts.append(
                 ThinkingPart(
@@ -343,14 +341,13 @@ class XaiModel(Model):
             # In real responses, we can use get_tool_call_type()
             # In mock responses, we default to client-side tools
             is_server_side_tool = False
-            if hasattr(tool_call, 'type'):
-                try:
-                    tool_type = get_tool_call_type(tool_call)
-                    # If it's not a client-side tool, it's a server-side tool
-                    is_server_side_tool = tool_type != 'client_side_tool'
-                except Exception:
-                    # If we can't determine the type, treat as client-side
-                    pass
+            try:
+                tool_type = get_tool_call_type(tool_call)
+                # If it's not a client-side tool, it's a server-side tool
+                is_server_side_tool = tool_type != 'client_side_tool'
+            except Exception:
+                # If we can't determine the type, treat as client-side
+                pass
 
             if is_server_side_tool:
                 # Server-side tools are executed by xAI, so we add both call and return parts
@@ -410,7 +407,7 @@ class XaiModel(Model):
             model_name=self._model_name,
             timestamp=now_utc(),
             provider_name='xai',
-            provider_response_id=response.id if hasattr(response, 'id') else None,
+            provider_response_id=response.id,
             finish_reason=finish_reason,
         )
 
@@ -427,43 +424,38 @@ class XaiModel(Model):
         - cache_read_tokens: Tokens read from prompt cache
         - server_side_tools_used: Count of server-side (built-in) tools executed
         """
-        if not hasattr(response, 'usage'):
+        if not response.usage:
             return RequestUsage()
 
-        usage_obj = getattr(response, 'usage', None)
-        if not usage_obj:
-            return RequestUsage()
+        usage_obj = response.usage
 
-        prompt_tokens = getattr(usage_obj, 'prompt_tokens', 0)
-        completion_tokens = getattr(usage_obj, 'completion_tokens', 0)
+        prompt_tokens = usage_obj.prompt_tokens or 0
+        completion_tokens = usage_obj.completion_tokens or 0
 
         # Build details dict for additional usage metrics
         details: dict[str, int] = {}
 
-        # Add reasoning tokens if available
-        if hasattr(usage_obj, 'reasoning_tokens'):
-            reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', 0)
-            if reasoning_tokens:
-                details['reasoning_tokens'] = reasoning_tokens
+        # Add reasoning tokens if available (optional attribute)
+        reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', None)
+        if reasoning_tokens:
+            details['reasoning_tokens'] = reasoning_tokens
 
-        # Add cached prompt tokens if available
-        if hasattr(usage_obj, 'cached_prompt_text_tokens'):
-            cached_tokens = getattr(usage_obj, 'cached_prompt_text_tokens', 0)
-            if cached_tokens:
-                details['cache_read_tokens'] = cached_tokens
+        # Add cached prompt tokens if available (optional attribute)
+        cached_tokens = getattr(usage_obj, 'cached_prompt_text_tokens', None)
+        if cached_tokens:
+            details['cache_read_tokens'] = cached_tokens
 
-        # Add server-side tools used count if available
-        if hasattr(usage_obj, 'server_side_tools_used'):
-            server_side_tools = getattr(usage_obj, 'server_side_tools_used', None)
+        # Add server-side tools used count if available (optional attribute)
+        server_side_tools = getattr(usage_obj, 'server_side_tools_used', None)
+        if server_side_tools:
             # server_side_tools_used is a repeated field (list-like) in the real SDK
             # but may be an int in mocks for simplicity
-            if server_side_tools:
-                if isinstance(server_side_tools, int):
-                    tools_count = server_side_tools
-                else:
-                    tools_count = len(server_side_tools)
-                if tools_count:
-                    details['server_side_tools_used'] = tools_count
+            if isinstance(server_side_tools, int):
+                tools_count = server_side_tools
+            else:
+                tools_count = len(server_side_tools)
+            if tools_count:
+                details['server_side_tools_used'] = tools_count
 
         if details:
             return RequestUsage(
@@ -489,18 +481,16 @@ class XaiStreamedResponse(StreamedResponse):
 
     def _update_response_state(self, response: Any) -> None:
         """Update response state including usage, response ID, and finish reason."""
-        from typing import cast
-
         # Update usage
-        if hasattr(response, 'usage'):
+        if response.usage:
             self._usage = XaiModel.extract_usage(response)
 
         # Set provider response ID
-        if hasattr(response, 'id') and self.provider_response_id is None:
+        if response.id and self.provider_response_id is None:
             self.provider_response_id = response.id
 
         # Handle finish reason
-        if hasattr(response, 'finish_reason') and response.finish_reason:
+        if response.finish_reason:
             finish_reason_map = {
                 'stop': 'stop',
                 'length': 'length',
@@ -517,7 +507,7 @@ class XaiStreamedResponse(StreamedResponse):
         if reasoning_handled:
             return
 
-        if hasattr(response, 'reasoning_content') and response.reasoning_content:
+        if response.reasoning_content:
             # reasoning_content is the human-readable summary
             thinking_part = ThinkingPart(
                 content=response.reasoning_content,
@@ -525,7 +515,7 @@ class XaiStreamedResponse(StreamedResponse):
                 provider_name='xai',
             )
             yield self._parts_manager.handle_part(vendor_part_id='reasoning', part=thinking_part)
-        elif hasattr(response, 'encrypted_content') and response.encrypted_content:
+        elif response.encrypted_content:
             # encrypted_content is a signature that can be sent back for reasoning continuity
             thinking_part = ThinkingPart(
                 content='',  # No readable content for encrypted-only reasoning
@@ -536,7 +526,7 @@ class XaiStreamedResponse(StreamedResponse):
 
     def _handle_text_delta(self, chunk: Any) -> Iterator[ModelResponseStreamEvent]:
         """Handle text content delta from chunk."""
-        if hasattr(chunk, 'content') and chunk.content:
+        if chunk.content:
             event = self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=chunk.content,
@@ -546,17 +536,16 @@ class XaiStreamedResponse(StreamedResponse):
 
     def _handle_single_tool_call(self, tool_call: Any) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single tool call, routing to server-side or client-side handler."""
-        if not (hasattr(tool_call.function, 'name') and tool_call.function.name):
+        if not tool_call.function.name:
             return
 
         # Determine if this is a server-side (built-in) tool
         is_server_side_tool = False
-        if hasattr(tool_call, 'type'):
-            try:
-                tool_type = get_tool_call_type(tool_call)
-                is_server_side_tool = tool_type != 'client_side_tool'
-            except Exception:
-                pass  # Treat as client-side if we can't determine
+        try:
+            tool_type = get_tool_call_type(tool_call)
+            is_server_side_tool = tool_type != 'client_side_tool'
+        except Exception:
+            pass  # Treat as client-side if we can't determine
 
         if is_server_side_tool:
             # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
@@ -588,7 +577,7 @@ class XaiStreamedResponse(StreamedResponse):
 
     def _handle_tool_calls(self, response: Any) -> Iterator[ModelResponseStreamEvent]:
         """Handle tool calls (both client-side and server-side)."""
-        if not hasattr(response, 'tool_calls'):
+        if not response.tool_calls:
             return
 
         for tool_call in response.tool_calls:
