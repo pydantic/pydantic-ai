@@ -210,6 +210,7 @@ When cache points from all sources (settings + `CachePoint` markers) exceed 4, P
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
+
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Instructions...',
