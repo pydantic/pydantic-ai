@@ -380,10 +380,9 @@ async def test_anthropic_native_output_multiple_language(
 
     result = await agent.run('What language is spoken in the user country?')
     # Should return CountryLanguage since we asked about language
-    assert isinstance(result.output, city_location_schema | country_language_schema)
-    if isinstance(result.output, country_language_schema):
-        assert result.output.country == 'France'  # type: ignore[attr-defined]
-        assert result.output.language == 'French'  # type: ignore[attr-defined]
+    assert isinstance(result.output, country_language_schema), 're run test until llm outputs country_language_schema'
+    assert result.output.country == 'France'  # type: ignore[attr-defined]
+    assert result.output.language == 'French'  # type: ignore[attr-defined]
 
 
 async def test_anthropic_auto_mode_sonnet_4_5(
