@@ -610,13 +610,12 @@ class AnthropicModel(Model):
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
 
-        if 'anthropic-beta' in extra_headers:
-            beta_value = extra_headers['anthropic-beta']
-            for beta in beta_value.split(','):
-                beta_stripped = beta.strip()
-                if beta_stripped:  # pragma: no branch
-                    betas.add(beta_stripped)
-            del extra_headers['anthropic-beta']
+        if beta_header := extra_headers.pop('anthropic-beta', None):
+            betas.update({
+                stripped_beta 
+                for beta in beta_header.split(',') 
+                if (stripped_beta := beta.strip())
+            })
 
         return sorted(betas), extra_headers
 
