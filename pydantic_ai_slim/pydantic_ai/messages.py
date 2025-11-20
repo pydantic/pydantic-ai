@@ -545,11 +545,11 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
-        media_type, _ = guess_type(path.as_posix())
+        media_type, _ = guess_type(path)
         if media_type is None:
             media_type = 'application/octet-stream'
 
-        return cls(data=path.read_bytes(), media_type=media_type)
+        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
 
     @pydantic.computed_field
     @property

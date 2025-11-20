@@ -615,7 +615,7 @@ def test_binary_content_validation_with_optional_identifier():
     )
 
 
-def test_file_part_from_path(tmp_path: Path):
+def test_binary_content_from_path(tmp_path: Path):
     # test normal file
     test_xml_file = tmp_path / 'test.xml'
     test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
@@ -632,3 +632,18 @@ def test_file_part_from_path(tmp_path: Path):
     test_unknown_file.write_text('some content', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_unknown_file)
     assert binary_content == snapshot(BinaryContent(data=b'some content', media_type='application/octet-stream'))
+
+    # test string path
+    test_txt_file = tmp_path / 'test.txt'
+    test_txt_file.write_text('just some text', encoding='utf-8')
+    string_path = test_txt_file.as_posix()
+    binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
+    assert binary_content == snapshot(BinaryContent(data=b'just some text', media_type='text/plain'))
+
+    # test image file
+    test_jpg_file = tmp_path / 'test.jpg'
+    test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
+    binary_content = BinaryContent.from_path(test_jpg_file)
+    assert binary_content == snapshot(
+        BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
+    )
