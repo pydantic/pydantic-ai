@@ -1003,6 +1003,9 @@ class TextPart:
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format."""
+
     def has_content(self) -> bool:
         """Return `True` if the text content is non-empty."""
         return bool(self.content)
@@ -1042,6 +1045,9 @@ class ThinkingPart:
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format."""
+
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
         return bool(self.content)
@@ -1067,6 +1073,9 @@ class FilePart:
 
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format."""
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
@@ -1100,6 +1109,9 @@ class BaseToolCallPart:
     """An optional identifier of the tool call part, separate from the tool call ID.
 
     This is used by some APIs like OpenAI Responses."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -1436,6 +1448,9 @@ class TextPartDelta:
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format."""
+
     def apply(self, part: ModelResponsePart) -> TextPart:
         """Apply this text delta to an existing `TextPart`.
 
@@ -1476,6 +1491,9 @@ class ThinkingPartDelta:
 
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format."""
 
     @overload
     def apply(self, part: ModelResponsePart) -> ThinkingPart: ...
@@ -1539,6 +1557,9 @@ class ToolCallPartDelta:
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
     """Part delta type identifier, used as a discriminator."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format."""
 
     def as_part(self) -> ToolCallPart | None:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.

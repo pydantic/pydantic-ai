@@ -451,6 +451,7 @@ def test_file_part_serialization_roundtrip():
                         'id': None,
                         'provider_name': None,
                         'part_kind': 'file',
+                        'provider_details': None,
                     }
                 ],
                 'usage': {
