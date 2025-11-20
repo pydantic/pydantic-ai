@@ -103,3 +103,100 @@ def test_transformer_output():
             'additionalProperties': False,
         }
     )
+
+
+def test_lossy_array_with_constrained_items():
+    """Array with lossy item schema should be lossy."""
+
+    class Container(BaseModel):
+        items: list[Annotated[str, Field(min_length=5)]]
+
+    transformer = AnthropicJsonSchemaTransformer(Container.model_json_schema(), strict=True)
+    transformer.walk()
+
+    # Array items with constraints are lossy
+    assert transformer.is_strict_compatible is False
+    assert transformer.schema == snapshot(
+        {
+            'properties': {'items': {'items': {'minLength': 5, 'type': 'string'}, 'title': 'Items', 'type': 'array'}},
+            'required': ['items'],
+            'title': 'Container',
+            'type': 'object',
+        }
+    )
+
+
+def test_lossy_array_min_items():
+    """Array with minItems > 1 should be lossy (constraint gets dropped)."""
+
+    class ItemList(BaseModel):
+        items: Annotated[list[str], Field(min_length=2)]
+
+    transformer = AnthropicJsonSchemaTransformer(ItemList.model_json_schema(), strict=True)
+    transformer.walk()
+
+    # SDK drops minItems > 1, making it lossy
+    assert transformer.is_strict_compatible is False
+    assert transformer.schema == snapshot(
+        {
+            'properties': {'items': {'items': {'type': 'string'}, 'minItems': 2, 'title': 'Items', 'type': 'array'}},
+            'required': ['items'],
+            'title': 'ItemList',
+            'type': 'object',
+        }
+    )
+
+
+def test_lossy_unsupported_string_format():
+    """String with unsupported format should be lossy (format gets dropped)."""
+    # Note: Using raw schema because Pydantic doesn't expose custom format generation in normal API
+    schema = {
+        'type': 'object',
+        'properties': {
+            'value': {
+                'type': 'string',
+                'format': 'regex',  # Unsupported format (not in SupportedStringFormats)
+            }
+        },
+        'required': ['value'],
+    }
+
+    transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
+    transformer.walk()
+
+    # SDK drops unsupported formats, making it lossy
+    assert transformer.is_strict_compatible is False
+    assert transformer.schema == snapshot(
+        {'type': 'object', 'properties': {'value': {'type': 'string', 'format': 'regex'}}, 'required': ['value']}
+    )
+
+
+def test_lossy_nested_defs():
+    """Schema with $defs containing nested schemas with constraints should be lossy."""
+
+    class ConstrainedString(BaseModel):
+        value: Annotated[str, Field(min_length=5)]
+
+    class Container(BaseModel):
+        item: ConstrainedString
+
+    transformer = AnthropicJsonSchemaTransformer(Container.model_json_schema(), strict=True)
+    transformer.walk()
+
+    # Nested schema in $defs has constraints, making it lossy
+    assert transformer.is_strict_compatible is False
+    assert transformer.schema == snapshot(
+        {
+            '$defs': {
+                'ConstrainedString': {
+                    'properties': {'value': {'minLength': 5, 'type': 'string'}},
+                    'required': ['value'],
+                    'type': 'object',
+                }
+            },
+            'properties': {'item': {'$ref': '#/$defs/ConstrainedString'}},
+            'required': ['item'],
+            'title': 'Container',
+            'type': 'object',
+        }
+    )

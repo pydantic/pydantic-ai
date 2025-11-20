@@ -14,7 +14,7 @@ def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
     from anthropic.lib._parse._transform import SupportedStringFormats
 
     def _walk(node: JsonSchema) -> bool:  # noqa: C901
-        if not isinstance(node, dict):
+        if not isinstance(node, dict):  # pragma: no cover
             return False
 
         node = dict(node)
@@ -41,7 +41,8 @@ def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
         # the wrapper object must not have any other unsupported fields -> `and not node`
         if isinstance(any_of, list):
             return all(_walk(item) for item in any_of) and not node  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        if isinstance(one_of, list):
+        if isinstance(one_of, list):  # pragma: no cover
+            # pydantic generates anyOf for Union types, leaving this here for JSON schemas that don't come from pydantic.BaseModel
             return all(_walk(item) for item in one_of) and not node  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
         if isinstance(all_of, list):
             return all(_walk(item) for item in all_of) and not node  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
@@ -68,7 +69,7 @@ def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
                 return False
         elif type_ == 'string':
             format_ = node.pop('format', None)
-            if format_ is not None and format_ not in SupportedStringFormats:
+            if format_ is not None and format_ not in SupportedStringFormats:  # pragma: no cover
                 return False
         elif type_ in {'integer', 'number', 'boolean', 'null'}:
             pass
