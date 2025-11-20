@@ -44,6 +44,9 @@ class ModelRetry(Exception):
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, self.__class__) and other.message == self.message
 
+    def __hash__(self) -> int:
+        return hash((self.__class__, self.message))
+
     @classmethod
     def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
         """Pydantic core schema to allow `ModelRetry` to be (de)serialized."""
@@ -67,18 +70,30 @@ class CallDeferred(Exception):
     """Exception to raise when a tool call should be deferred.
 
     See [tools docs](../deferred-tools.md#deferred-tools) for more information.
+
+    Args:
+        metadata: Optional dictionary of metadata to attach to the deferred tool call.
+            This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
     """
 
-    pass
+    def __init__(self, metadata: dict[str, Any] | None = None):
+        self.metadata = metadata
+        super().__init__()
 
 
 class ApprovalRequired(Exception):
     """Exception to raise when a tool call requires human-in-the-loop approval.
 
     See [tools docs](../deferred-tools.md#human-in-the-loop-tool-approval) for more information.
+
+    Args:
+        metadata: Optional dictionary of metadata to attach to the deferred tool call.
+            This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
     """
 
-    pass
+    def __init__(self, metadata: dict[str, Any] | None = None):
+        self.metadata = metadata
+        super().__init__()
 
 
 class UserError(RuntimeError):

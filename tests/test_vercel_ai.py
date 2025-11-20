@@ -1175,14 +1175,12 @@ async def test_run_stream_builtin_tool_call():
         yield {
             1: BuiltinToolReturnPart(
                 tool_name=WebSearchTool.kind,
-                content={
-                    'results': [
-                        {
-                            'title': '"Hello, World!" program',
-                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
-                        }
-                    ]
-                },
+                content=[
+                    {
+                        'title': '"Hello, World!" program',
+                        'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                    }
+                ],
                 tool_call_id='search_1',
                 provider_name='function',
             )
@@ -1218,21 +1216,19 @@ async def test_run_stream_builtin_tool_call():
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
                 'toolName': 'web_search',
-                'input': '{"query":"Hello world"}',
+                'input': {'query': 'Hello world'},
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'function'}},
             },
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'search_1',
-                'output': {
-                    'results': [
-                        {
-                            'title': '"Hello, World!" program',
-                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
-                        }
-                    ]
-                },
+                'output': [
+                    {
+                        'title': '"Hello, World!" program',
+                        'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                    }
+                ],
                 'providerExecuted': True,
             },
             {'type': 'text-start', 'id': IsStr()},
@@ -1310,7 +1306,7 @@ async def test_run_stream_tool_call():
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
                 'toolName': 'web_search',
-                'input': '{"query":"Hello world"}',
+                'input': {'query': 'Hello world'},
             },
             {
                 'type': 'tool-output-available',
@@ -1429,9 +1425,13 @@ async def test_run_stream_output_tool():
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
                 'toolName': 'final_result',
-                'input': '{"query":"Hello world"}',
+                'input': {'query': 'Hello world'},
             },
-            {'type': 'tool-output-available', 'toolCallId': 'search_1', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'search_1',
+                'output': 'Final result processed.',
+            },
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -1476,11 +1476,7 @@ async def test_run_stream_response_error():
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': IsStr(),
-                'toolName': 'unknown_tool',
-            },
+            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
@@ -1497,11 +1493,7 @@ Fix the errors and try again.\
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': IsStr(),
-                'toolName': 'unknown_tool',
-            },
+            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
             {'type': 'error', 'errorText': 'Exceeded maximum retries (1) for output validation'},
             {'type': 'finish-step'},
             {'type': 'finish'},

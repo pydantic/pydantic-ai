@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 import anyio
 import anyio.to_thread
+from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import (
@@ -18,6 +19,7 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FinishReason,
     ImageUrl,
@@ -39,7 +41,7 @@ from pydantic_ai import (
     usage,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
@@ -59,6 +61,7 @@ if TYPE_CHECKING:
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
+        CountTokensRequestTypeDef,
         DocumentBlockTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
@@ -74,7 +77,6 @@ if TYPE_CHECKING:
         ToolTypeDef,
         VideoBlockTypeDef,
     )
-
 
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
@@ -104,6 +106,13 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-opus-4-20250514-v1:0',
     'anthropic.claude-sonnet-4-20250514-v1:0',
     'us.anthropic.claude-sonnet-4-20250514-v1:0',
+    'eu.anthropic.claude-sonnet-4-20250514-v1:0',
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'anthropic.claude-haiku-4-5-20251001-v1:0',
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
     'cohere.command-text-v14',
     'cohere.command-r-v1:0',
     'cohere.command-r-plus-v1:0',
@@ -134,7 +143,6 @@ Since Bedrock supports a variety of date-stamped models, we explicitly list the 
 See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for a full list.
 """
 
-
 P = ParamSpec('P')
 T = typing.TypeVar('T')
 
@@ -146,6 +154,13 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
+
+_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.')
+"""Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
+
+Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
+which does not accept profile IDs. Extend if new geos appear (e.g., 'global.', 'us-gov.').
+"""
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -226,7 +241,7 @@ class BedrockConverseModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/converse' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
 
@@ -272,6 +287,34 @@ class BedrockConverseModel(Model):
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
         return model_response
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count the number of tokens, works with limited models.
+
+        Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
+        """
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
+        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters)
+        params: CountTokensRequestTypeDef = {
+            'modelId': self._remove_inference_geo_prefix(self.model_name),
+            'input': {
+                'converse': {
+                    'messages': bedrock_messages,
+                    'system': system_prompt,
+                },
+            },
+        }
+        try:
+            response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
+        except ClientError as e:
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
+            raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+        return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
     async def request_stream(
@@ -408,10 +451,16 @@ class BedrockConverseModel(Model):
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
 
-        if stream:
-            model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
-        else:
-            model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+        try:
+            if stream:
+                model_response = await anyio.to_thread.run_sync(
+                    functools.partial(self.client.converse_stream, **params)
+                )
+            else:
+                model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+        except ClientError as e:
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
+            raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
         return model_response
 
     @staticmethod
@@ -624,6 +673,9 @@ class BedrockConverseModel(Model):
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
+                elif isinstance(item, CachePoint):
+                    # Bedrock support has not been implemented yet: https://github.com/pydantic/pydantic-ai/issues/3418
+                    pass
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -633,6 +685,14 @@ class BedrockConverseModel(Model):
         return {
             'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
         }
+
+    @staticmethod
+    def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
+        """Remove inference geographic prefix from model ID if present."""
+        for prefix in _AWS_BEDROCK_INFERENCE_GEO_PREFIXES:
+            if model_name.startswith(prefix):
+                return model_name.removeprefix(prefix)
+        return model_name
 
 
 @dataclass

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
+    cast,
 )
 
 from ... import ExternalToolset, ToolDefinition
@@ -107,7 +108,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     @cached_property
     def state(self) -> dict[str, Any] | None:
         """Frontend state from the AG-UI run input."""
-        return self.run_input.state
+        state = self.run_input.state
+        if state is None:
+            return None
+
+        if isinstance(state, Mapping) and not state:
+            return None
+
+        return cast('dict[str, Any]', state)
 
     @classmethod
     def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:

@@ -612,8 +612,31 @@ class BinaryImage(BinaryContent):
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
 
 
+@dataclass
+class CachePoint:
+    """A cache point marker for prompt caching.
+
+    Can be inserted into UserPromptPart.content to mark cache boundaries.
+    Models that don't support caching will filter these out.
+
+    Supported by:
+
+    - Anthropic
+    """
+
+    kind: Literal['cache-point'] = 'cache-point'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    ttl: Literal['5m', '1h'] = '5m'
+    """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour).
+
+    Supported by:
+
+    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+
+
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
-UserContent: TypeAlias = str | MultiModalContent
+UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
 @dataclass(repr=False)
@@ -730,6 +753,9 @@ class UserPromptPart:
                 if settings.include_content and settings.include_binary_content:
                     converted_part['content'] = base64.b64encode(part.data).decode()
                 parts.append(converted_part)
+            elif isinstance(part, CachePoint):
+                # CachePoint is a marker, not actual content - skip it for otel
+                pass
             else:
                 parts.append({'type': part.kind})  # pragma: no cover
         return parts
@@ -776,10 +802,11 @@ class BaseToolReturnPart:
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        if isinstance(self.content, dict):
-            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
+        json_content = tool_return_ta.dump_python(self.content, mode='json')
+        if isinstance(json_content, dict):
+            return json_content  # type: ignore[reportUnknownReturn]
         else:
-            return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
+            return {'return_value': json_content}
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
         return Event(
@@ -947,6 +974,12 @@ class ModelRequest:
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
@@ -1037,7 +1070,7 @@ class FilePart:
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
-        return bool(self.content)  # pragma: no cover
+        return bool(self.content.data)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1187,6 +1220,12 @@ class ModelResponse:
 
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     @property
     def text(self) -> str | None:

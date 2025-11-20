@@ -11,7 +11,7 @@ from pydantic_ai import BinaryContent, ModelRequest, ModelResponse, SystemPrompt
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import CreateMessageResult
@@ -54,12 +54,14 @@ def test_assistant_text():
                         content='Hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -88,17 +90,27 @@ def test_assistant_text_history():
     assert result.output == snapshot('text content')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='1', timestamp=IsNow(tz=timezone.utc))], instructions='testing'),
-            ModelResponse(
-                parts=[TextPart(content='text content')],
-                model_name='test-model',
-                timestamp=IsNow(tz=timezone.utc),
+            ModelRequest(
+                parts=[UserPromptPart(content='1', timestamp=IsNow(tz=timezone.utc))],
+                instructions='testing',
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='2', timestamp=IsNow(tz=timezone.utc))], instructions='testing'),
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='2', timestamp=IsNow(tz=timezone.utc))],
+                instructions='testing',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='text content')],
+                model_name='test-model',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )

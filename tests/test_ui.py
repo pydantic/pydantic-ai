@@ -443,7 +443,7 @@ async def test_run_stream_external_tools():
             '<request>',
             "<function-tool-call name='external_tool'>{}</function-tool-call>",
             '</request>',
-            "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[])</run-result>",
+            "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[], metadata={})</run-result>",
             '</stream>',
         ]
     )
