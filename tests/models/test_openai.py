@@ -20,6 +20,7 @@ from pydantic_ai import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelProfile,
     ModelRequest,
@@ -1155,9 +1156,8 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     )
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
-    with pytest.raises(ModelHTTPError) as exc_info:
+    with pytest.raises(ModelAPIError) as exc_info:
         agent.run_sync('hello')
-    assert exc_info.value.status_code == 0
     assert exc_info.value.model_name == 'gpt-4o'
     assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.body)
 

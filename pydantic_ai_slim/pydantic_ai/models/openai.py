@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -547,7 +547,7 @@ class OpenAIChatModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
-            raise ModelHTTPError(status_code=0, model_name=self.model_name, body=str(e)) from e
+            raise ModelAPIError(model_name=self.model_name, body=str(e)) from e
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -1255,7 +1255,7 @@ class OpenAIResponsesModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
-            raise ModelHTTPError(status_code=0, model_name=self.model_name, body=str(e)) from e
+            raise ModelAPIError(model_name=self.model_name, body=str(e)) from e
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)

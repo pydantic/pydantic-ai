@@ -180,7 +180,7 @@ contains all the exceptions encountered during the `run` execution.
 === "Python >=3.11"
 
     ```python {title="fallback_model_failure.py" py="3.11"}
-    from pydantic_ai import Agent, ModelHTTPError
+    from pydantic_ai import Agent, ModelAPIError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -192,7 +192,7 @@ contains all the exceptions encountered during the `run` execution.
     agent = Agent(fallback_model)
     try:
         response = agent.run_sync('What is the capital of France?')
-    except* ModelHTTPError as exc_group:
+    except* ModelAPIError as exc_group:
         for exc in exc_group.exceptions:
             print(exc)
     ```
@@ -206,7 +206,7 @@ contains all the exceptions encountered during the `run` execution.
     ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
     from exceptiongroup import catch
 
-    from pydantic_ai import Agent, ModelHTTPError
+    from pydantic_ai import Agent, ModelAPIError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -222,10 +222,11 @@ contains all the exceptions encountered during the `run` execution.
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)
-    with catch({ModelHTTPError: model_status_error_handler}):
+    with catch({ModelAPIError: model_status_error_handler}):
         response = agent.run_sync('What is the capital of France?')
     ```
 
 By default, the `FallbackModel` only moves on to the next model if the current model raises a
+[`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which includes
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.

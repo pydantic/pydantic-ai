@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
 import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -33,11 +35,13 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.profiles import DEFAULT_PROFILE
+from pydantic_ai.providers import Provider
 from pydantic_ai.providers.bedrock import BedrockProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -54,6 +58,53 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+class _StubBedrockClient:
+    """Minimal Bedrock client that always raises the provided error."""
+
+    def __init__(self, error: ClientError):
+        self._error = error
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+
+    def converse(self, **_: Any) -> None:
+        raise self._error
+
+    def converse_stream(self, **_: Any) -> None:
+        raise self._error
+
+    def count_tokens(self, **_: Any) -> None:
+        raise self._error
+
+
+class _StubBedrockProvider(Provider[Any]):
+    """Provider implementation backed by the stub client."""
+
+    def __init__(self, client: _StubBedrockClient):
+        self._client = client
+
+    @property
+    def name(self) -> str:
+        return 'bedrock-stub'
+
+    @property
+    def base_url(self) -> str:
+        return 'https://bedrock.stub'
+
+    @property
+    def client(self) -> _StubBedrockClient:
+        return self._client
+
+    def model_profile(self, model_name: str):
+        return DEFAULT_PROFILE
+
+
+def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
+    """Instantiate a BedrockConverseModel wired to always raise the given error."""
+    return BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0',
+        provider=_StubBedrockProvider(_StubBedrockClient(error)),
+    )
 
 
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -151,6 +202,28 @@ async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_pr
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+async def test_bedrock_request_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.request([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.body == error.response
+
+
+async def test_bedrock_count_tokens_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.body == error.response
 
 
 @pytest.mark.parametrize(
