@@ -42,8 +42,6 @@ See the [Cerebras documentation](https://inference-docs.cerebras.ai/introduction
 
 ## Usage
 
-### Simple Usage (Recommended)
-
 ```python
 from pydantic_ai import Agent
 
@@ -51,22 +49,6 @@ agent = Agent('cerebras:llama-3.3-70b')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
-```
-
-### Async Usage
-
-```python
-import asyncio
-from pydantic_ai import Agent
-
-agent = Agent('cerebras:llama-3.3-70b')
-
-async def main():
-    result = await agent.run('What is the capital of France?')
-    print(result.output)
-    #> The capital of France is Paris.
-
-asyncio.run(main())
 ```
 
 ## Why Cerebras?
