@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1272'
+      - '1379'
       content-type:
       - application/json
       host:
@@ -36,6 +36,35 @@ interactions:
         - description: Represents the top-level structure.
           name: final_result
           parameters_json_schema:
+            $defs:
+              MiddleModel:
+                description: Represents the middle nested level.
+                properties:
+                  items:
+                    description: List of nested items
+                    items:
+                      $ref: '#/$defs/NestedModel'
+                    type: array
+                  title:
+                    description: Title of the page
+                    type: string
+                required:
+                - title
+                - items
+                type: object
+              NestedModel:
+                description: Represents the deepest nested level.
+                properties:
+                  name:
+                    description: Name of the item
+                    type: string
+                  value:
+                    description: Value of the item
+                    type: integer
+                required:
+                - name
+                - value
+                type: object
             properties:
               name:
                 description: Name of the collection
@@ -43,31 +72,7 @@ interactions:
               pages:
                 description: List of pages
                 items:
-                  description: Represents the middle nested level.
-                  properties:
-                    items:
-                      description: List of nested items
-                      items:
-                        description: Represents the deepest nested level.
-                        properties:
-                          name:
-                            description: Name of the item
-                            type: string
-                          value:
-                            description: Value of the item
-                            type: integer
-                        required:
-                        - name
-                        - value
-                        type: object
-                      type: array
-                    title:
-                      description: Title of the page
-                      type: string
-                  required:
-                  - title
-                  - items
-                  type: object
+                  $ref: '#/$defs/MiddleModel'
                 type: array
             required:
             - name
@@ -80,11 +85,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '3071'
+      - '2943'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2143
+      - gfet4t7; dur=2257
       transfer-encoding:
       - chunked
       vary:
@@ -100,33 +105,33 @@ interactions:
                 name: Example Collection
                 pages:
                 - items:
-                  - name: Item A1
+                  - name: Item A
                     value: 1
-                  - name: Item B1
+                  - name: Item B
                     value: 2
                   title: Page 1
                 - items:
-                  - name: Item A2
+                  - name: Item C
                     value: 3
-                  - name: Item B2
+                  - name: Item D
                     value: 4
                   title: Page 2
               name: final_result
-            thoughtSignature: CsgIAdHtim8VFy7oQIecPD1ll2aPBug66ePPEq/2lmU5jqIzT6swtvzKGTsYES6M9HsO1eYgGSpEzQn6A/oB99vXW8L/jRzSFQ81oGtrZZ72sUHyzIwlRkwZEzWg3hsT2j1oIhmsY0WuIUO0frXHmfOQ/Oj2qUv9uoWwqr/gQ8gsPW+Z/CHdsOMLYVED3ZvXAIbquFV5+ejYfui+Ng6tITlm47eDGkd3FwpAF2SLtO0ZPZaCoqoGyjNMrRGSK++VJV+0v7UFpOOgjkf4/9jmbD9VHkSiJ++XY87Kcjj96S35COhI48Boss8H/Amu+PPop+onKgUfit6+Mmoh2fq5LFoRDCprflbIi1TPulVRopby2z6PoaStQwz53dnO732y7girFMNJ4JHTKD0NwZXo74rAAejeMeZ4CvmPju0iXgI57CAQe1X5S9p2Y6pTL++JadoRtkK4ZdKOs1AWIKhptsmy5avi3qJr/xNGqdYyoJCQQ9BjwjrR2d8qZyPhV6nSIxBXY5aw8RmsaWr5FwNPRrzi420TvEPe9Ssp5uR3xk1+dusKGpi1HCHSQIyNLZ8NybPK002RU1CgomoRx+0EG5lVvKxvUGbFCaf4A4Y+qYQOd+X0HyDCLCBUJYjKOJAautjejS7qoTc1mKAaS1ZHWsnU5C7uUGbB4nkudXIX1J4LNkdlUnhCfhlJFEvKFcbI8otmRoKth4K2/+gcSSbELmKUzGqhUOECqpyrAdz0bx/7FM5pgB+s4FuaWGRXHsevhZowbteC4Q0XunbgvrujYpTfghzR8Y+KgztCO4bjtmI1Uz9X+faRJlNu5W7DZEIsRjuJACGrfQIMHKIoAFTIs/HmP3gzmyYPn/GpN/5KZ8yCWQ5FveyehI34mbRXCWPqNbV7OVy3eIUI5MtGkd59dFGeXGFF1LpCCWVtAKrYxyPqrS2SgZqmyU7pZo1Y0QXhXyCilhpKhs7bHvpBIUMY/byUAubYHFt44GfyL/4/tkUIrcSVteoJ2Wjc1rjaljNYOhLouk50xQq8iuXfQWZWufn+aWEtQo9mSul7/+2+qcW5A6zCYy8FpVZnTBz2cxKm/vRHXhSVT0b4rP0YGzGyBOHwNDQx1Gx8RPpqqiEFOS8RRhD+0mj3PhbSni4EtXbAZqQYRv286x75Mh53PuJNzEg46GC9fgVIeiBz8J9Ep6dl3/d4NmwksYHfYlDX/Jl1N9zwWgxjaYIhtug3F5gAzsxoOwlDWxi2UWy+5zzzu7eLfGwcxPx+gQ70K/yOxMdS86SPILoM7tCcgw6FjzlGytQGwY7zQdFdrDpHHKMGVLicfjZetV1NPZX9lYWwSUk7MfHr7Rg6VzUVqq1FWo2o84hjdrAdf2aejj4tNdAMfMZe20mz1QTmdiG5TLPURWMPGRbFDnsaOuV3VkbomB5BJzac8zAAyLtogKsxOcppn1zUzcTc0JmyYed92g==
+            thoughtSignature: Cu0HAdHtim/Us0P5TwBWE7yYzcsEdZQ1lCnTajHuXXzYUQcnrY+KXPclwqZ8upv3qmjNgTs8ahVMRiGHhHxGJ0qSjCtlo2HepWcH270aSkdkuIh2krevTqiKPXG7u5g30Jl/pvyHDKq6xkcxfzLfglyhArnCFbh16y89vfGiWC+K2QYjL23p/rjntkxCCZ3TMmsrudi/98HFOYu48hXuoG6YpFJ9C+ibgsxEhcffoEFaeQs4UqzfHhcz/dSr/wSinaA7QpRFPczmDRHphB8R7rrSSA5pV7ymRnkpE0SORjOlpUQwFDD5jFlXgTGy1CQt/FUYnXAPyRJawbaEbsc9HCs6J81hZZPOdxZN8tR5E7+nGpJJR0xmT02L60B9IXGXIiFb0QpUymk6E0L6jOVQBIHN5PaNrZC25YOrWqOGNLqaIukgnnF7nsqMP3mb/qOwUyKgcZ0O89OMcI6V9fSPz/df2m+PQvoNOM0qNtMKrVR0XDYqaZdhmK6Sv1uEWiQxS4mqra+f+SrQjskytlmxAAIoEeGx0jQC1x+avU68LtllwvXk6pJ3PddP0b3osNLokKxuv1VLfach+bNECqTmDD/LdLY/JMEof2hZSagqtDDfRbxBQB2WK2QPDs37Pg/LU4xXpj/FkTSs/Bxu0/GHylxY1/m0eR6RpAdq4XDctajLL3Y5IWLEQCJkSBtq67+InVpFFxQXAKx+WtAWshjTJzgkRbHxIVonrpG5aV2dysoQ73+GPkJfcXFGsY3aduc+xaViMfaqLuzh0IbtEQ2r+NWSePEfhmPOqztIwQuxgscEmHER6D1NdnwO8sv2GyHvxSzq5mjBtLg7bghK3UwLX2SPZ/COB71hcD4sYQ88RHv5OTAmI+0nKEHCD6fiAsRmCRspwLaAElkdCSIUPl8grfu9W9MP9w/eFW2tkcVW37TDO2dpY+Kn+qN8pPoDB0L2mcHUBt+TBL2xbgsiFnul1REQcZALB7tYbjMyLPqKx/ci1Eo6xAv/YOzX8Zbv4VNdjuT40X7+zXFrsgj0tXpga9/ymmZgynbVPUz0Ll+BAFXMmoVrqnVrEjCPxLuZFUFov7+DY88f8m1/ZWdNncj3Je74Oes7Aw5Ms/ynsY7VnzcnbyKOyLrT+Eg9CkB0COHvEMrOsJNceebAoESym/eCDtlDRrvcM9CCzV4NVH+2nvlEXYrEts6SV5iaztophBU74/dNWzAy9DlnihfIrYxRNTCgOJMXwSquViyKeeQk9eH61QvK2MF052bA68VkBGfgne0FHtG4n0bvpLO73KTH8aGcrvb0zIIpu13pT7GFACQDl5cR/R/y9sWDuoyh6LBG
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: GNEeadfuJfyAkdUPs_LP8A8
+      responseId: X94eaezvBLO1vdIP6brwoQc
       usageMetadata:
-        candidatesTokenCount: 97
+        candidatesTokenCount: 93
         promptTokenCount: 219
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 219
-        thoughtsTokenCount: 331
-        totalTokenCount: 647
+        thoughtsTokenCount: 323
+        totalTokenCount: 635
     status:
       code: 200
       message: OK
