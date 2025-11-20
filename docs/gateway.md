@@ -119,18 +119,21 @@ export PYDANTIC_AI_GATEWAY_API_KEY="YOUR_PYDANTIC_AI_GATEWAY_API_KEY"
 
 You can access multiple models with the same API key, as shown in the code snippet below.
 
-```python {title="hello_world.py"}
-from pydantic_ai import Agent
+=== "Hello World"
 
-agent = Agent('gateway/openai:gpt-5')
+    ```python {title="hello_world.py"}
+    from pydantic_ai import Agent
 
-result = agent.run_sync('Where does "hello world" come from?')
-print(result.output)
-"""
-The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-"""
-```
-=== "Passing API Key Directly"
+    agent = Agent('gateway/openai:gpt-5')
+
+    result = agent.run_sync('Where does "hello world" come from?')
+    print(result.output)
+    """
+    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+    """
+    ```
+
+=== "Passing API Key directly"
 
     Pass your API key directly using the provider:
 
