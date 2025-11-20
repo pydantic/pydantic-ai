@@ -82,5 +82,4 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown-model')
-    assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile is None
