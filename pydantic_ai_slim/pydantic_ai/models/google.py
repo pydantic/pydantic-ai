@@ -185,7 +185,6 @@ class GoogleModel(Model):
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
-    _url: str | None = field(repr=False)
 
     def __init__(
         self,

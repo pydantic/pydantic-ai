@@ -140,8 +140,7 @@ async def test_model_tools(allow_model_requests: None):
                     'description': 'This is foo',
                     'parameters': {
                         'type': 'object',
-                        'title': 'Foo',
-                        'properties': {'bar': {'type': 'number', 'title': 'Bar'}},
+                        'properties': {'bar': {'type': 'number'}},
                     },
                 },
                 {
@@ -149,9 +148,7 @@ async def test_model_tools(allow_model_requests: None):
                     'description': 'This is apple',
                     'parameters': {
                         'type': 'object',
-                        'properties': {
-                            'banana': {'type': 'array', 'title': 'Banana', 'items': {'type': 'number', 'title': 'Bar'}}
-                        },
+                        'properties': {'banana': {'type': 'array', 'items': {'type': 'number'}}},
                     },
                 },
                 {
@@ -159,7 +156,6 @@ async def test_model_tools(allow_model_requests: None):
                     'description': 'This is the tool for the final Result',
                     'parameters': {
                         'type': 'object',
-                        'title': 'Result',
                         'properties': {'spam': {'type': 'number'}},
                         'required': ['spam'],
                     },
@@ -193,7 +189,7 @@ async def test_require_response_tool(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+                    'parameters': {'type': 'object', 'properties': {'spam': {'type': 'number'}}},
                 }
             ]
         }
@@ -285,12 +281,10 @@ async def test_json_def_replaced(allow_model_requests: None):
                         'properties': {
                             'locations': {
                                 'items': {'$ref': '#/$defs/Location'},
-                                'title': 'Locations',
                                 'type': 'array',
                             }
                         },
                         'required': ['locations'],
-                        'title': 'Locations',
                         'type': 'object',
                         '$defs': {
                             'Axis': {
@@ -298,27 +292,23 @@ async def test_json_def_replaced(allow_model_requests: None):
                                     'label': {
                                         'default': '<unlabeled axis>',
                                         'description': 'The label of the axis',
-                                        'title': 'Label',
                                         'type': 'string',
                                     }
                                 },
-                                'title': 'Axis',
                                 'type': 'object',
                             },
                             'Chart': {
                                 'properties': {'x_axis': {'$ref': '#/$defs/Axis'}, 'y_axis': {'$ref': '#/$defs/Axis'}},
                                 'required': ['x_axis', 'y_axis'],
-                                'title': 'Chart',
                                 'type': 'object',
                             },
                             'Location': {
                                 'properties': {
-                                    'lat': {'title': 'Lat', 'type': 'number'},
-                                    'lng': {'default': 1.1, 'title': 'Lng', 'type': 'number'},
+                                    'lat': {'type': 'number'},
+                                    'lng': {'default': 1.1, 'type': 'number'},
                                     'chart': {'$ref': '#/$defs/Chart'},
                                 },
                                 'required': ['lat', 'chart'],
-                                'title': 'Location',
                                 'type': 'object',
                             },
                         },
@@ -381,18 +371,14 @@ async def test_json_def_enum(allow_model_requests: None):
                         'properties': {
                             'progress': {
                                 'default': None,
-                                'title': 'Progress',
                                 'anyOf': [
                                     {'items': {'$ref': '#/$defs/ProgressEnum'}, 'type': 'array'},
                                     {'type': 'null'},
                                 ],
                             }
                         },
-                        'title': 'QueryDetails',
                         'type': 'object',
-                        '$defs': {
-                            'ProgressEnum': {'enum': [100, 80, 60, 40, 20], 'title': 'ProgressEnum', 'type': 'integer'}
-                        },
+                        '$defs': {'ProgressEnum': {'enum': [100, 80, 60, 40, 20], 'type': 'integer'}},
                     },
                 }
             ]
@@ -434,16 +420,14 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                         'properties': {
                             'op_location': {'default': None, 'anyOf': [{'$ref': '#/$defs/Location'}, {'type': 'null'}]}
                         },
-                        'title': 'Locations',
                         'type': 'object',
                         '$defs': {
                             'Location': {
                                 'properties': {
-                                    'lat': {'title': 'Lat', 'type': 'number'},
-                                    'lng': {'title': 'Lng', 'type': 'number'},
+                                    'lat': {'type': 'number'},
+                                    'lng': {'type': 'number'},
                                 },
                                 'required': ['lat', 'lng'],
-                                'title': 'Location',
                                 'type': 'object',
                             }
                         },
@@ -498,13 +482,12 @@ async def test_json_def_date(allow_model_requests: None):
                     'description': 'This is the tool for the final Result',
                     'parameters': {
                         'properties': {
-                            'd': {'title': 'D', 'type': 'string', 'description': 'Format: date'},
-                            'dt': {'title': 'Dt', 'type': 'string', 'description': 'Format: date-time'},
-                            't': {'description': 'Format: time', 'title': 'T', 'type': 'string'},
-                            'td': {'description': 'my timedelta (format: duration)', 'title': 'Td', 'type': 'string'},
+                            'd': {'type': 'string', 'description': 'Format: date'},
+                            'dt': {'type': 'string', 'description': 'Format: date-time'},
+                            't': {'description': 'Format: time', 'type': 'string'},
+                            'td': {'description': 'my timedelta (format: duration)', 'type': 'string'},
                         },
                         'required': ['d', 'dt', 't', 'td'],
-                        'title': 'FormattedStringFields',
                         'type': 'object',
                     },
                 }
