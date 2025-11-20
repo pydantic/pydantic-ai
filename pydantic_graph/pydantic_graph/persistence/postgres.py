@@ -282,3 +282,4 @@ class PostgresStatePersistence(
         payloads = [json.loads(p) if isinstance(p, str) else p for p in raw_payloads]
         assert self._snapshot_adapter is not None, 'Persistence types not set'
         return self._snapshot_adapter.validate_python(payloads)
+    
