@@ -80,8 +80,10 @@ skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
     not transformer_imports_successful(), reason='transformers not available'
 )
 
+# Disabled because the llama_cpp tests have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
+# https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
 skip_if_llama_cpp_imports_unsuccessful = pytest.mark.skipif(
-    not llama_cpp_imports_successful(), reason='llama_cpp not available'
+    not llama_cpp_imports_successful() or True, reason='llama_cpp not available'
 )
 
 skip_if_vllm_imports_unsuccessful = pytest.mark.skipif(not vllm_imports_successful(), reason='vllm not available')
