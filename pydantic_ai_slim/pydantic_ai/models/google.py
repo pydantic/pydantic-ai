@@ -185,7 +185,6 @@ class GoogleModel(Model):
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
-    _url: str | None = field(repr=False)
 
     def __init__(
         self,
@@ -572,17 +571,23 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
-                # Google GenAI requires at least one part in the message.
-                if not message_parts:
-                    message_parts = [{'text': ''}]
-                contents.append({'role': 'user', 'parts': message_parts})
+                if message_parts:
+                    contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
-                contents.append(_content_model_response(m, self.system))
+                maybe_content = _content_model_response(m, self.system)
+                if maybe_content:
+                    contents.append(maybe_content)
             else:
                 assert_never(m)
+
+        # Google GenAI requires at least one part in the message.
+        if not contents:
+            contents = [{'role': 'user', 'parts': [{'text': ''}]}]
+
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_parts.insert(0, {'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
+
         return system_instruction, contents
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
@@ -767,7 +772,7 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict:  # noqa: C901
+def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict | None:  # noqa: C901
     parts: list[PartDict] = []
     thought_signature: bytes | None = None
     function_call_requires_signature: bool = True
@@ -822,6 +827,9 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
 
         if part:
             parts.append(part)
+
+    if not parts:
+        return None
     return ContentDict(role='model', parts=parts)
 
 
