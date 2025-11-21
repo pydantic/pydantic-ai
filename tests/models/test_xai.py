@@ -751,7 +751,6 @@ async def test_xai_document_url_input(allow_model_requests: None, xai_api_key: s
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    print(result.all_messages())
     assert result.output
     # The document contains "Dummy PDF file"
     response_text = result.output.lower()

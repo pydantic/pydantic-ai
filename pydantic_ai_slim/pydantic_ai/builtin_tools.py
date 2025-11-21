@@ -104,6 +104,7 @@ class WebSearchTool(AbstractBuiltinTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
+    * Grok, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     """
 
     allowed_domains: list[str] | None = None
@@ -115,6 +116,7 @@ class WebSearchTool(AbstractBuiltinTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
+    * Grok, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     """
 
     max_uses: int | None = None
