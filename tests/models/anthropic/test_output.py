@@ -2,7 +2,6 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
 from datetime import timezone
 
 import pytest
@@ -18,6 +17,7 @@ from ...conftest import IsNow, IsStr, try_import
 
 # Import reusable test utilities from parent test module
 from ..test_anthropic import MockAnthropic, get_mock_chat_completion_kwargs
+from .conftest import AnthropicModelFactory
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic, omit as OMIT
@@ -25,9 +25,6 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
-
-# Type alias for the make_agent fixture
-MakeAgentType = Callable[..., Agent]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -38,12 +35,12 @@ pytestmark = [
 
 async def test_anthropic_native_output_sonnet_4_5(
     allow_model_requests: None,
-    anthropic_sonnet_4_5: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test native JSON schema output with claude-sonnet-4-5 (supporting model)."""
-    agent = make_agent(anthropic_sonnet_4_5, output_type=NativeOutput(city_location_schema))
+    model = anthropic_model('claude-sonnet-4-5')
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(city_location_schema(city='Paris', country='France'))
@@ -85,12 +82,12 @@ async def test_anthropic_native_output_sonnet_4_5(
 
 async def test_anthropic_native_output_with_tools(
     allow_model_requests: None,
-    anthropic_sonnet_4_5: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test native output combined with tool calls."""
-    agent = make_agent(anthropic_sonnet_4_5, output_type=NativeOutput(city_location_schema))
+    model = anthropic_model('claude-sonnet-4-5')
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -102,12 +99,12 @@ async def test_anthropic_native_output_with_tools(
 
 async def test_anthropic_no_structured_output_support_sonnet_4_0(
     allow_model_requests: None,
-    anthropic_sonnet_4_0: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test that claude-sonnet-4-0 raises when NativeOutput is used."""
-    agent = make_agent(anthropic_sonnet_4_0, output_type=NativeOutput(city_location_schema))
+    model = anthropic_model('claude-sonnet-4-0')
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
 
     with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         await agent.run('What is the capital of France?')
@@ -115,12 +112,12 @@ async def test_anthropic_no_structured_output_support_sonnet_4_0(
 
 async def test_anthropic_no_structured_output_support_haiku_4_5(
     allow_model_requests: None,
-    anthropic_haiku_4_5: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test haiku-4-5 behavior with native output (expected to raise)."""
-    agent = make_agent(anthropic_haiku_4_5, output_type=NativeOutput(city_location_schema))
+    model = anthropic_model('claude-haiku-4-5')
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
 
     with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         await agent.run('What is the capital of France?')
@@ -130,13 +127,12 @@ def test_anthropic_native_output_strict_mode(
     allow_model_requests: None,
     mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test strict mode settings for native output."""
     model, mock_client = mock_sonnet_4_5
 
     # Explicit strict=True
-    agent = make_agent(model, output_type=NativeOutput(city_location_schema, strict=True))
+    agent = Agent(model, output_type=NativeOutput(city_location_schema, strict=True))
     agent.run_sync('What is the capital of Mexico?')
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
     output_format = completion_kwargs['output_format']
@@ -157,7 +153,7 @@ def test_anthropic_native_output_strict_mode(
     assert betas == snapshot(['structured-outputs-2025-11-13'])
 
     # Explicit strict=False
-    agent = make_agent(model, output_type=NativeOutput(city_location_schema, strict=False))
+    agent = Agent(model, output_type=NativeOutput(city_location_schema, strict=False))
     agent.run_sync('What is the capital of Mexico?')
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
     output_format = completion_kwargs['output_format']
@@ -178,7 +174,7 @@ def test_anthropic_native_output_strict_mode(
     assert betas == snapshot(['structured-outputs-2025-11-13'])
 
     # Strict-compatible (should auto-enable)
-    agent = make_agent(model, output_type=NativeOutput(city_location_schema))
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
     agent.run_sync('What is the capital of Mexico?')
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
     output_format = completion_kwargs['output_format']
@@ -200,7 +196,7 @@ def test_anthropic_native_output_strict_mode(
 
     # Strict-incompatible (with extras='allow')
     city_location_schema.model_config = ConfigDict(extra='allow')
-    agent = make_agent(model, output_type=NativeOutput(city_location_schema))
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
     agent.run_sync('What is the capital of Mexico?')
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
     output_format = completion_kwargs['output_format']
@@ -225,7 +221,6 @@ def test_anthropic_native_output_merge_beta_headers(
     allow_model_requests: None,
     mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test that custom anthropic-beta headers are merged with structured output beta features."""
     from pydantic_ai.models.anthropic import AnthropicModelSettings
@@ -233,7 +228,7 @@ def test_anthropic_native_output_merge_beta_headers(
     model, mock_client = mock_sonnet_4_5
 
     # User provides their own beta feature via extra_headers
-    agent = make_agent(
+    agent = Agent(
         model,
         output_type=NativeOutput(city_location_schema),
         model_settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-2025-01-01'}),
@@ -251,7 +246,6 @@ def test_anthropic_native_output_merge_beta_headers_comma_separated(
     allow_model_requests: None,
     mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test that comma-separated custom anthropic-beta headers are properly split and merged."""
     from pydantic_ai.models.anthropic import AnthropicModelSettings
@@ -259,7 +253,7 @@ def test_anthropic_native_output_merge_beta_headers_comma_separated(
     model, mock_client = mock_sonnet_4_5
 
     # User provides multiple beta features via comma-separated header
-    agent = make_agent(
+    agent = Agent(
         model,
         output_type=NativeOutput(city_location_schema),
         model_settings=AnthropicModelSettings(
@@ -344,13 +338,13 @@ def test_anthropic_strict_tools_sonnet_4_0(allow_model_requests: None, weather_t
 
 async def test_anthropic_native_output_multiple(
     allow_model_requests: None,
-    anthropic_sonnet_4_5: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
     country_language_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test native output with union of multiple schemas."""
-    agent = make_agent(anthropic_sonnet_4_5, output_type=NativeOutput([city_location_schema, country_language_schema]))
+    model = anthropic_model('claude-sonnet-4-5')
+    agent = Agent(model, output_type=NativeOutput([city_location_schema, country_language_schema]))
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -366,13 +360,13 @@ async def test_anthropic_native_output_multiple(
 
 async def test_anthropic_native_output_multiple_language(
     allow_model_requests: None,
-    anthropic_sonnet_4_5: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
     country_language_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test native output with union returns the second schema type."""
-    agent = make_agent(anthropic_sonnet_4_5, output_type=NativeOutput([city_location_schema, country_language_schema]))
+    model = anthropic_model('claude-sonnet-4-5')
+    agent = Agent(model, output_type=NativeOutput([city_location_schema, country_language_schema]))
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -387,12 +381,12 @@ async def test_anthropic_native_output_multiple_language(
 
 async def test_anthropic_auto_mode_sonnet_4_5(
     allow_model_requests: None,
-    anthropic_sonnet_4_5: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test auto mode with sonnet-4.5 (should use native output automatically)."""
-    agent = make_agent(anthropic_sonnet_4_5, output_type=city_location_schema)
+    model = anthropic_model('claude-sonnet-4-5')
+    agent = Agent(model, output_type=city_location_schema)
     assert agent.model.profile.supports_json_schema_output  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportOptionalMemberAccess]
 
     result = await agent.run('What is the capital of France?')
@@ -401,12 +395,12 @@ async def test_anthropic_auto_mode_sonnet_4_5(
 
 async def test_anthropic_auto_mode_sonnet_4_0(
     allow_model_requests: None,
-    anthropic_sonnet_4_0: AnthropicModel,
+    anthropic_model: AnthropicModelFactory,
     city_location_schema: type[BaseModel],
-    make_agent: MakeAgentType,
 ):
     """Test auto mode with sonnet-4.0 (should fall back to prompted output)."""
-    agent = make_agent(anthropic_sonnet_4_0, output_type=city_location_schema)
+    model = anthropic_model('claude-sonnet-4-0')
+    agent = Agent(model, output_type=city_location_schema)
     assert agent.model.profile.supports_json_schema_output is False  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportOptionalMemberAccess]
 
     result = await agent.run('What is the capital of France?')

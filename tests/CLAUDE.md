@@ -4,6 +4,11 @@
 
 - prefer using `snapshot()` instead of line-by-line assertions
 - unless the snapshot is too big and you only need to check specific values
+- kwargs are big no no in this codebase because they're untyped
+```python
+    # unacceptable
+    def _make_agent(model: AnthropicModel, **agent_kwargs: Any) -> Agent:
+```
 
 ### about static typing
 

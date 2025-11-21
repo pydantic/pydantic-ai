@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import pytest
 
@@ -17,27 +17,30 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-if TYPE_CHECKING:
-    from pydantic_ai import Agent
+AnthropicModelFactory = Callable[..., AnthropicModel]
 
 
-# Model fixtures for live API tests
+# Model factory fixture for live API tests
 @pytest.fixture
-def anthropic_sonnet_4_5(anthropic_api_key: str) -> AnthropicModel:
-    """Anthropic claude-sonnet-4-5 model with real API key."""
-    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:
+    """Factory to create Anthropic models with custom configuration."""
 
+    def _create_model(
+        model_name: str,
+        api_key: str | None = None,
+    ) -> AnthropicModel:
+        """Create an AnthropicModel with the specified configuration.
 
-@pytest.fixture
-def anthropic_sonnet_4_0(anthropic_api_key: str) -> AnthropicModel:
-    """Anthropic claude-sonnet-4-0 model with real API key."""
-    return AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+        Args:
+            model_name: Model name like 'claude-sonnet-4-5'
+            api_key: Optional API key, defaults to the fixture's anthropic_api_key
+        """
+        return AnthropicModel(
+            model_name,
+            provider=AnthropicProvider(api_key=api_key or anthropic_api_key),
+        )
 
-
-@pytest.fixture
-def anthropic_haiku_4_5(anthropic_api_key: str) -> AnthropicModel:
-    """Anthropic claude-haiku-4-5 model with real API key."""
-    return AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    return _create_model
 
 
 # Mock model fixtures for unit tests
@@ -76,20 +79,6 @@ def country_language_schema() -> type[BaseModel]:
         language: str
 
     return CountryLanguage
-
-
-# Agent factory helper
-@pytest.fixture
-def make_agent():
-    """Factory to create agents."""
-    from typing import Any
-
-    from pydantic_ai import Agent
-
-    def _make_agent(model: AnthropicModel, **agent_kwargs: Any) -> Agent:
-        return Agent(model, **agent_kwargs)
-
-    return _make_agent
 
 
 # Mock response fixtures

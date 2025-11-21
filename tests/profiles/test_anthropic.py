@@ -71,7 +71,7 @@ def test_lossy_string_constraints():
         username: Annotated[str, Field(min_length=3)]
 
     original_schema = User.model_json_schema()
-    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=True)
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=None)
     result = transformer.walk()
 
     # SDK drops minLength, making it lossy
@@ -104,7 +104,7 @@ def test_lossy_number_constraints():
     class Product(BaseModel):
         price: Annotated[float, Field(ge=0)]
 
-    transformer = AnthropicJsonSchemaTransformer(Product.model_json_schema(), strict=True)
+    transformer = AnthropicJsonSchemaTransformer(Product.model_json_schema(), strict=None)
     result = transformer.walk()
 
     # SDK drops minimum, making it lossy
@@ -127,7 +127,7 @@ def test_lossy_pattern_constraint():
         address: Annotated[str, Field(pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')]
 
     original_schema = Email.model_json_schema()
-    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=True)
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=None)
     result = transformer.walk()
 
     # SDK drops pattern, making it lossy
@@ -182,7 +182,7 @@ def test_lossy_array_with_constrained_items():
     class Container(BaseModel):
         items: list[Annotated[str, Field(min_length=5)]]
 
-    transformer = AnthropicJsonSchemaTransformer(Container.model_json_schema(), strict=True)
+    transformer = AnthropicJsonSchemaTransformer(Container.model_json_schema(), strict=None)
     transformer.walk()
 
     # Array items with constraints are lossy
@@ -195,7 +195,7 @@ def test_lossy_array_min_items():
     class ItemList(BaseModel):
         items: Annotated[list[str], Field(min_length=2)]
 
-    transformer = AnthropicJsonSchemaTransformer(ItemList.model_json_schema(), strict=True)
+    transformer = AnthropicJsonSchemaTransformer(ItemList.model_json_schema(), strict=None)
     transformer.walk()
 
     # SDK drops minItems > 1, making it lossy
@@ -216,7 +216,7 @@ def test_lossy_unsupported_string_format():
         'required': ['value'],
     }
 
-    transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
+    transformer = AnthropicJsonSchemaTransformer(schema, strict=None)
     transformer.walk()
 
     # SDK drops unsupported formats, making it lossy
@@ -233,7 +233,7 @@ def test_lossy_nested_defs():
         item: ConstrainedString
 
     original = Container.model_json_schema()
-    transformer = AnthropicJsonSchemaTransformer(original, strict=True)
+    transformer = AnthropicJsonSchemaTransformer(original, strict=None)
     result = transformer.walk()
 
     # Nested schema in $defs has constraints, making it lossy
@@ -268,5 +268,28 @@ def test_lossy_nested_defs():
             'properties': {'item': {'$ref': '#/$defs/ConstrainedString'}},
             'additionalProperties': False,
             'required': ['item'],
+        }
+    )
+
+
+def test_strict_false_no_compatibility_check():
+    """When strict=False, compatibility check should not run (is_strict_compatible stays True)."""
+
+    class User(BaseModel):
+        username: Annotated[str, Field(min_length=3)]
+
+    transformer = AnthropicJsonSchemaTransformer(User.model_json_schema(), strict=False)
+    result = transformer.walk()
+
+    # When strict=False, no compatibility check is performed
+    assert transformer.is_strict_compatible is True
+
+    # Schema is still transformed by Anthropic's SDK
+    assert result == snapshot(
+        {
+            'type': 'object',
+            'properties': {'username': {'type': 'string', 'description': '{minLength: 3}'}},
+            'required': ['username'],
+            'additionalProperties': False,
         }
     )

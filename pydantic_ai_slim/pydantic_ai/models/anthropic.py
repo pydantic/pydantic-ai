@@ -298,7 +298,7 @@ class AnthropicModel(Model):
             ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
                 raise UserError(
-                    'Anthropic does not support thinking and output tools at the same time. Use `output_type=NativeOutput(...)` instead.'
+                    'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 
@@ -332,7 +332,7 @@ class AnthropicModel(Model):
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters, model_settings)
         tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
-        native_format = self._native_output_format(model_request_parameters)
+        output_format = self._native_output_format(model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
@@ -352,7 +352,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
-                output_format=native_format or OMIT,
+                output_format=output_format or OMIT,
                 betas=betas_list or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
@@ -486,9 +486,9 @@ class AnthropicModel(Model):
     def _get_tools(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> list[BetaToolUnionParam]:
-        tools: list[BetaToolUnionParam] = []
-        for tool_def in model_request_parameters.tool_defs.values():
-            tools.append(self._map_tool_definition(tool_def))
+        tools: list[BetaToolUnionParam] = [
+            self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()
+        ]
 
         # Add cache_control to the last tool if enabled
         if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
@@ -510,14 +510,11 @@ class AnthropicModel(Model):
         """
         betas: set[str] = set()
 
-        has_strict_tools = any(
-            tool_def.strict and self.profile.supports_json_schema_output
-            for tool_def in model_request_parameters.tool_defs.values()
+        has_strict_tools = self.profile.supports_json_schema_output and any(
+            tool_def.strict for tool_def in model_request_parameters.tool_defs.values()
         )
 
-        has_native_output = model_request_parameters.output_mode == 'native'
-
-        if has_strict_tools or has_native_output:
+        if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
 
         return betas
@@ -611,11 +608,7 @@ class AnthropicModel(Model):
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         if beta_header := extra_headers.pop('anthropic-beta', None):
-            betas.update({
-                stripped_beta 
-                for beta in beta_header.split(',') 
-                if (stripped_beta := beta.strip())
-            })
+            betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
         return sorted(betas), extra_headers
 

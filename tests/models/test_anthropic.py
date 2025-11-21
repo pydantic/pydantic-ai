@@ -5413,7 +5413,7 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Anthropic does not support thinking and output tools at the same time. Use `output_type=NativeOutput(...)` instead.'
+            'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
         ),
     ):
         await agent.run('What is 3 + 3?')
