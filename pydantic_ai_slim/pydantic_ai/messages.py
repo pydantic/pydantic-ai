@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
+from os import PathLike
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 
 import pydantic
@@ -530,6 +532,25 @@ class BinaryContent:
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
+    @classmethod
+    def from_path(cls, path: PathLike[str]) -> BinaryContent:
+        """Create a `BinaryContent` from a path.
+
+        Defaults to 'application/octet-stream' if the media type cannot be inferred.
+
+        Raises:
+            FileNotFoundError: if the file does not exist.
+            PermissionError: if the file cannot be read.
+        """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f'File not found: {path}')
+        media_type, _ = guess_type(path)
+        if media_type is None:
+            media_type = 'application/octet-stream'
+
+        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
+
     @pydantic.computed_field
     @property
     def identifier(self) -> str:
@@ -1041,6 +1062,12 @@ class ThinkingPart:
 
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific details in a serializable format.
+
+    This allows storing selected vendor-specific data that isn't mapped to standard ThinkingPart fields.
+    """
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""

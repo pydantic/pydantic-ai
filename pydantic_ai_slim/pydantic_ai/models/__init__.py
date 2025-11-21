@@ -145,24 +145,28 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
+        'google-gla:gemini-flash-latest',
+        'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
+        'google-gla:gemini-2.5-flash-preview-09-2025',
+        'google-gla:gemini-2.5-flash-image',
         'google-gla:gemini-2.5-flash-lite',
         'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
         'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
+        'google-gla:gemini-3-pro-preview',
+        'google-vertex:gemini-flash-latest',
+        'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
+        'google-vertex:gemini-2.5-flash-preview-09-2025',
+        'google-vertex:gemini-2.5-flash-image',
         'google-vertex:gemini-2.5-flash-lite',
         'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
         'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
+        'google-vertex:gemini-3-pro-preview',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
         'grok:grok-3',
@@ -803,7 +807,6 @@ def infer_model(  # noqa: C901
         'heroku',
         'moonshotai',
         'ollama',
-        'openrouter',
         'together',
         'vercel',
         'litellm',
@@ -834,6 +837,10 @@ def infer_model(  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'mistral':
         from .mistral import MistralModel
 

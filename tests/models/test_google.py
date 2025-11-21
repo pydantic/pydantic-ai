@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from httpx import Timeout
 from inline_snapshot import Is, snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -1680,26 +1680,40 @@ async def test_google_model_receive_web_search_history_from_another_provider(
 
 
 async def test_google_model_empty_user_prompt(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run()
-    assert result.output == snapshot("I'm ready to assist you.  Please tell me what you need.\n")
+    assert result.output == snapshot("""\
+Hello! That's correct. I am designed to be a helpful assistant.
+
+I'm ready to assist you with a wide range of tasks, from answering questions and providing information to brainstorming ideas and generating creative content.
+
+How can I help you today?\
+""")
 
 
 async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run(
-        'Empty?',
+        'Was your previous response empty?',
         message_history=[
             ModelRequest(parts=[UserPromptPart(content='Hi')]),
             ModelResponse(parts=[TextPart(content='')]),
         ],
     )
 
-    assert result.output == snapshot('Yes, your previous message was empty.  Is there anything I can help you with?\n')
+    assert result.output == snapshot("""\
+As an AI, I don't retain memory of past interactions or specific conversational history in the way a human does. Each response I generate is based on the current prompt I receive.
+
+Therefore, I cannot directly recall if my specific previous response to you was empty.
+
+However, I am designed to always provide a response with content. If you received an empty response, it would likely indicate a technical issue or an error in the system, rather than an intentional empty output from me.
+
+Could you please tell me what you were expecting or if you'd like me to try again?\
+""")
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
@@ -2464,7 +2478,7 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
@@ -2866,6 +2880,37 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
     # Will default to prompted output
     agent = Agent(m, output_type=CityLocation, builtin_tools=[WebFetchTool()])
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+
+async def test_google_native_output_with_builtin_tools_gemini_3(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Google does not support output tools and built-in tools at the same time. Use `output_type=NativeOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in Mexico?')
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    # Will default to native output
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
@@ -3526,6 +3571,100 @@ async def test_google_prefix_items_native_output_gemini_2_0(
     assert -75 <= result.output.point[1] <= -73
 
 
+async def test_google_nested_models_without_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    """
+    Test that deeply nested Pydantic models work correctly WITHOUT NativeOutput.
+
+    This is a regression test for issue #3483 where nested models were incorrectly
+    treated as tool calls instead of structured output schema in v1.20.0.
+
+    When NOT using NativeOutput, the agent should still handle nested models correctly
+    by using the OutputToolset approach rather than treating nested models as separate tools.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class NestedModel(BaseModel):
+        """Represents the deepest nested level."""
+
+        name: str = Field(..., description='Name of the item')
+        value: int = Field(..., description='Value of the item')
+
+    class MiddleModel(BaseModel):
+        """Represents the middle nested level."""
+
+        title: str = Field(..., description='Title of the page')
+        items: list[NestedModel] = Field(..., description='List of nested items')
+
+    class TopModel(BaseModel):
+        """Represents the top-level structure."""
+
+        name: str = Field(..., description='Name of the collection')
+        pages: list[MiddleModel] = Field(..., description='List of pages')
+
+    # This should work WITHOUT NativeOutput - the agent should use OutputToolset
+    # and NOT treat NestedModel/MiddleModel as separate tool calls
+    agent = Agent(
+        m,
+        output_type=TopModel,
+        system_prompt='You are a helpful assistant that creates structured data.',
+        retries=5,
+    )
+
+    result = await agent.run('Create a simple example with 2 pages, each with 2 items')
+
+    # Verify the structure is correct
+    assert isinstance(result.output, TopModel)
+    assert result.output.name is not None
+    assert len(result.output.pages) == snapshot(2)
+    assert all(isinstance(page, MiddleModel) for page in result.output.pages)
+    assert all(len(page.items) == 2 for page in result.output.pages)
+    assert all(isinstance(item, NestedModel) for page in result.output.pages for item in page.items)
+
+
+async def test_google_nested_models_with_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    """
+    Test that deeply nested Pydantic models work correctly WITH NativeOutput.
+
+    This is the workaround for issue #3483 - using NativeOutput should always work.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class NestedModel(BaseModel):
+        """Represents the deepest nested level."""
+
+        name: str = Field(..., description='Name of the item')
+        value: int = Field(..., description='Value of the item')
+
+    class MiddleModel(BaseModel):
+        """Represents the middle nested level."""
+
+        title: str = Field(..., description='Title of the page')
+        items: list[NestedModel] = Field(..., description='List of nested items')
+
+    class TopModel(BaseModel):
+        """Represents the top-level structure."""
+
+        name: str = Field(..., description='Name of the collection')
+        pages: list[MiddleModel] = Field(..., description='List of pages')
+
+    # This should work WITH NativeOutput - uses native JSON schema structured output
+    agent = Agent(
+        m,
+        output_type=NativeOutput(TopModel),
+        system_prompt='You are a helpful assistant that creates structured data.',
+    )
+
+    result = await agent.run('Create a simple example with 2 pages, each with 2 items')
+
+    # Verify the structure is correct
+    assert isinstance(result.output, TopModel)
+    assert result.output.name is not None
+    assert len(result.output.pages) == snapshot(2)
+    assert all(isinstance(page, MiddleModel) for page in result.output.pages)
+    assert all(len(page.items) == 2 for page in result.output.pages)
+    assert all(isinstance(item, NestedModel) for page in result.output.pages for item in page.items)
+
+
 def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
@@ -3592,6 +3731,140 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
+async def test_thinking_with_tool_calls_from_other_model(
+    allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
+):
+    openai_model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent()
+
+    @agent.tool_plain
+    def get_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the capital of the country?', model=openai_model)
+    assert result.output == snapshot('Mexico City (Ciudad de México).')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of the country?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=37, output_tokens=144, details={'reasoning_tokens': 128}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id=IsStr(),
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='Mexico City (Ciudad de México).',
+                        id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=206, output_tokens=141, details={'reasoning_tokens': 128}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    result = await agent.run(model=model, message_history=messages[:-1], output_type=CityLocation)
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+    assert result.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'city': 'Mexico City', 'country': 'Mexico'},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=114, output_tokens=91, details={'thoughts_tokens': 68, 'text_prompt_tokens': 114}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     'error_class,error_response,expected_status',
     [
@@ -3631,3 +3904,42 @@ async def test_google_api_errors_are_handled(
 
     assert exc_info.value.status_code == expected_status
     assert error_response['error']['message'] in str(exc_info.value.body)
+
+
+async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[]),
+    ]
+
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    agent = Agent(model=model)
+
+    result = await agent.run(message_history=message_history)
+    assert result.output == snapshot('Hello! How can I help you today?')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[], run_id=IsStr()),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content='Hello! How can I help you today?'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2, output_tokens=222, details={'thoughts_tokens': 213, 'text_prompt_tokens': 2}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
