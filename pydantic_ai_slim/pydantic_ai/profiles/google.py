@@ -47,6 +47,9 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
         schema.pop('discriminator', None)
         schema.pop('examples', None)
 
+        # Remove 'title' due to https://github.com/googleapis/python-genai/issues/1732
+        schema.pop('title', None)
+
         type_ = schema.get('type')
         if type_ == 'string' and (fmt := schema.pop('format', None)):
             description = schema.get('description')

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from httpx import Timeout
 from inline_snapshot import Is, snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -1606,26 +1606,40 @@ async def test_google_model_receive_web_search_history_from_another_provider(
 
 
 async def test_google_model_empty_user_prompt(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run()
-    assert result.output == snapshot("I'm ready to assist you.  Please tell me what you need.\n")
+    assert result.output == snapshot("""\
+Hello! That's correct. I am designed to be a helpful assistant.
+
+I'm ready to assist you with a wide range of tasks, from answering questions and providing information to brainstorming ideas and generating creative content.
+
+How can I help you today?\
+""")
 
 
 async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run(
-        'Empty?',
+        'Was your previous response empty?',
         message_history=[
             ModelRequest(parts=[UserPromptPart(content='Hi')]),
             ModelResponse(parts=[TextPart(content='')]),
         ],
     )
 
-    assert result.output == snapshot('Yes, your previous message was empty.  Is there anything I can help you with?\n')
+    assert result.output == snapshot("""\
+As an AI, I don't retain memory of past interactions or specific conversational history in the way a human does. Each response I generate is based on the current prompt I receive.
+
+Therefore, I cannot directly recall if my specific previous response to you was empty.
+
+However, I am designed to always provide a response with content. If you received an empty response, it would likely indicate a technical issue or an error in the system, rather than an intentional empty output from me.
+
+Could you please tell me what you were expecting or if you'd like me to try again?\
+""")
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3483,6 +3497,100 @@ async def test_google_prefix_items_native_output_gemini_2_0(
     assert -75 <= result.output.point[1] <= -73
 
 
+async def test_google_nested_models_without_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    """
+    Test that deeply nested Pydantic models work correctly WITHOUT NativeOutput.
+
+    This is a regression test for issue #3483 where nested models were incorrectly
+    treated as tool calls instead of structured output schema in v1.20.0.
+
+    When NOT using NativeOutput, the agent should still handle nested models correctly
+    by using the OutputToolset approach rather than treating nested models as separate tools.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class NestedModel(BaseModel):
+        """Represents the deepest nested level."""
+
+        name: str = Field(..., description='Name of the item')
+        value: int = Field(..., description='Value of the item')
+
+    class MiddleModel(BaseModel):
+        """Represents the middle nested level."""
+
+        title: str = Field(..., description='Title of the page')
+        items: list[NestedModel] = Field(..., description='List of nested items')
+
+    class TopModel(BaseModel):
+        """Represents the top-level structure."""
+
+        name: str = Field(..., description='Name of the collection')
+        pages: list[MiddleModel] = Field(..., description='List of pages')
+
+    # This should work WITHOUT NativeOutput - the agent should use OutputToolset
+    # and NOT treat NestedModel/MiddleModel as separate tool calls
+    agent = Agent(
+        m,
+        output_type=TopModel,
+        system_prompt='You are a helpful assistant that creates structured data.',
+        retries=5,
+    )
+
+    result = await agent.run('Create a simple example with 2 pages, each with 2 items')
+
+    # Verify the structure is correct
+    assert isinstance(result.output, TopModel)
+    assert result.output.name is not None
+    assert len(result.output.pages) == snapshot(2)
+    assert all(isinstance(page, MiddleModel) for page in result.output.pages)
+    assert all(len(page.items) == 2 for page in result.output.pages)
+    assert all(isinstance(item, NestedModel) for page in result.output.pages for item in page.items)
+
+
+async def test_google_nested_models_with_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    """
+    Test that deeply nested Pydantic models work correctly WITH NativeOutput.
+
+    This is the workaround for issue #3483 - using NativeOutput should always work.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class NestedModel(BaseModel):
+        """Represents the deepest nested level."""
+
+        name: str = Field(..., description='Name of the item')
+        value: int = Field(..., description='Value of the item')
+
+    class MiddleModel(BaseModel):
+        """Represents the middle nested level."""
+
+        title: str = Field(..., description='Title of the page')
+        items: list[NestedModel] = Field(..., description='List of nested items')
+
+    class TopModel(BaseModel):
+        """Represents the top-level structure."""
+
+        name: str = Field(..., description='Name of the collection')
+        pages: list[MiddleModel] = Field(..., description='List of pages')
+
+    # This should work WITH NativeOutput - uses native JSON schema structured output
+    agent = Agent(
+        m,
+        output_type=NativeOutput(TopModel),
+        system_prompt='You are a helpful assistant that creates structured data.',
+    )
+
+    result = await agent.run('Create a simple example with 2 pages, each with 2 items')
+
+    # Verify the structure is correct
+    assert isinstance(result.output, TopModel)
+    assert result.output.name is not None
+    assert len(result.output.pages) == snapshot(2)
+    assert all(isinstance(page, MiddleModel) for page in result.output.pages)
+    assert all(len(page.items) == 2 for page in result.output.pages)
+    assert all(isinstance(item, NestedModel) for page in result.output.pages for item in page.items)
+
+
 def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
@@ -3722,3 +3830,42 @@ async def test_google_api_errors_are_handled(
 
     assert exc_info.value.status_code == expected_status
     assert error_response['error']['message'] in str(exc_info.value.body)
+
+
+async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[]),
+    ]
+
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    agent = Agent(model=model)
+
+    result = await agent.run(message_history=message_history)
+    assert result.output == snapshot('Hello! How can I help you today?')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[], run_id=IsStr()),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content='Hello! How can I help you today?'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2, output_tokens=222, details={'thoughts_tokens': 213, 'text_prompt_tokens': 2}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
