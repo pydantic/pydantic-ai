@@ -57,9 +57,6 @@ KnownModelName = TypeAliasType(
     Literal[
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-5-sonnet-20240620',
-        'anthropic:claude-3-5-sonnet-20241022',
-        'anthropic:claude-3-5-sonnet-latest',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
@@ -380,7 +377,10 @@ class Model(ABC):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Make a request to the model."""
+        """Make a request to the model.
+
+        This is ultimately called by `pydantic_ai._agent_graph.ModelRequestNode._make_request(...)`.
+        """
         raise NotImplementedError()
 
     async def count_tokens(
@@ -988,6 +988,10 @@ def get_user_agent() -> str:
 
 
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
+    """Customize the tool definition using the given transformer.
+
+    If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
+    """
     schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
     parameters_json_schema = schema_transformer.walk()
     return replace(
@@ -997,13 +1001,13 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinit
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=o.strict)
+def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+    schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
-        o,
+        output_object,
         json_schema=json_schema,
-        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+        strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
 
 

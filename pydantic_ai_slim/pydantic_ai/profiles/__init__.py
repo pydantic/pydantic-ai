@@ -25,9 +25,17 @@ class ModelProfile:
     supports_tools: bool = True
     """Whether the model supports tools."""
     supports_json_schema_output: bool = False
-    """Whether the model supports JSON schema output."""
+    """Whether the model supports JSON schema output.
+
+    This is also referred to as 'native' support for structured output.
+    Relates to the `NativeOutput` output type.
+    """
     supports_json_object_output: bool = False
-    """Whether the model supports JSON object output."""
+    """Whether the model supports a dedicated mode to enforce JSON output, without necessarily sending a schema.
+
+    E.g. [OpenAI's JSON mode](https://platform.openai.com/docs/guides/structured-outputs#json-mode)
+    Relates to the `PromptedOutput` output type.
+    """
     supports_image_output: bool = False
     """Whether the model supports image output."""
     default_structured_output_mode: StructuredOutputMode = 'tool'

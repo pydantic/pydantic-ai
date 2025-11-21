@@ -8,12 +8,12 @@ from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Any, TypeVar, cast
+from typing import Annotated, Any, TypeVar, cast
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -51,7 +51,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
@@ -77,6 +77,7 @@ with try_import() as imports_successful:
         BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
+        BetaMessageTokensCount,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -144,7 +145,7 @@ class MockAnthropic:
 
     @cached_property
     def messages(self) -> Any:
-        return type('Messages', (), {'create': self.messages_create})
+        return type('Messages', (), {'create': self.messages_create, 'count_tokens': self.messages_count_tokens})
 
     @classmethod
     def create_mock(cls, messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage]) -> AsyncAnthropic:
@@ -179,6 +180,11 @@ class MockAnthropic:
                 response = cast(BetaMessage, self.messages_)
         self.index += 1
         return response
+
+    async def messages_count_tokens(self, *_args: Any, **kwargs: Any) -> BetaMessageTokensCount:
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+        # Return a mock token count
+        return BetaMessageTokensCount(input_tokens=10)
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
@@ -586,6 +592,58 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
     # System instructions should have 5m TTL
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
+async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
+    """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
+    c = completion_message(
+        [BetaTextBlock(text='Done', type='text')],
+        usage=BetaUsage(input_tokens=8, output_tokens=3),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def constrained_tool(value: Annotated[str, Field(min_length=2)]) -> str:  # pragma: no cover
+        return value
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'strict' not in completion_kwargs['tools'][0]
+
+
+async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
+    """Exercise both strict=True and strict=False tool definitions against the live API."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
+    )
+
+    @agent.tool_plain(strict=True)
+    async def country_source() -> str:
+        return 'Japan'
+
+    capital_called = {'value': False}
+
+    @agent.tool_plain(strict=False)
+    async def capital_lookup(country: str) -> str:
+        capital_called['value'] = True
+        if country == 'Japan':
+            return 'Tokyo'
+        return f'Unknown capital for {country}'  # pragma: no cover
+
+    result = await agent.run('Use the registered tools and respond exactly as `Capital: <city>`.')
+    assert capital_called['value'] is True
+    assert result.output.startswith('Capital:')
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'capital_lookup'
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    )
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -4912,21 +4970,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
-    assert result.output == snapshot("""\
-Based on the search results, today is Thursday, August 14, 2025. Here are some additional details about the date:
-
-It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year.
-
-Some interesting observances for today include:
-It's being celebrated as:
-- Color Book Day
-- National Creamsicle Day
-- National Financial Awareness Day
-- National Navajo Code Talkers Day
-- National Tattoo Removal Day
-- National Wiffle Ball Day
-- Social Security Day\
-""")
+    assert result.output == snapshot('Today is November 19, 2025.')
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
@@ -4937,16 +4981,16 @@ It's being celebrated as:
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Tomorrow will be **Friday, August 15, 2025**.',
-                        id='msg_689dc4acfa488196a6b1ec0ebd3bd9520afe80ec3d42722e',
+                        content='Tomorrow is November 20, 2025.',
+                        id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
                     )
                 ],
-                usage=RequestUsage(input_tokens=458, output_tokens=17, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5355,19 +5399,6 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
             ),
         ]
     )
-
-
-async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-
-    class CityLocation(BaseModel):
-        city: str
-        country: str
-
-    agent = Agent(m, output_type=NativeOutput(CityLocation))
-
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
-        await agent.run('What is the largest city in the user country?')
 
 
 async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
@@ -6485,6 +6516,23 @@ I noticed a small typo in that famous pangram! It should be:
 This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.\
 """
     )
+
+
+async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
+    """Test that count_tokens is called on the mock client."""
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    assert result.output == 'hello world'
+    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert 'model' in count_tokens_kwargs
+    assert 'messages' in count_tokens_kwargs
 
 
 @pytest.mark.vcr()
