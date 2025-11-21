@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -61,7 +62,7 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -1203,6 +1204,21 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: claude-sonnet-4-5, body: {'error': 'test error'}"
     )
+
+
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.anthropic.com timed out',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
 
 
 async def test_document_binary_content_input(
