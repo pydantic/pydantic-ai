@@ -127,7 +127,7 @@ def search_docs(ctx: RunContext, query: str) -> str:
     """Search documentation."""
     return f'Results for {query}'
 
-async def main():
+async def main():  # noqa: F811
     # All three cache points are used: instructions, tools, and last message
     result = await agent.run('Search for Python best practices')
     print(result.output)
@@ -138,7 +138,7 @@ agent = Agent(
     system_prompt='Instructions...',
 )
 
-async def main():
+async def main():  # noqa: F811
     # Manually control cache points for specific content blocks
     result = await agent.run([
         'Long context from documentation...',
@@ -162,7 +162,7 @@ agent = Agent(
     ),
 )
 
-async def main():
+async def main():  # noqa: F811
     result = await agent.run('Your question')
     usage = result.usage()
     print(f'Cache write tokens: {usage.cache_write_tokens}')
@@ -202,7 +202,7 @@ agent = Agent(
 def my_tool() -> str:
     return 'result'
 
-async def main():
+async def main():  # noqa: F811
     # This uses 3 cache points (instructions + tools + last message)
     # You can add 1 more CachePoint marker before hitting the limit
     result = await agent.run([
@@ -236,7 +236,7 @@ agent = Agent(
 def search() -> str:
     return 'data'
 
-async def main():
+async def main():  # noqa: F811
     # Already using 2 cache points (instructions + tools)
     # Can add 2 more CachePoint markers (4 total limit)
     result = await agent.run([
