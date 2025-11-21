@@ -881,10 +881,9 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     """The name of the provider that generated the response."""
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
-    # TODO (DouweM): Consider renaming to `provider_metadata`?
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1028,7 +1027,7 @@ class TextPart:
     """An optional identifier of the text part."""
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
@@ -1072,7 +1071,7 @@ class ThinkingPart:
     """
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
@@ -1103,7 +1102,7 @@ class FilePart:
     """
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
@@ -1144,7 +1143,7 @@ class BaseToolCallPart:
     This is used by some APIs like OpenAI Responses."""
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
@@ -1252,9 +1251,7 @@ class ModelResponse:
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
     ] = None
-    """Additional provider-specific data that can't be mapped to standard fields.
-
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    """Additional data returned by the provider that can't be mapped to standard fields."""
 
     provider_response_id: Annotated[
         str | None,
@@ -1479,7 +1476,7 @@ class TextPartDelta:
     _: KW_ONLY
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
@@ -1529,7 +1526,7 @@ class ThinkingPartDelta:
     """
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
@@ -1576,9 +1573,7 @@ class ThinkingPartDelta:
             if self.provider_name is not None:
                 part = replace(part, provider_name=self.provider_name)
             if self.provider_details is not None:
-                part = replace(
-                    part, provider_details={**(part.provider_details or {}), **(self.provider_details or {})}
-                )
+                part = replace(part, provider_details={**(part.provider_details or {}), **self.provider_details})
             return part
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
@@ -1608,7 +1603,7 @@ class ToolCallPartDelta:
     non-matching value is provided an error will be raised."""
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific data that can't be mapped to standard fields.
+    """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
