@@ -1568,12 +1568,150 @@ async def test_messages() -> None:
                     ),
                 ]
             ),
-            ModelResponse(
-                parts=[TextPart(content='Assistant message')],
-                timestamp=IsDatetime(),
-            ),
+            ModelResponse(parts=[TextPart(content='Assistant message')], timestamp=IsDatetime()),
         ]
     )
+
+
+async def test_messages_roundtrip() -> None:
+    """Test comprehensive AG-UI -> Pydantic AI -> AG-UI roundtrip with all message types.
+
+    This test covers:
+    - System, user, and assistant messages
+    - Tool calls with dict args (tests JSON serialization)
+    - Tool returns with string content (tests string path in _serialize_content)
+    - Tool returns with dict content (tests JSON serialization of content)
+    - Builtin tool calls and returns (tests BuiltinToolCallPart/ReturnPart paths)
+    - Non-JSON-serializable content (tests fallback to str() in _serialize_content)
+
+    Note: Message IDs are not preserved during roundtrip conversion.
+    """
+    original_messages = [
+        SystemMessage(id='msg_1', content='You are helpful.'),
+        UserMessage(id='msg_2', content='Hello!'),
+        AssistantMessage(id='msg_3', content='Hi! Let me help.'),
+        # Tool call with dict args (tests JSON serialization)
+        UserMessage(id='msg_4', content='What is 2+2?'),
+        AssistantMessage(
+            id='msg_5',
+            tool_calls=[
+                ToolCall(
+                    id='call_123',
+                    type='function',
+                    function=FunctionCall(name='calculator', arguments='{"expression": "2+2"}'),
+                )
+            ],
+        ),
+        # Tool return with string content (tests string path)
+        ToolMessage(id='msg_6', content='4', tool_call_id='call_123'),
+        AssistantMessage(id='msg_7', content='The answer is 4.'),
+        # Multiple tool calls with dict content in tool returns
+        UserMessage(id='msg_8', content='Get user data'),
+        AssistantMessage(
+            id='msg_9',
+            tool_calls=[
+                ToolCall(
+                    id='call_456',
+                    type='function',
+                    function=FunctionCall(name='get_user', arguments='{"user_id": "123"}'),
+                ),
+                ToolCall(
+                    id='call_789',
+                    type='function',
+                    function=FunctionCall(name='get_status', arguments='{"user_id": "123"}'),
+                ),
+            ],
+        ),
+        # Multiple tool returns (tests multiple ToolReturnPart in same ModelRequest)
+        ToolMessage(id='msg_10', content='{"name": "John", "age": 30}', tool_call_id='call_456'),
+        ToolMessage(id='msg_10b', content='{"status": "active"}', tool_call_id='call_789'),
+        AssistantMessage(id='msg_11', content='Found user John, age 30, status active.'),
+        # Builtin tool calls with content (tests BuiltinToolCallPart path with multiple tool calls)
+        UserMessage(id='msg_12', content='Search for cats and dogs'),
+        AssistantMessage(
+            id='msg_13',
+            content='Searching',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|test|search_1',
+                    type='function',
+                    function=FunctionCall(name='web_search', arguments='{"query": "cats"}'),
+                ),
+                ToolCall(
+                    id='pyd_ai_builtin|test|search_2',
+                    type='function',
+                    function=FunctionCall(name='web_search', arguments='{"query": "dogs"}'),
+                ),
+            ],
+        ),
+        # Builtin tool returns (tests BuiltinToolReturnPart path with multiple returns)
+        ToolMessage(
+            id='msg_14',
+            content='{"results": ["cat1"]}',
+            tool_call_id='pyd_ai_builtin|test|search_1',
+        ),
+        ToolMessage(
+            id='msg_15',
+            content='{"results": ["dog1"]}',
+            tool_call_id='pyd_ai_builtin|test|search_2',
+        ),
+        AssistantMessage(id='msg_16', content='Found results for both cats and dogs.'),
+        UserMessage(id='msg_17', content='Thanks!'),
+        AssistantMessage(id='msg_18', content='You are welcome!'),
+    ]
+
+    # Test 1: Roundtrip (IDs are not preserved, so we exclude them from comparison)
+    pydantic_messages = AGUIAdapter.load_messages(original_messages)
+    converted_messages = AGUIAdapter.dump_messages(pydantic_messages)
+
+    # Serialize both to JSON for comparison (excluding IDs)
+    def serialize_message(msg: Message) -> dict[str, Any]:
+        """Serialize message for comparison, excluding ID."""
+        data = msg.model_dump(mode='json')
+        data.pop('id', None)
+        return data
+
+    original_serialized: list[dict[str, Any]] = [serialize_message(msg) for msg in original_messages]
+    converted_serialized: list[dict[str, Any]] = [serialize_message(msg) for msg in converted_messages]
+
+    # Check that roundtrip produces identical messages (excluding IDs)
+    assert original_serialized == converted_serialized
+
+
+async def test_non_json_serializable_content() -> None:
+    """Test that non-JSON-serializable content falls back to str() in _serialize_content."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolReturnPart
+
+    class CustomObject:
+        def __str__(self) -> str:
+            return 'custom_object_str'
+
+    pydantic_messages_with_custom = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='test_tool',
+                    args={'key': 'value'},
+                    tool_call_id='call_custom',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='test_tool',
+                    content=CustomObject(),  # Non-JSON-serializable
+                    tool_call_id='call_custom',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_messages_custom = AGUIAdapter.dump_messages(pydantic_messages_with_custom)
+    assert len(ag_ui_messages_custom) == 3
+    assert isinstance(ag_ui_messages_custom[2], ToolMessage)
+    assert ag_ui_messages_custom[2].content == 'custom_object_str'
 
 
 async def test_builtin_tool_call() -> None:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import json
+from collections.abc import Callable, Mapping, Sequence
 from functools import cached_property
+from itertools import groupby
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -15,6 +17,10 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -24,21 +30,24 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from ...toolsets import AbstractToolset
+from .. import MessagesBuilder
 
 try:
     from ag_ui.core import (
         AssistantMessage,
         BaseEvent,
         DeveloperMessage,
+        FunctionCall,
         Message,
         RunAgentInput,
         SystemMessage,
         Tool as AGUITool,
+        ToolCall,
         ToolMessage,
         UserMessage,
     )
 
-    from .. import MessagesBuilder, UIAdapter, UIEventStream
+    from .. import UIAdapter, UIEventStream
     from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -193,3 +202,150 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
 
         return builder.messages
+
+    @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:
+        """Transform Pydantic AI messages into AG-UI messages.
+
+        Note: AG-UI message IDs are not preserved from load_messages().
+
+        Args:
+            messages: Sequence of Pydantic AI [`ModelMessage`][pydantic_ai.messages.ModelMessage] objects.
+
+        Returns:
+            List of AG-UI protocol messages.
+        """
+        ag_ui_messages: list[Message] = []
+        message_id_counter = 1
+
+        def get_next_id() -> str:
+            nonlocal message_id_counter
+            result = f'msg_{message_id_counter}'
+            message_id_counter += 1
+            return result
+
+        for model_msg in messages:
+            if isinstance(model_msg, ModelRequest):
+                cls._convert_request_parts(model_msg.parts, ag_ui_messages, get_next_id)
+
+            elif isinstance(model_msg, ModelResponse):
+                cls._convert_response_parts(model_msg.parts, ag_ui_messages, get_next_id)
+
+        return ag_ui_messages
+
+    @staticmethod
+    def _convert_request_parts(
+        parts: Sequence[ModelRequestPart],
+        ag_ui_messages: list[Message],
+        get_next_id: Callable[[], str],
+    ) -> None:
+        """Convert ModelRequest parts to AG-UI messages."""
+        for part in parts:
+            msg_id = get_next_id()
+
+            if isinstance(part, SystemPromptPart):
+                ag_ui_messages.append(SystemMessage(id=msg_id, content=part.content))
+
+            elif isinstance(part, UserPromptPart):
+                content = part.content if isinstance(part.content, str) else str(part.content)
+                ag_ui_messages.append(UserMessage(id=msg_id, content=content))
+
+            elif isinstance(part, ToolReturnPart):
+                ag_ui_messages.append(
+                    ToolMessage(
+                        id=msg_id,
+                        content=AGUIAdapter._serialize_content(part.content),
+                        tool_call_id=part.tool_call_id,
+                    )
+                )
+
+    @staticmethod
+    def _convert_response_parts(
+        parts: Sequence[ModelResponsePart],
+        ag_ui_messages: list[Message],
+        get_next_id: Callable[[], str],
+    ) -> None:
+        """Convert ModelResponse parts to AG-UI messages."""
+
+        # Group consecutive assistant parts (text, tool calls) together
+        def is_assistant_part(part: ModelResponsePart) -> bool:
+            return isinstance(part, TextPart | ToolCallPart | BuiltinToolCallPart)
+
+        for is_assistant, group in groupby(parts, key=is_assistant_part):
+            parts_list = list(group)
+
+            if is_assistant:
+                # Combine all parts into a single AssistantMessage
+                content: str | None = None
+                tool_calls: list[ToolCall] = []
+
+                for part in parts_list:
+                    if isinstance(part, TextPart):
+                        content = part.content
+                    elif isinstance(part, ToolCallPart):
+                        tool_calls.append(AGUIAdapter._convert_tool_call(part))
+                    elif isinstance(part, BuiltinToolCallPart):
+                        tool_calls.append(AGUIAdapter._convert_builtin_tool_call(part))
+
+                ag_ui_messages.append(
+                    AssistantMessage(
+                        id=get_next_id(),
+                        content=content,
+                        tool_calls=tool_calls if tool_calls else None,
+                    )
+                )
+            else:
+                # Each non-assistant part becomes its own message
+                for part in parts_list:
+                    if isinstance(part, BuiltinToolReturnPart):
+                        ag_ui_messages.append(
+                            ToolMessage(
+                                id=get_next_id(),
+                                content=AGUIAdapter._serialize_content(part.content),
+                                tool_call_id=AGUIAdapter._make_builtin_tool_call_id(
+                                    part.provider_name, part.tool_call_id
+                                ),
+                            )
+                        )
+
+    @staticmethod
+    def _make_builtin_tool_call_id(provider_name: str | None, tool_call_id: str) -> str:
+        """Create a full builtin tool call ID from provider name and tool call ID."""
+        return f'{BUILTIN_TOOL_CALL_ID_PREFIX}|{provider_name}|{tool_call_id}'
+
+    @staticmethod
+    def _convert_tool_call(part: ToolCallPart) -> ToolCall:
+        """Convert a ToolCallPart to an AG-UI ToolCall."""
+        args_str = part.args if isinstance(part.args, str) else json.dumps(part.args)
+        return ToolCall(
+            id=part.tool_call_id,
+            type='function',
+            function=FunctionCall(
+                name=part.tool_name,
+                arguments=args_str,
+            ),
+        )
+
+    @staticmethod
+    def _convert_builtin_tool_call(part: BuiltinToolCallPart) -> ToolCall:
+        """Convert a BuiltinToolCallPart to an AG-UI ToolCall."""
+        args_str = part.args if isinstance(part.args, str) else json.dumps(part.args)
+        return ToolCall(
+            id=AGUIAdapter._make_builtin_tool_call_id(part.provider_name, part.tool_call_id),
+            type='function',
+            function=FunctionCall(
+                name=part.tool_name,
+                arguments=args_str,
+            ),
+        )
+
+    @staticmethod
+    def _serialize_content(content: Any) -> str:
+        """Serialize content to a JSON string."""
+        if isinstance(content, str):
+            return content
+        try:
+            return json.dumps(content)
+        except (TypeError, ValueError):
+            # Fall back to str() if JSON serialization fails
+            return str(content)
