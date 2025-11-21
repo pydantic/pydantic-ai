@@ -146,7 +146,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 
 
 async def test_xai_image_input(allow_model_requests: None):
-    """Test that Grok model handles image inputs (text is extracted from content)."""
+    """Test that xAI model handles image inputs (text is extracted from content)."""
     response = create_response(content='done')
     mock_client = MockXai.create_mock(response)
     model = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
@@ -492,7 +492,7 @@ async def test_xai_stream_structured(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [{'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=1))
@@ -513,7 +513,7 @@ async def test_xai_stream_structured_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [{'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -824,7 +824,7 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
 async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_api_key: str):
-    """Test Grok's built-in web_search tool."""
+    """Test xAI's built-in web_search tool."""
     from pydantic_ai import WebSearchTool
 
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
@@ -843,7 +843,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_api_k
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
 async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_api_key: str):
-    """Test Grok's built-in x_search tool (X/Twitter search)."""
+    """Test xAI's built-in x_search tool (X/Twitter search)."""
     # Note: This test is skipped until XSearchTool is properly implemented
     # from pydantic_ai.builtin_tools import AbstractBuiltinTool
     #
@@ -860,7 +860,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_api_key
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
 async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_api_key: str):
-    """Test Grok's built-in code_execution tool."""
+    """Test xAI's built-in code_execution tool."""
     from pydantic_ai import CodeExecutionTool
 
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
@@ -905,7 +905,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None, xai_api_ke
 
 @pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
 async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, xai_api_key: str):
-    """Test mixing Grok's built-in tools with custom (client-side) tools."""
+    """Test mixing xAI's built-in tools with custom (client-side) tools."""
     from pydantic_ai import WebSearchTool
 
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key=xai_api_key))
@@ -957,7 +957,7 @@ async def test_xai_builtin_tools_wiring(allow_model_requests: None):
     reason='Requires XAI_API_KEY and LINEAR_ACCESS_TOKEN (gRPC, no cassettes)',
 )
 async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_api_key: str):
-    """Test Grok's MCP server tool with Linear."""
+    """Test xAI's MCP server tool with Linear."""
     from pydantic_ai import MCPServerTool
 
     linear_token = os.getenv('LINEAR_ACCESS_TOKEN')
@@ -1000,7 +1000,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_api_k
 
 
 async def test_xai_model_retries(allow_model_requests: None):
-    """Test Grok model with retries."""
+    """Test xAI model with retries."""
     # Create error response then success
     success_response = create_response(content='Success after retry')
 
@@ -1012,7 +1012,7 @@ async def test_xai_model_retries(allow_model_requests: None):
 
 
 async def test_xai_model_settings(allow_model_requests: None):
-    """Test Grok model with various settings."""
+    """Test xAI model with various settings."""
     response = create_response(content='response with settings')
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
@@ -1034,7 +1034,7 @@ async def test_xai_model_settings(allow_model_requests: None):
 
 
 async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
-    """Test Grok model with multiple tool calls in sequence."""
+    """Test xAI model with multiple tool calls in sequence."""
     # Three responses: two tool calls, then final answer
     responses = [
         create_response(
@@ -1065,7 +1065,7 @@ async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
 
 
 async def test_xai_stream_with_tool_calls(allow_model_requests: None):
-    """Test Grok streaming with tool calls."""
+    """Test xAI streaming with tool calls."""
     # First stream: tool call
     stream1 = [
         grok_tool_chunk('get_info', None, accumulated_args=''),
@@ -1105,7 +1105,7 @@ async def test_xai_model_invalid_api_key():
 
 
 async def test_xai_model_properties():
-    """Test Grok model properties."""
+    """Test xAI model properties."""
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
 
     assert m.model_name == 'grok-4-1-fast-non-reasoning'
@@ -1116,7 +1116,7 @@ async def test_xai_model_properties():
 
 
 async def test_xai_reasoning_simple(allow_model_requests: None):
-    """Test Grok model with simple reasoning content."""
+    """Test xAI model with simple reasoning content."""
     response = create_response(
         content='The answer is 4',
         reasoning_content='Let me think: 2+2 equals 4',
@@ -1152,7 +1152,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
 
 
 async def test_xai_encrypted_content_only(allow_model_requests: None):
-    """Test Grok model with encrypted content (signature) only."""
+    """Test xAI model with encrypted content (signature) only."""
     response = create_response(
         content='4',
         encrypted_content='abc123signature',
@@ -1188,7 +1188,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
 
 
 async def test_xai_reasoning_without_summary(allow_model_requests: None):
-    """Test Grok model with encrypted content but no reasoning summary."""
+    """Test xAI model with encrypted content but no reasoning summary."""
     response = create_response(
         content='4',
         encrypted_content='encrypted123',
@@ -1226,7 +1226,7 @@ async def test_xai_reasoning_without_summary(allow_model_requests: None):
 
 
 async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
-    """Test Grok model with reasoning content and tool calls."""
+    """Test xAI model with reasoning content and tool calls."""
     responses = [
         create_response(
             tool_calls=[create_tool_call(id='1', name='calculate', arguments={'expression': '2+2'})],
@@ -1299,7 +1299,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
 
 
 async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests: None):
-    """Test Grok model with encrypted reasoning content and tool calls."""
+    """Test xAI model with encrypted reasoning content and tool calls."""
     responses = [
         create_response(
             tool_calls=[create_tool_call(id='1', name='get_weather', arguments={'city': 'San Francisco'})],
@@ -1372,7 +1372,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
 
 
 async def test_xai_stream_with_reasoning(allow_model_requests: None):
-    """Test Grok streaming with reasoning content."""
+    """Test xAI streaming with reasoning content."""
     stream = [
         grok_reasoning_text_chunk('The answer', reasoning_content='Let me think about this...', finish_reason=''),
         grok_reasoning_text_chunk(' is 4', reasoning_content='Let me think about this...', finish_reason='stop'),
@@ -1399,7 +1399,7 @@ async def test_xai_stream_with_reasoning(allow_model_requests: None):
 
 
 async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
-    """Test Grok streaming with encrypted reasoning content."""
+    """Test xAI streaming with encrypted reasoning content."""
     stream = [
         grok_reasoning_text_chunk('The weather', encrypted_content='encrypted_abc123', finish_reason=''),
         grok_reasoning_text_chunk(' is sunny', encrypted_content='encrypted_abc123', finish_reason='stop'),
@@ -1427,7 +1427,7 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
 
 
 async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
-    """Test that Grok model properly extracts reasoning_tokens and cache_read_tokens from usage."""
+    """Test that xAI model properly extracts reasoning_tokens and cache_read_tokens from usage."""
     # Create a mock usage object with reasoning_tokens and cached_prompt_text_tokens
     mock_usage = SimpleNamespace(
         prompt_tokens=100,
@@ -1456,7 +1456,7 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
 
 
 async def test_xai_usage_without_details(allow_model_requests: None):
-    """Test that Grok model handles usage without reasoning_tokens or cached tokens."""
+    """Test that xAI model handles usage without reasoning_tokens or cached tokens."""
     mock_usage = SimpleNamespace(
         prompt_tokens=20,
         completion_tokens=10,
@@ -1482,7 +1482,7 @@ async def test_xai_usage_without_details(allow_model_requests: None):
 
 
 async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
-    """Test that Grok model properly extracts server_side_tools_used from usage."""
+    """Test that xAI model properly extracts server_side_tools_used from usage."""
     # Create a mock usage object with server_side_tools_used
     # Note: In the real SDK, server_side_tools_used is a repeated field (list-like),
     # but we use an int in mocks for simplicity

@@ -53,6 +53,7 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    check_allow_model_requests,
     download_item,
 )
 from ..profiles import ModelProfileSpec
@@ -63,6 +64,28 @@ from ..usage import RequestUsage
 
 # Type alias for consistency
 XaiModelName = GrokModelName
+
+
+class XaiModelSettings(ModelSettings, total=False):
+    """Settings specific to xAI models.
+
+    See [xAI SDK documentation](https://docs.x.ai/docs) for more details on these parameters.
+    """
+
+    logprobs: bool
+    """Whether to return log probabilities of the output tokens or not."""
+
+    top_logprobs: int
+    """An integer between 0 and 20 specifying the number of most likely tokens to return at each position."""
+
+    use_encrypted_content: bool
+    """Whether to use encrypted content for reasoning continuity."""
+
+    store_messages: bool
+    """Whether to store messages on xAI's servers for conversation continuity."""
+
+    user: str
+    """A unique identifier representing your end-user, which can help xAI to monitor and detect abuse."""
 
 
 class XaiModel(Model):
@@ -404,6 +427,34 @@ class XaiModel(Model):
                 )
         return tools
 
+    def _map_model_settings(self, model_settings: ModelSettings | None) -> dict[str, Any]:
+        """Map pydantic_ai ModelSettings to xAI SDK parameters."""
+        if not model_settings:
+            return {}
+
+        # Mapping of pydantic_ai setting keys to xAI SDK parameter names
+        # Most keys are the same, but 'stop_sequences' maps to 'stop'
+        setting_mapping = {
+            'temperature': 'temperature',
+            'top_p': 'top_p',
+            'max_tokens': 'max_tokens',
+            'stop_sequences': 'stop',
+            'seed': 'seed',
+            'parallel_tool_calls': 'parallel_tool_calls',
+            'presence_penalty': 'presence_penalty',
+            'frequency_penalty': 'frequency_penalty',
+            'logprobs': 'logprobs',
+            'top_logprobs': 'top_logprobs',
+            'reasoning_effort': 'reasoning_effort',
+            'use_encrypted_content': 'use_encrypted_content',
+            'store_messages': 'store_messages',
+            'user': 'user',
+        }
+
+        # Build the settings dict, only including keys that are present in the input
+        # TypedDict is just a dict at runtime, so we can iterate over it directly
+        return {setting_mapping[key]: value for key, value in model_settings.items() if key in setting_mapping}
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -411,6 +462,11 @@ class XaiModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Make a request to the xAI model."""
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         client = self._provider.client
 
         # Convert messages to xAI format
@@ -424,26 +480,8 @@ class XaiModel(Model):
             tools.extend(self._map_tools(model_request_parameters))
         tools_param = tools if tools else None
 
-        # Filter model settings to only include xAI SDK compatible parameters
-        xai_settings: dict[str, Any] = {}
-        if model_settings:
-            # Map pydantic_ai settings to xAI SDK parameters
-            if 'temperature' in model_settings:
-                xai_settings['temperature'] = model_settings['temperature']
-            if 'top_p' in model_settings:
-                xai_settings['top_p'] = model_settings['top_p']
-            if 'max_tokens' in model_settings:
-                xai_settings['max_tokens'] = model_settings['max_tokens']
-            if 'stop_sequences' in model_settings:
-                xai_settings['stop'] = model_settings['stop_sequences']
-            if 'seed' in model_settings:
-                xai_settings['seed'] = model_settings['seed']
-            if 'parallel_tool_calls' in model_settings:
-                xai_settings['parallel_tool_calls'] = model_settings['parallel_tool_calls']
-            if 'presence_penalty' in model_settings:
-                xai_settings['presence_penalty'] = model_settings['presence_penalty']
-            if 'frequency_penalty' in model_settings:
-                xai_settings['frequency_penalty'] = model_settings['frequency_penalty']
+        # Map model settings to xAI SDK parameters
+        xai_settings = self._map_model_settings(model_settings)
 
         # Create chat instance
         chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools_param, **xai_settings)
@@ -463,6 +501,11 @@ class XaiModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the xAI model."""
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         client = self._provider.client
 
         # Convert messages to xAI format
@@ -476,26 +519,8 @@ class XaiModel(Model):
             tools.extend(self._map_tools(model_request_parameters))
         tools_param = tools if tools else None
 
-        # Filter model settings to only include xAI SDK compatible parameters
-        xai_settings: dict[str, Any] = {}
-        if model_settings:
-            # Map pydantic_ai settings to xAI SDK parameters
-            if 'temperature' in model_settings:
-                xai_settings['temperature'] = model_settings['temperature']
-            if 'top_p' in model_settings:
-                xai_settings['top_p'] = model_settings['top_p']
-            if 'max_tokens' in model_settings:
-                xai_settings['max_tokens'] = model_settings['max_tokens']
-            if 'stop_sequences' in model_settings:
-                xai_settings['stop'] = model_settings['stop_sequences']
-            if 'seed' in model_settings:
-                xai_settings['seed'] = model_settings['seed']
-            if 'parallel_tool_calls' in model_settings:
-                xai_settings['parallel_tool_calls'] = model_settings['parallel_tool_calls']
-            if 'presence_penalty' in model_settings:
-                xai_settings['presence_penalty'] = model_settings['presence_penalty']
-            if 'frequency_penalty' in model_settings:
-                xai_settings['frequency_penalty'] = model_settings['frequency_penalty']
+        # Map model settings to xAI SDK parameters
+        xai_settings = self._map_model_settings(model_settings)
 
         # Create chat instance
         chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools_param, **xai_settings)
