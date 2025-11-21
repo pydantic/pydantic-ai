@@ -2,12 +2,10 @@
 
 from .agent_options import (
     AI_MODELS,
-    BUILTIN_TOOL_DEFS,
-    BUILTIN_TOOLS,
+    DEFAULT_BUILTIN_TOOL_DEFS,
     AIModel,
     AIModelID,
-    BuiltinTool,
-    BuiltinToolID,
+    BuiltinToolDef,
 )
 from .api import create_api_router
 from .app import create_web_app
@@ -16,10 +14,8 @@ __all__ = [
     'create_web_app',
     'create_api_router',
     'AI_MODELS',
-    'BUILTIN_TOOL_DEFS',
-    'BUILTIN_TOOLS',
+    'DEFAULT_BUILTIN_TOOL_DEFS',
     'AIModel',
     'AIModelID',
-    'BuiltinTool',
-    'BuiltinToolID',
+    'BuiltinToolDef',
 ]

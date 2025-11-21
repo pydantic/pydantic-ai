@@ -94,7 +94,9 @@ app = agent.to_web()  # Returns a FastAPI application
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [--web] [--host HOST] [--port PORT] [--config CONFIG]
+            [--no-auto-config]
+            [prompt]
 
 Pydantic AI CLI v...
 
@@ -118,4 +120,9 @@ options:
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
   --version             Show version and exit
+  --web                 Launch web chat UI for the agent (requires --agent)
+  --host HOST           Host to bind the server to (default: 127.0.0.1)
+  --port PORT           Port to bind the server to (default: 8000)
+  --config CONFIG       Path to agent_options.py config file (overrides auto-discovery)
+  --no-auto-config      Disable auto-discovery of agent_options.py in current directory
 ```
