@@ -2,6 +2,8 @@
 
 ::: pydantic_ai.providers.Provider
 
+::: pydantic_ai.providers.gateway
+
 ::: pydantic_ai.providers.google
 
 ::: pydantic_ai.providers.openai
