@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, FileSearchTool, ImageGenerationTool, UrlContextTool, WebSearchTool
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -63,6 +63,7 @@ try:
         ExecutableCode,
         ExecutableCodeDict,
         FileDataDict,
+        FileSearchDict,
         FinishReason as GoogleFinishReason,
         FunctionCallDict,
         FunctionCallingConfigDict,
@@ -92,6 +93,7 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
 
 LatestGoogleModelNames = Literal[
     'gemini-flash-latest',
@@ -350,6 +352,9 @@ class GoogleModel(Model):
                     tools.append(ToolDict(url_context=UrlContextDict()))
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+                elif isinstance(tool, FileSearchTool):
+                    file_search_config = FileSearchDict(file_search_store_names=tool.vector_store_ids)
+                    tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
@@ -853,6 +858,11 @@ def _process_response_from_parts(
         items.append(web_search_call)
         items.append(web_search_return)
 
+    file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
+    if file_search_call and file_search_return:
+        items.append(file_search_call)
+        items.append(file_search_return)
+
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
     for part in parts:
@@ -994,6 +1004,35 @@ def _map_grounding_metadata(
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
                 content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
+                if (grounding_chunks := grounding_metadata.grounding_chunks)
+                else None,
+            ),
+        )
+    else:
+        return None, None
+
+
+def _map_file_search_grounding_metadata(
+    grounding_metadata: GroundingMetadata | None, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    if grounding_metadata and (retrieval_queries := grounding_metadata.retrieval_queries):
+        tool_call_id = _utils.generate_tool_call_id()
+        return (
+            BuiltinToolCallPart(
+                provider_name=provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=tool_call_id,
+                args={'queries': retrieval_queries},
+            ),
+            BuiltinToolReturnPart(
+                provider_name=provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=tool_call_id,
+                content=[
+                    chunk.retrieved_context.model_dump(mode='json')
+                    for chunk in grounding_chunks
+                    if chunk.retrieved_context
+                ]
                 if (grounding_chunks := grounding_metadata.grounding_chunks)
                 else None,
             ),

@@ -3610,7 +3610,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-test',
         _response=response_iterator(),
-        _timestamp=datetime.datetime.now(datetime.timezone.utc),
+        _timestamp=IsDatetime(),
         _provider_name='test-provider',
         _provider_url='',
     )
@@ -3639,6 +3639,355 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
             ],
         }
     )
+
+
+@pytest.mark.vcr()
+async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    import asyncio
+    import os
+    import tempfile
+
+    from pydantic_ai.builtin_tools import FileSearchTool
+
+    client = google_provider.client
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
+        test_file_path = f.name
+
+    store = None
+    try:
+        store = await client.aio.file_search_stores.create(config={'display_name': 'test-file-search-store'})
+        assert store.name is not None
+
+        with open(test_file_path, 'rb') as f:
+            await client.aio.file_search_stores.upload_to_file_search_store(
+                file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
+            )
+
+        await asyncio.sleep(3)
+
+        m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(
+            m,
+            system_prompt='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(vector_store_ids=[store.name])],
+        )
+
+        result = await agent.run('What is the capital of France?')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(
+                            content='You are a helpful assistant.',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content="""\
+The capital of France is Paris.
+
+Paris is a major global center for art, fashion, gastronomy, and culture. A famous landmark in the city is the Eiffel Tower. The city is also known for its 19th-century cityscape, which is crisscrossed by wide boulevards and the River Seine.\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=15,
+                        output_tokens=979,
+                        details={
+                            'thoughts_tokens': 879,
+                            'tool_use_prompt_tokens': 1485,
+                            'text_prompt_tokens': 15,
+                            'text_tool_use_prompt_tokens': 1485,
+                        },
+                    ),
+                    model_name='gemini-2.5-pro',
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        messages = result.all_messages()
+        result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
+        assert result.new_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Tell me about the Eiffel Tower.',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content="""\
+The Eiffel Tower is a famous landmark located in Paris, the capital of France. It is one of the most recognizable structures in the world.
+
+Here are some key facts about the Eiffel Tower:
+
+*   **Construction:** It was designed by the engineer Gustave Eiffel, and his company built it between 1887 and 1889. It was created as the entrance arch for the 1889 Exposition Universelle (World's Fair), which celebrated the 100th anniversary of the French Revolution.
+*   **Design and Material:** The tower is made of wrought iron and is a masterpiece of structural engineering. Its open-lattice design was innovative for its time and was chosen for its wind resistance and stability.
+*   **Height:** The Eiffel Tower stands at a height of 330 meters (1,083 feet), including its antennas. For about 41 years, it held the title of the tallest man-made structure in the world until the Chrysler Building in New York City was completed in 1930.
+*   **Visiting:** The tower has three levels for visitors. The first two levels can be reached by stairs or elevators and feature restaurants and shops. The top level, accessible only by elevator, offers panoramic views of Paris.
+*   **Cultural Impact:** Initially criticized by some of France's leading artists and intellectuals for its design, the Eiffel Tower has since become a global cultural icon of France and a symbol of Paris itself. It is one of the most visited paid monuments in the world.\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=88,
+                        output_tokens=506,
+                        details={
+                            'thoughts_tokens': 167,
+                            'tool_use_prompt_tokens': 270,
+                            'text_prompt_tokens': 88,
+                            'text_tool_use_prompt_tokens': 270,
+                        },
+                    ),
+                    model_name='gemini-2.5-pro',
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    finally:
+        os.unlink(test_file_path)
+        if store is not None and store.name is not None:
+            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+
+
+@pytest.mark.vcr()
+async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
+    import asyncio
+    import os
+    import tempfile
+
+    from pydantic_ai.builtin_tools import FileSearchTool
+
+    client = google_provider.client
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
+        test_file_path = f.name
+
+    store = None
+    try:
+        store = await client.aio.file_search_stores.create(config={'display_name': 'test-file-search-stream'})
+        assert store.name is not None
+
+        with open(test_file_path, 'rb') as f:
+            await client.aio.file_search_stores.upload_to_file_search_store(
+                file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
+            )
+
+        await asyncio.sleep(3)
+
+        m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(
+            m,
+            system_prompt='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(vector_store_ids=[store.name])],
+        )
+
+        event_parts: list[Any] = []
+        async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            event_parts.append(event)
+
+        assert agent_run.result is not None
+        messages = agent_run.result.all_messages()
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(
+                            content='You are a helpful assistant.',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='code_execution',
+                            args={
+                                'code': """\
+   print(file_search.query(query="what is the capital of France?"))
+   \
+""",
+                                'language': 'PYTHON',
+                            },
+                            tool_call_id=IsStr(),
+                            provider_name='google-gla',
+                        ),
+                        BuiltinToolCallPart(
+                            tool_name='code_execution',
+                            args={
+                                'code': 'print(file_search.query(query="what is the capital of France?"))',
+                                'language': 'PYTHON',
+                            },
+                            tool_call_id=IsStr(),
+                            provider_name='google-gla',
+                        ),
+                        TextPart(
+                            content='The capital of France is Paris. A famous landmark in Paris is the Eiffel Tower.'
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=15,
+                        output_tokens=264,
+                        details={
+                            'thoughts_tokens': 211,
+                            'tool_use_prompt_tokens': 526,
+                            'text_prompt_tokens': 15,
+                            'text_tool_use_prompt_tokens': 526,
+                        },
+                    ),
+                    model_name='gemini-2.5-pro',
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        assert event_parts == snapshot(
+            [
+                PartStartEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+   print(file_search.query(query="what is the capital of France?"))
+   \
+""",
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                ),
+                PartEndEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+   print(file_search.query(query="what is the capital of France?"))
+   \
+""",
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    next_part_kind='builtin-tool-call',
+                ),
+                PartStartEvent(
+                    index=1,
+                    part=BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': 'print(file_search.query(query="what is the capital of France?"))',
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    previous_part_kind='builtin-tool-call',
+                ),
+                PartEndEvent(
+                    index=1,
+                    part=BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': 'print(file_search.query(query="what is the capital of France?"))',
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    next_part_kind='text',
+                ),
+                PartStartEvent(
+                    index=2, part=TextPart(content='The capital of France'), previous_part_kind='builtin-tool-call'
+                ),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(
+                    index=2, delta=TextPartDelta(content_delta=' is Paris. A famous landmark in Paris is the Eiffel')
+                ),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' Tower.')),
+                PartEndEvent(
+                    index=2,
+                    part=TextPart(
+                        content='The capital of France is Paris. A famous landmark in Paris is the Eiffel Tower.'
+                    ),
+                ),
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                    part=BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+   print(file_search.query(query="what is the capital of France?"))
+   \
+""",
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    )
+                ),
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                    part=BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': 'print(file_search.query(query="what is the capital of France?"))',
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    )
+                ),
+            ]
+        )
+
+    finally:
+        os.unlink(test_file_path)
+        if store is not None and store.name is not None:
+            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
 
 
 async def test_cache_point_filtering():
