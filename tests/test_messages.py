@@ -336,7 +336,10 @@ def test_video_url_invalid():
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
     original_delta = ThinkingPartDelta(
-        content_delta='original', signature_delta='sig1', provider_name='original_provider'
+        content_delta='original',
+        signature_delta='sig1',
+        provider_name='original_provider',
+        provider_details={'foo': 'bar', 'baz': 'qux'},
     )
 
     # Test applying delta with no content or signature - should raise error
@@ -361,6 +364,14 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
     assert result.provider_name == 'new_provider'
+
+    # Test applying delta with provider_details
+    provider_details_delta = ThinkingPartDelta(
+        content_delta='', provider_details={'finish_reason': 'STOP', 'foo': 'qux'}
+    )
+    result = provider_details_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.provider_details == {'foo': 'qux', 'baz': 'qux', 'finish_reason': 'STOP'}
 
 
 def test_pre_usage_refactor_messages_deserializable():
