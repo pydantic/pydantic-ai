@@ -111,10 +111,10 @@ Before you start, make sure you are on version 1.16 or later of `pydantic-ai`. T
     pip install -U pydantic-ai
     ```
 
-Set the `PYDANTIC_AI_GATEWAY_API_KEY`  environment variable to your Gateway API key:
+Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable to your Gateway API key:
 
 ```bash
-export PYDANTIC_AI_GATEWAY_API_KEY="YOUR_PYDANTIC_AI_GATEWAY_API_KEY"
+export PYDANTIC_AI_GATEWAY_API_KEY="paig_<example_key>"
 ```
 
 You can access multiple models with the same API key, as shown in the code snippet below.
@@ -142,7 +142,7 @@ You can access multiple models with the same API key, as shown in the code snipp
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.gateway import gateway_provider
 
-    provider = gateway_provider('openai', api_key='PYDANTIC_AI_GATEWAY_API_KEY')
+    provider = gateway_provider('openai', api_key='paig_<example_key>')
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
 
@@ -164,8 +164,8 @@ You can access multiple models with the same API key, as shown in the code snipp
 
     provider = gateway_provider(
         'openai',
-        api_key='PYDANTIC_AI_GATEWAY_API_KEY',
-        route='modal-ai'
+        api_key='paig_<example_key>',
+        route='builtin-openai'
     )
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
