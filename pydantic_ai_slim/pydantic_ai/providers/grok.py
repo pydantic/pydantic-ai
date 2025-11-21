@@ -25,6 +25,11 @@ except ImportError as _import_error:  # pragma: no cover
 GrokModelName = Literal[
     'grok-4',
     'grok-4-0709',
+    'grok-4-1-fast-reasoning',
+    'grok-4-1-fast-non-reasoning',
+    'grok-4-fast-reasoning',
+    'grok-4-fast-non-reasoning',
+    'grok-code-fast-1',
     'grok-3',
     'grok-3-mini',
     'grok-3-fast',
@@ -35,7 +40,7 @@ GrokModelName = Literal[
 
 
 class GrokProvider(Provider[AsyncOpenAI]):
-    """Provider for Grok API."""
+    """Provider for Grok API (OpenAI-compatible interface)."""
 
     @property
     def name(self) -> str:
