@@ -45,7 +45,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=806
+      - gfet4t7; dur=760
       transfer-encoding:
       - chunked
       vary:
@@ -54,7 +54,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -5.800400977022946e-05
+      - avgLogprobs: -4.7391682164743544e-05
         content:
           parts:
           - text: |-
@@ -65,7 +65,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: Lvkgad-TOprpz7IPiMrqsQQ
+      responseId: EfsgaZT5JPbXz7IPqtGJkQ8
       usageMetadata:
         candidatesTokenCount: 20
         candidatesTokensDetails:

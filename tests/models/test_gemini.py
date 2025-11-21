@@ -63,7 +63,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -138,15 +138,12 @@ async def test_model_tools(allow_model_requests: None):
                 {
                     'name': 'foo',
                     'description': 'This is foo',
-                    'parameters': {
-                        'type': 'object',
-                        'properties': {'bar': {'type': 'number'}},
-                    },
+                    'parameters_json_schema': {'type': 'object', 'properties': {'bar': {'type': 'number'}}},
                 },
                 {
                     'name': 'apple',
                     'description': 'This is apple',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'type': 'object',
                         'properties': {'banana': {'type': 'array', 'items': {'type': 'number'}}},
                     },
@@ -154,7 +151,7 @@ async def test_model_tools(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'type': 'object',
                         'properties': {'spam': {'type': 'number'}},
                         'required': ['spam'],
@@ -189,7 +186,7 @@ async def test_require_response_tool(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {'type': 'object', 'properties': {'spam': {'type': 'number'}}},
+                    'parameters_json_schema': {'type': 'object', 'properties': {'spam': {'type': 'number'}}},
                 }
             ]
         }
@@ -277,13 +274,8 @@ async def test_json_def_replaced(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
-                        'properties': {
-                            'locations': {
-                                'items': {'$ref': '#/$defs/Location'},
-                                'type': 'array',
-                            }
-                        },
+                    'parameters_json_schema': {
+                        'properties': {'locations': {'items': {'$ref': '#/$defs/Location'}, 'type': 'array'}},
                         'required': ['locations'],
                         'type': 'object',
                         '$defs': {
@@ -367,7 +359,7 @@ async def test_json_def_enum(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'properties': {
                             'progress': {
                                 'default': None,
@@ -416,17 +408,14 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'properties': {
                             'op_location': {'default': None, 'anyOf': [{'$ref': '#/$defs/Location'}, {'type': 'null'}]}
                         },
                         'type': 'object',
                         '$defs': {
                             'Location': {
-                                'properties': {
-                                    'lat': {'type': 'number'},
-                                    'lng': {'type': 'number'},
-                                },
+                                'properties': {'lat': {'type': 'number'}, 'lng': {'type': 'number'}},
                                 'required': ['lat', 'lng'],
                                 'type': 'object',
                             }
@@ -480,7 +469,7 @@ async def test_json_def_date(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'properties': {
                             'd': {'type': 'string', 'description': 'Format: date'},
                             'dt': {'type': 'string', 'description': 'Format: date-time'},
@@ -1031,7 +1020,10 @@ async def test_empty_text_ignored():
         {
             'role': 'model',
             'parts': [
-                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
+                {
+                    'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
+                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                },
                 {'text': 'xxx'},
             ],
         }
@@ -1044,7 +1036,12 @@ async def test_empty_text_ignored():
     assert content == snapshot(
         {
             'role': 'model',
-            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
+            'parts': [
+                {
+                    'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
+                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                }
+            ],
         }
     )
 
@@ -1194,41 +1191,39 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
+                run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_4b41e83dfa494855b1ce086967c7ba1a')
-                ],
+                parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
                     input_tokens=33, output_tokens=74, details={'thoughts_tokens': 64, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='JfYgaYXrHZmFz7IPxuf_kAg',
-                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
+                provider_response_id=IsStr(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='pyd_ai_4b41e83dfa494855b1ce086967c7ba1a',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
                             'This is file 1c8566:',
                             BinaryContent(
-                                data=IsStr(),
+                                data=IsBytes(),
                                 media_type='image/png',
                             ),
                         ],
                         timestamp=IsDatetime(),
                     ),
                 ],
-                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1267,8 +1262,8 @@ You can clearly identify it by its signature features:
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='LfYgad6vHMjjz7IP6smh-Qo',
-                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
+                provider_response_id=IsStr(),
+                run_id=IsStr(),
             ),
         ]
     )

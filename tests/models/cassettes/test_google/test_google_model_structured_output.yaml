@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1203'
+      - '1182'
       content-type:
       - application/json
       host:
@@ -68,7 +68,6 @@ interactions:
             - temperature
             - date
             - city
-            title: Response
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
@@ -80,7 +79,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=798
+      - gfet4t7; dur=835
       transfer-encoding:
       - chunked
       vary:
@@ -100,7 +99,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: h_kgaZetCbSlmtkP-rz3kAg
+      responseId: IvsgabDNFcqHz7IPgc2O8Ak
       usageMetadata:
         candidatesTokenCount: 14
         candidatesTokensDetails:
@@ -123,7 +122,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1615'
+      - '1594'
       content-type:
       - application/json
       host:
@@ -139,13 +138,13 @@ interactions:
             args:
               city: London
               date: '2022-01-01'
-            id: pyd_ai_c823e3ca4eea4b80b9c8bb5189503055
+            id: pyd_ai_9526b1a5c88049ba818b5a35fb6228d3
             name: temperature
           thoughtSignature: Y29udGV4dF9lbmdpbmVlcmluZ19pc190aGVfd2F5X3RvX2dv
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_c823e3ca4eea4b80b9c8bb5189503055
+            id: pyd_ai_9526b1a5c88049ba818b5a35fb6228d3
             name: temperature
             response:
               return_value: 30°C
@@ -199,7 +198,6 @@ interactions:
             - temperature
             - date
             - city
-            title: Response
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
@@ -211,7 +209,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=702
+      - gfet4t7; dur=699
       transfer-encoding:
       - chunked
       vary:
@@ -220,7 +218,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00017863975483037176
+      - avgLogprobs: -0.00036509230821615173
         content:
           parts:
           - functionCall:
@@ -232,7 +230,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: h_kgaf_-MaesqtsP5pqBiAg
+      responseId: I_sgafe-BLLBz7IP0buJgQc
       usageMetadata:
         candidatesTokenCount: 21
         candidatesTokensDetails:
