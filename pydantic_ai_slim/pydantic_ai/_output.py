@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import copy
 import inspect
 import json
 import re
@@ -228,9 +227,29 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     def allows_text(self) -> bool:
         return self.text_processor is not None
 
-    @abstractmethod
-    def dump(self) -> JsonSchema:
-        raise NotImplementedError()
+    def json_schema(self) -> JsonSchema:
+        additional_outputs: Sequence[type] = []
+        if self.allows_text:
+            additional_outputs.append(str)
+        if self.allows_deferred_tools:
+            additional_outputs.append(DeferredToolRequests)
+        if self.allows_image:
+            additional_outputs.append(_messages.BinaryImage)
+
+        processors = None
+        if self.toolset:
+            processors = self.toolset.processors
+
+        # special case where we don't want to union
+        if len(additional_outputs) == 1 and not processors:
+            return TypeAdapter(additional_outputs[0]).json_schema()
+
+        json_schema = UnionOutputProcessor(
+            outputs=additional_outputs,
+            processors=processors,
+        ).object_def.json_schema
+
+        return json_schema
 
     @classmethod
     def build(  # noqa: C901
@@ -401,7 +420,7 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
         super().__init__(
             toolset=toolset,
             object_def=processor.object_def,
-            text_processor=processor,
+            text_processor=processor,  # always triggers allows_text to be true, maybe a bug?
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
@@ -410,18 +429,6 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'auto'
-
-    def dump(self) -> JsonSchema:
-        if self.toolset:
-            processors: list[ObjectOutputProcessor[OutputDataT]] = []
-            for tool_def in self.toolset._tool_defs:  # pyright: ignore [reportPrivateUsage]
-                processor = copy.copy(self.toolset.processors[tool_def.name])
-                processor.object_def.name = tool_def.name
-                processor.object_def.description = tool_def.description
-                processors.append(processor)
-            return UnionOutputProcessor(processors).object_def.json_schema
-
-        return self.processor.object_def.json_schema
 
 
 @dataclass(init=False)
@@ -443,9 +450,6 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
     def mode(self) -> OutputMode:
         return 'text'
 
-    def dump(self) -> JsonSchema:
-        return {'type': 'string'}
-
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
     def __init__(self, *, allows_deferred_tools: bool):
@@ -454,9 +458,6 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'image'
-
-    def dump(self) -> JsonSchema:
-        raise NotImplementedError()
 
 
 @dataclass(init=False)
@@ -473,9 +474,6 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
             allows_image=allows_image,
         )
         self.processor = processor
-
-    def dump(self) -> JsonSchema:
-        return self.processor.object_def.json_schema
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
@@ -549,18 +547,6 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'tool'
-
-    def dump(self) -> JsonSchema:
-        if self.toolset is None:
-            # need to check expected behavior
-            raise NotImplementedError()
-        processors: list[ObjectOutputProcessor[OutputDataT]] = []
-        for tool_def in self.toolset._tool_defs:  # pyright: ignore [reportPrivateUsage]
-            processor = copy.copy(self.toolset.processors[tool_def.name])
-            processor.object_def.name = tool_def.name
-            processor.object_def.description = tool_def.description
-            processors.append(processor)
-        return UnionOutputProcessor(processors).object_def.json_schema
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
@@ -753,24 +739,45 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
     def __init__(
         self,
-        outputs: Sequence[OutputTypeOrFunction[OutputDataT] | ObjectOutputProcessor[OutputDataT]],
+        outputs: Sequence[OutputTypeOrFunction[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        processors: dict[str, ObjectOutputProcessor[OutputDataT]] | None = None,
     ):
         self._union_processor = ObjectOutputProcessor(output=UnionOutputModel)
 
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
-        for output in outputs:
-            if isinstance(output, ObjectOutputProcessor):
-                processor = output
-            else:
-                processor = ObjectOutputProcessor(output=output, strict=strict)
-            object_def = processor.object_def
 
+        if processors:
+            for name, processor in processors.items():
+                object_key = name
+
+                i = 1
+                original_key = object_key
+                while object_key in self._processors:
+                    i += 1
+                    object_key = f'{original_key}_{i}'
+
+                self._processors[object_key] = processor
+
+                object_def = processor.object_def
+
+                json_schema = object_def.json_schema
+                if object_def.name:  # pragma: no branch
+                    json_schema['title'] = name
+                if object_def.description:
+                    json_schema['description'] = object_def.description
+
+                json_schemas.append(json_schema)
+
+        for output in outputs:
+            processor = ObjectOutputProcessor(output=output, strict=strict)
+            object_def = processor.object_def
             object_key = object_def.name or output.__name__
+
             i = 1
             original_key = object_key
             while object_key in self._processors:

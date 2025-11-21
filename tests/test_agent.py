@@ -5174,8 +5174,21 @@ async def test_wrapper_agent():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'final_result',
-                            'description': 'The final response which ends this conversation',
-                        }
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'str'},
+                                'data': {
+                                    'properties': {'response': {'type': 'string'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'str',
+                        },
                     ]
                 }
             },
@@ -6205,8 +6218,21 @@ async def test_auto_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'final_result',
-                            'description': 'The final response which ends this conversation',
-                        }
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'str'},
+                                'data': {
+                                    'properties': {'response': {'type': 'string'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'str',
+                        },
                     ]
                 }
             },
@@ -6273,7 +6299,6 @@ async def test_tool_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'alice',
-                            'description': 'bool: The final response which ends this conversation',
                         },
                         {
                             'type': 'object',
@@ -6288,7 +6313,6 @@ async def test_tool_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'bob',
-                            'description': 'bool: The final response which ends this conversation',
                         },
                     ]
                 }
@@ -6304,9 +6328,7 @@ async def test_native_output_json_schema():
         'test',
         output_type=NativeOutput([bool], name='native_output_name', description='native_output_description'),
     )
-    assert agent.output_json_schema() == snapshot(
-        {'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'type': 'object'}
-    )
+    assert agent.output_json_schema() == snapshot({'type': 'string'})
 
 
 async def test_prompted_output_json_schema():
@@ -6314,9 +6336,7 @@ async def test_prompted_output_json_schema():
         'test',
         output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description'),
     )
-    assert agent.output_json_schema() == snapshot(
-        {'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'type': 'object'}
-    )
+    assert agent.output_json_schema() == snapshot({'type': 'string'})
 
 
 async def test_custom_output_json_schema():
@@ -6350,7 +6370,21 @@ async def test_custom_output_json_schema():
                             'additionalProperties': False,
                             'title': 'final_result',
                             'description': 'A human with a name and age',
-                        }
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'str'},
+                                'data': {
+                                    'properties': {'response': {'type': 'string'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'str',
+                        },
                     ]
                 }
             },
