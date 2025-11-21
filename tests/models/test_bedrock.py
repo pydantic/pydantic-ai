@@ -230,6 +230,29 @@ async def test_bedrock_count_tokens_non_http_error():
     )
 
 
+async def test_bedrock_stream_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
+            async for _ in stream:
+                pass
+
+    assert 'broken connection' in exc_info.value.message
+
+
+async def test_stub_provider_properties():
+    # tests the test utility itself...
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'test'}}, 'converse')
+    model = _bedrock_model_with_client_error(error)
+    provider = model._provider  # pyright: ignore[reportPrivateUsage]
+
+    assert provider.name == 'bedrock-stub'
+    assert provider.base_url == 'https://bedrock.stub'
+
+
 @pytest.mark.parametrize(
     ('model_name', 'expected'),
     [

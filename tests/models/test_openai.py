@@ -1162,6 +1162,21 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
 
 
+def test_responses_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAIResponses.create_mock(
+        APIConnectionError(
+            message='Connection to http://localhost:11434/v1 timed out',
+            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+        )
+    )
+    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'o3-mini'
+    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
 async def test_max_completion_tokens(allow_model_requests: None, model_name: str, openai_api_key: str):
     m = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))

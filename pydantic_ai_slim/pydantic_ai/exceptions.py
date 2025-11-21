@@ -158,9 +158,9 @@ class ModelAPIError(AgentRunError):
     model_name: str
     """The name of the model associated with the error."""
 
-    def __init__(self, model_name: str, message: str | None = None):
+    def __init__(self, model_name: str, message: str):
         self.model_name = model_name
-        super().__init__(message or f'model_name: {model_name}')
+        super().__init__(message)
 
 
 class ModelHTTPError(ModelAPIError):

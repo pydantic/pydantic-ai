@@ -29,7 +29,7 @@ from pydantic_ai.exceptions import (
         lambda: AgentRunError('test'),
         lambda: UnexpectedModelBehavior('test'),
         lambda: UsageLimitExceeded('test'),
-        lambda: ModelAPIError('model'),
+        lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
         lambda: IncompleteToolCall('test'),
     ],
