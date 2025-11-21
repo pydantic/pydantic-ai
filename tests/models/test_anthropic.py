@@ -184,7 +184,7 @@ class MockAnthropic:
     async def messages_count_tokens(self, *_args: Any, **_kwargs: Any) -> Any:
         if self.messages_ is not None:
             raise_if_exception(self.messages_ if not isinstance(self.messages_, Sequence) else self.messages_[0])
-        return None
+        return None  # pragma: no cover
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
