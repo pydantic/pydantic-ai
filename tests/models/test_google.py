@@ -2894,7 +2894,7 @@ async def test_google_native_output_with_builtin_tools_gemini_3(
         city: str
         country: str
 
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebFetchTool()])
 
     with pytest.raises(
         UserError,
@@ -2904,13 +2904,13 @@ async def test_google_native_output_with_builtin_tools_gemini_3(
     ):
         await agent.run('What is the largest city in Mexico?')
 
-    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[WebFetchTool()])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
     # Will default to native output
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebFetchTool()])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
