@@ -272,8 +272,8 @@ def test_lossy_nested_defs():
     )
 
 
-def test_strict_false_no_compatibility_check():
-    """When strict=False, compatibility check should not run (is_strict_compatible stays True)."""
+def test_strict_false_no_transformation():
+    """When strict=False, no transformation is applied."""
 
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
@@ -281,15 +281,7 @@ def test_strict_false_no_compatibility_check():
     transformer = AnthropicJsonSchemaTransformer(User.model_json_schema(), strict=False)
     result = transformer.walk()
 
-    # When strict=False, no compatibility check is performed
-    assert transformer.is_strict_compatible is True
-
-    # Schema is still transformed by Anthropic's SDK
+    # `'minLength': 3` proves no transformation occurred
     assert result == snapshot(
-        {
-            'type': 'object',
-            'properties': {'username': {'type': 'string', 'description': '{minLength: 3}'}},
-            'required': ['username'],
-            'additionalProperties': False,
-        }
+        {'type': 'object', 'properties': {'username': {'minLength': 3, 'type': 'string'}}, 'required': ['username']}
     )

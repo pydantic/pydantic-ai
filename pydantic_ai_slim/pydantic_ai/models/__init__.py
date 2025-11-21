@@ -998,13 +998,13 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinit
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=o.strict)
+def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+    schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
-        o,
+        output_object,
         json_schema=json_schema,
-        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+        strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
 
 

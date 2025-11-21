@@ -25,6 +25,10 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 
         schema = super().walk()
 
+        if self.strict is False:
+            # no transformation if specifically non-strict
+            return schema
+
         if self.strict is None:
             before = deepcopy(schema)
             transformed = transform_schema(schema)

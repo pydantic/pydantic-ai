@@ -300,6 +300,18 @@ class AnthropicModel(Model):
                 raise UserError(
                     'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
                 )
+
+        if (
+            model_request_parameters.output_mode == 'native' and model_request_parameters.output_object is not None
+        ):  # pragma: no branch
+            # force strict=True for native output (Anthropic requires it)
+            # this needs to be done here because `super().prepare_request` calls
+            # -> Model.customize_request_parameters(model_request_parameters) which calls
+            # -> -> _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition)
+            # which finally calls sets `json_schema = schema_transformer.walk()`
+            model_request_parameters = replace(
+                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
+            )
         return super().prepare_request(model_settings, model_request_parameters)
 
     @overload
@@ -895,9 +907,9 @@ class AnthropicModel(Model):
     def _native_output_format(model_request_parameters: ModelRequestParameters) -> BetaJSONOutputFormatParam | None:
         if model_request_parameters.output_mode != 'native':
             return None
-        output_object = model_request_parameters.output_object
-        assert output_object is not None
-        return {'type': 'json_schema', 'schema': output_object.json_schema}
+        assert model_request_parameters.output_object is not None
+        model_request_parameters.output_object.strict = True
+        return {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
 
 def _map_usage(
