@@ -428,9 +428,9 @@ def test_cache_control_unsupported_param_type():
 
     # Create a list with an unsupported param type (document)
     # We'll use a mock document block param
-    params: list[dict[str, Any]] = [{'type': 'document', 'source': {'data': 'test'}}]
+    params: list[dict[str, Any]] = [{'type': 'thinking', 'source': {'data': 'test'}}]
 
-    with pytest.raises(UserError, match='Cache control not supported for param type: document'):
+    with pytest.raises(UserError, match='Cache control not supported for param type: thinking'):
         AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
