@@ -66,6 +66,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}
+* `restate` - installs [`restate`](durable_execution/restate.md) [PyPI ↗](https://pypi.org/project/restate-sdk){:target="_blank"}
 
 You can also install dependencies for multiple models and use cases, for example:
 
