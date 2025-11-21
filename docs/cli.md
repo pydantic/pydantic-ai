@@ -84,8 +84,8 @@ This will start a web server (default: http://127.0.0.1:8000) with a chat interf
 You can customize which AI models and builtin tools are available in the web UI by creating an `agent_options.py` file:
 
 ```python title="agent_options.py"
-from pydantic_ai.ui.web import AIModel, BuiltinToolDef
 from pydantic_ai.builtin_tools import WebSearchTool, CodeExecutionTool
+from pydantic_ai.ui.web import AIModel, BuiltinToolDef
 
 models = [
     AIModel(
