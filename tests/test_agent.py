@@ -2492,8 +2492,6 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
 
 def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_prompt():
-    """Test that an agent run raises error when message_history ends on ModelResponse without tool calls or a new prompt."""
-
     def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
 
@@ -2522,7 +2520,54 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
         ]
     )
 
-    assert result.new_messages() == []
+    assert result.new_messages() == snapshot([])
+
+
+async def test_message_history_ending_on_model_response_with_instructions():
+    model = TestModel(custom_output_text='James likes cars in general, especially the Fiat 126p that his parents had.')
+    summarize_agent = Agent(
+        model,
+        instructions="""
+        Summarize this conversation to include all important facts about the user and
+        what their interactions were about.
+        """,
+    )
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi, my name is James')]),
+        ModelResponse(parts=[TextPart(content='Nice to meet you, James.')]),
+        ModelRequest(parts=[UserPromptPart(content='I like cars')]),
+        ModelResponse(parts=[TextPart(content='I like them too. Sport cars?')]),
+        ModelRequest(parts=[UserPromptPart(content='No, cars in general.')]),
+        ModelResponse(parts=[TextPart(content='Awesome. Which one do you like most?')]),
+        ModelRequest(parts=[UserPromptPart(content='Fiat 126p')]),
+        ModelResponse(parts=[TextPart(content="That's an old one, isn't it?")]),
+        ModelRequest(parts=[UserPromptPart(content='Yes, it is. My parents had one.')]),
+        ModelResponse(parts=[TextPart(content='Cool. Was it fast?')]),
+    ]
+
+    result = await summarize_agent.run(message_history=message_history)
+
+    assert result.output == snapshot('James likes cars in general, especially the Fiat 126p that his parents had.')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[],
+                instructions="""\
+Summarize this conversation to include all important facts about the user and
+        what their interactions were about.\
+""",
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='James likes cars in general, especially the Fiat 126p that his parents had.')],
+                usage=RequestUsage(input_tokens=73, output_tokens=43),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_empty_response():
