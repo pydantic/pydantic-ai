@@ -599,8 +599,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                     try:
                                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                                         return
-                                    except ToolRetryError:
-                                        # If the text from the preview response was invalid, ignore it.
+                                    except ToolRetryError:  # pragma: no cover
+                                        # If the text from the previous response was invalid, ignore it.
                                         pass
 
                     # Go back to the model request node with an empty request, which means we'll essentially
