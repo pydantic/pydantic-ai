@@ -1,18 +1,34 @@
 from __future__ import annotations as _annotations
 
+from dataclasses import dataclass
+
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
+
+
+@dataclass(kw_only=True)
+class GoogleModelProfile(ModelProfile):
+    """Profile for models used with `GoogleModel`.
+
+    ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    google_supports_native_output_with_builtin_tools: bool = False
+    """Whether the model supports native output with builtin tools.
+    See https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools"""
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
-    return ModelProfile(
+    is_3_or_newer = 'gemini-3' in model_name
+    return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
         supports_json_schema_output=not is_image_model,
         supports_json_object_output=not is_image_model,
         supports_tools=not is_image_model,
+        google_supports_native_output_with_builtin_tools=is_3_or_newer,
     )
 
 
@@ -30,6 +46,9 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
             schema['enum'] = [const]
         schema.pop('discriminator', None)
         schema.pop('examples', None)
+
+        # Remove 'title' due to https://github.com/googleapis/python-genai/issues/1732
+        schema.pop('title', None)
 
         type_ = schema.get('type')
         if type_ == 'string' and (fmt := schema.pop('format', None)):

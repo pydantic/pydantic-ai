@@ -6,6 +6,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -80,8 +81,11 @@ skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
     not transformer_imports_successful(), reason='transformers not available'
 )
 
+# We only run this on the latest Python as the llama_cpp tests have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
+# https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
 skip_if_llama_cpp_imports_unsuccessful = pytest.mark.skipif(
-    not llama_cpp_imports_successful(), reason='llama_cpp not available'
+    not llama_cpp_imports_successful() or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false',
+    reason='llama_cpp not available',
 )
 
 skip_if_vllm_imports_unsuccessful = pytest.mark.skipif(not vllm_imports_successful(), reason='vllm not available')
@@ -568,6 +572,7 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
 
     # unsupported: tool calls
     tool_call_message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='some user prompt')]),
         ModelResponse(parts=[ToolCallPart(tool_call_id='1', tool_name='get_location')]),
         ModelRequest(parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')]),
     ]
@@ -583,7 +588,8 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
 
     # unsupported: non-image file parts
     file_part_message_history: list[ModelMessage] = [
-        ModelResponse(parts=[FilePart(content=BinaryContent(data=b'test', media_type='text/plain'))])
+        ModelRequest(parts=[UserPromptPart(content='some user prompt')]),
+        ModelResponse(parts=[FilePart(content=BinaryContent(data=b'test', media_type='text/plain'))]),
     ]
     with pytest.raises(
         UserError, match='File parts other than `BinaryImage` are not supported for Outlines models yet.'
