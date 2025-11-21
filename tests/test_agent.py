@@ -2807,13 +2807,13 @@ def test_empty_response_with_finish_reason_length():
 
     with pytest.raises(
         UnexpectedModelBehavior,
-        match=r'Model token limit \(10\) exceeded, resulting in an empty response.',
+        match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
         UnexpectedModelBehavior,
-        match=r'Model token limit \(provider default\) exceeded, resulting in an empty response.',
+        match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
 

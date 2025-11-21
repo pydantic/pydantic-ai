@@ -584,7 +584,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         model_settings = ctx.deps.model_settings
                         max_tokens = model_settings.get('max_tokens') if model_settings else None
                         raise exceptions.UnexpectedModelBehavior(
-                            f'Model token limit ({max_tokens or "provider default"}) exceeded, resulting in an empty response. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                            f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                         )
 
                     # we got an empty response.
