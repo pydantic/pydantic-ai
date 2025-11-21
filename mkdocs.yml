@@ -31,10 +31,10 @@ nav:
           - models/google.md
           - models/bedrock.md
           - models/cohere.md
-          - models/openrouter.md
           - models/groq.md
-          - models/mistral.md
           - models/huggingface.md
+          - models/mistral.md
+          - models/openrouter.md
           - models/outlines.md
       - Tools & Toolsets:
           - tools.md
