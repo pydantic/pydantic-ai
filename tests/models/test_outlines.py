@@ -577,7 +577,6 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
 
     # unsupported: tool calls
     tool_call_message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='some user prompt')]),
         ModelResponse(parts=[ToolCallPart(tool_call_id='1', tool_name='get_location')]),
         ModelRequest(parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')]),
     ]
@@ -593,8 +592,7 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
 
     # unsupported: non-image file parts
     file_part_message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='some user prompt')]),
-        ModelResponse(parts=[FilePart(content=BinaryContent(data=b'test', media_type='text/plain'))]),
+        ModelResponse(parts=[FilePart(content=BinaryContent(data=b'test', media_type='text/plain'))])
     ]
     with pytest.raises(
         UserError, match='File parts other than `BinaryImage` are not supported for Outlines models yet.'
