@@ -10,6 +10,7 @@ from mimetypes import guess_type
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
@@ -228,21 +229,23 @@ class VideoUrl(FileUrl):
 
     def _infer_media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
-        if self.url.endswith('.mkv'):
+        # Parse URL path to remove query parameters (e.g., presigned URLs)
+        path = urlparse(self.url).path
+        if path.endswith('.mkv'):
             return 'video/x-matroska'
-        elif self.url.endswith('.mov'):
+        elif path.endswith('.mov'):
             return 'video/quicktime'
-        elif self.url.endswith('.mp4'):
+        elif path.endswith('.mp4'):
             return 'video/mp4'
-        elif self.url.endswith('.webm'):
+        elif path.endswith('.webm'):
             return 'video/webm'
-        elif self.url.endswith('.flv'):
+        elif path.endswith('.flv'):
             return 'video/x-flv'
-        elif self.url.endswith(('.mpeg', '.mpg')):
+        elif path.endswith(('.mpeg', '.mpg')):
             return 'video/mpeg'
-        elif self.url.endswith('.wmv'):
+        elif path.endswith('.wmv'):
             return 'video/x-ms-wmv'
-        elif self.url.endswith('.three_gp'):
+        elif path.endswith('.three_gp'):
             return 'video/3gpp'
         # Assume that YouTube videos are mp4 because there would be no extension
         # to infer from. This should not be a problem, as Gemini disregards media
@@ -308,17 +311,19 @@ class AudioUrl(FileUrl):
         References:
         - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
         """
-        if self.url.endswith('.mp3'):
+        # Parse URL path to remove query parameters (e.g., presigned URLs)
+        path = urlparse(self.url).path
+        if path.endswith('.mp3'):
             return 'audio/mpeg'
-        if self.url.endswith('.wav'):
+        if path.endswith('.wav'):
             return 'audio/wav'
-        if self.url.endswith('.flac'):
+        if path.endswith('.flac'):
             return 'audio/flac'
-        if self.url.endswith('.oga'):
+        if path.endswith('.oga'):
             return 'audio/ogg'
-        if self.url.endswith('.aiff'):
+        if path.endswith('.aiff'):
             return 'audio/aiff'
-        if self.url.endswith('.aac'):
+        if path.endswith('.aac'):
             return 'audio/aac'
 
         raise ValueError(
@@ -367,13 +372,15 @@ class ImageUrl(FileUrl):
 
     def _infer_media_type(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
-        if self.url.endswith(('.jpg', '.jpeg')):
+        # Parse URL path to remove query parameters (e.g., presigned URLs)
+        path = urlparse(self.url).path
+        if path.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
-        elif self.url.endswith('.png'):
+        elif path.endswith('.png'):
             return 'image/png'
-        elif self.url.endswith('.gif'):
+        elif path.endswith('.gif'):
             return 'image/gif'
-        elif self.url.endswith('.webp'):
+        elif path.endswith('.webp'):
             return 'image/webp'
         else:
             raise ValueError(
