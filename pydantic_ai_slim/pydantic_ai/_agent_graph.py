@@ -221,6 +221,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message: _messages.ModelRequest | None = None
 
+        run_context: RunContext[DepsT] | None = None
+        instructions: str | None = None
+
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
@@ -242,15 +245,19 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
-                    # Skip ModelRequestNode and go directly to CallToolsNode
-                    return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    if not instructions:
+                        # If there's no new prompt or instructions, skip ModelRequestNode and go directly to CallToolsNode
+                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
                     )
 
-        # Build the run context after `ctx.deps.prompt` has been updated
-        run_context = build_run_context(ctx)
+        if not run_context:
+            run_context = build_run_context(ctx)
+            instructions = await ctx.deps.get_instructions(run_context)
 
         if messages:
             await self._reevaluate_dynamic_prompts(messages, run_context)
@@ -267,7 +274,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
             next_message = _messages.ModelRequest(parts=parts)
 
-        next_message.instructions = await ctx.deps.get_instructions(run_context)
+        next_message.instructions = instructions
 
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
@@ -592,8 +599,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                     try:
                                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                                         return
-                                    except ToolRetryError:
-                                        # If the text from the preview response was invalid, ignore it.
+                                    except ToolRetryError:  # pragma: no cover
+                                        # If the text from the previous response was invalid, ignore it.
                                         pass
 
                     # Go back to the model request node with an empty request, which means we'll essentially
