@@ -155,7 +155,7 @@ You can access multiple models with the same API key, as shown in the code snipp
 
 === "Using a different upstream provider"
 
-    If you're using a different upstream provider, you can specify it in the route parameter:
+    To use an alternate provider or routing group, you can specify it in the route parameter:
 
     ```python {title="routing_via_provider.py"}
     from pydantic_ai import Agent
