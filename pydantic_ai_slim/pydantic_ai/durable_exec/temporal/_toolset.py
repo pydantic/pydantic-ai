@@ -27,11 +27,13 @@ class CallToolParams:
 
 @dataclass
 class _ApprovalRequired:
+    metadata: dict[str, Any] | None = None
     kind: Literal['approval_required'] = 'approval_required'
 
 
 @dataclass
 class _CallDeferred:
+    metadata: dict[str, Any] | None = None
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
@@ -75,10 +77,10 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         try:
             result = await coro
             return _ToolReturn(result=result)
-        except ApprovalRequired:
-            return _ApprovalRequired()
-        except CallDeferred:
-            return _CallDeferred()
+        except ApprovalRequired as e:
+            return _ApprovalRequired(metadata=e.metadata)
+        except CallDeferred as e:
+            return _CallDeferred(metadata=e.metadata)
         except ModelRetry as e:
             return _ModelRetry(message=e.message)
 
@@ -86,9 +88,9 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         if isinstance(result, _ToolReturn):
             return result.result
         elif isinstance(result, _ApprovalRequired):
-            raise ApprovalRequired()
+            raise ApprovalRequired(metadata=result.metadata)
         elif isinstance(result, _CallDeferred):
-            raise CallDeferred()
+            raise CallDeferred(metadata=result.metadata)
         elif isinstance(result, _ModelRetry):
             raise ModelRetry(result.message)
         else:

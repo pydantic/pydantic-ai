@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
+from os import PathLike
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 
 import pydantic
@@ -530,6 +532,25 @@ class BinaryContent:
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
+    @classmethod
+    def from_path(cls, path: PathLike[str]) -> BinaryContent:
+        """Create a `BinaryContent` from a path.
+
+        Defaults to 'application/octet-stream' if the media type cannot be inferred.
+
+        Raises:
+            FileNotFoundError: if the file does not exist.
+            PermissionError: if the file cannot be read.
+        """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f'File not found: {path}')
+        media_type, _ = guess_type(path)
+        if media_type is None:
+            media_type = 'application/octet-stream'
+
+        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
+
     @pydantic.computed_field
     @property
     def identifier(self) -> str:
@@ -626,6 +647,13 @@ class CachePoint:
 
     kind: Literal['cache-point'] = 'cache-point'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    ttl: Literal['5m', '1h'] = '5m'
+    """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour).
+
+    Supported by:
+
+    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -970,6 +998,9 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
@@ -1060,7 +1091,7 @@ class FilePart:
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
-        return bool(self.content)  # pragma: no cover
+        return bool(self.content.data)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1213,6 +1244,9 @@ class ModelResponse:
 
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     @property
     def text(self) -> str | None:
