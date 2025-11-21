@@ -142,7 +142,7 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
-    "stubs/**/*.pyi",
+    "typings/**/*.pyi",
 ]
 
 [tool.ruff.lint]
@@ -187,10 +187,10 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-"stubs/**/*.pyi" = ["F401", "PYI044", "PYI035", "ANN401"]
+"typings/**/*.pyi" = ["F401", "PYI044", "PYI035", "ANN401"]
 
 [tool.pyright]
-stubPath = "stubs"
+stubPath = "typings"
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
@@ -220,7 +220,7 @@ exclude = [
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
-mypy_path = "stubs"
+mypy_path = "typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]
