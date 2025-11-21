@@ -146,7 +146,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
 
     class Response(TypedDict):
@@ -172,10 +172,10 @@ async def test_google_model_structured_output(allow_model_requests: None, google
     assert result.usage() == snapshot(
         RunUsage(
             requests=2,
-            input_tokens=224,
+            input_tokens=160,
             output_tokens=35,
             tool_calls=1,
-            details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
+            details={'text_prompt_tokens': 160, 'text_candidates_tokens': 35},
         )
     )
     assert result.all_messages() == snapshot(
@@ -200,11 +200,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=101,
+                    input_tokens=69,
                     output_tokens=14,
-                    details={'text_candidates_tokens': 14, 'text_prompt_tokens': 101},
+                    details={'text_candidates_tokens': 14, 'text_prompt_tokens': 69},
                 ),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -229,11 +229,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=123,
+                    input_tokens=91,
                     output_tokens=21,
-                    details={'text_candidates_tokens': 21, 'text_prompt_tokens': 123},
+                    details={'text_candidates_tokens': 21, 'text_prompt_tokens': 91},
                 ),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2433,7 +2433,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=25, output_tokens=20, details={'text_candidates_tokens': 20, 'text_prompt_tokens': 25}
+                    input_tokens=8, output_tokens=20, details={'text_candidates_tokens': 20, 'text_prompt_tokens': 8}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),

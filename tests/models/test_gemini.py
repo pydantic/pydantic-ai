@@ -1194,7 +1194,7 @@ async def test_safety_settings_safe(
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
-    m = GeminiModel('gemini-2.5-pro-preview-03-25', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-3-pro-preview', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1211,55 +1211,81 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr(),
+                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content="""\
-I need to use the `get_image` tool to see the image first.
-
-"""
-                    ),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_4b41e83dfa494855b1ce086967c7ba1a')
                 ],
                 usage=RequestUsage(
-                    input_tokens=38, output_tokens=389, details={'thoughts_tokens': 361, 'text_prompt_tokens': 38}
+                    input_tokens=33, output_tokens=74, details={'thoughts_tokens': 64, 'text_prompt_tokens': 33}
                 ),
-                model_name='gemini-2.5-pro-preview-03-25',
+                model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                run_id=IsStr(),
+                provider_response_id='JfYgaYXrHZmFz7IPxuf_kAg',
+                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id=IsStr(),
+                        tool_call_id='pyd_ai_4b41e83dfa494855b1ce086967c7ba1a',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
                             'This is file 1c8566:',
-                            image_content,
+                            BinaryContent(
+                                data=IsStr(),
+                                media_type='image/png',
+                            ),
                         ],
                         timestamp=IsDatetime(),
                     ),
                 ],
-                run_id=IsStr(),
+                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
             ),
             ModelResponse(
-                parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
+                parts=[
+                    TextPart(content='6'),
+                    TextPart(
+                        content="""\
+ 1c8566
+The image shows a **kiwi** fruit that has been sliced in half.
+
+You can see:
+*   The **bright green flesh**.
+*   The ring of tiny **black seeds**.
+*   The **white core** in the center.
+*   The fuzzy **brown skin** around the outside.
+
+It's positioned against a plain white background.\
+"""
+                    ),
+                    TextPart(
+                        content="""\
+The fruit in the image is a **kiwi** (specifically, a sliced green kiwifruit).
+
+You can clearly identify it by its signature features:
+*   **Green flesh** with a radial pattern.
+*   A ring of small **black seeds**.
+*   A cream-colored **white core** in the center.
+*   Fuzzy **brown skin** visible on the exterior edge.\
+"""
+                    ),
+                ],
                 usage=RequestUsage(
-                    input_tokens=360,
-                    output_tokens=212,
-                    details={'thoughts_tokens': 201, 'text_prompt_tokens': 102, 'image_prompt_tokens': 258},
+                    input_tokens=1185,
+                    output_tokens=552,
+                    details={'thoughts_tokens': 381, 'image_prompt_tokens': 1107, 'text_prompt_tokens': 78},
                 ),
-                model_name='gemini-2.5-pro-preview-03-25',
+                model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                run_id=IsStr(),
+                provider_response_id='LfYgad6vHMjjz7IP6smh-Qo',
+                run_id='6396faf9-bf3b-47ee-8db3-620d61f05d6d',
             ),
         ]
     )
@@ -1361,7 +1387,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
     assert result.output == snapshot(
-        'I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n'
+        'I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must be at least 18 years old.'
     )
 
 
@@ -1399,7 +1425,7 @@ class CurrentLocation(BaseModel, extra='forbid'):
 
 @pytest.mark.vcr()
 async def test_gemini_additional_properties_is_false(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1408,14 +1434,14 @@ async def test_gemini_additional_properties_is_false(allow_model_requests: None,
 
     result = await agent.run('What is the temperature in Tokyo?')
     assert result.output == snapshot(
-        'The available tools lack the ability to access real-time information, including current temperature.  Therefore, I cannot answer your question.\n'
+        'I need the country to find the temperature in Tokyo. Could you please tell me which country Tokyo is in?\n'
     )
 
 
 @pytest.mark.vcr()
 async def test_gemini_additional_properties_is_true(allow_model_requests: None, gemini_api_key: str):
     """Test that additionalProperties with schemas now work natively (no warning since Nov 2025 announcement)."""
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1424,7 +1450,7 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
 
     result = await agent.run('What is the temperature in Tokyo?')
     assert result.output == snapshot(
-        'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
+        'I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is being processed by the tool.'
     )
 
 
@@ -1943,7 +1969,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=17, output_tokens=20, details={'text_prompt_tokens': 17, 'text_candidates_tokens': 20}
+                    input_tokens=8, output_tokens=20, details={'text_prompt_tokens': 8, 'text_candidates_tokens': 20}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),

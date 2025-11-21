@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '409'
+      - '403'
       content-type:
       - application/json
       host:
@@ -20,33 +20,32 @@ interactions:
         - text: What is the largest city in Mexico?
         role: user
       generationConfig:
-        responseMimeType: application/json
-        responseSchema:
+        responseJsonSchema:
           description: A city and its country.
           properties:
             city:
-              type: STRING
+              type: string
             country:
-              type: STRING
-          property_ordering:
-          - city
-          - country
+              type: string
           required:
           - city
           - country
           title: CityLocation
-          type: OBJECT
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '710'
+      - '708'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=402
+      - gfet4t7; dur=806
       transfer-encoding:
       - chunked
       vary:
@@ -55,7 +54,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00018302639946341515
+      - avgLogprobs: -5.800400977022946e-05
         content:
           parts:
           - text: |-
@@ -66,17 +65,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: PVteaL2dMana1PIP8IqGiAI
+      responseId: Lvkgad-TOprpz7IPiMrqsQQ
       usageMetadata:
         candidatesTokenCount: 20
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 20
-        promptTokenCount: 25
+        promptTokenCount: 8
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 25
-        totalTokenCount: 45
+          tokenCount: 8
+        totalTokenCount: 28
     status:
       code: 200
       message: OK
