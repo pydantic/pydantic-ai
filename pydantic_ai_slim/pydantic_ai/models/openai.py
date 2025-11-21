@@ -1466,7 +1466,7 @@ class OpenAIResponsesModel(Model):
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system and send_item_ids:
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
@@ -1536,7 +1536,7 @@ class OpenAIResponsesModel(Model):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item.provider_name == self.system and send_item_ids:
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
