@@ -183,10 +183,7 @@ class MockAnthropic:
 
     async def messages_count_tokens(self, *_args: Any, **_kwargs: Any) -> Any:
         if self.messages_ is not None:
-            if isinstance(self.messages_, Sequence):
-                raise_if_exception(self.messages_[0])
-            else:
-                raise_if_exception(self.messages_)
+            raise_if_exception(self.messages_ if not isinstance(self.messages_, Sequence) else self.messages_[0])
         return None
 
 
