@@ -229,7 +229,6 @@ class VideoUrl(FileUrl):
 
     def _infer_media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
-        # Parse URL path to remove query parameters (e.g., presigned URLs)
         path = urlparse(self.url).path
         if path.endswith('.mkv'):
             return 'video/x-matroska'
@@ -311,7 +310,6 @@ class AudioUrl(FileUrl):
         References:
         - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
         """
-        # Parse URL path to remove query parameters (e.g., presigned URLs)
         path = urlparse(self.url).path
         if path.endswith('.mp3'):
             return 'audio/mpeg'
@@ -372,7 +370,6 @@ class ImageUrl(FileUrl):
 
     def _infer_media_type(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
-        # Parse URL path to remove query parameters (e.g., presigned URLs)
         path = urlparse(self.url).path
         if path.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
