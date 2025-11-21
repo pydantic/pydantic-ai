@@ -113,9 +113,9 @@ class GraphAgentState:
                 try:
                     tool_call.args_as_dict()
                 except Exception:
-                    max_tokens = (model_settings or {}).get('max_tokens') if model_settings else None
+                    max_tokens = model_settings.get('max_tokens') if model_settings else None
                     raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({max_tokens if max_tokens is not None else "provider default"}) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.'
+                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
@@ -579,6 +579,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 if not self.model_response.parts:
+                    # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
+                    if self.model_response.finish_reason == 'length':
+                        model_settings = ctx.deps.model_settings
+                        max_tokens = model_settings.get('max_tokens') if model_settings else None
+                        raise exceptions.UnexpectedModelBehavior(
+                            f'Model token limit ({max_tokens or "provider default"}) exceeded, resulting in an empty response. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                        )
+
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
