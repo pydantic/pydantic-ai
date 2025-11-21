@@ -6684,7 +6684,7 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     1. The first call with a long context creates a cache (cache_write_tokens > 0)
     2. Follow-up messages in the same conversation can read from that cache (cache_read_tokens > 0)
     """
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         system_prompt='You are a helpful assistant.',
@@ -6694,12 +6694,13 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     )
 
     # First call with a longer message - this will cache the message content
-    result1 = await agent.run('Please explain what Python is and its main use cases. ' * 10)
+    result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
     usage1 = result1.usage()
 
     # With anthropic_cache_messages, the first call should write cache for the last message
-    # (Note: cache_write_tokens might be 0 if content is too short, but the setting is applied)
+    # (cache_write_tokens > 0 indicates that caching occurred)
     assert usage1.requests == 1
+    assert usage1.cache_write_tokens > 0
     assert usage1.output_tokens > 0
 
     # Continue the conversation - this message appends to history
@@ -6709,5 +6710,8 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
 
     # The second call should potentially read from cache if the previous message is still cached
     # (cache_read_tokens > 0 when cache hit occurs)
+    # (cache_write_tokens > 0 as new message is added to cache)
     assert usage2.requests == 1
+    assert usage2.cache_read_tokens > 0
+    assert usage2.cache_write_tokens > 0
     assert usage2.output_tokens > 0
