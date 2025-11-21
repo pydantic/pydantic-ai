@@ -1067,7 +1067,10 @@ class ThinkingPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format."""
+    """Additional provider-specific details in a serializable format.
+
+    This allows storing selected vendor-specific data that isn't mapped to standard ThinkingPart fields.
+    """
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
