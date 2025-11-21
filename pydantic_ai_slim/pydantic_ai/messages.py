@@ -880,6 +880,12 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     provider_name: str | None = None
     """The name of the provider that generated the response."""
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    # TODO (DouweM): Consider renaming to `provider_metadata`?
+
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -1021,11 +1027,13 @@ class TextPart:
     id: str | None = None
     """An optional identifier of the text part."""
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
-
-    provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format."""
 
     def has_content(self) -> bool:
         """Return `True` if the text content is non-empty."""
@@ -1063,14 +1071,13 @@ class ThinkingPart:
     Signatures are only sent back to the same provider.
     """
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
-
-    provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format.
-
-    This allows storing selected vendor-specific data that isn't mapped to standard ThinkingPart fields.
-    """
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
@@ -1095,11 +1102,13 @@ class FilePart:
     """The name of the provider that generated the response.
     """
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
-
-    provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format."""
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
@@ -1135,7 +1144,9 @@ class BaseToolCallPart:
     This is used by some APIs like OpenAI Responses."""
 
     provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format."""
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -1241,11 +1252,9 @@ class ModelResponse:
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
     ] = None
-    """Additional provider-specific details in a serializable format.
+    """Additional provider-specific data that can't be mapped to standard fields.
 
-    This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
-    For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
-    """
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     provider_response_id: Annotated[
         str | None,
@@ -1469,11 +1478,13 @@ class TextPartDelta:
 
     _: KW_ONLY
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
-
-    provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format."""
 
     def apply(self, part: ModelResponsePart) -> TextPart:
         """Apply this text delta to an existing `TextPart`.
@@ -1489,7 +1500,11 @@ class TextPartDelta:
         """
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
-        return replace(part, content=part.content + self.content_delta)
+        return replace(
+            part,
+            content=part.content + self.content_delta,
+            provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
+        )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1513,11 +1528,13 @@ class ThinkingPartDelta:
     Signatures are only sent back to the same provider.
     """
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
-
-    provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format."""
 
     @overload
     def apply(self, part: ModelResponsePart) -> ThinkingPart: ...
@@ -1541,7 +1558,14 @@ class ThinkingPartDelta:
             new_content = part.content + self.content_delta if self.content_delta else part.content
             new_signature = self.signature_delta if self.signature_delta is not None else part.signature
             new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
-            return replace(part, content=new_content, signature=new_signature, provider_name=new_provider_name)
+            new_provider_details = {**(part.provider_details or {}), **(self.provider_details or {})} or None
+            return replace(
+                part,
+                content=new_content,
+                signature=new_signature,
+                provider_name=new_provider_name,
+                provider_details=new_provider_details,
+            )
         elif isinstance(part, ThinkingPartDelta):
             if self.content_delta is None and self.signature_delta is None:
                 raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
@@ -1551,6 +1575,10 @@ class ThinkingPartDelta:
                 part = replace(part, signature_delta=self.signature_delta)
             if self.provider_name is not None:
                 part = replace(part, provider_name=self.provider_name)
+            if self.provider_details is not None:
+                part = replace(
+                    part, provider_details={**(part.provider_details or {}), **(self.provider_details or {})}
+                )
             return part
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
@@ -1579,11 +1607,13 @@ class ToolCallPartDelta:
     Note this is never treated as a delta — it can replace None, but otherwise if a
     non-matching value is provided an error will be raised."""
 
+    provider_details: dict[str, Any] | None = None
+    """Additional provider-specific data that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_delta_kind: Literal['tool_call'] = 'tool_call'
     """Part delta type identifier, used as a discriminator."""
-
-    provider_details: dict[str, Any] | None = None
-    """Additional provider-specific details in a serializable format."""
 
     def as_part(self) -> ToolCallPart | None:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.
