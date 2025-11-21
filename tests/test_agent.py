@@ -4261,11 +4261,32 @@ def test_multi_agent_instructions_with_structured_output():
 
     result1 = agent1.run_sync('Hello')
 
-    # TestModel doesn't support structured output, so this will fail with retries
-    # But we can still verify that Agent2's instructions are used in retry requests
-    with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior):
-            agent2.run_sync(message_history=result1.new_messages())
+    result2 = agent2.run_sync(message_history=result1.new_messages())
+    messages = result2.new_messages()
+
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[], instructions='Agent 2 instructions', run_id=IsStr()),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'text': 'a'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     # Verify Agent2's retry requests used Agent2's instructions (not Agent1's)
     requests = [m for m in messages if isinstance(m, ModelRequest)]
