@@ -2,7 +2,7 @@ Stub files (`*.pyi`) contain type hints used only by type checkers, not at
 runtime. They were introduced in
 [PEP 484](https://peps.python.org/pep-0484/#stub-files). For example, the
 [`typeshed`](https://github.com/python/typeshed) repository maintains a
-collection of such typings for the Python standard library and some third-party
+collection of such stubs for the Python standard library and some third-party
 libraries.
 
 The `./typings` folder contains type information only for the parts of
