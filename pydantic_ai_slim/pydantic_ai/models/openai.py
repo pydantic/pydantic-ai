@@ -716,10 +716,28 @@ class OpenAIChatModel(Model):
         to form a single assistant message.
         """
 
+        _model: OpenAIChatModel
+
         texts: list[str] = field(default_factory=list)
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
 
-        def into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
+        def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
+            for item in message.parts:
+                if isinstance(item, TextPart):
+                    self._map_response_text_part(item)
+                elif isinstance(item, ThinkingPart):
+                    self._map_response_thinking_part(item)
+                elif isinstance(item, ToolCallPart):
+                    self._map_response_tool_call_part(item)
+                elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                    self._map_response_builtin_part(item)
+                elif isinstance(item, FilePart):  # pragma: no cover
+                    self._map_response_file_part(item)
+                else:
+                    assert_never(item)
+            return self._into_message_param()
+
+        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
             """Converts the collected texts and tool calls into a single OpenAI `ChatCompletionAssistantMessageParam`.
 
             This method serves as a hook that can be overridden by subclasses
@@ -739,74 +757,58 @@ class OpenAIChatModel(Model):
                 message_param['tool_calls'] = self.tool_calls
             return message_param
 
-    def _map_response_text_part(self, ctx: _MapModelResponseContext, item: TextPart) -> None:
-        """Maps a `TextPart` to the response context.
+        def _map_response_text_part(self, item: TextPart) -> None:
+            """Maps a `TextPart` to the response context.
 
-        This method serves as a hook that can be overridden by subclasses
-        to implement custom logic for handling text parts.
-        """
-        ctx.texts.append(item.content)
+            This method serves as a hook that can be overridden by subclasses
+            to implement custom logic for handling text parts.
+            """
+            self.texts.append(item.content)
 
-    def _map_response_thinking_part(self, ctx: _MapModelResponseContext, item: ThinkingPart) -> None:
-        """Maps a `ThinkingPart` to the response context.
+        def _map_response_thinking_part(self, item: ThinkingPart) -> None:
+            """Maps a `ThinkingPart` to the response context.
 
-        This method serves as a hook that can be overridden by subclasses
-        to implement custom logic for handling thinking parts.
-        """
-        # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
-        # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
-        # If you need this changed, please file an issue.
-        start_tag, end_tag = self.profile.thinking_tags
-        ctx.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            This method serves as a hook that can be overridden by subclasses
+            to implement custom logic for handling thinking parts.
+            """
+            # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
+            # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
+            # If you need this changed, please file an issue.
+            start_tag, end_tag = self._model.profile.thinking_tags
+            self.texts.append('\n'.join([start_tag, item.content, end_tag]))
 
-    def _map_response_tool_call_part(self, ctx: _MapModelResponseContext, item: ToolCallPart) -> None:
-        """Maps a `ToolCallPart` to the response context.
+        def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
+            """Maps a `ToolCallPart` to the response context.
 
-        This method serves as a hook that can be overridden by subclasses
-        to implement custom logic for handling tool call parts.
-        """
-        ctx.tool_calls.append(self._map_tool_call(item))
+            This method serves as a hook that can be overridden by subclasses
+            to implement custom logic for handling tool call parts.
+            """
+            self.tool_calls.append(self._model._map_tool_call(item))
 
-    def _map_response_builtin_part(
-        self, ctx: _MapModelResponseContext, item: BuiltinToolCallPart | BuiltinToolReturnPart
-    ) -> None:
-        """Maps a built-in tool call or return part to the response context.
+        def _map_response_builtin_part(self, item: BuiltinToolCallPart | BuiltinToolReturnPart) -> None:
+            """Maps a built-in tool call or return part to the response context.
 
-        This method serves as a hook that can be overridden by subclasses
-        to implement custom logic for handling built-in tool parts.
-        """
-        # OpenAI doesn't return built-in tool calls
-        pass
+            This method serves as a hook that can be overridden by subclasses
+            to implement custom logic for handling built-in tool parts.
+            """
+            # OpenAI doesn't return built-in tool calls
+            pass
 
-    def _map_response_file_part(self, ctx: _MapModelResponseContext, item: FilePart) -> None:
-        """Maps a `FilePart` to the response context.
+        def _map_response_file_part(self, item: FilePart) -> None:
+            """Maps a `FilePart` to the response context.
 
-        This method serves as a hook that can be overridden by subclasses
-        to implement custom logic for handling file parts.
-        """
-        # Files generated by models are not sent back to models that don't themselves generate files.
-        pass
+            This method serves as a hook that can be overridden by subclasses
+            to implement custom logic for handling file parts.
+            """
+            # Files generated by models are not sent back to models that don't themselves generate files.
+            pass
 
     def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
         """Hook that determines how `ModelResponse` is mapped into `ChatCompletionMessageParam` objects before sending.
 
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
-        ctx = self._MapModelResponseContext()
-        for item in message.parts:
-            if isinstance(item, TextPart):
-                self._map_response_text_part(ctx, item)
-            elif isinstance(item, ThinkingPart):
-                self._map_response_thinking_part(ctx, item)
-            elif isinstance(item, ToolCallPart):
-                self._map_response_tool_call_part(ctx, item)
-            elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
-                self._map_response_builtin_part(ctx, item)
-            elif isinstance(item, FilePart):  # pragma: no cover
-                self._map_response_file_part(ctx, item)
-            else:
-                assert_never(item)
-        return ctx.into_message_param()
+        return self._MapModelResponseContext(self).map_assistant_message(message)
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
