@@ -368,7 +368,10 @@ class XaiModel(Model):
         tools: list[chat_types.chat_pb2.Tool] = []
         for builtin_tool in model_request_parameters.builtin_tools:
             if isinstance(builtin_tool, WebSearchTool):
-                # xAI supports excluded_domains, allowed_domains, but not user_location or search_context_size
+                # xAI web_search supports:
+                # - excluded_domains (from blocked_domains)
+                # - allowed_domains
+                # Note: user_location and search_context_size are not supported by xAI SDK
                 tools.append(
                     web_search(
                         excluded_domains=builtin_tool.blocked_domains,
@@ -377,9 +380,12 @@ class XaiModel(Model):
                     )
                 )
             elif isinstance(builtin_tool, CodeExecutionTool):
-                # xAI code_execution doesn't take any parameters
+                # xAI code_execution takes no parameters
                 tools.append(code_execution())
             elif isinstance(builtin_tool, MCPServerTool):
+                # xAI mcp supports:
+                # - server_url, server_label, server_description
+                # - allowed_tool_names, authorization, extra_headers
                 tools.append(
                     mcp(
                         server_url=builtin_tool.url,
