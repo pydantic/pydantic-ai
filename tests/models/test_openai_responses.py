@@ -344,7 +344,7 @@ async def test_image_as_binary_content_tool_response(
                         tool_name='get_image',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_681134d47cf48191b3f62e4d28b6c3820fe7a5a4e2123dc3',
+                        id='fc_05a28c9c87aea8f8006920487e39ec81a19fa932858f91cdc9',
                     )
                 ],
                 usage=RequestUsage(input_tokens=40, output_tokens=11, details={'reasoning_tokens': 0}),
@@ -352,7 +352,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
+                provider_response_id='resp_05a28c9c87aea8f8006920487c7d6c81a19ffd79a5d5b67a98',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -360,13 +360,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA',
+                        content='See file 241a70',
+                        tool_call_id='call_4vtaOW4XJ2L1W6yvluzaLCar',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
+                            'This is file 241a70:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
@@ -378,15 +378,15 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     TextPart(
                         content='The fruit in the image is a kiwi.',
-                        id='msg_681134d770d881919f3a3148badde27802cbfeaababb040c',
+                        id='msg_0fe4744db2d4e30300692048821de481a3a5f591c58f5a6e4e',
                     )
                 ],
-                usage=RequestUsage(input_tokens=1185, output_tokens=11, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=839, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
+                provider_response_id='resp_0fe4744db2d4e303006920487f1ff481a3945bbd522d72fed0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

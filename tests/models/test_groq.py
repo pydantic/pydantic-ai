@@ -585,7 +585,7 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ):
-    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-maverick-17b-128e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -609,13 +609,13 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
-                usage=RequestUsage(input_tokens=192, output_tokens=8),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='6weyx5dr0')],
+                usage=RequestUsage(input_tokens=712, output_tokens=20),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                provider_response_id='chatcmpl-b8f663a4-3fd5-45fd-8350-f76e3ad82fd2',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -623,13 +623,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='call_wkpd',
+                        content='See file 241a70',
+                        tool_call_id='6weyx5dr0',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
+                            'This is file 241a70:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
@@ -639,12 +639,12 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=RequestUsage(input_tokens=2552, output_tokens=11),
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                usage=RequestUsage(input_tokens=1501, output_tokens=11),
+                model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                provider_response_id='chatcmpl-3e3c87b6-4bba-410b-97a1-7e0c112f704f',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

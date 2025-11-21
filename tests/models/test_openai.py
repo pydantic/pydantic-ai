@@ -981,10 +981,10 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_uBO7GLyT93HjkLVx4S6kpkCI')],
                 usage=RequestUsage(
                     input_tokens=46,
-                    output_tokens=11,
+                    output_tokens=10,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -996,7 +996,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
+                provider_response_id='chatcmpl-CeJJIJhjE0tMYBwMYwjQY62QGoyNW',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1004,13 +1004,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY',
+                        content='See file 241a70',
+                        tool_call_id='call_uBO7GLyT93HjkLVx4S6kpkCI',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
+                            'This is file 241a70:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
@@ -1019,10 +1019,10 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The image shows a kiwi fruit.')],
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
                 usage=RequestUsage(
-                    input_tokens=1185,
-                    output_tokens=9,
+                    input_tokens=847,
+                    output_tokens=10,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1034,7 +1034,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
+                provider_response_id='chatcmpl-CeJJJlyALm6IbWMTyKZJrvjS2nRDs',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

@@ -75,6 +75,7 @@ with try_import() as mlxlm_imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='outlines not installed'),
     pytest.mark.anyio,
+    pytest.mark.xdist_group(name='outlines'),
 ]
 
 skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
@@ -161,6 +162,8 @@ def llamacpp_model() -> OutlinesModel:
         llama_cpp.Llama.from_pretrained(  # type: ignore
             repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
             filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
+            n_gpu_layers=0,
+            verbose=False,
         )
     )
     return OutlinesModel(outlines_model_llamacpp, provider=OutlinesProvider())
@@ -192,9 +195,9 @@ def vllm_model_offline() -> OutlinesModel:  # pragma: no cover
 
 @pytest.fixture
 def binary_image() -> BinaryImage:
-    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.png'
+    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.jpg'
     image_bytes = image_path.read_bytes()
-    return BinaryImage(data=image_bytes, media_type='image/png')
+    return BinaryImage(data=image_bytes, media_type='image/jpeg')
 
 
 outlines_parameters = [
@@ -215,6 +218,8 @@ outlines_parameters = [
             llama_cpp.Llama.from_pretrained(  # type: ignore
                 repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
                 filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
+                n_gpu_layers=0,
+                verbose=False,
             ),
         ),
         marks=skip_if_llama_cpp_imports_unsuccessful,
@@ -435,7 +440,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                     UserPromptPart(
                         content=[
                             "What's on the image?",
-                            BinaryImage(data=IsBytes(), media_type='image/png'),
+                            BinaryImage(data=IsBytes(), media_type='image/jpeg'),
                         ],
                         timestamp=IsDatetime(),
                     )
