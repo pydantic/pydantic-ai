@@ -337,3 +337,20 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Adding Custom Metadata
+
+Use the agent's `metadata` parameter to attach additional data to the agent's span.
+Metadata can be provided as a string, a dictionary, or a callable that reads the [`RunContext`][pydantic_ai.tools.RunContext] to compute values on each run.
+
+```python {hl_lines="4-5"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'openai:gpt-5',
+    instrument=True,
+    metadata=lambda ctx: {'deployment': 'staging', 'tenant': ctx.deps.tenant},
+)
+```
+
+When instrumentation is enabled, the resolved metadata is recorded on the agent span under the `logfire.agent.metadata` attribute.
