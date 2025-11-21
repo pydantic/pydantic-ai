@@ -517,7 +517,7 @@ class AnthropicModel(Model):
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.append('code-execution-2025-05-22')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                citations = BetaCitationsConfigParam(enabled=tool.citations_enabled) if tool.citations_enabled else None
+                citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
                     BetaWebFetchTool20250910Param(
                         name='web_fetch',

@@ -206,7 +206,7 @@ class WebFetchTool(AbstractBuiltinTool):
     * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
     """
 
-    citations_enabled: bool = False
+    enable_citations: bool = False
     """If True, enables citations for fetched content.
 
     Supported by:

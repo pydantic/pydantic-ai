@@ -1372,6 +1372,64 @@ async def test_google_model_web_fetch_tool(
         'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
     )
 
+    # Check that BuiltinToolCallPart and BuiltinToolReturnPart are generated
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_fetch',
+                        args={'urls': ['https://ai.pydantic.dev']},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_fetch',
+                        content=[
+                            {
+                                'retrieved_url': 'https://ai.pydantic.dev',
+                                'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=32,
+                    output_tokens=2483,
+                    details={
+                        'thoughts_tokens': 47,
+                        'tool_use_prompt_tokens': 2395,
+                        'text_prompt_tokens': 32,
+                        'text_tool_use_prompt_tokens': 2395,
+                    },
+                ),
+                model_name='gemini-2.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='qgqkaI-iDLrTjMcP0bP24A4',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
 
 async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)

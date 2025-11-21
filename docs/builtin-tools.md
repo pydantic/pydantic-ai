@@ -316,7 +316,7 @@ allowing it to pull up-to-date information from the web.
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | Anthropic | ✅ | Full feature support. Uses Anthropic's [Web Fetch Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-fetch-tool) internally to retrieve URL contents. |
-| Google | ✅ | No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is currently generated; please submit an issue if you need this. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Google | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | OpenAI | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
@@ -339,38 +339,24 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-### Parameters
+### Configuration Options
 
-The [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] supports several configuration parameters. The parameters that are actually used depend on the model provider.
+The `WebFetchTool` supports several configuration parameters:
 
-| Parameter | Type | Description | Supported by |
-|-----------|------|-------------|--------------|
-| `max_uses` | `int \| None` | Limit the number of URL fetches per request | Anthropic |
-| `allowed_domains` | `list[str] \| None` | Only fetch from these domains | Anthropic |
-| `blocked_domains` | `list[str] \| None` | Never fetch from these domains | Anthropic |
-| `citations_enabled` | `bool` | Enable citations for fetched content | Anthropic |
-| `max_content_tokens` | `int \| None` | Maximum content length in tokens | Anthropic |
-
-!!! note
-    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
-
-!!! note
-    Google's URL context tool does not support any configuration parameters. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL.
-
-Example with parameters (Anthropic only):
-
-```py {title="web_fetch_with_params.py"}
+```py {title="web_fetch_configured.py"}
 from pydantic_ai import Agent, WebFetchTool
 
-# Configure WebFetchTool with domain filtering and limits
-web_fetch = WebFetchTool(
-    allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
-    max_uses=10,
-    citations_enabled=True,
-    max_content_tokens=50000,
+agent = Agent(
+    'anthropic:claude-sonnet-4-0',
+    builtin_tools=[
+        WebFetchTool(
+            allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
+            max_uses=10,
+            enable_citations=True,
+            max_content_tokens=50000,
+        )
+    ],
 )
-
-agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[web_fetch])
 
 result = agent.run_sync(
     'Compare the documentation at https://ai.pydantic.dev and https://docs.pydantic.dev'
@@ -380,6 +366,21 @@ print(result.output)
 Both sites provide comprehensive documentation for Pydantic projects. ai.pydantic.dev focuses on PydanticAI, a framework for building AI agents, while docs.pydantic.dev covers Pydantic, the data validation library. They share similar documentation styles and both emphasize type safety and developer experience.
 """
 ```
+
+_(This example is complete, it can be run "as is")_
+
+#### Provider Support
+
+| Parameter | Anthropic | Google |
+|-----------|-----------|--------|
+| `max_uses` | ✅ | ❌ |
+| `allowed_domains` | ✅ | ❌ |
+| `blocked_domains` | ✅ | ❌ |
+| `enable_citations` | ✅ | ❌ |
+| `max_content_tokens` | ✅ | ❌ |
+
+!!! note "Anthropic Domain Filtering"
+    With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 ## Memory Tool
 

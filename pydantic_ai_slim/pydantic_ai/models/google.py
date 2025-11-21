@@ -84,6 +84,7 @@ try:
         ToolDict,
         ToolListUnionDict,
         UrlContextDict,
+        UrlContextMetadata,
         VideoMetadataDict,
     )
 except ImportError as _import_error:
@@ -503,6 +504,7 @@ class GoogleModel(Model):
             vendor_id=vendor_id,
             vendor_details=vendor_details,
             finish_reason=finish_reason,
+            url_context_metadata=candidate.url_context_metadata,
         )
 
     async def _process_streamed_response(
@@ -814,16 +816,19 @@ def _process_response_from_parts(
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
+    url_context_metadata: UrlContextMetadata | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
-
-    # We don't currently turn `candidate.url_context_metadata` into BuiltinToolCallPart and BuiltinToolReturnPart for WebFetchTool.
-    # Please file an issue if you need this.
 
     web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
     if web_search_call and web_search_return:
         items.append(web_search_call)
         items.append(web_search_return)
+
+    web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
+    if web_fetch_call and web_fetch_return:
+        items.append(web_fetch_call)
+        items.append(web_fetch_return)
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
@@ -968,6 +973,31 @@ def _map_grounding_metadata(
                 content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
                 if (grounding_chunks := grounding_metadata.grounding_chunks)
                 else None,
+            ),
+        )
+    else:
+        return None, None
+
+
+def _map_url_context_metadata(
+    url_context_metadata: UrlContextMetadata | None, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    if url_context_metadata and (url_metadata := url_context_metadata.url_metadata):
+        tool_call_id = _utils.generate_tool_call_id()
+        # Extract URLs from the metadata
+        urls = [meta.retrieved_url for meta in url_metadata if meta.retrieved_url]
+        return (
+            BuiltinToolCallPart(
+                provider_name=provider_name,
+                tool_name=WebFetchTool.kind,
+                tool_call_id=tool_call_id,
+                args={'urls': urls} if urls else None,
+            ),
+            BuiltinToolReturnPart(
+                provider_name=provider_name,
+                tool_name=WebFetchTool.kind,
+                tool_call_id=tool_call_id,
+                content=[meta.model_dump(mode='json') for meta in url_metadata],
             ),
         )
     else:

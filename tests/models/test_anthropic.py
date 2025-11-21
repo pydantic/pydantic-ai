@@ -4452,7 +4452,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     web_fetch_tool = WebFetchTool(
         max_uses=5,
         allowed_domains=['example.com', 'ai.pydantic.dev'],
-        citations_enabled=True,
+        enable_citations=True,
         max_content_tokens=50000,
     )
 
