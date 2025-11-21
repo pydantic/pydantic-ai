@@ -7,10 +7,10 @@ from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.builtin_tools import BUILTIN_TOOL_ID
 from pydantic_ai.ui.vercel_ai._adapter import VercelAIAdapter
 
-from .agent_options import AI_MODELS, BUILTIN_TOOL_DEFS, BUILTIN_TOOLS, AIModel, BuiltinTool
+from .agent_options import AI_MODELS, DEFAULT_BUILTIN_TOOL_DEFS, AIModel, BuiltinToolDef
 
 
 def get_agent(request: Request) -> Agent:
@@ -23,8 +23,7 @@ def get_agent(request: Request) -> Agent:
 
 def create_api_router(
     models: list[AIModel] | None = None,
-    builtin_tools: dict[str, AbstractBuiltinTool] | None = None,
-    builtin_tool_defs: list[BuiltinTool] | None = None,
+    builtin_tool_defs: list[BuiltinToolDef] | None = None,
 ) -> APIRouter:
     """Create the API router for chat endpoints.
 
@@ -34,8 +33,7 @@ def create_api_router(
         builtin_tool_defs: Optional list of builtin tool definitions (defaults to BUILTIN_TOOL_DEFS)
     """
     _models = models or AI_MODELS
-    _builtin_tools: dict[str, AbstractBuiltinTool] = builtin_tools or BUILTIN_TOOLS
-    _builtin_tool_defs = builtin_tool_defs or BUILTIN_TOOL_DEFS
+    _builtin_tool_defs = builtin_tool_defs or DEFAULT_BUILTIN_TOOL_DEFS
 
     router = APIRouter()
 
@@ -48,14 +46,14 @@ def create_api_router(
         """Response model for frontend configuration."""
 
         models: list[AIModel]
-        builtin_tools: list[BuiltinTool]
+        builtin_tool_defs: list[BuiltinToolDef]
 
     @router.get('/api/configure')
     async def configure_frontend() -> ConfigureFrontend:  # pyright: ignore[reportUnusedFunction]
         """Endpoint to configure the frontend with available models and tools."""
         return ConfigureFrontend(
             models=_models,
-            builtin_tools=_builtin_tool_defs,
+            builtin_tool_defs=_builtin_tool_defs,
         )
 
     @router.get('/api/health')
@@ -67,7 +65,7 @@ def create_api_router(
         """Extra data extracted from chat request."""
 
         model: str | None = None
-        builtin_tools: list[str] = []
+        builtin_tools: list[BUILTIN_TOOL_ID] = []
 
     @router.post('/api/chat')
     async def post_chat(  # pyright: ignore[reportUnusedFunction]
@@ -76,11 +74,16 @@ def create_api_router(
         """Handle chat requests via Vercel AI Adapter."""
         adapter = await VercelAIAdapter.from_request(request, agent=agent)
         extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        builtin_tools = [
+            builtin_tool_def.tool
+            for builtin_tool_def in _builtin_tool_defs
+            if builtin_tool_def.id in extra_data.builtin_tools
+        ]
         streaming_response = await VercelAIAdapter.dispatch_request(
             request,
             agent=agent,
             model=extra_data.model,
-            builtin_tools=[_builtin_tools[tool_id] for tool_id in extra_data.builtin_tools],
+            builtin_tools=builtin_tools,
         )
         return streaming_response
 

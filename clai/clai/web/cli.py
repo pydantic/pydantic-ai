@@ -8,42 +8,37 @@ import sys
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.ui.web import AIModel, BuiltinTool, create_web_app
+from pydantic_ai.ui.web import AIModel, BuiltinToolDef, create_web_app
 
 
 def load_agent_options(
     config_path: Path,
-) -> tuple[list[AIModel] | None, dict[str, AbstractBuiltinTool] | None, list[BuiltinTool] | None]:
+) -> tuple[list[AIModel] | None, list[BuiltinToolDef] | None]:
     """Load agent options from a config file.
 
     Args:
         config_path: Path to the config file (e.g., agent_options.py)
-
-    Returns:
-        Tuple of (models, builtin_tools, builtin_tool_defs) or (None, None, None) if not found
     """
     if not config_path.exists():
-        return None, None, None
+        return None, None
 
     try:
         spec = importlib.util.spec_from_file_location('agent_options_config', config_path)
         if spec is None or spec.loader is None:
             print(f'Warning: Could not load config from {config_path}')
-            return None, None, None
+            return None, None
 
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
         models = getattr(module, 'AI_MODELS', None)
-        builtin_tools = getattr(module, 'BUILTIN_TOOLS', None)
-        builtin_tool_defs = getattr(module, 'BUILTIN_TOOL_DEFS', None)
+        builtin_tool_defs = getattr(module, 'DEFAULT_BUILTIN_TOOL_DEFS', getattr(module, 'BUILTIN_TOOL_DEFS', None))
 
-        return models, builtin_tools, builtin_tool_defs
+        return models, builtin_tool_defs
 
     except Exception as e:
         print(f'Warning: Error loading config from {config_path}: {e}')
-        return None, None, None
+        return None, None
 
 
 def load_agent(agent_path: str) -> Agent | None:
@@ -105,17 +100,17 @@ def run_web_command(
     if agent is None:
         return 1
 
-    models, builtin_tools, builtin_tool_defs = None, None, None
+    models, builtin_tool_defs = None, None
     if config_path:
         print(f'Loading config from {config_path}...')
-        models, builtin_tools, builtin_tool_defs = load_agent_options(config_path)
+        models, builtin_tool_defs = load_agent_options(config_path)
     elif auto_config:
         default_config = Path.cwd() / 'agent_options.py'
         if default_config.exists():
             print(f'Found config file: {default_config}')
-            models, builtin_tools, builtin_tool_defs = load_agent_options(default_config)
+            models, builtin_tool_defs = load_agent_options(default_config)
 
-    app = create_web_app(agent, models=models, builtin_tools=builtin_tools, builtin_tool_defs=builtin_tool_defs)
+    app = create_web_app(agent, models=models, builtin_tool_defs=builtin_tool_defs)
 
     print(f'\nStarting chat UI for {agent_path}...')
     print(f'Open your browser at: http://{host}:{port}')

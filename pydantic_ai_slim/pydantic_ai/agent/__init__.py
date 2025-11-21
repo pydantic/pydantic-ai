@@ -68,7 +68,10 @@ from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutput
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
     from ..mcp import MCPServer
+    from ..ui.web.agent_options import AIModel, BuiltinToolDef
 
 __all__ = (
     'Agent',
@@ -1507,12 +1510,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._get_toolset().apply(_set_sampling_model)
 
-    def to_web(self) -> Any:
+    def to_web(
+        self,
+        *,
+        models: list[AIModel] | None = None,
+        builtin_tool_defs: list[BuiltinToolDef] | None = None,
+    ) -> FastAPI:
         """Create a FastAPI app that serves a web chat UI for this agent.
 
         This method returns a pre-configured FastAPI application that provides a web-based
-        chat interface for interacting with the agent. The UI is served from a CDN and
-        includes support for model selection and builtin tool configuration.
+        chat interface for interacting with the agent. The UI is downloaded and cached on
+        first use, and includes support for model selection and builtin tool configuration.
+
+        Args:
+            models: List of AI models to make available in the UI. If not provided,
+                defaults to a predefined set of models. You'll need to ensure you have valid API keys
+                configured for any models you wish to use.
+            builtin_tool_defs: Optional list of builtin tool definitions for the UI. Each
+                definition includes the tool ID, display name, and tool instance. If not
+                provided, defaults to a predefined set of tool definitions.
 
         Returns:
             A configured FastAPI application ready to be served (e.g., with uvicorn)
@@ -1520,6 +1536,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Example:
             ```python
             from pydantic_ai import Agent
+            from pydantic_ai.builtin_tools import WebSearchTool
+            from pydantic_ai.ui.web import AIModel, BuiltinToolDef
 
             agent = Agent('openai:gpt-5')
 
@@ -1527,14 +1545,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def get_weather(city: str) -> str:
                 return f'The weather in {city} is sunny'
 
+            # Use defaults
             app = agent.to_web()
+
+            # Or customize models and tools
+            app = agent.to_web(
+                models=[
+                    AIModel(id='openai:gpt-5', name='GPT 5', builtin_tools=['web_search']),
+                ],
+                builtin_tool_defs=[
+                    BuiltinToolDef(
+                        id='web_search',
+                        name='Web Search',
+                        tool=WebSearchTool(),
+                    )
+                ],
+            )
 
             # Then run with: uvicorn app:app --reload
             ```
         """
         from ..ui.web import create_web_app
 
-        return create_web_app(self)
+        return create_web_app(self, models=models, builtin_tool_defs=builtin_tool_defs)
 
     @asynccontextmanager
     @deprecated(

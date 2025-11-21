@@ -412,3 +412,13 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.get('kind', AbstractBuiltinTool.kind)
     else:
         return tool_data.kind
+
+
+BUILTIN_TOOL_ID = Literal[
+    'web_search',
+    'code_execution',
+    'image_generation',
+    'url_context',
+    'memory',
+    'mcp_server',
+]
