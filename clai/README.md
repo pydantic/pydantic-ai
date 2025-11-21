@@ -56,7 +56,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 Launch a web-based chat interface for your agent:
 
 ```bash
-clai web module:agent_variable
+clai --web --agent module:agent_variable
 ```
 
 For example, if you have an agent defined in `my_agent.py`:
@@ -70,7 +70,7 @@ my_agent = Agent('openai:gpt-5', system_prompt='You are a helpful assistant.')
 Launch the web UI with:
 
 ```bash
-clai web my_agent:my_agent
+clai --web --agent my_agent:my_agent
 ```
 
 This will start a web server (default: http://127.0.0.1:8000) with a chat interface for your agent.
@@ -81,6 +81,27 @@ This will start a web server (default: http://127.0.0.1:8000) with a chat interf
 - `--port`: Port to bind the server to (default: 8000)
 - `--config`: Path to custom `agent_options.py` config file
 - `--no-auto-config`: Disable auto-discovery of `agent_options.py` in current directory
+
+### Configuring Models and Tools
+
+You can customize which AI models and builtin tools are available in the web UI by creating an `agent_options.py` file. For example:
+
+```python
+from pydantic_ai.ui.web import AIModel, BuiltinToolDef
+from pydantic_ai.builtin_tools import WebSearchTool
+
+models = [
+    AIModel(id='openai:gpt-5', name='GPT 5', builtin_tools=['web_search']),
+]
+
+builtin_tool_definitions = [
+    BuiltinToolDef(id='web_search', name='Web Search', tool=WebSearchTool()),
+]
+```
+
+See the [default configuration](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/ui/web/agent_options.py) for more examples.
+
+If an `agent_options.py` file exists in your current directory, it will be automatically loaded when you run `clai --web`. You can also specify a custom config path with `--config`.
 
 You can also launch the web UI directly from an `Agent` instance using `Agent.to_web()`:
 

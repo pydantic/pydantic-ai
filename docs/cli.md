@@ -53,7 +53,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 Launch a web-based chat interface for your agent:
 
 ```bash
-clai web module:agent_variable
+clai --web --agent module:agent_variable
 ```
 
 For example, if you have an agent defined in `my_agent.py`:
@@ -67,7 +67,7 @@ my_agent = Agent('openai:gpt-5', system_prompt='You are a helpful assistant.')
 Launch the web UI with:
 
 ```bash
-clai web my_agent:my_agent
+clai --web --agent my_agent:my_agent
 ```
 
 This will start a web server (default: http://127.0.0.1:8000) with a chat interface for your agent.
@@ -78,6 +78,43 @@ This will start a web server (default: http://127.0.0.1:8000) with a chat interf
 - `--port`: Port to bind the server to (default: 8000)
 - `--config`: Path to custom `agent_options.py` config file
 - `--no-auto-config`: Disable auto-discovery of `agent_options.py` in current directory
+
+#### Configuring Models and Tools
+
+You can customize which AI models and builtin tools are available in the web UI by creating an `agent_options.py` file:
+
+```python title="agent_options.py"
+from pydantic_ai.ui.web import AIModel, BuiltinToolDef
+from pydantic_ai.builtin_tools import WebSearchTool, CodeExecutionTool
+
+models = [
+    AIModel(
+        id='openai:gpt-5',
+        name='GPT 5',
+        builtin_tools=['web_search', 'code_execution'],
+    ),
+    AIModel(
+        id='anthropic:claude-sonnet-4-5',
+        name='Claude Sonnet 4.5',
+        builtin_tools=['web_search'],
+    ),
+]
+
+builtin_tool_definitions = [
+    BuiltinToolDef(
+        id='web_search',
+        name='Web Search',
+        tool=WebSearchTool(),
+    ),
+    BuiltinToolDef(
+        id='code_execution',
+        name='Code Execution',
+        tool=CodeExecutionTool(),
+    ),
+]
+```
+
+If an `agent_options.py` file exists in your current directory, it will be automatically loaded when you run `clai --web`. You can also specify a custom config path with `--config`.
 
 You can also launch the web UI directly from an `Agent` instance using [`Agent.to_web()`][pydantic_ai.Agent.to_web]:
 
@@ -91,7 +128,9 @@ app = agent.to_web()  # Returns a FastAPI application
 The returned FastAPI app can be run with your preferred ASGI server (uvicorn, hypercorn, etc.):
 
 ```bash
-uvicorn my_module:app --host 0.0.0.0 --port 8080
+# If you saved the code above in my_agent.py and created an app variable:
+# app = agent.to_web()
+uvicorn my_agent:app --host 0.0.0.0 --port 8080
 ```
 
 ### Help
@@ -119,7 +158,7 @@ You can specify a custom agent using the `--agent` flag with a module path and v
 ```python {title="custom_agent.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5', system_prompt='You always respond in Italian.')
 ```
 
 Then run:
@@ -138,7 +177,7 @@ Additionally, you can directly launch CLI mode from an `Agent` instance using `A
 ```python {title="agent_to_cli_sync.py" test="skip" hl_lines=4}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5', system_prompt='You always respond in Italian.')
 agent.to_cli_sync()
 ```
 
@@ -147,7 +186,7 @@ You can also use the async interface with `Agent.to_cli()`:
 ```python {title="agent_to_cli.py" test="skip" hl_lines=6}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5', system_prompt='You always respond in Italian.')
 
 async def main():
     await agent.to_cli()

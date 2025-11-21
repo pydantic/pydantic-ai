@@ -53,13 +53,13 @@ _id_to_builtin_tool: dict[BUILTIN_TOOL_ID, AbstractBuiltinTool] = {
     'image_generation': ImageGenerationTool(),
 }
 
-DEFAULT_BUILTIN_TOOL_DEFS: list[BuiltinToolDef] = [
+builtin_tool_definitions: list[BuiltinToolDef] = [
     BuiltinToolDef(id=tool_id, name=_id_to_ui_name[tool_id], tool=_id_to_builtin_tool[tool_id])
     for tool_id in _default_tool_ids
 ]
 
 
-AI_MODELS: list[AIModel] = [
+models: list[AIModel] = [
     AIModel(
         id='anthropic:claude-sonnet-4-5',
         name='Claude Sonnet 4.5',

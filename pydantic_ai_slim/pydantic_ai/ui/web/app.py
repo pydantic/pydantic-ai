@@ -32,9 +32,9 @@ def create_web_app(
 
     Args:
         agent: The Pydantic AI agent to serve
-        models: Optional list of AI models (defaults to AI_MODELS)
+        models: Optional list of AI models (defaults to default models)
         builtin_tool_defs: Optional list of builtin tool definitions. Each definition includes
-            the tool ID, display name, and tool instance (defaults to DEFAULT_BUILTIN_TOOL_DEFS)
+            the tool ID, display name, and tool instance (defaults to default builtin tool definitions)
 
     Returns:
         A configured FastAPI application ready to be served
