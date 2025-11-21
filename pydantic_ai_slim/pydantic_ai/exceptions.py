@@ -158,13 +158,9 @@ class ModelAPIError(AgentRunError):
     model_name: str
     """The name of the model associated with the error."""
 
-    body: object | None
-    """The body of the response, if available."""
-
-    def __init__(self, model_name: str, body: object | None = None, message: str | None = None):
+    def __init__(self, model_name: str, message: str | None = None):
         self.model_name = model_name
-        self.body = body
-        super().__init__(message or f'model_name: {model_name}, body: {body}')
+        super().__init__(message or f'model_name: {model_name}')
 
 
 class ModelHTTPError(ModelAPIError):
@@ -173,10 +169,14 @@ class ModelHTTPError(ModelAPIError):
     status_code: int
     """The HTTP status code returned by the API."""
 
+    body: object | None
+    """The body of the response, if available."""
+
     def __init__(self, status_code: int, model_name: str, body: object | None = None):
         self.status_code = status_code
+        self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
-        super().__init__(model_name=model_name, body=body, message=message)
+        super().__init__(model_name=model_name, message=message)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

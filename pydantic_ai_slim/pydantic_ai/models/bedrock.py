@@ -315,7 +315,7 @@ class BedrockConverseModel(Model):
             status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
             if isinstance(status_code, int):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
-            raise ModelAPIError(model_name=self.model_name, body=e.response) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -464,7 +464,7 @@ class BedrockConverseModel(Model):
             status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
             if isinstance(status_code, int):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
-            raise ModelAPIError(model_name=self.model_name, body=e.response) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return model_response
 
     @staticmethod

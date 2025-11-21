@@ -573,7 +573,7 @@ async def test_fallback_condition_tuple() -> None:
 
 async def test_fallback_connection_error() -> None:
     def connection_error_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
-        raise ModelAPIError(model_name='test-connection-model', body='Connection timed out')
+        raise ModelAPIError(model_name='test-connection-model', message='Connection timed out')
 
     connection_error_model = FunctionModel(connection_error_response)
     fallback_model = FallbackModel(connection_error_model, success_model)

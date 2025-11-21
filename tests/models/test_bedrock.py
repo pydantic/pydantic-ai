@@ -212,7 +212,9 @@ async def test_bedrock_request_non_http_error():
     with pytest.raises(ModelAPIError) as exc_info:
         await model.request([ModelRequest.user_text_prompt('hi')], None, params)
 
-    assert exc_info.value.body == error.response
+    assert exc_info.value.message == snapshot(
+        'An error occurred (TestException) when calling the converse operation: broken connection'
+    )
 
 
 async def test_bedrock_count_tokens_non_http_error():
@@ -223,7 +225,9 @@ async def test_bedrock_count_tokens_non_http_error():
     with pytest.raises(ModelAPIError) as exc_info:
         await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
 
-    assert exc_info.value.body == error.response
+    assert exc_info.value.message == snapshot(
+        'An error occurred (TestException) when calling the count_tokens operation: broken connection'
+    )
 
 
 @pytest.mark.parametrize(

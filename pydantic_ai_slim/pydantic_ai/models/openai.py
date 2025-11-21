@@ -547,7 +547,7 @@ class OpenAIChatModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, body=str(e)) from e
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -1255,7 +1255,7 @@ class OpenAIResponsesModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, body=str(e)) from e
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)

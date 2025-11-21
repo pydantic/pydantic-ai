@@ -1159,7 +1159,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelAPIError) as exc_info:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'gpt-4o'
-    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.body)
+    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
 
 
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
