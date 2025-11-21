@@ -620,7 +620,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         Args:
             data: The output data to validate.
             run_context: The current run context.
-            validation_context: Additional Pydantic validation context for the current run.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
