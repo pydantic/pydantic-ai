@@ -93,23 +93,32 @@ You can combine multiple strategies for maximum savings:
 from pydantic_ai import Agent, CachePoint, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
-# Option 1: Use anthropic_cache_messages for convenience (caches last message only)
+# Example 1: Use anthropic_cache_messages for automatic last message caching
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    system_prompt='Detailed instructions...',
+    system_prompt='You are a helpful assistant.',
     model_settings=AnthropicModelSettings(
-        anthropic_cache_messages=True,  # Caches the last user message
+        anthropic_cache_messages=True,  # Automatically caches the last message
     ),
 )
 
-# Option 2: Fine-grained control with individual settings
+async def main():
+    # The last message is automatically cached - no need for manual CachePoint
+    result1 = await agent.run('What is the capital of France?')
+
+    # Subsequent calls with similar conversation benefit from cache
+    result2 = await agent.run('What is the capital of Germany?')
+    print(f'Cache write: {result1.usage().cache_write_tokens}')
+    print(f'Cache read: {result2.usage().cache_read_tokens}')
+
+# Example 2: Combine with other cache settings for comprehensive caching
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Detailed instructions...',
     model_settings=AnthropicModelSettings(
-        # Use True for default 5m TTL, or specify '5m' / '1h' directly
-        anthropic_cache_instructions=True,
-        anthropic_cache_tool_definitions='1h',  # Longer cache for tool definitions
+        anthropic_cache_instructions=True,      # Cache system instructions
+        anthropic_cache_tool_definitions='1h',  # Cache tool definitions with 1h TTL
+        anthropic_cache_messages=True,          # Also cache the last message
     ),
 )
 
@@ -119,21 +128,24 @@ def search_docs(ctx: RunContext, query: str) -> str:
     return f'Results for {query}'
 
 async def main():
-    # First call - writes to cache
-    result1 = await agent.run([
+    # All three cache points are used: instructions, tools, and last message
+    result = await agent.run('Search for Python best practices')
+    print(result.output)
+
+# Example 3: Fine-grained control with manual CachePoint markers
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    system_prompt='Instructions...',
+)
+
+async def main():
+    # Manually control cache points for specific content blocks
+    result = await agent.run([
         'Long context from documentation...',
-        CachePoint(),
+        CachePoint(),  # Cache everything up to this point
         'First question'
     ])
-
-    # Subsequent calls - read from cache (90% cost reduction)
-    result2 = await agent.run([
-        'Long context from documentation...',  # Same content
-        CachePoint(),
-        'Second question'
-    ])
-    print(f'First: {result1.output}')
-    print(f'Second: {result2.output}')
+    print(result.output)
 ```
 
 Access cache usage statistics via `result.usage()`:
@@ -242,5 +254,6 @@ async def main():
 
 **Key Points**:
 - System and tool cache points are **always preserved**
-- Message cache points are removed from oldest to newest when limit is exceeded
+- The cache point created by `anthropic_cache_messages` is **always preserved** (as it's the newest message cache point)
+- Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
