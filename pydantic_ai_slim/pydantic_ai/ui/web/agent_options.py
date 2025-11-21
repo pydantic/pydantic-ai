@@ -23,7 +23,7 @@ AIModelID = Literal[
 class AIModel(BaseModel, alias_generator=to_camel, populate_by_name=True):
     """Defines an AI model with its associated built-in tools."""
 
-    id: AIModelID
+    id: str
     name: str
     builtin_tools: list[BUILTIN_TOOL_ID]
 

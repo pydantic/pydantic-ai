@@ -77,7 +77,7 @@ def test_chat_app_configure_endpoint():
                         'builtinTools': ['web_search', 'code_execution'],
                     },
                 ],
-                'builtinTools': [
+                'builtinToolDefs': [
                     {'id': 'web_search', 'name': 'Web Search'},
                     {'id': 'code_execution', 'name': 'Code Execution'},
                     {'id': 'image_generation', 'name': 'Image Generation'},

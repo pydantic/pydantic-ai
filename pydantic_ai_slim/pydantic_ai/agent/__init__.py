@@ -1526,7 +1526,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             models: List of AI models to make available in the UI. If not provided,
                 defaults to a predefined set of models. You'll need to ensure you have valid API keys
                 configured for any models you wish to use.
-            builtin_tool_defs: Optional list of builtin tool definitions for the UI. Each
+            builtin_tool_defs: List of builtin tool definitions for the UI. Each
                 definition includes the tool ID, display name, and tool instance. If not
                 provided, defaults to a predefined set of tool definitions.
 
