@@ -485,8 +485,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         run_context = build_run_context(ctx)
-        validation_context = build_validation_context(ctx.deps.validation_context, run_context)
-        run_context = replace(run_context, validation_context=validation_context)
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
@@ -738,9 +736,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
-        validation_context = build_validation_context(ctx.deps.validation_context, run_context)
-
-        run_context = replace(run_context, validation_context=validation_context)
 
         result_data = await text_processor.process(text, run_context=run_context)
 
@@ -787,7 +782,7 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
-    return RunContext[DepsT](
+    run_context = RunContext[DepsT](
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         usage=ctx.state.usage,
@@ -803,6 +798,9 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
     )
+    validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+    run_context = replace(run_context, validation_context=validation_context)
+    return run_context
 
 
 def build_validation_context(
