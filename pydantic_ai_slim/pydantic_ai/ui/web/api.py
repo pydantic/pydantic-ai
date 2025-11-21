@@ -10,7 +10,12 @@ from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import BUILTIN_TOOL_ID
 from pydantic_ai.ui.vercel_ai._adapter import VercelAIAdapter
 
-from .agent_options import AI_MODELS, DEFAULT_BUILTIN_TOOL_DEFS, AIModel, BuiltinToolDef
+from .agent_options import (
+    AIModel,
+    BuiltinToolDef,
+    builtin_tool_definitions as default_builtin_tool_definitions,
+    models as default_models,
+)
 
 
 def get_agent(request: Request) -> Agent:
@@ -28,12 +33,11 @@ def create_api_router(
     """Create the API router for chat endpoints.
 
     Args:
-        models: Optional list of AI models (defaults to AI_MODELS)
-        builtin_tools: Optional dict of builtin tool instances (defaults to BUILTIN_TOOLS)
-        builtin_tool_defs: Optional list of builtin tool definitions (defaults to BUILTIN_TOOL_DEFS)
+        models: Optional list of AI models (defaults to default_models)
+        builtin_tool_defs: Optional list of builtin tool definitions (defaults to default_builtin_tool_definitions)
     """
-    _models = models or AI_MODELS
-    _builtin_tool_defs = builtin_tool_defs or DEFAULT_BUILTIN_TOOL_DEFS
+    _models = models or default_models
+    _builtin_tool_defs = builtin_tool_defs or default_builtin_tool_definitions
 
     router = APIRouter()
 

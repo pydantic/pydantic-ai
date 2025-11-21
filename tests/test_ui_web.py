@@ -13,7 +13,7 @@ with try_import() as fastapi_import_successful:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from pydantic_ai.ui.web import AI_MODELS, DEFAULT_BUILTIN_TOOL_DEFS, create_web_app
+    from pydantic_ai.ui.web import builtin_tool_definitions, create_web_app, models
 
 pytestmark = [
     pytest.mark.skipif(not fastapi_import_successful(), reason='fastapi not installed'),
@@ -116,9 +116,9 @@ def test_chat_app_index_caching():
 
 def test_ai_models_configuration():
     """Test that AI models are configured correctly."""
-    assert len(AI_MODELS) == 3
+    assert len(models) == 3
 
-    model_ids = {model.id for model in AI_MODELS}
+    model_ids = {model.id for model in models}
     assert 'anthropic:claude-sonnet-4-5' in model_ids
     assert 'openai-responses:gpt-5' in model_ids
     assert 'google-gla:gemini-2.5-pro' in model_ids
@@ -126,16 +126,16 @@ def test_ai_models_configuration():
 
 def test_builtin_tools_configuration():
     """Test that builtin tool definitions are configured correctly."""
-    assert len(DEFAULT_BUILTIN_TOOL_DEFS) == 3
+    assert len(builtin_tool_definitions) == 3
 
-    tool_ids = {tool_def.id for tool_def in DEFAULT_BUILTIN_TOOL_DEFS}
+    tool_ids = {tool_def.id for tool_def in builtin_tool_definitions}
     assert 'web_search' in tool_ids
     assert 'code_execution' in tool_ids
     assert 'image_generation' in tool_ids
 
     from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool
 
-    tools_by_id = {tool_def.id: tool_def.tool for tool_def in DEFAULT_BUILTIN_TOOL_DEFS}
+    tools_by_id = {tool_def.id: tool_def.tool for tool_def in builtin_tool_definitions}
     assert isinstance(tools_by_id['web_search'], WebSearchTool)
     assert isinstance(tools_by_id['code_execution'], CodeExecutionTool)
     assert isinstance(tools_by_id['image_generation'], ImageGenerationTool)

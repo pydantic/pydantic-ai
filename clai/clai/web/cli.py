@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
 import importlib.util
 import sys
 from pathlib import Path
+
+from pydantic import BaseModel, ImportString, ValidationError
 
 from pydantic_ai import Agent
 from pydantic_ai.ui.web import AIModel, BuiltinToolDef, create_web_app
@@ -31,14 +32,20 @@ def load_agent_options(
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        models = getattr(module, 'AI_MODELS', None)
-        builtin_tool_defs = getattr(module, 'DEFAULT_BUILTIN_TOOL_DEFS', getattr(module, 'BUILTIN_TOOL_DEFS', None))
+        models = getattr(module, 'models', None)
+        builtin_tool_defs = getattr(module, 'builtin_tool_definitions', None)
 
         return models, builtin_tool_defs
 
     except Exception as e:
         print(f'Warning: Error loading config from {config_path}: {e}')
         return None, None
+
+
+class _AgentLoader(BaseModel):
+    """Helper model for loading agents using Pydantic's ImportString."""
+
+    agent: ImportString  # type: ignore[valid-type]
 
 
 def load_agent(agent_path: str) -> Agent | None:
@@ -53,30 +60,17 @@ def load_agent(agent_path: str) -> Agent | None:
     sys.path.insert(0, str(Path.cwd()))
 
     try:
-        module_path, variable_name = agent_path.split(':')
-    except ValueError:
-        print('Error: Agent must be specified in "module:variable" format')
-        return None
-
-    try:
-        module = importlib.import_module(module_path)
-        agent = getattr(module, variable_name, None)
-
-        if agent is None:
-            print(f'Error: {variable_name} not found in module {module_path}')
-            return None
+        loader = _AgentLoader(agent=agent_path)
+        agent = loader.agent  # type: ignore[reportUnknownVariableType]
 
         if not isinstance(agent, Agent):
-            print(f'Error: {variable_name} is not an Agent instance')
+            print(f'Error: {agent_path} is not an Agent instance')
             return None
 
         return agent  # pyright: ignore[reportUnknownVariableType]
 
-    except ImportError as e:
-        print(f'Error: Could not import module {module_path}: {e}')
-        return None
-    except Exception as e:
-        print(f'Error loading agent: {e}')
+    except ValidationError as e:
+        print(f'Error loading agent from {agent_path}: {e}')
         return None
 
 
