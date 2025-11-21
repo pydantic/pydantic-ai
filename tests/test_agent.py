@@ -2492,8 +2492,6 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
 
 def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_prompt():
-    """Test that an agent run raises error when message_history ends on ModelResponse without tool calls or a new prompt."""
-
     def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
 
@@ -2522,7 +2520,54 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
         ]
     )
 
-    assert result.new_messages() == []
+    assert result.new_messages() == snapshot([])
+
+
+async def test_message_history_ending_on_model_response_with_instructions():
+    model = TestModel(custom_output_text='James likes cars in general, especially the Fiat 126p that his parents had.')
+    summarize_agent = Agent(
+        model,
+        instructions="""
+        Summarize this conversation to include all important facts about the user and
+        what their interactions were about.
+        """,
+    )
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi, my name is James')]),
+        ModelResponse(parts=[TextPart(content='Nice to meet you, James.')]),
+        ModelRequest(parts=[UserPromptPart(content='I like cars')]),
+        ModelResponse(parts=[TextPart(content='I like them too. Sport cars?')]),
+        ModelRequest(parts=[UserPromptPart(content='No, cars in general.')]),
+        ModelResponse(parts=[TextPart(content='Awesome. Which one do you like most?')]),
+        ModelRequest(parts=[UserPromptPart(content='Fiat 126p')]),
+        ModelResponse(parts=[TextPart(content="That's an old one, isn't it?")]),
+        ModelRequest(parts=[UserPromptPart(content='Yes, it is. My parents had one.')]),
+        ModelResponse(parts=[TextPart(content='Cool. Was it fast?')]),
+    ]
+
+    result = await summarize_agent.run(message_history=message_history)
+
+    assert result.output == snapshot('James likes cars in general, especially the Fiat 126p that his parents had.')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[],
+                instructions="""\
+Summarize this conversation to include all important facts about the user and
+        what their interactions were about.\
+""",
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='James likes cars in general, especially the Fiat 126p that his parents had.')],
+                usage=RequestUsage(input_tokens=73, output_tokens=43),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_empty_response():
@@ -2723,13 +2768,13 @@ def test_tool_exceeds_token_limit_error():
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
     ):
         agent.run_sync('Hello')
 
@@ -2750,6 +2795,27 @@ def test_tool_exceeds_token_limit_but_complete_args():
 
     result = agent.run_sync('Hello')
     assert result.output == 'done'
+
+
+def test_empty_response_with_finish_reason_length():
+    def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_empty_response), output_type=str)
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(10\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(provider default\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello')
 
 
 def test_model_requests_blocked(env: TestEnv):
@@ -4216,11 +4282,32 @@ def test_multi_agent_instructions_with_structured_output():
 
     result1 = agent1.run_sync('Hello')
 
-    # TestModel doesn't support structured output, so this will fail with retries
-    # But we can still verify that Agent2's instructions are used in retry requests
-    with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior):
-            agent2.run_sync(message_history=result1.new_messages())
+    result2 = agent2.run_sync(message_history=result1.new_messages())
+    messages = result2.new_messages()
+
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[], instructions='Agent 2 instructions', run_id=IsStr()),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'text': 'a'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     # Verify Agent2's retry requests used Agent2's instructions (not Agent1's)
     requests = [m for m in messages if isinstance(m, ModelRequest)]
@@ -6132,19 +6219,3 @@ async def test_message_history():
             ]
         )
         assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
-
-
-def test_message_history_cannot_start_with_model_response():
-    """Test that message history starting with ModelResponse raises UserError."""
-
-    agent = Agent('test')
-
-    invalid_history = [
-        ModelResponse(parts=[TextPart(content='ai response')]),
-    ]
-
-    with pytest.raises(
-        UserError,
-        match='Message history cannot start with a `ModelResponse`.',
-    ):
-        agent.run_sync('hello', message_history=invalid_history)
