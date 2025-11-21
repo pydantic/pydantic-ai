@@ -516,21 +516,11 @@ class XaiModel(Model):
         parts: list[ModelResponsePart] = []
 
         # Add reasoning/thinking content first if present
-        if response.reasoning_content:
-            # reasoning_content is the human-readable summary
+        if response.reasoning_content or response.encrypted_content:
             parts.append(
                 ThinkingPart(
-                    content=response.reasoning_content,
-                    signature=None,
-                    provider_name='xai',
-                )
-            )
-        elif response.encrypted_content:
-            # encrypted_content is a signature that can be sent back for reasoning continuity
-            parts.append(
-                ThinkingPart(
-                    content='',  # No readable content for encrypted-only reasoning
-                    signature=response.encrypted_content,
+                    content=response.reasoning_content or '',  # Empty string if only encrypted
+                    signature=response.encrypted_content or None,
                     provider_name='xai',
                 )
             )
