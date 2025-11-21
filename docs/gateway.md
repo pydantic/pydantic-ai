@@ -135,7 +135,7 @@ You can access multiple models with the same API key, as shown in the code snipp
 
 === "Passing API Key directly"
 
-    Pass your API key directly using the [gateway_provider](https://ai.pydantic.dev/api/providers/#pydantic_ai.providers.gateway):
+    Pass your API key directly using the [gateway_provider](https://ai.pydantic.dev/api/providers/#pydantic-ai-gateway-provider):
 
     ```python {title="passing_api_key.py"}
     from pydantic_ai import Agent
