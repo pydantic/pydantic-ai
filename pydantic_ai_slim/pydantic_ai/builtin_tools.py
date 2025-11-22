@@ -227,17 +227,16 @@ class WebFetchTool(AbstractBuiltinTool):
 
 
 @deprecated('Use `WebFetchTool` instead.')
+@dataclass(kw_only=True)
 class UrlContextTool(WebFetchTool):
-    """Deprecated alias for WebFetchTool. Use WebFetchTool instead."""
+    """Deprecated alias for WebFetchTool. Use WebFetchTool instead.
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        # Skip registration in _BUILTIN_TOOL_TYPES to avoid breaking the discriminated union
-        pass
+    Overrides kind to 'url_context' so old serialized payloads with {"kind": "url_context", ...}
+    can be deserialized to UrlContextTool for backward compatibility.
+    """
 
-
-# Remove UrlContextTool from _BUILTIN_TOOL_TYPES and restore WebFetchTool
-# This ensures the discriminated union only includes WebFetchTool
-_BUILTIN_TOOL_TYPES['url_context'] = WebFetchTool
+    kind: str = 'url_context'
+    """The kind of tool (deprecated value for backward compatibility)."""
 
 
 @dataclass(kw_only=True)
