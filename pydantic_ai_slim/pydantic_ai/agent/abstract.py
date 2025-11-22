@@ -777,8 +777,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -853,8 +853,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits=usage_limits,
             usage=usage,
             toolsets=toolsets,
-            event_stream_handler=event_stream_handler,
             builtin_tools=builtin_tools,
+            event_stream_handler=event_stream_handler,
         )
 
     async def _run_stream_events(
@@ -871,8 +871,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]

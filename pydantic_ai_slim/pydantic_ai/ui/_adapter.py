@@ -208,8 +208,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -263,8 +263,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
-            event_stream_handler=event_stream_handler,
             builtin_tools=builtin_tools,
+            event_stream_handler=event_stream_handler,
         )
 
     def run_stream(
@@ -281,8 +281,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
@@ -318,8 +318,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
                 builtin_tools=builtin_tools,
+                event_stream_handler=event_stream_handler,
             ),
             on_complete=on_complete,
         )
@@ -341,8 +341,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -400,8 +400,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
                 builtin_tools=builtin_tools,
+                event_stream_handler=event_stream_handler,
                 on_complete=on_complete,
             ),
         )
