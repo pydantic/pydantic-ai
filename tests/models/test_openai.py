@@ -1946,6 +1946,124 @@ def test_strict_schema():
     )
 
 
+def test_openai_transformer_with_recursive_ref() -> None:
+    """Test that OpenAIJsonSchemaTransformer correctly handles recursive models with $ref root."""
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    # Create a schema with $ref root (recursive model scenario)
+    schema: dict[str, Any] = {
+        '$ref': '#/$defs/MyModel',
+        '$defs': {
+            'MyModel': {
+                'type': 'object',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+            },
+        },
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+    result = transformer.walk()
+
+    # The transformer should resolve the $ref and use the transformed schema from $defs
+    # (not the original self.defs, which was the bug we fixed)
+    assert result == snapshot(
+        {
+            '$defs': {
+                'MyModel': {
+                    'type': 'object',
+                    'properties': {'foo': {'type': 'string'}},
+                    'required': ['foo'],
+                    'additionalProperties': False,
+                }
+            },
+            'type': 'object',
+            'properties': {'foo': {'type': 'string'}},
+            'required': ['foo'],
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_openai_transformer_fallback_with_prefer_inlined_defs() -> None:
+    """Test fallback path when prefer_inlined_defs=True causes root_key to be missing from result['$defs'].
+
+    When prefer_inlined_defs=True, only recursive refs are kept in $defs.
+    For non-recursive models, the root_key won't be in result['$defs'], triggering the fallback.
+    """
+    from pydantic_ai._json_schema import JsonSchemaTransformer
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    class TestTransformer(OpenAIJsonSchemaTransformer):
+        def __init__(self, schema: dict[str, Any], *, strict: bool | None = None):
+            # Set prefer_inlined_defs=True to test fallback
+            JsonSchemaTransformer.__init__(self, schema, strict=strict, flatten_allof=True, prefer_inlined_defs=True)
+            self.root_ref = schema.get('$ref')
+
+    schema: dict[str, Any] = {
+        '$ref': '#/$defs/MyModel',
+        '$defs': {
+            'MyModel': {
+                'type': 'object',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+            },
+        },
+    }
+
+    transformer = TestTransformer(schema, strict=True)
+    result = transformer.walk()
+
+    # When prefer_inlined_defs=True and model is not recursive, root_key won't be in result['$defs']
+    # So the fallback uses self.defs (original, untransformed schema)
+    # Note: The fallback uses the original schema, so it won't have additionalProperties: False
+    assert result == snapshot(
+        {
+            'type': 'object',
+            'properties': {'foo': {'type': 'string'}},
+            'required': ['foo'],
+            'additionalProperties': False,
+        }
+    )
+
+
+def test_openai_transformer_flattens_allof() -> None:
+    """Test that OpenAIJsonSchemaTransformer flattens allOf schemas."""
+    from pydantic_ai._json_schema import JsonSchema
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+            },
+            {
+                'type': 'object',
+                'properties': {'bar': {'type': 'integer'}},
+                'required': ['bar'],
+            },
+        ],
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'foo': {'type': 'string'},
+                'bar': {'type': 'integer'},
+            },
+            'required': ['foo', 'bar'],
+            'additionalProperties': False,
+        }
+    )
+
+
 def test_native_output_strict_mode(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
