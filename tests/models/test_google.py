@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
 import os
 import re
+import tempfile
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -43,7 +45,13 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    UrlContextTool,
+    WebSearchTool,
+)
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -3629,12 +3637,6 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
 
 @pytest.mark.vcr()
 async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
-    import asyncio
-    import os
-    import tempfile
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-
     client = google_provider.client
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -3657,7 +3659,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
         agent = Agent(
             m,
             system_prompt='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(vector_store_ids=[store.name])],
+            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
         )
 
         result = await agent.run('What is the capital of France?')
@@ -3765,12 +3767,6 @@ Here are some key facts about the Eiffel Tower:
 
 @pytest.mark.vcr()
 async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    import asyncio
-    import os
-    import tempfile
-
-    from pydantic_ai.builtin_tools import FileSearchTool
-
     client = google_provider.client
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -3793,7 +3789,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         agent = Agent(
             m,
             system_prompt='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(vector_store_ids=[store.name])],
+            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
         )
 
         event_parts: list[Any] = []

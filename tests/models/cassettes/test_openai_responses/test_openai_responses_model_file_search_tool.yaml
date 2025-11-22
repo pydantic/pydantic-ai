@@ -211,7 +211,7 @@ interactions:
       tool_choice: auto
       tools:
       - type: file_search
-        vector_store_ids:
+        file_store_ids:
         - vs_691f9b2716c08191bd8a0d05c5008de1
     uri: https://api.openai.com/v1/responses
   response:
@@ -290,7 +290,7 @@ interactions:
           ranker: auto
           score_threshold: 0.0
         type: file_search
-        vector_store_ids:
+        file_store_ids:
         - vs_691f9b2716c08191bd8a0d05c5008de1
       top_logprobs: 0
       top_p: 1.0
@@ -339,7 +339,7 @@ interactions:
       tool_choice: auto
       tools:
       - type: file_search
-        vector_store_ids:
+        file_store_ids:
         - vs_691f9b2716c08191bd8a0d05c5008de1
     uri: https://api.openai.com/v1/responses
   response:
@@ -424,7 +424,7 @@ interactions:
           ranker: auto
           score_threshold: 0.0
         type: file_search
-        vector_store_ids:
+        file_store_ids:
         - vs_691f9b2716c08191bd8a0d05c5008de1
       top_logprobs: 0
       top_p: 1.0

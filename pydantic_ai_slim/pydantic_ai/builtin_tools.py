@@ -348,11 +348,11 @@ class FileSearchTool(AbstractBuiltinTool):
     * Google (Gemini)
     """
 
-    vector_store_ids: list[str]
-    """List of vector store IDs to search through.
+    file_store_ids: list[str]
+    """List of file store IDs to search through.
 
     For OpenAI, these are the IDs of vector stores created via the OpenAI API.
-    For Google, these are file resource names that have been uploaded and processed.
+    For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
     """
 
     kind: str = 'file_search'

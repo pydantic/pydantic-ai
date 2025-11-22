@@ -577,6 +577,7 @@ The [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool] enables your ag
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). Vector stores must be created and file IDs added before using the tool. |
 | Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+|| Google (Vertex AI) | ❌ | Not supported |
 | Anthropic | ❌ | Not supported |
 | Groq | ❌ | Not supported |
 | OpenAI Chat Completions | ❌ | Not supported |
@@ -597,7 +598,7 @@ from pydantic_ai import Agent, FileSearchTool
 
 agent = Agent(
     'openai-responses:gpt-5',
-    builtin_tools=[FileSearchTool(vector_store_ids=['vs_abc123'])]  # (1)
+    builtin_tools=[FileSearchTool(file_store_ids=['vs_abc123'])]  # (1)
 )
 
 result = agent.run_sync('What information is in my documents about pydantic?')
@@ -616,7 +617,7 @@ from pydantic_ai import Agent, FileSearchTool
 
 agent = Agent(
     'google-gla:gemini-2.5-flash',
-    builtin_tools=[FileSearchTool(vector_store_ids=['files/abc123'])]  # (1)
+    builtin_tools=[FileSearchTool(file_store_ids=['files/abc123'])]  # (1)
 )
 
 result = agent.run_sync('Summarize the key points from my uploaded documents.')

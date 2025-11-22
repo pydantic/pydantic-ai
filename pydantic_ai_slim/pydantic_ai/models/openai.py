@@ -1290,9 +1290,7 @@ class OpenAIResponsesModel(Model):
                     )
                 tools.append(web_search_tool)
             elif isinstance(tool, FileSearchTool):
-                file_search_tool = responses.FileSearchToolParam(
-                    type='file_search', vector_store_ids=tool.vector_store_ids
-                )
+                file_search_tool = responses.FileSearchToolParam(type='file_search', file_store_ids=tool.file_store_ids)
                 tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True

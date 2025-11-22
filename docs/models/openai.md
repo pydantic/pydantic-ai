@@ -148,7 +148,7 @@ model_settings = OpenAIResponsesModelSettings(
     openai_builtin_tools=[
         FileSearchToolParam(
             type='file_search',
-            vector_store_ids=['your-history-book-vector-store-id']
+            file_store_ids=['your-history-book-vector-store-id']
         )
     ],
 )
