@@ -891,6 +891,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             events = _yield_event_stream(events)
             if event_stream_handler is not None:
                 await event_stream_handler(context, events)
+            async for _ in events:
+                pass
 
         async def run_agent() -> AgentRunResult[Any]:
             async with send_stream:
