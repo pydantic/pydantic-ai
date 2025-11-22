@@ -53,6 +53,10 @@ with try_import() as imports_successful:
         SDKError,
         ToolCall as MistralToolCall,
     )
+    from mistralai.models.prediction import (
+        Prediction as MistralPrediction,
+        PredictionTypedDict as MistralPredictionTypedDict,
+    )
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
@@ -1738,6 +1742,51 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 #####################
 ## Test methods
 #####################
+@pytest.fixture
+def example_dict() -> MistralPredictionTypedDict:
+    """Fixture providing a typed dict for prediction."""
+    return {'type': 'content', 'content': 'foo'}
+
+
+@pytest.fixture
+def example_prediction() -> MistralPrediction:
+    """Fixture providing a MistralPrediction object."""
+    return MistralPrediction(content='bar')
+
+
+@pytest.mark.parametrize(
+    'input_value,expected_content',
+    [
+        ('plain text', 'plain text'),
+        ('example_prediction', 'bar'),
+        ('example_dict', 'foo'),
+        (None, None),
+    ],
+)
+def test_map_setting_prediction_valid(request: pytest.FixtureRequest, input_value: str, expected_content: str | None):
+    """
+    Accepted input types (str, dict, MistralPrediction, None) must be correctlyconverted to a MistralPrediction or None.
+    """
+    # If the parameter is a fixture name, resolve it using request
+    resolved_value: str | MistralPredictionTypedDict | MistralPrediction | None = input_value
+    if isinstance(input_value, str) and input_value in {'example_dict', 'example_prediction'}:
+        resolved_value = request.getfixturevalue(input_value)
+
+    result = MistralModel._map_setting_prediction(resolved_value)  # pyright: ignore[reportPrivateUsage]
+
+    if resolved_value is None:
+        assert result is None
+    else:
+        assert isinstance(result, MistralPrediction)
+        assert result.content == expected_content
+
+
+def test_map_setting_prediction_unsupported_type():
+    """Test that _map_setting_prediction raises RuntimeError for unsupported types."""
+    with pytest.raises(
+        RuntimeError, match='Unsupported prediction type.*int.*Expected str, dict, or MistralPrediction'
+    ):
+        MistralModel._map_setting_prediction(123)  # pyright: ignore[reportPrivateUsage, reportArgumentType]
 
 
 def test_generate_user_output_format_complex(mistral_api_key: str):
@@ -2361,3 +2410,20 @@ If you're in a country where cars drive on the left (like the UK or Japan), reme
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_mistral_chat_with_prediction(allow_model_requests: None, mistral_api_key: str):
+    """Test chat completion with prediction parameter using a math query."""
+    from pydantic_ai.models.mistral import MistralModelSettings
+
+    model = MistralModel('mistral-large-2411', provider=MistralProvider(api_key=mistral_api_key))
+    prediction = 'The result of 21+21=99'
+    settings = MistralModelSettings(mistral_prediction=prediction)
+    agent = Agent(model, model_settings=settings)
+
+    result = await agent.run(['Correct the math, keep everything else. No explanation, no formatting.', prediction])
+
+    # Verify that the response uses the expected prediction
+    assert '42' in result.output
+    assert 'The result of 21+21=' in result.output
