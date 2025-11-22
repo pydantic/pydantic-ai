@@ -333,6 +333,78 @@ def test_video_url_invalid():
         VideoUrl('foobar.potato').media_type
 
 
+@pytest.mark.parametrize(
+    'url,media_type,format',
+    [
+        pytest.param(
+            'https://example.com/video.mp4?query=param',
+            'video/mp4',
+            'mp4',
+            id='mp4_with_query',
+        ),
+        pytest.param(
+            'https://example.com/video.webm?X-Amz-Algorithm=AWS4-HMAC-SHA256',
+            'video/webm',
+            'webm',
+            id='webm_with_aws_params',
+        ),
+    ],
+)
+def test_video_url_with_query_parameters(url: str, media_type: str, format: str):
+    """Test that VideoUrl correctly infers media type from URLs with query parameters (e.g., presigned URLs)."""
+    video_url = VideoUrl(url)
+    assert video_url.media_type == media_type
+    assert video_url.format == format
+
+
+@pytest.mark.parametrize(
+    'url,media_type,format',
+    [
+        pytest.param(
+            'https://example.com/audio.mp3?query=param',
+            'audio/mpeg',
+            'mp3',
+            id='mp3_with_query',
+        ),
+        pytest.param(
+            'https://example.com/audio.wav?X-Amz-Algorithm=AWS4-HMAC-SHA256',
+            'audio/wav',
+            'wav',
+            id='wav_with_aws_params',
+        ),
+    ],
+)
+def test_audio_url_with_query_parameters(url: str, media_type: str, format: str):
+    """Test that AudioUrl correctly infers media type from URLs with query parameters (e.g., presigned URLs)."""
+    audio_url = AudioUrl(url)
+    assert audio_url.media_type == media_type
+    assert audio_url.format == format
+
+
+@pytest.mark.parametrize(
+    'url,media_type,format',
+    [
+        pytest.param(
+            'https://example.com/image.png?query=param',
+            'image/png',
+            'png',
+            id='png_with_query',
+        ),
+        pytest.param(
+            'https://example.com/image.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256',
+            'image/jpeg',
+            'jpeg',
+            id='jpg_with_aws_params',
+        ),
+    ],
+)
+def test_image_url_with_query_parameters(url: str, media_type: str, format: str):
+    """Test that ImageUrl correctly infers media type from URLs with query parameters (e.g., presigned URLs)."""
+    image_url = ImageUrl(url)
+    assert image_url.media_type == media_type
+    assert image_url.format == format
+
+
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
     original_delta = ThinkingPartDelta(
