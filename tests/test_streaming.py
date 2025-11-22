@@ -2191,3 +2191,46 @@ def test_structured_response_sync_validation():
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
+
+
+async def test_exhaustive_strategy_multiple_final_results_with_retry():
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # Return two final_result calls in one response
+        # The second one will fail validation
+        yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+        yield {2: DeltaToolCall('final_result', '{"value": 123}')}  # Invalid - not a string
+
+    agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='exhaustive')
+
+    async with agent.run_stream('test retry') as result:
+        response = await result.get_output()
+        # Should use the first final result
+        assert response.value == snapshot('first')
+
+        messages = result.all_messages()
+        # Check that we got a retry prompt for the second final_result
+        retry_parts = [
+            p for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, RetryPromptPart)
+        ]
+        assert len(retry_parts) >= 1
+        # The retry should mention validation error
+        assert any('value' in str(p.content).lower() for p in retry_parts)
+
+
+async def test_exhaustive_strategy_final_result_unexpected_behavior():
+    class CustomOutputType(BaseModel):
+        value: str
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # Return two final_result calls where second one is malformed
+        yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+        yield {2: DeltaToolCall('final_result', 'not valid json')}  # Malformed JSON
+
+    agent = Agent(
+        FunctionModel(stream_function=sf), output_type=CustomOutputType, end_strategy='exhaustive', output_retries=0
+    )
+
+    # Should raise because the second final_result has invalid JSON
+    with pytest.raises(UnexpectedModelBehavior):
+        async with agent.run_stream('test') as result:
+            await result.get_output()
