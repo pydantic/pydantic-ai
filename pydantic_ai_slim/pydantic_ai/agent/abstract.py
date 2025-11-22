@@ -867,16 +867,25 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage: _usage.RunUsage | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]
         ]()
 
-        async def event_stream_handler(
-            _: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
-        ) -> None:
+        async def _yield_event_stream(
+            events: AsyncIterable[_messages.AgentStreamEvent],
+        ) -> AsyncIterator[_messages.AgentStreamEvent]:
             async for event in events:
                 await send_stream.send(event)
+                yield event
+
+        async def _event_stream_handler(
+            context: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
+        ) -> None:
+            events = _yield_event_stream(events)
+            if event_stream_handler is not None:
+                await event_stream_handler(context, events)
 
         async def run_agent() -> AgentRunResult[Any]:
             async with send_stream:
@@ -894,7 +903,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     infer_name=False,
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
-                    event_stream_handler=event_stream_handler,
+                    event_stream_handler=_event_stream_handler,
                 )
 
         task = asyncio.create_task(run_agent())
