@@ -1,0 +1,64 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '325'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - urlContext: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"P\"}],\"role\": \"model\"},\"index\": 0,\"groundingMetadata\":
+        {},\"urlContextMetadata\": {\"urlMetadata\": [{\"retrievedUrl\": \"https://ai.pydantic.dev\",\"urlRetrievalStatus\":
+        \"URL_RETRIEVAL_STATUS_SUCCESS\"}]}}],\"usageMetadata\": {\"promptTokenCount\": 32,\"candidatesTokenCount\": 17,\"totalTokenCount\":
+        4698,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4611,\"toolUsePromptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 4611}],\"thoughtsTokenCount\": 38},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\":
+        \"IBAhadfHIqDK-8YP-u-X0AQ\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"ydantic AI Gateway
+        is now available!\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\": {\"groundingChunks\":
+        [{\"web\": {\"uri\": \"https://ai.pydantic.dev\",\"title\": \"Pydantic AI\"}}],\"groundingSupports\": [{\"segment\":
+        {\"endIndex\": 37,\"text\": \"Pydantic AI Gateway is now available!\"},\"groundingChunkIndices\": [0]}]}}],\"usageMetadata\":
+        {\"promptTokenCount\": 32,\"candidatesTokenCount\": 25,\"totalTokenCount\": 4706,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4611,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        4611}],\"thoughtsTokenCount\": 38},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"IBAhadfHIqDK-8YP-u-X0AQ\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1380
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -686,6 +686,15 @@ class GeminiStreamedResponse(StreamedResponse):
             #         vendor_part_id=uuid4(), part=web_search_return
             #     )
 
+            # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
+            # so we can safely yield it here
+            web_fetch_call, web_fetch_return = _map_url_context_metadata(
+                candidate.url_context_metadata, self.provider_name
+            )
+            if web_fetch_call and web_fetch_return:
+                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
+                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
+
             if candidate.content is None or candidate.content.parts is None:
                 if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
                     raise UnexpectedModelBehavior(

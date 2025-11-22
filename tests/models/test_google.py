@@ -1433,6 +1433,128 @@ async def test_google_model_web_fetch_tool(
     )
 
 
+async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test WebFetchTool streaming to ensure BuiltinToolCallPart and BuiltinToolReturnPart are generated."""
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    tool = WebFetchTool()
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[tool])
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+
+    # Check that BuiltinToolCallPart and BuiltinToolReturnPart are generated in messages
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_fetch',
+                        args={'urls': ['https://ai.pydantic.dev']},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_fetch',
+                        content=[
+                            {
+                                'retrieved_url': 'https://ai.pydantic.dev',
+                                'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=IsInstance(int),
+                    output_tokens=IsInstance(int),
+                    details={
+                        'thoughts_tokens': IsInstance(int),
+                        'tool_use_prompt_tokens': IsInstance(int),
+                        'text_prompt_tokens': IsInstance(int),
+                        'text_tool_use_prompt_tokens': IsInstance(int),
+                    },
+                ),
+                model_name='gemini-2.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Check that streaming events include BuiltinToolCallPart and BuiltinToolReturnPart
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_fetch',
+                    args={'urls': ['https://ai.pydantic.dev']},
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_fetch',
+                    args={'urls': ['https://ai.pydantic.dev']},
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_fetch',
+                    content=[
+                        {
+                            'retrieved_url': 'https://ai.pydantic.dev',
+                            'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
+                        }
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=2, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='ydantic AI Gateway is now available!')),
+            PartEndEvent(index=2, part=TextPart(content='Pydantic AI Gateway is now available!')),
+        ]
+    )
+
+
 async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
