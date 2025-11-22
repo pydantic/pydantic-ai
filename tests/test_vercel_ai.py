@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, MutableMapping
+from itertools import count
 from typing import Any, cast
 
 import pytest
@@ -48,6 +49,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolOutputAvailablePart,
+    DynamicToolOutputErrorPart,
     FileUIPart,
     ReasoningUIPart,
     SubmitMessage,
@@ -80,6 +82,12 @@ pytestmark = [
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
+
+
+def predictable_id_generator(prefix: str = 'test-id-'):
+    """Create a predictable ID generator for testing."""
+    c = count(1)
+    return lambda: f'{prefix}{next(c)}'
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
@@ -1954,5 +1962,607 @@ async def test_adapter_load_messages():
                 ],
                 timestamp=IsDatetime(),
             ),
+        ]
+    )
+
+
+async def test_adapter_dump_messages():
+    """Test dumping Pydantic AI messages to Vercel AI format."""
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant.'),
+                UserPromptPart(content='Hello, world!'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Hi there!'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # we need to dump the BaseModels to dicts for `IsStr` to work properly in snapshot
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'system',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'You are a helpful assistant.', 'state': 'done', 'provider_metadata': None}
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Hello, world!', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Hi there!', 'state': 'done', 'provider_metadata': None}],
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_tools():
+    """Test dumping messages with tool calls and returns."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me search for that.'),
+                ToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test query'},
+                    tool_call_id='tool_123',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='web_search',
+                    content={'results': ['result1', 'result2']},
+                    tool_call_id='tool_123',
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Here are the results.')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Let me search for that.', 'state': 'done', 'provider_metadata': None},
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'web_search',
+                        'tool_call_id': 'tool_123',
+                        'state': 'output-available',
+                        'input': '{"query":"test query"}',
+                        'output': '{"results":["result1","result2"]}',
+                        'call_provider_metadata': None,
+                        'preliminary': None,
+                    },
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Here are the results.', 'state': 'done', 'provider_metadata': None}
+                ],
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_builtin_tools():
+    """Test dumping messages with builtin tool calls."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='tool_456',
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'status': 'completed'},
+                    tool_call_id='tool_456',
+                    provider_name='openai',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-web_search',
+                        'tool_call_id': 'pyd_ai_builtin|openai|tool_456',
+                        'state': 'output-available',
+                        'input': '{"query":"test"}',
+                        'output': '{"status":"completed"}',
+                        'provider_executed': True,
+                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                        'preliminary': None,
+                    }
+                ],
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_thinking():
+    """Test dumping messages with thinking parts."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Tell me something')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think about this...'),
+                TextPart(content='Here is my answer.'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Tell me something', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'reasoning',
+                        'text': 'Let me think about this...',
+                        'state': 'done',
+                        'provider_metadata': None,
+                    },
+                    {'type': 'text', 'text': 'Here is my answer.', 'state': 'done', 'provider_metadata': None},
+                ],
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_files():
+    """Test dumping messages with file parts."""
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Here is an image:',
+                        BinaryImage(data=b'fake_image', media_type='image/png'),
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                    ]
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Nice image!'),
+                FilePart(content=BinaryContent(data=b'response_file', media_type='application/pdf')),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # Check user message with files
+    assert ui_messages[0].role == 'user'
+    assert len(ui_messages[0].parts) == 3
+    assert isinstance(ui_messages[0].parts[0], TextUIPart)
+    assert isinstance(ui_messages[0].parts[1], FileUIPart)
+    assert ui_messages[0].parts[1].url.startswith('data:image/png;base64,')
+    assert isinstance(ui_messages[0].parts[2], FileUIPart)
+    assert ui_messages[0].parts[2].url == 'https://example.com/image.png'
+
+    # Check assistant message with file
+    assert ui_messages[1].role == 'assistant'
+    assert isinstance(ui_messages[1].parts[0], TextUIPart)
+    assert isinstance(ui_messages[1].parts[1], FileUIPart)
+    assert ui_messages[1].parts[1].url.startswith('data:application/pdf;base64,')
+
+
+async def test_adapter_dump_messages_with_retry():
+    """Test dumping messages with retry prompts."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args={'arg': 'value'}, tool_call_id='tool_789'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content='Tool failed with error',
+                    tool_name='my_tool',
+                    tool_call_id='tool_789',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # Check assistant message has tool call with error
+    assert ui_messages[1].role == 'assistant'
+    tool_part = ui_messages[1].parts[0]
+    assert isinstance(tool_part, DynamicToolOutputErrorPart)
+    assert tool_part.tool_name == 'my_tool'
+    assert tool_part.state == 'output-error'
+    assert 'Tool failed with error' in tool_part.error_text
+
+
+async def test_adapter_dump_messages_consecutive_text():
+    """Test that consecutive text parts are concatenated correctly."""
+    messages = [
+        ModelResponse(
+            parts=[
+                TextPart(content='First '),
+                TextPart(content='second'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'First second', 'state': 'done', 'provider_metadata': None}],
+            }
+        ]
+    )
+
+
+async def test_adapter_dump_messages_text_with_interruption():
+    """Test text concatenation with interruption."""
+    messages = [
+        ModelResponse(
+            parts=[
+                TextPart(content='Before tool'),
+                BuiltinToolCallPart(
+                    tool_name='test',
+                    args={},
+                    tool_call_id='t1',
+                    provider_name='test',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='test',
+                    content='result',
+                    tool_call_id='t1',
+                    provider_name='test',
+                ),
+                TextPart(content='After tool'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Before tool', 'state': 'done', 'provider_metadata': None},
+                    {
+                        'type': 'tool-test',
+                        'tool_call_id': 'pyd_ai_builtin|test|t1',
+                        'state': 'output-available',
+                        'input': '{}',
+                        'output': 'result',
+                        'provider_executed': True,
+                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'test'}},
+                        'preliminary': None,
+                    },
+                    {
+                        'type': 'text',
+                        'text': """\
+
+
+After tool\
+""",
+                        'state': 'done',
+                        'provider_metadata': None,
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_adapter_dump_load_roundtrip():
+    """Test that dump_messages and load_messages are approximately inverse operations."""
+    original_messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System message'),
+                UserPromptPart(content='User message'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Response text'),
+                ToolCallPart(tool_name='tool1', args={'key': 'value'}, tool_call_id='tc1'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='tool1', content='tool result', tool_call_id='tc1')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Final response'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+
+    # Load back to Pydantic AI format
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+
+    # Can't use `assert reloaded_messages == original_messages` because the timestamps will be different
+    assert reloaded_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='System message', timestamp=IsDatetime()),
+                    UserPromptPart(content='User message', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Response text'),
+                    ToolCallPart(tool_name='tool1', args={'key': 'value'}, tool_call_id='tc1'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='tool1', content='tool result', tool_call_id='tc1', timestamp=IsDatetime())
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='Final response')], timestamp=IsDatetime()),
+        ]
+    )
+
+
+async def test_adapter_dump_messages_text_before_thinking():
+    """Test dumping messages where text precedes a thinking part."""
+    messages = [
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me check.'),
+                ThinkingPart(content='Okay, I am checking now.'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Let me check.', 'state': 'done', 'provider_metadata': None},
+                    {
+                        'type': 'reasoning',
+                        'text': 'Okay, I am checking now.',
+                        'state': 'done',
+                        'provider_metadata': None,
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_adapter_dump_messages_tool_call_without_return():
+    """Test dumping messages with a tool call that has no corresponding result."""
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='get_weather',
+                    args={'city': 'New York'},
+                    tool_call_id='tool_abc',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'get_weather',
+                        'tool_call_id': 'tool_abc',
+                        'state': 'input-available',
+                        'input': '{"city":"New York"}',
+                        'call_provider_metadata': None,
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_adapter_dump_messages_assistant_starts_with_tool():
+    """Test an assistant message that starts with a tool call instead of text."""
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='t', args={}, tool_call_id='tc1'),
+                TextPart(content='Some text'),
+            ]
+        )
+    ]
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 't',
+                        'tool_call_id': 'tc1',
+                        'state': 'input-available',
+                        'input': '{}',
+                        'call_provider_metadata': None,
+                    },
+                    {
+                        'type': 'text',
+                        'text': """\
+
+
+Some text\
+""",
+                        'state': 'done',
+                        'provider_metadata': None,
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_convert_user_prompt_part_without_urls():
+    """Test converting a user prompt with only text and binary content."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(content=['text part', BinaryContent(data=b'data', media_type='application/pdf')])
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [
+            TextUIPart(text='text part', state='done'),
+            FileUIPart(media_type='application/pdf', url='data:application/pdf;base64,ZGF0YQ=='),
+        ]
+    )
+
+
+async def test_adapter_dump_messages_file_without_text():
+    """Test a file part appearing without any preceding text."""
+    messages = [
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryContent(data=b'file_data', media_type='image/png')),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'file',
+                        'media_type': 'image/png',
+                        'filename': None,
+                        'url': 'data:image/png;base64,ZmlsZV9kYXRh',
+                        'provider_metadata': None,
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_convert_user_prompt_part_only_urls():
+    """Test converting a user prompt with only URL content (no binary)."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(
+        content=[
+            ImageUrl(url='https://example.com/img.png', media_type='image/png'),
+            VideoUrl(url='https://example.com/vid.mp4', media_type='video/mp4'),
+        ]
+    )
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [
+            FileUIPart(media_type='image/png', url='https://example.com/img.png'),
+            FileUIPart(media_type='video/mp4', url='https://example.com/vid.mp4'),
         ]
     )

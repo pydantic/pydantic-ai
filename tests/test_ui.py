@@ -88,6 +88,10 @@ class DummyUIAdapter(UIAdapter[DummyUIRunInput, ModelMessage, str, AgentDepsT, O
         return DummyUIRunInput.model_validate_json(body)
 
     @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+        return list(messages)
+
+    @classmethod
     def load_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return list(messages)
 
