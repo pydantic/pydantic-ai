@@ -26,42 +26,9 @@ async def test_auto_output_json_schema():
     assert agent.output_json_schema() == snapshot(
         {
             'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'bool'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'bool',
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'str'},
-                                'data': {
-                                    'properties': {'response': {'type': 'string'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'str',
-                        },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'properties': {'response': {'type': 'boolean'}},
+            'required': ['response'],
+            'title': 'bool',
         }
     )
 
@@ -74,29 +41,10 @@ async def test_tool_output_json_schema():
     assert agent.output_json_schema() == snapshot(
         {
             'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'alice'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'alice',
-                            'description': 'Dreaming...',
-                        }
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'properties': {'response': {'type': 'boolean'}},
+            'required': ['response'],
+            'title': 'alice',
+            'description': 'Dreaming...',
         }
     )
 
@@ -155,43 +103,10 @@ async def test_native_output_json_schema():
     assert agent.output_json_schema() == snapshot(
         {
             'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'native_output_name'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'native_output_name',
-                            'description': 'native_output_description',
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'str'},
-                                'data': {
-                                    'properties': {'response': {'type': 'string'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'str',
-                        },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'properties': {'response': {'type': 'boolean'}},
+            'required': ['response'],
+            'title': 'native_output_name',
+            'description': 'native_output_description',
         }
     )
 
@@ -204,43 +119,10 @@ async def test_prompted_output_json_schema():
     assert agent.output_json_schema() == snapshot(
         {
             'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'prompted_output_name'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'prompted_output_name',
-                            'description': 'prompted_output_description',
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'str'},
-                                'data': {
-                                    'properties': {'response': {'type': 'string'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'str',
-                        },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'properties': {'response': {'type': 'boolean'}},
+            'required': ['response'],
+            'title': 'prompted_output_name',
+            'description': 'prompted_output_description',
         }
     )
 
@@ -259,43 +141,10 @@ async def test_custom_output_json_schema():
     assert agent.output_json_schema() == snapshot(
         {
             'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'Human'},
-                                'data': {
-                                    'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
-                                    'required': ['name', 'age'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'Human',
-                            'description': 'A human with a name and age',
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'str'},
-                                'data': {
-                                    'properties': {'response': {'type': 'string'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'str',
-                        },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'title': 'Human',
+            'required': ['name', 'age'],
+            'description': 'A human with a name and age',
         }
     )
 
@@ -347,22 +196,15 @@ async def test_image_output_json_schema():
     agent = Agent('test', output_type=str | BinaryImage)
     assert agent.output_json_schema() == snapshot(
         {
+            'type': 'object',
             'properties': {
                 'result': {
                     'anyOf': [
                         {
                             'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'str'},
-                                'data': {
-                                    'properties': {'response': {'type': 'string'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
+                            'properties': {'kind': {'type': 'string', 'const': 'str'}, 'data': {'type': 'string'}},
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'str',
                         },
                         {
                             'type': 'object',
@@ -370,7 +212,7 @@ async def test_image_output_json_schema():
                                 'kind': {'type': 'string', 'const': 'BinaryImage'},
                                 'data': {
                                     'properties': {
-                                        'data': {'format': 'binary', 'type': 'string'},
+                                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
                                         'media_type': {
                                             'anyOf': [
                                                 {
@@ -403,7 +245,8 @@ async def test_image_output_json_schema():
                                                     'type': 'string',
                                                 },
                                                 {'type': 'string'},
-                                            ]
+                                            ],
+                                            'title': 'Media Type',
                                         },
                                         'vendor_metadata': {
                                             'anyOf': [
@@ -411,12 +254,19 @@ async def test_image_output_json_schema():
                                                 {'type': 'null'},
                                             ],
                                             'default': None,
+                                            'title': 'Vendor Metadata',
                                         },
                                         'identifier': {
                                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                                             'default': None,
+                                            'title': 'Identifier',
                                         },
-                                        'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
+                                        'kind': {
+                                            'const': 'binary',
+                                            'default': 'binary',
+                                            'title': 'Kind',
+                                            'type': 'string',
+                                        },
                                     },
                                     'required': ['data', 'media_type'],
                                     'type': 'object',
@@ -430,7 +280,6 @@ async def test_image_output_json_schema():
                 }
             },
             'required': ['result'],
-            'type': 'object',
             'additionalProperties': False,
         }
     )
@@ -443,29 +292,10 @@ async def test_override_output_json_schema():
     assert agent.output_json_schema(output_type=output_type) == snapshot(
         {
             'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'alice'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'alice',
-                            'description': 'Dreaming...',
-                        }
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'properties': {'response': {'type': 'boolean'}},
+            'required': ['response'],
+            'title': 'alice',
+            'description': 'Dreaming...',
         }
     )
 
@@ -489,17 +319,9 @@ async def test_deferred_output_json_schema():
                     'anyOf': [
                         {
                             'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'str'},
-                                'data': {
-                                    'properties': {'response': {'type': 'string'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
+                            'properties': {'kind': {'type': 'string', 'const': 'str'}, 'data': {'type': 'string'}},
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'str',
                         },
                         {
                             'type': 'object',
@@ -507,10 +329,19 @@ async def test_deferred_output_json_schema():
                                 'kind': {'type': 'string', 'const': 'DeferredToolRequests'},
                                 'data': {
                                     'properties': {
-                                        'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'type': 'array'},
-                                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'type': 'array'},
+                                        'calls': {
+                                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                                            'title': 'Calls',
+                                            'type': 'array',
+                                        },
+                                        'approvals': {
+                                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                                            'title': 'Approvals',
+                                            'type': 'array',
+                                        },
                                         'metadata': {
                                             'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                                            'title': 'Metadata',
                                             'type': 'object',
                                         },
                                     },
@@ -530,7 +361,7 @@ async def test_deferred_output_json_schema():
                 'ToolCallPart': {
                     'description': 'A tool call from a model.',
                     'properties': {
-                        'tool_name': {'type': 'string'},
+                        'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
                             'anyOf': [
                                 {'type': 'string'},
@@ -538,10 +369,16 @@ async def test_deferred_output_json_schema():
                                 {'type': 'null'},
                             ],
                             'default': None,
+                            'title': 'Args',
                         },
-                        'tool_call_id': {'type': 'string'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
-                        'part_kind': {'const': 'tool-call', 'default': 'tool-call', 'type': 'string'},
+                        'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                        'part_kind': {
+                            'const': 'tool-call',
+                            'default': 'tool-call',
+                            'title': 'Part Kind',
+                            'type': 'string',
+                        },
                     },
                     'required': ['tool_name'],
                     'title': 'ToolCallPart',

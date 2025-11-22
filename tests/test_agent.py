@@ -5245,42 +5245,9 @@ async def test_wrapper_agent():
     assert wrapper_agent.output_json_schema() == snapshot(
         {
             'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'Foo'},
-                                'data': {
-                                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}},
-                                    'required': ['a', 'b'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'Foo',
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'str'},
-                                'data': {
-                                    'properties': {'response': {'type': 'string'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'str',
-                        },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}},
+            'title': 'Foo',
+            'required': ['a', 'b'],
         }
     )
     assert wrapper_agent.output_json_schema(output_type=str) == snapshot({'type': 'string'})
