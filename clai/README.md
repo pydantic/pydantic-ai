@@ -51,10 +51,73 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
+## Web Chat UI
+
+Launch a web-based chat interface for your agent:
+
+```bash
+clai --web --agent module:agent_variable
+```
+
+For example, if you have an agent defined in `my_agent.py`:
+
+```python
+from pydantic_ai import Agent
+
+my_agent = Agent('openai:gpt-5', system_prompt='You are a helpful assistant.')
+```
+
+Launch the web UI with:
+
+```bash
+clai --web --agent my_agent:my_agent
+```
+
+This will start a web server (default: http://127.0.0.1:8000) with a chat interface for your agent.
+
+### Web Command Options
+
+- `--host`: Host to bind the server to (default: 127.0.0.1)
+- `--port`: Port to bind the server to (default: 8000)
+- `--config`: Path to custom `agent_options.py` config file
+- `--no-auto-config`: Disable auto-discovery of `agent_options.py` in current directory
+
+### Configuring Models and Tools
+
+You can customize which AI models and builtin tools are available in the web UI by creating an `agent_options.py` file. For example:
+
+```python
+from pydantic_ai.ui.web import AIModel, BuiltinToolDef
+from pydantic_ai.builtin_tools import WebSearchTool
+
+models = [
+    AIModel(id='openai:gpt-5', name='GPT 5', builtin_tools=['web_search']),
+]
+
+builtin_tool_definitions = [
+    BuiltinToolDef(id='web_search', name='Web Search', tool=WebSearchTool()),
+]
+```
+
+See the [default configuration](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/ui/web/agent_options.py) for more examples.
+
+If an `agent_options.py` file exists in your current directory, it will be automatically loaded when you run `clai --web`. You can also specify a custom config path with `--config`.
+
+You can also launch the web UI directly from an `Agent` instance using `Agent.to_web()`:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5')
+app = agent.to_web()  # Returns a FastAPI application
+```
+
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [--web] [--host HOST] [--port PORT] [--config CONFIG]
+            [--no-auto-config]
+            [prompt]
 
 Pydantic AI CLI v...
 
@@ -78,4 +141,9 @@ options:
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
   --version             Show version and exit
+  --web                 Launch web chat UI for the agent (requires --agent)
+  --host HOST           Host to bind the server to (default: 127.0.0.1)
+  --port PORT           Port to bind the server to (default: 8000)
+  --config CONFIG       Path to agent_options.py config file (overrides auto-discovery)
+  --no-auto-config      Disable auto-discovery of agent_options.py in current directory
 ```

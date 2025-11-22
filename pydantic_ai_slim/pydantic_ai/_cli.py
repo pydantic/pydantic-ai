@@ -106,6 +106,10 @@ def cli(  # noqa: C901
     args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5'
 ) -> int:
     """Run the CLI and return the exit code for the process."""
+    # we don't want to autocomplete or list models that don't include the provider,
+    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+
     parser = argparse.ArgumentParser(
         prog=prog_name,
         description=f"""\
@@ -119,16 +123,15 @@ Special prompts:
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
+
     parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
+
     arg = parser.add_argument(
         '-m',
         '--model',
         nargs='?',
         help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
     )
-    # we don't want to autocomplete or list models that don't include the provider,
-    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
-    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
     arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(
         '-a',
@@ -151,8 +154,43 @@ Special prompts:
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
+    if prog_name == 'clai':
+        parser.add_argument(
+            '--web',
+            action='store_true',
+            help='Launch web chat UI for the agent (requires --agent)',
+        )
+        parser.add_argument('--host', default='127.0.0.1', help='Host to bind the server to (default: 127.0.0.1)')
+        parser.add_argument('--port', type=int, default=8000, help='Port to bind the server to (default: 8000)')
+        parser.add_argument(
+            '--config', type=Path, help='Path to agent_options.py config file (overrides auto-discovery)'
+        )
+        parser.add_argument(
+            '--no-auto-config',
+            action='store_true',
+            help='Disable auto-discovery of agent_options.py in current directory',
+        )
+
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
+
+    if prog_name == 'clai' and args.web:
+        if not args.agent:
+            console = Console()
+            console.print('[red]Error: --web requires --agent to be specified[/red]')
+            return 1
+        try:
+            from clai.web.cli import run_web_command
+        except ImportError:
+            print('Error: clai --web command is only available when clai is installed.')
+            return 1
+        return run_web_command(
+            agent_path=args.agent,
+            host=args.host,
+            port=args.port,
+            config_path=args.config,
+            auto_config=not args.no_auto_config,
+        )
 
     console = Console()
     name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
