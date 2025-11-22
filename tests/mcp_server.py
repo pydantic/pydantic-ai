@@ -69,6 +69,45 @@ async def get_image_resource_link() -> ResourceLink:
     )
 
 
+@mcp.tool(structured_output=False, annotations=ToolAnnotations(title='Collatz Conjecture sequence generator'))
+async def get_collatz_conjecture(n: int) -> TextContent:
+    """Generate the Collatz conjecture sequence for a given number.
+    This tool attaches response metadata.
+
+    Args:
+        n: The starting number for the Collatz sequence.
+    Returns:
+        A list representing the Collatz sequence with attached metadata.
+    """
+    if n <= 0:
+        raise ValueError('Starting number for the Collatz conjecture must be a positive integer.')
+
+    input_param_n = n  # store the original input value
+
+    sequence = [n]
+    while n != 1:
+        if n % 2 == 0:
+            n = n // 2
+        else:
+            n = 3 * n + 1
+        sequence.append(n)
+
+    return TextContent(
+        type='text',
+        text=str(sequence),
+        _meta={'pydantic_ai': {'tool': 'collatz_conjecture', 'n': input_param_n, 'length': len(sequence)}},
+    )
+
+
+@mcp.tool()
+async def get_structured_text_content_with_metadata() -> dict[str, Any]:
+    """Return structured dict with metadata."""
+    return {
+        'result': 'This is some text content.',
+        '_meta': {'pydantic_ai': {'source': 'get_structured_text_content_with_metadata'}},
+    }
+
+
 @mcp.resource('resource://kiwi.png', mime_type='image/png')
 async def kiwi_resource() -> bytes:
     return Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()

@@ -490,12 +490,62 @@ class MCPServer(AbstractToolset[Any], ABC):
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
             # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
-                return structured['result']
-            return structured
+            return_value = (
+                structured['result']
+                if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured
+                else structured
+            )
+            return messages.ToolReturn(return_value=return_value, metadata=result.meta) if result.meta else return_value
 
-        mapped = [await self._map_tool_result_part(part) for part in result.content]
-        return mapped[0] if len(mapped) == 1 else mapped
+        parts_with_metadata = [await self._map_tool_result_part(part) for part in result.content]
+        parts_only = [part for part, _ in parts_with_metadata]
+        # any_part_has_metadata = any(metadata is not None for _, metadata in parts_with_metadata)
+        return_values: list[Any] = []
+        user_contents: list[Any] = []
+        parts_metadata: dict[int, dict[str, Any]] = {}
+        return_metadata: dict[str, Any] = {}
+        # if any_part_has_metadata:
+        for idx, (part, part_metadata) in enumerate(parts_with_metadata):
+            if part_metadata is not None:
+                parts_metadata[idx] = part_metadata
+            # TODO: Keep updated with the multimodal content parsing in _agent_graph.py
+            if isinstance(part, messages.BinaryContent):
+                identifier = part.identifier
+
+                return_values.append(f'See file {identifier}')
+                user_contents.append([f'This is file {identifier}:', part])
+            else:
+                user_contents.append(part)
+
+        # The following branching cannot be tested until FastMCP is updated to version 2.13.1
+        # such that the MCP server can generate ToolResult and result.meta can be specified.
+        # TODO: Add tests for the following branching once FastMCP is updated.
+        if len(parts_metadata) > 0:
+            if result.meta is not None and len(result.meta) > 0:  # pragma: no cover
+                # Merge the tool result metadata and parts metadata into the return metadata
+                return_metadata = {'result': result.meta, 'content': parts_metadata}
+            else:
+                # Only parts metadata exists
+                if len(parts_metadata) == 1:
+                    # If there is only one content metadata, unwrap it
+                    return_metadata = parts_metadata[0]
+                else:
+                    return_metadata = {'content': parts_metadata}  # pragma: no cover
+        else:
+            if result.meta is not None and len(result.meta) > 0:  # pragma: no cover
+                return_metadata = result.meta
+        # TODO: What else should we cover here?
+
+        # Finally, construct and return the ToolReturn object
+        return (
+            messages.ToolReturn(
+                return_value=return_values,
+                content=user_contents,
+                metadata=return_metadata,
+            )
+            if len(return_metadata) > 0
+            else (parts_only[0] if len(parts_only) == 1 else parts_only)
+        )
 
     async def call_tool(
         self,
@@ -682,30 +732,57 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
-    ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
+    ) -> tuple[str | messages.BinaryContent | dict[str, Any] | list[Any], dict[str, Any] | None]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
+        metadata: dict[str, Any] | None = part.meta
         if isinstance(part, mcp_types.TextContent):
             text = part.text
             if text.startswith(('[', '{')):
                 try:
-                    return pydantic_core.from_json(text)
+                    return pydantic_core.from_json(text), metadata
                 except ValueError:
                     pass
-            return text
+            return text, metadata
         elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
-        elif isinstance(part, mcp_types.AudioContent):
+            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType), metadata
+        elif isinstance(part, mcp_types.AudioContent):  # pragma: no cover
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
-            return messages.BinaryContent(
-                data=base64.b64decode(part.data), media_type=part.mimeType
-            )  # pragma: no cover
+            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType), metadata
         elif isinstance(part, mcp_types.EmbeddedResource):
-            resource = part.resource
-            return self._get_content(resource)
+            return self._get_content(part.resource), metadata
+        # The following branching cannot be tested until FastMCP is updated to version 2.13.1
+        # such that the MCP server can generate ToolResult and result.meta can be specified.
+        # TODO: Add tests for the following branching once FastMCP is updated.
         elif isinstance(part, mcp_types.ResourceLink):
-            return await self.read_resource(str(part.uri))
+            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
+            # Check if metadata already exists. If so, merge it with nested the resource metadata.
+            parts_metadata: dict[int, dict[str, Any]] = {}
+            nested_metadata: dict[str, Any] = {}
+            for idx, content in enumerate(resource_result.contents):
+                if content.meta is not None:  # pragma: no cover
+                    parts_metadata[idx] = content.meta
+            if len(parts_metadata) > 0:
+                if resource_result.meta is not None and len(resource_result.meta) > 0:  # pragma: no cover
+                    # Merge the tool result metadata and parts metadata into the return metadata
+                    nested_metadata = {'result': resource_result.meta, 'content': parts_metadata}
+                else:
+                    # Only parts metadata exists
+                    if len(parts_metadata) == 1:  # pragma: no cover
+                        # If there is only one content metadata, unwrap it
+                        nested_metadata = parts_metadata[0]
+                    else:
+                        nested_metadata = {'content': parts_metadata}  # pragma: no cover
+            else:
+                if resource_result.meta is not None and len(resource_result.meta) > 0:  # pragma: no cover
+                    nested_metadata = resource_result.meta
+            # FIXME: Is this a correct assumption? If metadata was read from the part then that is the same as resource_result.meta
+            metadata = nested_metadata
+            if len(resource_result.contents) == 1:
+                return self._get_content(resource_result.contents[0]), metadata
+            else:  # pragma: no cover
+                return [self._get_content(resource) for resource in resource_result.contents], metadata
         else:
             assert_never(part)
 
@@ -1178,6 +1255,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 ToolResult = (
     str
     | messages.BinaryContent
+    | messages.ToolReturn
     | dict[str, Any]
     | list[Any]
     | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]

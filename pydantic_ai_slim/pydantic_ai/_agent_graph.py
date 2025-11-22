@@ -1119,6 +1119,7 @@ async def _call_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
+            # TODO: Keep updated with the binary parsing in mcp.py
             elif isinstance(content, _messages.MultiModalContent):
                 identifier = content.identifier
 
