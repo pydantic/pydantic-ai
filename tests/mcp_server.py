@@ -49,13 +49,13 @@ async def get_weather_forecast(location: str) -> str:
 
 @mcp.tool()
 async def get_image_resource() -> EmbeddedResource:
-    data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
     return EmbeddedResource(
         type='resource',
         resource=BlobResourceContents(
-            uri=AnyUrl('resource://kiwi.png'),
+            uri=AnyUrl('resource://kiwi.jpg'),
             blob=base64.b64encode(data).decode('utf-8'),
-            mimeType='image/png',
+            mimeType='image/jpeg',
         ),
     )
 
@@ -64,14 +64,14 @@ async def get_image_resource() -> EmbeddedResource:
 async def get_image_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=AnyUrl('resource://kiwi.png'),
-        name='kiwi.png',
+        uri=AnyUrl('resource://kiwi.jpg'),
+        name='kiwi.jpg',
     )
 
 
-@mcp.resource('resource://kiwi.png', mime_type='image/png')
+@mcp.resource('resource://kiwi.jpg', mime_type='image/jpg')
 async def kiwi_resource() -> bytes:
-    return Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
+    return Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
 
 
 @mcp.tool()
@@ -138,8 +138,8 @@ async def greeting_resource_template(name: str) -> str:
 
 @mcp.tool()
 async def get_image() -> Image:
-    data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
-    return Image(data=data, format='png')
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
+    return Image(data=data, format='jpg')
 
 
 @mcp.tool()

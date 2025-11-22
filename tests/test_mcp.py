@@ -43,7 +43,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, try_import
+from .conftest import IsBytes, IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
@@ -342,7 +342,7 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
         resources = await server.list_resources()
         assert resources == snapshot(
             [
-                Resource(name='kiwi_resource', description='', mime_type='image/png', uri='resource://kiwi.png'),
+                Resource(name='kiwi_resource', description='', mime_type='image/jpg', uri='resource://kiwi.jpg'),
                 Resource(name='marcelo_resource', description='', mime_type='audio/mpeg', uri='resource://marcelo.mp3'),
                 Resource(
                     name='product_name_resource',
@@ -660,11 +660,20 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content='See file 1c8566',
+                            content='See file 241a70',
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=[
+                                'This is file 241a70:',
+                                BinaryContent(
+                                    data=IsBytes(),
+                                    media_type='image/jpeg',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
                     ],
                     run_id=IsStr(),
                 ),
@@ -745,11 +754,20 @@ async def test_tool_returning_image_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
-                            content='See file 1c8566',
+                            content='See file 241a70',
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=[
+                                'This is file 241a70:',
+                                BinaryContent(
+                                    data=IsBytes(),
+                                    media_type='image/jpg',
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
                     ],
                     run_id=IsStr(),
                 ),
@@ -960,14 +978,17 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image',
-                            content='See file 1c8566',
+                            content='See file 241a70',
                             tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(
                             content=[
-                                'This is file 1c8566:',
-                                image_content,
+                                'This is file 241a70:',
+                                BinaryContent(
+                                    data=IsBytes(),
+                                    media_type='image/jpg',
+                                ),
                             ],
                             timestamp=IsDatetime(),
                         ),
@@ -1382,15 +1403,18 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                                 'This is a string',
                                 'Another string',
                                 {'foo': 'bar', 'baz': 123},
-                                'See file 1c8566',
+                                'See file 241a70',
                             ],
                             tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(
                             content=[
-                                'This is file 1c8566:',
-                                image_content,
+                                'This is file 241a70:',
+                                BinaryContent(
+                                    data=IsBytes(),
+                                    media_type='image/jpg',
+                                ),
                             ],
                             timestamp=IsDatetime(),
                         ),
@@ -1587,11 +1611,11 @@ async def test_read_blob_resource(run_context: RunContext[int]):
     """Test reading a binary resource (converted to BinaryContent)."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        content = await server.read_resource('resource://kiwi.png')
+        content = await server.read_resource('resource://kiwi.jpg')
         assert isinstance(content, BinaryContent)
-        assert content.media_type == snapshot('image/png')
-        # Verify it's PNG data (starts with PNG magic bytes)
-        assert content.data[:8] == b'\x89PNG\r\n\x1a\n'  # PNG magic bytes
+        assert content.media_type == snapshot('image/jpg')
+        # Verify it's JPEG data (starts with JPEG magic bytes)
+        assert content.data.startswith(bytes.fromhex('ffd8ffe0'))  # JPEG magic bytes
 
 
 async def test_read_resource_template(run_context: RunContext[int]):
