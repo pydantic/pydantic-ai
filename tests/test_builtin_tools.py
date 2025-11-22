@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
+    AbstractBuiltinTool,
     CodeExecutionTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
+    WebFetchTool,
     WebSearchTool,
 )
 from pydantic_ai.exceptions import UserError
@@ -54,18 +57,13 @@ def test_url_context_tool_is_deprecated():
 
 def test_url_context_tool_backward_compatibility():
     """Test that old payloads with 'url_context' kind can be deserialized."""
-    import pytest
-    from pydantic import TypeAdapter
-
-    from pydantic_ai.builtin_tools import AbstractBuiltinTool, UrlContextTool, WebFetchTool
-
     adapter = TypeAdapter(AbstractBuiltinTool)
 
     # Test 1: Old payload with url_context should deserialize to UrlContextTool (which is deprecated)
     old_payload = {'kind': 'url_context', 'max_uses': 5, 'enable_citations': True}
     with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
         result = adapter.validate_python(old_payload)
-    assert isinstance(result, UrlContextTool)
+    assert isinstance(result, UrlContextTool)  # pyright: ignore[reportDeprecated]
     assert isinstance(result, WebFetchTool)  # UrlContextTool is a subclass of WebFetchTool
     assert result.kind == 'url_context'  # Preserves the original kind from payload
     assert result.max_uses == 5
@@ -87,10 +85,6 @@ def test_url_context_tool_backward_compatibility():
 
 def test_url_context_tool_instance_behavior():
     """Test that UrlContextTool instances work correctly with deprecation warning."""
-    from pydantic import TypeAdapter
-
-    from pydantic_ai.builtin_tools import AbstractBuiltinTool, UrlContextTool, WebFetchTool
-
     adapter = TypeAdapter(AbstractBuiltinTool)
 
     # Create instance with deprecation warning
@@ -111,11 +105,6 @@ def test_url_context_tool_instance_behavior():
 
 def test_url_context_discriminated_union():
     """Test that the discriminated union correctly handles both url_context and web_fetch."""
-    import pytest
-    from pydantic import TypeAdapter
-
-    from pydantic_ai.builtin_tools import AbstractBuiltinTool, UrlContextTool, WebFetchTool
-
     adapter = TypeAdapter(list[AbstractBuiltinTool])
 
     # Mix of old and new payloads
@@ -130,7 +119,7 @@ def test_url_context_discriminated_union():
     with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
         results = adapter.validate_python(payloads)
     assert len(results) == 4
-    assert isinstance(results[0], UrlContextTool)
+    assert isinstance(results[0], UrlContextTool)  # pyright: ignore[reportDeprecated]
     assert isinstance(results[0], WebFetchTool)  # UrlContextTool is a subclass
     assert results[0].kind == 'url_context'
     assert results[0].max_uses == 1
