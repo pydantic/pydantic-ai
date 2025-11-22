@@ -61,8 +61,10 @@ NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
 
-- `'early'`: Stop processing other tool calls once a final result is found
-- `'exhaustive'`: Process all tool calls even after finding a final result
+- `'early'`: Stop processing other tool calls (both function tools and output tools) once a final result is found
+- `'exhaustive'`: Process all tool calls (both function tools and output tools) even after finding a final result
+
+This applies to both function tools and output tools.
 """
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -831,7 +833,9 @@ async def process_tool_calls(  # noqa: C901
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
                 )
-            else:
+                output_parts.append(part)
+            # With early strategy, execute only the first output tool
+            elif ctx.deps.end_strategy == 'early':
                 yield _messages.FunctionToolCallEvent(call)
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
@@ -839,8 +843,32 @@ async def process_tool_calls(  # noqa: C901
                     tool_call_id=call.tool_call_id,
                 )
                 yield _messages.FunctionToolResultEvent(part)
-
-            output_parts.append(part)
+                output_parts.append(part)
+            # With exhaustive strategy, execute all output tools
+            elif ctx.deps.end_strategy == 'exhaustive':
+                try:
+                    await tool_manager.handle_call(call)
+                except exceptions.UnexpectedModelBehavior as e:
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
+                    raise e  # pragma: lax no cover
+                except ToolRetryError as e:
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
+                    yield _messages.FunctionToolCallEvent(call)
+                    output_parts.append(e.tool_retry)
+                    yield _messages.FunctionToolResultEvent(e.tool_retry)
+                else:
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Final result processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    output_parts.append(part)
+            else:
+                assert_never(ctx.deps.end_strategy)
         else:
             try:
                 result_data = await tool_manager.handle_call(call)

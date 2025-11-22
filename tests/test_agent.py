@@ -3132,7 +3132,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
-                            content='Output tool not used - a final result was already processed.',
+                            content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -3162,6 +3162,100 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    def test_exhaustive_strategy_calls_all_output_tools(self):
+        """Test that 'exhaustive' strategy executes all output tool functions."""
+        output_tools_called: list[str] = []
+
+        class FirstOutput(BaseModel):
+            value: str
+
+        class SecondOutput(BaseModel):
+            value: str
+
+        def process_first(output: FirstOutput) -> FirstOutput:
+            """Process first output."""
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: SecondOutput) -> SecondOutput:
+            """Process second output."""
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'first'}),
+                    ToolCallPart('second_output', {'value': 'second'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+        )
+
+        result = agent.run_sync('test exhaustive output tools')
+
+        # Verify the result came from the first output tool
+        assert isinstance(result.output, FirstOutput)
+        assert result.output.value == 'first'
+
+        # Verify both output tools were called
+        assert output_tools_called == ['first', 'second']
+
+    def test_early_strategy_does_not_call_additional_output_tools(self):
+        """Test that 'early' strategy does not execute additional output tool functions."""
+        output_tools_called: list[str] = []
+
+        class FirstOutput(BaseModel):
+            value: str
+
+        class SecondOutput(BaseModel):
+            value: str
+
+        def process_first(output: FirstOutput) -> FirstOutput:
+            """Process first output."""
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: SecondOutput) -> SecondOutput:  # pragma: no cover
+            """Process second output."""
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'first'}),
+                    ToolCallPart('second_output', {'value': 'second'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='early',
+        )
+
+        result = agent.run_sync('test early output tools')
+
+        # Verify the result came from the first output tool
+        assert isinstance(result.output, FirstOutput)
+        assert result.output.value == 'first'
+
+        # Verify only the first output tool was called
+        assert output_tools_called == ['first']
 
     def test_early_strategy_with_final_result_in_middle(self):
         """Test that 'early' strategy stops at first final result, regardless of position."""

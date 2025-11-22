@@ -306,6 +306,53 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
+##### Handling Multiple Output Tool Calls
+
+When a model calls multiple output tools in the same response (for example, when you have multiple output types in a union or list), the agent's `end_strategy` parameter controls whether all output tool functions are executed or only the first one:
+
+- `'early'` (default): Only the first output tool is executed, and additional output tool calls are skipped once a final result is found. This is the default behavior.
+- `'exhaustive'`: All output tool functions are executed, even after a final result is found. The first tool's result is still used as the final output.
+
+This parameter also applies to [function tools](tools.md), not just output tools.
+
+```python {title="exhaustive_output.py"}
+from pydantic import BaseModel
+from pydantic_ai import Agent, ToolOutput
+
+calls_made: list[str] = []
+
+class ResultA(BaseModel):
+    value: str
+
+class ResultB(BaseModel):
+    value: str
+
+def process_a(result: ResultA) -> ResultA:
+    calls_made.append('A')
+    return result
+
+def process_b(result: ResultB) -> ResultB:
+    calls_made.append('B')
+    return result
+
+# With 'exhaustive' strategy, both functions will be called
+agent = Agent(
+    'openai:gpt-5',
+    output_type=[
+        ToolOutput(process_a, name='return_a'),
+        ToolOutput(process_b, name='return_b'),
+    ],
+    end_strategy='exhaustive',  # (1)!
+)
+
+# If the model calls both output tools, both process_a and process_b will execute
+# calls_made will be ['A', 'B']
+```
+
+1. Setting `end_strategy='exhaustive'` ensures all output tool functions are executed, which can be useful for side effects like logging, metrics, or validation.
+
+_(This example is complete, it can be run "as is")_
+
 #### Native Output
 
 Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Anthropic does not support this at all, and Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
