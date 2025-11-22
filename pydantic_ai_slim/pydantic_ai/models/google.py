@@ -14,7 +14,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -410,7 +410,7 @@ class GoogleModel(Model):
                     model_name=self._model_name,
                     body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
                 ) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
     async def _build_content_and_config(
         self,
