@@ -31,18 +31,18 @@ interactions:
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse
   response:
     body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"P\"}],\"role\": \"model\"},\"index\": 0,\"groundingMetadata\":
-        {},\"urlContextMetadata\": {\"urlMetadata\": [{\"retrievedUrl\": \"https://ai.pydantic.dev\",\"urlRetrievalStatus\":
-        \"URL_RETRIEVAL_STATUS_SUCCESS\"}]}}],\"usageMetadata\": {\"promptTokenCount\": 32,\"candidatesTokenCount\": 17,\"totalTokenCount\":
-        4698,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4611,\"toolUsePromptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 4611}],\"thoughtsTokenCount\": 38},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\":
-        \"IBAhadfHIqDK-8YP-u-X0AQ\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"ydantic AI Gateway
-        is now available!\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\": {\"groundingChunks\":
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Pydantic AI\"}],\"role\": \"model\"},\"index\":
+        0,\"groundingMetadata\": {},\"urlContextMetadata\": {\"urlMetadata\": [{\"retrievedUrl\": \"https://ai.pydantic.dev\",\"urlRetrievalStatus\":
+        \"URL_RETRIEVAL_STATUS_SUCCESS\"}]}}],\"usageMetadata\": {\"promptTokenCount\": 32,\"candidatesTokenCount\": 20,\"totalTokenCount\":
+        4699,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4610,\"toolUsePromptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 4610}],\"thoughtsTokenCount\": 37},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\":
+        \"oRIhaZOoA8L-jrEPzfDTmQc\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Gateway is now
+        available!\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\": {\"groundingChunks\":
         [{\"web\": {\"uri\": \"https://ai.pydantic.dev\",\"title\": \"Pydantic AI\"}}],\"groundingSupports\": [{\"segment\":
         {\"endIndex\": 37,\"text\": \"Pydantic AI Gateway is now available!\"},\"groundingChunkIndices\": [0]}]}}],\"usageMetadata\":
-        {\"promptTokenCount\": 32,\"candidatesTokenCount\": 25,\"totalTokenCount\": 4706,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4611,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        4611}],\"thoughtsTokenCount\": 38},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"IBAhadfHIqDK-8YP-u-X0AQ\"}\r\n\r\n"
+        {\"promptTokenCount\": 32,\"candidatesTokenCount\": 25,\"totalTokenCount\": 4704,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 32}],\"toolUsePromptTokenCount\": 4610,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        4610}],\"thoughtsTokenCount\": 37},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"oRIhaZOoA8L-jrEPzfDTmQc\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -51,7 +51,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=1380
+      - gfet4t7; dur=1144
       transfer-encoding:
       - chunked
       vary:

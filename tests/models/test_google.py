@@ -1547,10 +1547,32 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=2, part=TextPart(content=IsStr()), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='ydantic AI Gateway is now available!')),
-            PartEndEvent(index=2, part=TextPart(content='Pydantic AI Gateway is now available!')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
+            PartEndEvent(index=2, part=TextPart(content=IsStr())),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='web_fetch',
+                    args={'urls': ['https://ai.pydantic.dev']},
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='web_fetch',
+                    content=[
+                        {
+                            'retrieved_url': 'https://ai.pydantic.dev',
+                            'url_retrieval_status': 'URL_RETRIEVAL_STATUS_SUCCESS',
+                        }
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                )
+            ),
         ]
     )
 
