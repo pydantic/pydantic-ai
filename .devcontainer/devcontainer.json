@@ -1,0 +1,123 @@
+{
+  "name": "Pydantic AI Development",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  // Configure tool-specific properties
+  "customizations": {
+    "vscode": {
+      "settings": {
+        // Python settings
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.analysis.typeCheckingMode": "strict",
+        "python.analysis.autoImportCompletions": true,
+        // Ruff settings
+        "[python]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
+          },
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        },
+        // Type checking
+        "mypy-type-checker.importStrategy": "fromEnvironment",
+        "pyright.disableOrganizeImports": true,
+        // Terminal
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "/bin/bash",
+            "icon": "terminal-bash"
+          }
+        },
+        // Files
+        "files.exclude": {
+          "**/__pycache__": true,
+          "**/.pytest_cache": true,
+          "**/.mypy_cache": true,
+          "**/.ruff_cache": true,
+          "**/*.pyc": true
+        },
+        // Editor
+        "editor.rulers": [
+          100,
+          120
+        ],
+        "editor.formatOnSave": true,
+        "files.insertFinalNewline": true,
+        "files.trimTrailingWhitespace": true
+      },
+      "extensions": [
+        // Python development
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.mypy-type-checker",
+        "charliermarsh.ruff",
+        // Development tools
+        "ms-vscode.makefile-tools",
+        "eamodio.gitlens",
+        "donjayamanne.githistory",
+        // General utilities
+        "christian-kohler.path-intellisense",
+        "streetsidesoftware.code-spell-checker"
+      ]
+    }
+  },
+  // Features to add to the dev container
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "installOhMyZsh": false,
+      "upgradePackages": true
+    }
+  },
+  // Port forwarding for local services
+  "forwardPorts": [
+    8000,
+    8080,
+    11434,
+    54320,
+    54321
+  ],
+  "portsAttributes": {
+    "8000": {
+      "label": "MkDocs Server",
+      "onAutoForward": "notify"
+    },
+    "8080": {
+      "label": "FastAPI/Example Apps",
+      "onAutoForward": "notify"
+    },
+    "11434": {
+      "label": "Ollama",
+      "onAutoForward": "silent"
+    },
+    "54320": {
+      "label": "PostgreSQL",
+      "onAutoForward": "silent"
+    },
+    "54321": {
+      "label": "PostgreSQL (pgvector)",
+      "onAutoForward": "silent"
+    }
+  },
+  // Lifecycle scripts
+  "postCreateCommand": ".devcontainer/install.sh",
+  "postStartCommand": "git config --global --add safe.directory /workspace",
+  // Run as non-root user
+  "remoteUser": "vscode",
+  // Container environment variables
+  "remoteEnv": {
+    "COLUMNS": "150",
+    "UV_PROJECT_ENVIRONMENT": "/workspace/.venv",
+    "UV_LINK_MODE": "copy",
+    "PYTHONUNBUFFERED": "1",
+    // Git identity for AI commits (customize these values)
+    "GIT_AUTHOR_NAME": "AI Agent",
+    "GIT_AUTHOR_EMAIL": "ai@devcontainer.local",
+    "GIT_COMMITTER_NAME": "AI Agent",
+    "GIT_COMMITTER_EMAIL": "ai@devcontainer.local"
+  }
+}

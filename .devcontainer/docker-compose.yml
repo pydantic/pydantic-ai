@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # Main development container
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Force x86_64 platform to avoid ARM64 Linux compatibility issues (e.g., mlx package)
+      # This works on Apple Silicon via Rosetta/QEMU emulation
+    platform: linux/amd64
+
+    volumes:
+      # Bind workspace
+      - ..:/workspace:cached
+
+      # Persist .venv across rebuilds for faster startup
+      - venv-data:/workspace/.venv
+
+      # Cache directories for faster rebuilds
+      - uv-cache:/home/vscode/.cache/uv
+      - pre-commit-cache:/home/vscode/.cache/pre-commit
+
+    working_dir: /workspace
+
+    # Keep container running
+    command: sleep infinity
+
+    network_mode: host
+
+    security_opt:
+      - seccomp:unconfined
+
+    cap_add:
+      - SYS_PTRACE
+
+    environment:
+      - COLUMNS=150
+      - UV_PROJECT_ENVIRONMENT=/workspace/.venv
+      - PYTHONUNBUFFERED=1
+      - UV_PYTHON=3.12
+      # MCP proxy endpoint (if using separate service)
+      - MCP_PROXY_URL=http://localhost:3000
+
+    # Init to handle signals properly
+    init: true
+
+  # MCP Proxy service (optional - for advanced MCP integration)
+  # Uncomment if you need to proxy stdio MCP servers over HTTP
+  # mcp-proxy:
+  #   image: node:24-slim
+  #   platform: linux/amd64
+  #   working_dir: /app
+  #   volumes:
+  #     - ./mcp-proxy-config.json:/app/config.json:ro
+  #   command: >
+  #     sh -c "
+  #     npm install -g @modelcontextprotocol/proxy &&
+  #     mcp-proxy --config /app/config.json
+  #     "
+  #   ports:
+  #     - "3000:3000"
+  #   restart: unless-stopped
+  #   init: true
+
+  # Ollama service (optional - for local model testing)
+  # Uncomment to run Ollama locally for testing with local models
+  # After starting, pull models with: docker exec pydantic-ai-ollama ollama pull qwen2:0.5b
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   platform: linux/amd64
+  #   container_name: pydantic-ai-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+  #   restart: unless-stopped
+  #   init: true
+
+  # PostgreSQL service (optional - for SQL examples)
+  # Uncomment to run examples/sql_gen.py
+  # postgres:
+  #   image: postgres:18
+  #   platform: linux/amd64
+  #   container_name: pydantic-ai-postgres
+  #   ports:
+  #     - "54320:5432"
+  #   environment:
+  #     - POSTGRES_USER=postgres
+  #     - POSTGRES_PASSWORD=postgres
+  #     - POSTGRES_DB=postgres
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+  #   init: true
+
+  # PostgreSQL with pgvector (optional - for RAG examples)
+  # Uncomment to run examples/rag.py
+  # pgvector:
+  #   image: pgvector/pgvector:pg18
+  #   platform: linux/amd64
+  #   container_name: pydantic-ai-pgvector
+  #   ports:
+  #     - "54321:5432"
+  #   environment:
+  #     - POSTGRES_USER=postgres
+  #     - POSTGRES_PASSWORD=postgres
+  #     - POSTGRES_DB=postgres
+  #   volumes:
+  #     - pgvector-data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+  #   init: true
+
+volumes:
+  venv-data:
+  uv-cache:
+  pre-commit-cache:
+  # ollama-models:  # Uncomment if using Ollama service
+  # postgres-data:  # Uncomment if using PostgreSQL service
+  # pgvector-data:  # Uncomment if using pgvector service
