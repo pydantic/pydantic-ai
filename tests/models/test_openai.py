@@ -1226,7 +1226,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
 
     result = await agent.run('Answer in 5 words only. Who is Tux?', message_history=message_history)
 
-    assert result.output == snapshot("Tux is Linux's penguin mascot.")
+    assert result.output == snapshot('Linux mascot, a penguin character.')
     assert result.all_messages() == snapshot(
         [
             ModelResponse(
@@ -1243,10 +1243,10 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content="Tux is Linux's penguin mascot.")],
+                parts=[TextPart(content='Linux mascot, a penguin character.')],
                 usage=RequestUsage(
                     input_tokens=31,
-                    output_tokens=9,
+                    output_tokens=8,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -1258,7 +1258,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='chatcmpl-Cee9HJclmrDapXpXuyDHw5BWDGJfK',
+                provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
