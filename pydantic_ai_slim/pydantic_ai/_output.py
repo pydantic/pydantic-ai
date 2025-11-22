@@ -237,7 +237,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             additional_outputs.append(_messages.BinaryImage)
 
         processors = None
-        if self.toolset:
+        # if processor exists, it should override toolsets
+        if hasattr(self, 'processor'):
+            processors = {self.processor.object_def.name: self.processor}
+        elif self.toolset:
             processors = self.toolset.processors
 
         # special case where we don't want to union
@@ -728,23 +731,19 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         if processors:
             for name, processor in processors.items():
                 object_key = name
-
                 i = 1
                 original_key = object_key
                 while object_key in self._processors:
                     i += 1
                     object_key = f'{original_key}_{i}'
-
                 self._processors[object_key] = processor
 
                 object_def = processor.object_def
-
                 json_schema = object_def.json_schema
                 if object_def.name:  # pragma: no branch
                     json_schema['title'] = name
                 if object_def.description:
                     json_schema['description'] = object_def.description
-
                 json_schemas.append(json_schema)
 
         for output in outputs:
