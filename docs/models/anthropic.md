@@ -87,13 +87,14 @@ Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-wit
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache All Messages**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache all messages
 
-You can combine multiple strategies for maximum savings:
+### Example 1: Automatic Last Message Caching
+
+Use `anthropic_cache_messages` to automatically cache the last user message:
 
 ```python {test="skip"}
-from pydantic_ai import Agent, CachePoint, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
-# Example 1: Use anthropic_cache_messages for automatic last message caching
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='You are a helpful assistant.',
@@ -102,16 +103,23 @@ agent = Agent(
     ),
 )
 
-async def main():
-    # The last message is automatically cached - no need for manual CachePoint
-    result1 = await agent.run('What is the capital of France?')
+# The last message is automatically cached - no need for manual CachePoint
+result1 = agent.run_sync('What is the capital of France?')
 
-    # Subsequent calls with similar conversation benefit from cache
-    result2 = await agent.run('What is the capital of Germany?')
-    print(f'Cache write: {result1.usage().cache_write_tokens}')
-    print(f'Cache read: {result2.usage().cache_read_tokens}')
+# Subsequent calls with similar conversation benefit from cache
+result2 = agent.run_sync('What is the capital of Germany?')
+print(f'Cache write: {result1.usage().cache_write_tokens}')
+print(f'Cache read: {result2.usage().cache_read_tokens}')
+```
 
-# Example 2: Combine with other cache settings for comprehensive caching
+### Example 2: Comprehensive Caching Strategy
+
+Combine multiple cache settings for maximum savings:
+
+```python {test="skip"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Detailed instructions...',
@@ -127,26 +135,33 @@ def search_docs(ctx: RunContext, query: str) -> str:
     """Search documentation."""
     return f'Results for {query}'
 
-async def main():  # noqa: F811
-    # All three cache points are used: instructions, tools, and last message
-    result = await agent.run('Search for Python best practices')
-    print(result.output)
 
-# Example 3: Fine-grained control with manual CachePoint markers
+result = agent.run_sync('Search for Python best practices')
+print(result.output)
+```
+
+### Example 3: Fine-Grained Control with CachePoint
+
+Use manual `CachePoint` markers to control cache locations precisely:
+
+```python {test="skip"}
+from pydantic_ai import Agent, CachePoint
+
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Instructions...',
 )
 
-async def main():  # noqa: F811
-    # Manually control cache points for specific content blocks
-    result = await agent.run([
-        'Long context from documentation...',
-        CachePoint(),  # Cache everything up to this point
-        'First question'
-    ])
-    print(result.output)
+# Manually control cache points for specific content blocks
+result = agent.run_sync([
+    'Long context from documentation...',
+    CachePoint(),  # Cache everything up to this point
+    'First question'
+])
+print(result.output)
 ```
+
+### Accessing Cache Usage Statistics
 
 Access cache usage statistics via `result.usage()`:
 
@@ -162,11 +177,10 @@ agent = Agent(
     ),
 )
 
-async def main():  # noqa: F811
-    result = await agent.run('Your question')
-    usage = result.usage()
-    print(f'Cache write tokens: {usage.cache_write_tokens}')
-    print(f'Cache read tokens: {usage.cache_read_tokens}')
+result = agent.run_sync('Your question')
+usage = result.usage()
+print(f'Cache write tokens: {usage.cache_write_tokens}')
+print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 ### Cache Point Limits
@@ -181,13 +195,16 @@ Cache points can be placed in three locations:
 2. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
 3. **Messages**: Via `CachePoint` markers or `anthropic_cache_messages` setting (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them:
+Each setting uses **at most 1 cache point**, but you can combine them.
+
+#### Example: Using All 3 Cache Point Sources
+
+Define an agent with all cache settings enabled:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
-# Example: Using all 3 cache point sources
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
     system_prompt='Detailed instructions...',
@@ -202,22 +219,24 @@ agent = Agent(
 def my_tool() -> str:
     return 'result'
 
-async def main():  # noqa: F811
-    # This uses 3 cache points (instructions + tools + last message)
-    # You can add 1 more CachePoint marker before hitting the limit
-    result = await agent.run([
-        'Context', CachePoint(),  # 4th cache point - OK
-        'Question'
-    ])
-    print(result.output)
-    usage = result.usage()
-    print(f'Cache write tokens: {usage.cache_write_tokens}')
-    print(f'Cache read tokens: {usage.cache_read_tokens}')
+
+# This uses 3 cache points (instructions + tools + last message)
+# You can add 1 more CachePoint marker before hitting the limit
+result = agent.run_sync([
+    'Context', CachePoint(),  # 4th cache point - OK
+    'Question'
+])
+print(result.output)
+usage = result.usage()
+print(f'Cache write tokens: {usage.cache_write_tokens}')
+print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 #### Automatic Cache Point Limiting
 
-When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes excess cache points from **older message content** (keeping the most recent ones):
+When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes excess cache points from **older message content** (keeping the most recent ones).
+
+Define an agent with 2 cache points from settings:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -236,20 +255,19 @@ agent = Agent(
 def search() -> str:
     return 'data'
 
-async def main():  # noqa: F811
-    # Already using 2 cache points (instructions + tools)
-    # Can add 2 more CachePoint markers (4 total limit)
-    result = await agent.run([
-        'Context 1', CachePoint(),  # Oldest - will be removed
-        'Context 2', CachePoint(),  # Will be kept (3rd point)
-        'Context 3', CachePoint(),  # Will be kept (4th point)
-        'Question'
-    ])
-    # Final cache points: instructions + tools + Context 2 + Context 3 = 4
-    print(result.output)
-    usage = result.usage()
-    print(f'Cache write tokens: {usage.cache_write_tokens}')
-    print(f'Cache read tokens: {usage.cache_read_tokens}')
+# Already using 2 cache points (instructions + tools)
+# Can add 2 more CachePoint markers (4 total limit)
+result = agent.run_sync([
+    'Context 1', CachePoint(),  # Oldest - will be removed
+    'Context 2', CachePoint(),  # Will be kept (3rd point)
+    'Context 3', CachePoint(),  # Will be kept (4th point)
+    'Question'
+])
+# Final cache points: instructions + tools + Context 2 + Context 3 = 4
+print(result.output)
+usage = result.usage()
+print(f'Cache write tokens: {usage.cache_write_tokens}')
+print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 **Key Points**:
