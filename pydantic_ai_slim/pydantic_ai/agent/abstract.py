@@ -854,6 +854,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage=usage,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            event_stream_handler=event_stream_handler,
         )
 
     async def _run_stream_events(
