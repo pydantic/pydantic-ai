@@ -20,7 +20,7 @@ from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.agent.abstract import Instructions
+from pydantic_ai.agent.abstract import EventStreamHandler, Instructions
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
@@ -209,6 +209,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -226,6 +227,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
         """
         message_history = [*(message_history or []), *self.messages]
 
@@ -262,6 +264,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            event_stream_handler=event_stream_handler,
         )
 
     def run_stream(
