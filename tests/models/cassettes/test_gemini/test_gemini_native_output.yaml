@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '305'
+      - '350'
       content-type:
       - application/json
       host:
@@ -20,8 +20,8 @@ interactions:
         - text: What is the largest city in Mexico?
         role: user
       generationConfig:
-        response_mime_type: application/json
-        response_schema:
+        response_json_schema:
+          description: A city and its country.
           properties:
             city:
               type: string
@@ -32,17 +32,18 @@ interactions:
           - country
           title: CityLocation
           type: object
+        response_mime_type: application/json
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '710'
+      - '707'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=819
+      - gfet4t7; dur=813
       transfer-encoding:
       - chunked
       vary:
@@ -51,7 +52,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00018302639946341515
+      - avgLogprobs: -5.800400977022946e-05
         content:
           parts:
           - text: |-
@@ -62,17 +63,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: SEVIaJvJHICK7dcP3OzRiQQ
+      responseId: wfkgacl6gqSq2w_ti--QDQ
       usageMetadata:
         candidatesTokenCount: 20
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 20
-        promptTokenCount: 17
+        promptTokenCount: 8
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 17
-        totalTokenCount: 37
+          tokenCount: 8
+        totalTokenCount: 28
     status:
       code: 200
       message: OK

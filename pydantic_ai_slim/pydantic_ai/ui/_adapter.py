@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import KW_ONLY, Field, dataclass
@@ -21,7 +22,6 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import Instructions
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -243,8 +243,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
             deps.state = state
         elif self.state:
-            raise UserError(
-                f'State is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
+            warnings.warn(
+                f'State was provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps[...]` or implement `StateHandler` to receive AG-UI state.',
+                UserWarning,
+                stacklevel=2,
             )
 
         return self.agent.run_stream_events(

@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '514'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 123 / 456?
+        role: user
+      model: mistralai/mistral-small
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Divide two numbers.
+          name: divide
+          parameters:
+            additionalProperties: false
+            description: Divide two numbers.
+            properties:
+              denominator:
+                type: number
+              numerator:
+                type: number
+              on_inf:
+                default: infinity
+                enum:
+                - error
+                - infinity
+                type: string
+            required:
+            - numerator
+            - denominator
+            type: object
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '585'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"numerator": 123, "denominator": 456, "on_inf": "infinity"}'
+              name: divide
+            id: 3sniiMddS
+            index: 0
+            type: function
+        native_finish_reason: tool_calls
+      created: 1762047030
+      id: gen-1762047030-dJUcJW4ildNGqK4UV6iJ
+      model: mistralai/mistral-small
+      object: chat.completion
+      provider: Mistral
+      usage:
+        completion_tokens: 43
+        prompt_tokens: 134
+        total_tokens: 177
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -14,7 +14,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -55,7 +55,14 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
 
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropicBedrock, AsyncStream, omit as OMIT
+    from anthropic import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIStatusError,
+        AsyncAnthropicBedrock,
+        AsyncStream,
+        omit as OMIT,
+    )
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -358,7 +365,9 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     async def _messages_count_tokens(
         self,
@@ -395,7 +404,9 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -776,7 +787,7 @@ class AnthropicModel(Model):
 
         # Only certain types support cache_control
         # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
-        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result'}
+        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
         # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
         # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
         last_param = cast(dict[str, Any], params[-1])

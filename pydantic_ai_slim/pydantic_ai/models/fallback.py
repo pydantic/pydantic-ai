@@ -11,7 +11,7 @@ from opentelemetry.trace import get_current_span
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
-from ..exceptions import FallbackExceptionGroup, ModelHTTPError
+from ..exceptions import FallbackExceptionGroup, ModelAPIError
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
@@ -36,7 +36,7 @@ class FallbackModel(Model):
         self,
         default_model: Model | KnownModelName | str,
         *fallback_models: Model | KnownModelName | str,
-        fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelHTTPError,),
+        fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelAPIError,),
     ):
         """Initialize a fallback model instance.
 

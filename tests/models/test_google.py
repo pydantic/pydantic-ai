@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import datetime
 import os
 import re
@@ -9,7 +10,7 @@ from typing import Any
 import pytest
 from httpx import Timeout
 from inline_snapshot import Is, snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -44,7 +45,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -73,6 +74,7 @@ with try_import() as imports_successful:
         GeminiStreamedResponse,
         GoogleModel,
         GoogleModelSettings,
+        _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -146,7 +148,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
 
     class Response(TypedDict):
@@ -172,10 +174,10 @@ async def test_google_model_structured_output(allow_model_requests: None, google
     assert result.usage() == snapshot(
         RunUsage(
             requests=2,
-            input_tokens=224,
+            input_tokens=160,
             output_tokens=35,
             tool_calls=1,
-            details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
+            details={'text_prompt_tokens': 160, 'text_candidates_tokens': 35},
         )
     )
     assert result.all_messages() == snapshot(
@@ -200,11 +202,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=101,
+                    input_tokens=69,
                     output_tokens=14,
-                    details={'text_candidates_tokens': 14, 'text_prompt_tokens': 101},
+                    details={'text_candidates_tokens': 14, 'text_prompt_tokens': 69},
                 ),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -229,11 +231,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=123,
+                    input_tokens=91,
                     output_tokens=21,
-                    details={'text_candidates_tokens': 21, 'text_prompt_tokens': 123},
+                    details={'text_candidates_tokens': 21, 'text_prompt_tokens': 91},
                 ),
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -1606,30 +1608,44 @@ async def test_google_model_receive_web_search_history_from_another_provider(
 
 
 async def test_google_model_empty_user_prompt(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run()
-    assert result.output == snapshot("I'm ready to assist you.  Please tell me what you need.\n")
+    assert result.output == snapshot("""\
+Hello! That's correct. I am designed to be a helpful assistant.
+
+I'm ready to assist you with a wide range of tasks, from answering questions and providing information to brainstorming ideas and generating creative content.
+
+How can I help you today?\
+""")
 
 
 async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run(
-        'Empty?',
+        'Was your previous response empty?',
         message_history=[
             ModelRequest(parts=[UserPromptPart(content='Hi')]),
             ModelResponse(parts=[TextPart(content='')]),
         ],
     )
 
-    assert result.output == snapshot('Yes, your previous message was empty.  Is there anything I can help you with?\n')
+    assert result.output == snapshot("""\
+As an AI, I don't retain memory of past interactions or specific conversational history in the way a human does. Each response I generate is based on the current prompt I receive.
+
+Therefore, I cannot directly recall if my specific previous response to you was empty.
+
+However, I am designed to always provide a response with content. If you received an empty response, it would likely indicate a technical issue or an error in the system, rather than an intentional empty output from me.
+
+Could you please tell me what you were expecting or if you'd like me to try again?\
+""")
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
     agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
 
@@ -1655,21 +1671,20 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
+                    ThinkingPart(content=IsStr()),
+                    TextPart(
                         content=IsStr(),
-                        signature=IsStr(),
-                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
                     ),
-                    TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=34, output_tokens=1246, details={'thoughts_tokens': 817, 'text_prompt_tokens': 34}
+                    input_tokens=29, output_tokens=1737, details={'thoughts_tokens': 1001, 'text_prompt_tokens': 29}
                 ),
-                model_name='gemini-2.5-pro',
+                model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='sebBaN7rGrSsqtsPhf3J0Q4',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1693,21 +1708,20 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
+                    ThinkingPart(content=IsStr()),
+                    TextPart(
                         content=IsStr(),
-                        signature=IsStr(),
-                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
                     ),
-                    TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=978, output_tokens=2417, details={'thoughts_tokens': 1476, 'text_prompt_tokens': 978}
+                    input_tokens=1280, output_tokens=2073, details={'thoughts_tokens': 1115, 'text_prompt_tokens': 1280}
                 ),
-                model_name='gemini-2.5-pro',
+                model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='zObBaKreOqSIqtsP7uur4A0',
+                provider_response_id='UN4gafq5OY-kmtkPwqS6kAs',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1803,12 +1817,11 @@ async def test_google_model_thinking_part_from_other_model(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
+                    ThinkingPart(content=IsStr()),
+                    TextPart(
                         content=IsStr(),
-                        signature=IsStr(),
-                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
                     ),
-                    TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
                     input_tokens=1106, output_tokens=1867, details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106}
@@ -1817,7 +1830,7 @@ async def test_google_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='mPvBaJmNOMywqtsPsb_l2A4',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1860,12 +1873,11 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
+                    ThinkingPart(content=IsStr()),
+                    TextPart(
                         content=IsStr(),
-                        signature=IsStr(),
-                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
                     ),
-                    TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
                     input_tokens=34, output_tokens=1256, details={'thoughts_tokens': 787, 'text_prompt_tokens': 34}
@@ -1887,7 +1899,6 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='google-gla')),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
@@ -1912,16 +1923,15 @@ I've revised the procedure's initial step, emphasizing safe crossing zones (cros
 I've identified the core user intent: to learn safe street-crossing. Now, I'm focusing on crafting universally applicable steps. Finding safe crossing locations and looking-listening for traffic remain paramount. I'm prioritizing direct, clear language, addressing my limitations as an AI. I'm crafting advice that works generally, regardless of specific circumstances or locations.
 
 
-""",
-                    signature='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',
-                    provider_name='google-gla',
+"""
                 ),
                 next_part_kind='text',
             ),
             PartStartEvent(
                 index=1,
                 part=TextPart(
-                    content='This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step'
+                    content='This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step',
+                    provider_details={'thought_signature': IsStr()},
                 ),
                 previous_part_kind='thinking',
             ),
@@ -1980,7 +1990,8 @@ Once it's safe:
 *   **At a Stop Sign:** Wait for the car to come to a complete stop. Make eye contact with the driver before you step into the street to be sure they see you.
 
 The most important rule is to **stay alert and be predictable**. Always assume a driver might not see you.\
-"""
+""",
+                    provider_details={'thought_signature': IsStr()},
                 ),
             ),
         ]
@@ -2433,7 +2444,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=25, output_tokens=20, details={'text_candidates_tokens': 20, 'text_prompt_tokens': 25}
+                    input_tokens=8, output_tokens=20, details={'text_candidates_tokens': 20, 'text_prompt_tokens': 8}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3483,6 +3494,100 @@ async def test_google_prefix_items_native_output_gemini_2_0(
     assert -75 <= result.output.point[1] <= -73
 
 
+async def test_google_nested_models_without_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    """
+    Test that deeply nested Pydantic models work correctly WITHOUT NativeOutput.
+
+    This is a regression test for issue #3483 where nested models were incorrectly
+    treated as tool calls instead of structured output schema in v1.20.0.
+
+    When NOT using NativeOutput, the agent should still handle nested models correctly
+    by using the OutputToolset approach rather than treating nested models as separate tools.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class NestedModel(BaseModel):
+        """Represents the deepest nested level."""
+
+        name: str = Field(..., description='Name of the item')
+        value: int = Field(..., description='Value of the item')
+
+    class MiddleModel(BaseModel):
+        """Represents the middle nested level."""
+
+        title: str = Field(..., description='Title of the page')
+        items: list[NestedModel] = Field(..., description='List of nested items')
+
+    class TopModel(BaseModel):
+        """Represents the top-level structure."""
+
+        name: str = Field(..., description='Name of the collection')
+        pages: list[MiddleModel] = Field(..., description='List of pages')
+
+    # This should work WITHOUT NativeOutput - the agent should use OutputToolset
+    # and NOT treat NestedModel/MiddleModel as separate tool calls
+    agent = Agent(
+        m,
+        output_type=TopModel,
+        system_prompt='You are a helpful assistant that creates structured data.',
+        retries=5,
+    )
+
+    result = await agent.run('Create a simple example with 2 pages, each with 2 items')
+
+    # Verify the structure is correct
+    assert isinstance(result.output, TopModel)
+    assert result.output.name is not None
+    assert len(result.output.pages) == snapshot(2)
+    assert all(isinstance(page, MiddleModel) for page in result.output.pages)
+    assert all(len(page.items) == 2 for page in result.output.pages)
+    assert all(isinstance(item, NestedModel) for page in result.output.pages for item in page.items)
+
+
+async def test_google_nested_models_with_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    """
+    Test that deeply nested Pydantic models work correctly WITH NativeOutput.
+
+    This is the workaround for issue #3483 - using NativeOutput should always work.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class NestedModel(BaseModel):
+        """Represents the deepest nested level."""
+
+        name: str = Field(..., description='Name of the item')
+        value: int = Field(..., description='Value of the item')
+
+    class MiddleModel(BaseModel):
+        """Represents the middle nested level."""
+
+        title: str = Field(..., description='Title of the page')
+        items: list[NestedModel] = Field(..., description='List of nested items')
+
+    class TopModel(BaseModel):
+        """Represents the top-level structure."""
+
+        name: str = Field(..., description='Name of the collection')
+        pages: list[MiddleModel] = Field(..., description='List of pages')
+
+    # This should work WITH NativeOutput - uses native JSON schema structured output
+    agent = Agent(
+        m,
+        output_type=NativeOutput(TopModel),
+        system_prompt='You are a helpful assistant that creates structured data.',
+    )
+
+    result = await agent.run('Create a simple example with 2 pages, each with 2 items')
+
+    # Verify the structure is correct
+    assert isinstance(result.output, TopModel)
+    assert result.output.name is not None
+    assert len(result.output.pages) == snapshot(2)
+    assert all(isinstance(page, MiddleModel) for page in result.output.pages)
+    assert all(len(page.items) == 2 for page in result.output.pages)
+    assert all(isinstance(item, NestedModel) for page in result.output.pages for item in page.items)
+
+
 def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
@@ -3593,7 +3698,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=37, output_tokens=144, details={'reasoning_tokens': 128}),
+                usage=RequestUsage(input_tokens=37, output_tokens=272, details={'reasoning_tokens': 256}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3626,7 +3731,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=206, output_tokens=141, details={'reasoning_tokens': 128}),
+                usage=RequestUsage(input_tokens=379, output_tokens=77, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3646,19 +3751,15 @@ async def test_thinking_with_tool_calls_from_other_model(
         [
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='',
-                        signature=IsStr(),
-                        provider_name='google-gla',
-                    ),
                     ToolCallPart(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
                         tool_call_id=IsStr(),
-                    ),
+                        provider_details={'thought_signature': IsStr()},
+                    )
                 ],
                 usage=RequestUsage(
-                    input_tokens=114, output_tokens=91, details={'thoughts_tokens': 68, 'text_prompt_tokens': 114}
+                    input_tokens=107, output_tokens=146, details={'thoughts_tokens': 123, 'text_prompt_tokens': 107}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -3722,3 +3823,194 @@ async def test_google_api_errors_are_handled(
 
     assert exc_info.value.status_code == expected_status
     assert error_response['error']['message'] in str(exc_info.value.body)
+
+
+async def test_google_api_non_http_error(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    mocked_error = errors.APIError(302, {'error': {'code': 302, 'message': 'Redirect', 'status': 'REDIRECT'}})
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await agent.run('This prompt will trigger the mocked error.')
+
+    assert exc_info.value.model_name == 'gemini-1.5-flash'
+
+
+async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[]),
+    ]
+
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    agent = Agent(model=model)
+
+    result = await agent.run(message_history=message_history)
+    assert result.output == snapshot('Hello! How can I help you today?')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[], run_id=IsStr()),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Hello! How can I help you today?',
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=2, output_tokens=222, details={'thoughts_tokens': 213, 'text_prompt_tokens': 2}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_google_thought_signature_on_thinking_part():
+    """Verify that "legacy" thought signatures stored on preceding thinking parts are handled identically
+    to those stored on provider details."""
+
+    signature = base64.b64encode(b'signature').decode('utf-8')
+
+    old_google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(content='text1'),
+                ThinkingPart(content='', signature=signature, provider_name='google-gla'),
+                TextPart(content='text2'),
+                TextPart(content='text3'),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+    )
+    new_google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(content='text1'),
+                TextPart(content='text2', provider_details={'thought_signature': signature}),
+                TextPart(content='text3'),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+    )
+    assert old_google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'text': 'text1'}, {'thought_signature': b'signature', 'text': 'text2'}, {'text': 'text3'}],
+        }
+    )
+    assert new_google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'text': 'text1'}, {'thought_signature': b'signature', 'text': 'text2'}, {'text': 'text3'}],
+        }
+    )
+    assert old_google_response == new_google_response
+
+    old_google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='thought', signature=signature, provider_name='google-gla'),
+                TextPart(content='text'),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+    )
+    new_google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='thought'),
+                TextPart(content='text', provider_details={'thought_signature': signature}),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+    )
+    assert old_google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'text': 'thought', 'thought': True}, {'thought_signature': b'signature', 'text': 'text'}],
+        }
+    )
+    assert new_google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'text': 'thought', 'thought': True}, {'thought_signature': b'signature', 'text': 'text'}],
+        }
+    )
+    assert old_google_response == new_google_response
+
+    old_google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='thought', signature=signature, provider_name='google-gla'),
+                TextPart(content='text'),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+    )
+    new_google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='thought'),
+                TextPart(content='text', provider_details={'thought_signature': signature}),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+    )
+    assert old_google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'text': 'thought', 'thought': True}, {'thought_signature': b'signature', 'text': 'text'}],
+        }
+    )
+    assert new_google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'text': 'thought', 'thought': True}, {'thought_signature': b'signature', 'text': 'text'}],
+        }
+    )
+    assert old_google_response == new_google_response
+
+
+def test_google_missing_tool_call_thought_signature():
+    google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='tool', args={}, tool_call_id='tool_call_id'),
+                ToolCallPart(tool_name='tool2', args={}, tool_call_id='tool_call_id2'),
+            ],
+            provider_name='openai',
+        ),
+        'google-gla',
+    )
+    assert google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'function_call': {'name': 'tool', 'args': {}, 'id': 'tool_call_id'},
+                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                },
+                {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
+            ],
+        }
+    )

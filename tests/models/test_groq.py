@@ -22,6 +22,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
@@ -51,7 +52,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from groq import APIStatusError, AsyncGroq
+    from groq import APIConnectionError, APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
     from groq.types.chat.chat_completion_chunk import (
@@ -692,6 +693,21 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: llama-3.3-70b-versatile, body: {'error': 'test error'}"
     )
+
+
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockGroq.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.groq.com timed out',
+            request=httpx.Request('POST', 'https://api.groq.com/v1/chat/completions'),
+        )
+    )
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'llama-3.3-70b-versatile'
+    assert 'Connection to https://api.groq.com timed out' in str(exc_info.value.message)
 
 
 async def test_init_with_provider():
