@@ -943,7 +943,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ),
                     ToolReturnPart(
                         tool_name='final_result',
-                        content='Output tool not used - a final result was already processed.',
+                        content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
