@@ -511,7 +511,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         fmt = cls._infer_fmt(path, fmt)
 
-        raw = Path(path).read_text()
+        raw = Path(path).read_text(encoding='utf-8')
         try:
             return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types, default_name=path.stem)
         except ValidationError as e:  # pragma: no cover
@@ -767,7 +767,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         json_schema = cls.model_json_schema_with_evaluators(custom_evaluator_types)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
-        if not path.exists() or path.read_text() != schema_content:  # pragma: no branch
+        if not path.exists() or path.read_text(encoding='utf-8') != schema_content:  # pragma: no branch
             path.write_text(schema_content)
 
     @classmethod
