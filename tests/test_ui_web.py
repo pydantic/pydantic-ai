@@ -139,3 +139,48 @@ def test_builtin_tools_configuration():
     assert isinstance(tools_by_id['web_search'], WebSearchTool)
     assert isinstance(tools_by_id['code_execution'], CodeExecutionTool)
     assert isinstance(tools_by_id['image_generation'], ImageGenerationTool)
+
+
+def test_get_agent_missing():
+    """Test that get_agent raises RuntimeError when agent is not configured."""
+    from pydantic_ai.ui.web.api import get_agent
+
+    app = FastAPI()
+
+    class FakeRequest:
+        def __init__(self, app: FastAPI):
+            self.app = app
+
+    request = FakeRequest(app)
+
+    with pytest.raises(RuntimeError, match='No agent configured'):
+        get_agent(request)  # type: ignore[arg-type]
+
+
+@pytest.mark.anyio
+async def test_post_chat_endpoint():
+    """Test the POST /api/chat endpoint."""
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(TestModel(custom_output_text='Hello from test!'))
+    app = create_web_app(agent)
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'test-message-id',
+                'messages': [
+                    {
+                        'id': 'msg-1',
+                        'role': 'user',
+                        'parts': [{'type': 'text', 'text': 'Hello'}],
+                    }
+                ],
+                'model': 'test',
+                'builtinTools': [],
+            },
+        )
+
+        assert response.status_code == 200
