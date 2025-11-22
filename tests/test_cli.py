@@ -350,3 +350,49 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         deps=None,
         message_history=test_messages,
     )
+
+
+def test_clai_web_without_agent(capfd: CaptureFixture[str]):
+    assert cli(['--web'], prog_name='clai') == 1
+    assert 'Error: --web requires --agent to be specified' in capfd.readouterr().out
+
+
+def test_clai_web_import_error(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    # Mock the import to fail
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any):
+        if name == 'clai.web.cli':
+            raise ImportError('clai.web.cli not found')
+        return original_import(name, *args, **kwargs)
+
+    mocker.patch('builtins.__import__', side_effect=mock_import)
+
+    assert cli(['--web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 1
+
+
+def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    # Mock the run_web_command function
+    mock_run_web = mocker.MagicMock(return_value=0)
+    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+
+    assert cli(['--web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 0
+
+    # Verify run_web_command was called with correct args
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='127.0.0.1',
+        port=8000,
+        config_path=None,
+        auto_config=True,
+    )
