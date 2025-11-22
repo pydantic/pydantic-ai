@@ -19,6 +19,7 @@ from typing_extensions import Self
 from pydantic_ai import (
     AbstractToolset,
     Agent,
+    AgentRunResultEvent,
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
@@ -6225,3 +6226,36 @@ async def test_message_history():
             ]
         )
         assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+
+
+async def test_run_stream_events_with_event_stream_handler():
+    async def llm(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'ok here is '
+        yield 'text'
+
+    messages: list[list[ModelMessage]] = []
+    stream_events: list[Any] = []
+
+    async def event_stream_handler(context: RunContext[Any], events: AsyncIterable[Any]) -> None:
+        messages.append(context.messages)
+        async for event in events:
+            stream_events.append(event)
+
+    agent = Agent(FunctionModel(stream_function=llm))
+    agent_events = [
+        event
+        async for event in agent.run_stream_events(
+            message_history=[
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+            ],
+            event_stream_handler=event_stream_handler,
+        )
+    ]
+
+    assert len(stream_events) == len(agent_events) - 1
+    assert stream_events == agent_events[: len(stream_events)]
+    result_event = next((event for event in agent_events if isinstance(event, AgentRunResultEvent)), None)
+    assert result_event is not None
+    all_messages = result_event.result.all_messages()
+    assert messages
+    assert all_messages == messages[-1]
