@@ -317,6 +317,7 @@ This parameter also applies to [function tools](tools.md), not just output tools
 
 ```python {title="exhaustive_output.py"}
 from pydantic import BaseModel
+
 from pydantic_ai import Agent, ToolOutput
 
 calls_made: list[str] = []
