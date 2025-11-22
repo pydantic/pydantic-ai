@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '296'
+      - '360'
       content-type:
       - application/json
       host:
@@ -20,10 +20,11 @@ interactions:
         - text: What is the temperature in Tokyo?
         role: user
       tools:
-        function_declarations:
-        - description: null
+        functionDeclarations:
+        - description: ''
           name: get_temperature
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               city:
                 type: string
@@ -32,18 +33,19 @@ interactions:
             required:
             - city
             - country
+            title: CurrentLocation
             type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '748'
+      - '752'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=523
+      - gfet4t7; dur=723
       transfer-encoding:
       - chunked
       vary:
@@ -52,24 +54,25 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.12538558465463143
+      - avgLogprobs: -0.13673184228980023
         content:
           parts:
           - text: |
-              The available tools lack the ability to access real-time information, including current temperature.  Therefore, I cannot answer your question.
+              I need the country to find the temperature in Tokyo. Could you please tell me which country Tokyo is in?
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
+      modelVersion: gemini-2.0-flash
+      responseId: V_cgaZvoEIGhz7IP0LnHiA4
       usageMetadata:
-        candidatesTokenCount: 27
+        candidatesTokenCount: 23
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 27
-        promptTokenCount: 14
+          tokenCount: 23
+        promptTokenCount: 10
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 14
-        totalTokenCount: 41
+          tokenCount: 10
+        totalTokenCount: 33
     status:
       code: 200
       message: OK

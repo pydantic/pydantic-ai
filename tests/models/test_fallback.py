@@ -15,6 +15,7 @@ from pydantic_core import to_json
 
 from pydantic_ai import (
     Agent,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelProfile,
@@ -564,6 +565,18 @@ def potato_exception_response(_model_messages: list[ModelMessage], _agent_info: 
 async def test_fallback_condition_tuple() -> None:
     potato_model = FunctionModel(potato_exception_response)
     fallback_model = FallbackModel(potato_model, success_model, fallback_on=(PotatoException, ModelHTTPError))
+    agent = Agent(model=fallback_model)
+
+    response = await agent.run('hello')
+    assert response.output == 'success'
+
+
+async def test_fallback_connection_error() -> None:
+    def connection_error_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='test-connection-model', message='Connection timed out')
+
+    connection_error_model = FunctionModel(connection_error_response)
+    fallback_model = FallbackModel(connection_error_model, success_model)
     agent = Agent(model=fallback_model)
 
     response = await agent.run('hello')

@@ -44,7 +44,7 @@ from ..conftest import IsBytes, IsDatetime, IsStr, try_import
 with try_import() as imports_successful:
     import outlines
 
-    from pydantic_ai.models.outlines import OutlinesModel
+    from pydantic_ai.models.outlines import OutlinesAsyncBaseModel, OutlinesModel
     from pydantic_ai.providers.outlines import OutlinesProvider
 
 with try_import() as transformer_imports_successful:
@@ -54,11 +54,11 @@ with try_import() as llama_cpp_imports_successful:
     import llama_cpp
 
 with try_import() as vllm_imports_successful:
-    import vllm  # type: ignore[reportMissingImports]
+    import vllm
 
     # We try to load the vllm model to ensure it is available
     try:  # pragma: no lax cover
-        vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # type: ignore
+        vllm.LLM('microsoft/Phi-3-mini-4k-instruct')
     except RuntimeError as e:  # pragma: lax no cover
         if 'Found no NVIDIA driver' in str(e) or 'Device string must not be empty' in str(e):
             # Treat as import failure
@@ -97,60 +97,59 @@ skip_if_mlxlm_imports_unsuccessful = pytest.mark.skipif(not mlxlm_imports_succes
 
 @pytest.fixture
 def mock_async_model() -> OutlinesModel:
-    class MockOutlinesAsyncModel(outlines.models.base.AsyncModel):
+    class MockOutlinesAsyncModel(OutlinesAsyncBaseModel):
         """Mock an OutlinesAsyncModel because no Outlines local models have an async version.
 
         The `__call__` and `stream` methods will be called by the Pydantic AI model while the other methods are
         only implemented because they are abstract methods in the OutlinesAsyncModel class.
         """
 
-        async def __call__(self, model_input, output_type, backend, **inference_kwargs):  # type: ignore[reportMissingParameterType]
+        async def __call__(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any) -> str:
             return 'test'
 
-        async def stream(self, model_input, output_type, backend, **inference_kwargs):  # type: ignore[reportMissingParameterType]
+        async def stream(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any):
             for _ in range(2):
                 yield 'test'
 
-        async def generate(self, model_input, output_type, **inference_kwargs):  # type: ignore[reportMissingParameterType]
-            ...  # pragma: no cover
+        async def generate(self, model_input: Any, output_type: Any, **inference_kwargs: Any): ...  # pragma: no cover
 
-        async def generate_batch(self, model_input, output_type, **inference_kwargs):  # type: ignore[reportMissingParameterType]
-            ...  # pragma: no cover
+        async def generate_batch(
+            self, model_input: Any, output_type: Any, **inference_kwargs: Any
+        ): ...  # pragma: no cover
 
-        async def generate_stream(self, model_input, output_type, **inference_kwargs):  # type: ignore[reportMissingParameterType]
-            ...  # pragma: no cover
+        async def generate_stream(
+            self, model_input: Any, output_type: Any, **inference_kwargs: Any
+        ): ...  # pragma: no cover
 
     return OutlinesModel(MockOutlinesAsyncModel(), provider=OutlinesProvider())
 
 
 @pytest.fixture
 def transformers_model() -> OutlinesModel:
-    hf_model = transformers.AutoModelForCausalLM.from_pretrained(  # type: ignore
+    hf_model = transformers.AutoModelForCausalLM.from_pretrained(
         'erwanf/gpt2-mini',
         device_map='cpu',
     )
-    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')  # type: ignore
+    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
     outlines_model = outlines.models.transformers.from_transformers(
-        hf_model,  # type: ignore[reportUnknownArgumentType]
-        hf_tokenizer,  # type: ignore
+        hf_model,
+        hf_tokenizer,
     )
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
 @pytest.fixture
 def transformers_multimodal_model() -> OutlinesModel:
-    hf_model = transformers.LlavaForConditionalGeneration.from_pretrained(  # type: ignore
+    hf_model = transformers.LlavaForConditionalGeneration.from_pretrained(
         'trl-internal-testing/tiny-LlavaForConditionalGeneration',
         device_map='cpu',
     )
-    hf_processor = transformers.AutoProcessor.from_pretrained(  # type: ignore
-        'trl-internal-testing/tiny-LlavaForConditionalGeneration'
-    )
+    hf_processor = transformers.AutoProcessor.from_pretrained('trl-internal-testing/tiny-LlavaForConditionalGeneration')
     outlines_model = outlines.models.transformers.from_transformers(
         hf_model,
-        hf_processor,  # type: ignore
+        hf_processor,
     )
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
@@ -158,7 +157,7 @@ def transformers_multimodal_model() -> OutlinesModel:
 @pytest.fixture
 def llamacpp_model() -> OutlinesModel:
     outlines_model_llamacpp = outlines.models.llamacpp.from_llamacpp(
-        llama_cpp.Llama.from_pretrained(  # type: ignore
+        llama_cpp.Llama.from_pretrained(
             repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
             filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
         )
@@ -168,9 +167,7 @@ def llamacpp_model() -> OutlinesModel:
 
 @pytest.fixture
 def mlxlm_model() -> OutlinesModel:  # pragma: no cover
-    outlines_model = outlines.models.mlxlm.from_mlxlm(
-        *mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit')  # type: ignore
-    )
+    outlines_model = outlines.models.mlxlm.from_mlxlm(*mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'))
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
@@ -184,9 +181,7 @@ def sglang_model() -> OutlinesModel:
 
 @pytest.fixture
 def vllm_model_offline() -> OutlinesModel:  # pragma: no cover
-    outlines_model = outlines.models.vllm_offline.from_vllm_offline(  # type: ignore
-        vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # type: ignore
-    )
+    outlines_model = outlines.models.vllm_offline.from_vllm_offline(vllm.LLM('microsoft/Phi-3-mini-4k-instruct'))
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
@@ -201,18 +196,18 @@ outlines_parameters = [
     pytest.param(
         'from_transformers',
         lambda: (
-            transformers.AutoModelForCausalLM.from_pretrained(  # type: ignore
+            transformers.AutoModelForCausalLM.from_pretrained(
                 'erwanf/gpt2-mini',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # type: ignore
+            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
     pytest.param(
         'from_llamacpp',
         lambda: (
-            llama_cpp.Llama.from_pretrained(  # type: ignore
+            llama_cpp.Llama.from_pretrained(
                 repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
                 filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
             ),
@@ -221,7 +216,7 @@ outlines_parameters = [
     ),
     pytest.param(
         'from_mlxlm',
-        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # type: ignore
+        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),
         marks=skip_if_mlxlm_imports_unsuccessful,
     ),
     pytest.param(
@@ -231,7 +226,7 @@ outlines_parameters = [
     ),
     pytest.param(
         'from_vllm_offline',
-        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),  # type: ignore
+        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),
         marks=skip_if_vllm_imports_unsuccessful,
     ),
 ]
@@ -260,18 +255,18 @@ pydantic_ai_parameters = [
     pytest.param(
         'from_transformers',
         lambda: (
-            transformers.AutoModelForCausalLM.from_pretrained(  # type: ignore
+            transformers.AutoModelForCausalLM.from_pretrained(
                 'erwanf/gpt2-mini',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # type: ignore
+            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
     pytest.param(
         'from_llamacpp',
         lambda: (
-            llama_cpp.Llama.from_pretrained(  # type: ignore
+            llama_cpp.Llama.from_pretrained(
                 repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
                 filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
             ),
@@ -280,7 +275,7 @@ pydantic_ai_parameters = [
     ),
     pytest.param(
         'from_mlxlm',
-        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # type: ignore
+        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),
         marks=skip_if_mlxlm_imports_unsuccessful,
     ),
     pytest.param(
@@ -290,7 +285,7 @@ pydantic_ai_parameters = [
     ),
     pytest.param(
         'from_vllm_offline',
-        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),  # type: ignore
+        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),
         marks=skip_if_vllm_imports_unsuccessful,
     ),
 ]
