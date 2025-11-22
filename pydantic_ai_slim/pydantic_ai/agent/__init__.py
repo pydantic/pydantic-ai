@@ -115,7 +115,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _name: str | None
     end_strategy: EndStrategy
-    """Strategy for handling tool calls when a final result is found."""
+    """Strategy for handling tool calls when a final result is found.
+
+    - `'early'`: Stop processing other tool calls once a final result is found (default)
+    - `'exhaustive'`: Process all tool calls even after finding a final result
+
+    This applies to both function tools and output tools.
+    """
 
     model_settings: ModelSettings | None
     """Optional model request settings to use for this agents's runs, by default.
