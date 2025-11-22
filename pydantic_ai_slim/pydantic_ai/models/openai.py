@@ -18,7 +18,11 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    guard_tool_call_id as _guard_tool_call_id,
+    now_utc as _now_utc,
+    number_to_datetime,
+)
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
@@ -55,6 +59,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
+    import tiktoken
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
@@ -1006,6 +1011,24 @@ class OpenAIChatModel(Model):
         )
         return ChatCompletionContentPartTextParam(text=text, type='text')
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count the number of tokens in the given messages."""
+        if self.system != 'openai':
+            raise NotImplementedError('Token counting is only supported for OpenAI system.')
+
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
+        openai_messages = await self._map_messages(messages, model_request_parameters)
+        token_count = _num_tokens_from_messages(openai_messages, self.model_name)
+
+        return usage.RequestUsage(
+            input_tokens=token_count,
+        )
+
 
 @deprecated(
     '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
@@ -1800,6 +1823,26 @@ class OpenAIResponsesModel(Model):
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count the number of tokens in the given messages."""
+        if self.system != 'openai':
+            raise NotImplementedError('Token counting is only supported for OpenAI system.')
+
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
+        _, openai_messages = await self._map_messages(
+            messages, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+        )
+        token_count = _num_tokens_from_messages(openai_messages, self.model_name)
+
+        return usage.RequestUsage(
+            input_tokens=token_count,
+        )
+
 
 @dataclass
 class OpenAIStreamedResponse(StreamedResponse):
@@ -2515,3 +2558,31 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+def _num_tokens_from_messages(
+    messages: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
+    model: OpenAIModelName,
+) -> int:
+    """Return the number of tokens used by a list of messages."""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        encoding = tiktoken.get_encoding('o200k_base')
+
+    if 'gpt-5' in model:
+        tokens_per_message = 3
+        final_primer = 2  # "reverse engineered" based on test cases
+    else:
+        # Adapted from https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken#6-counting-tokens-for-chat-completions-api-calls
+        tokens_per_message = 3
+        final_primer = 3  # every reply is primed with <|start|>assistant<|message|>
+
+    num_tokens = 0
+    for message in messages:
+        num_tokens += tokens_per_message
+        for value in message.values():
+            if isinstance(value, str):
+                num_tokens += len(encoding.encode(value))
+    num_tokens += final_primer
+    return num_tokens
