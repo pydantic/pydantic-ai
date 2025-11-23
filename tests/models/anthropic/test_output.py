@@ -598,8 +598,8 @@ def create_header_verification_hook(case: StrictTestCase):
                 assert 'structured-outputs-2025-11-13' not in beta_header, (
                     f'Did not expect beta header for {case.name}, got: {beta_header}'
                 )
-        else:
-            pass  # No verification needed for non-messages endpoints
+        else:  # pragma: no cover
+            pass
 
     return verify_headers
 
