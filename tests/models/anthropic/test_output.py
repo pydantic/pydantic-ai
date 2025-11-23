@@ -16,12 +16,13 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Literal, assert_never
+from typing import Annotated, Literal
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
+from typing_extensions import assert_never
 
 from pydantic_ai import Agent, Tool
 from pydantic_ai.exceptions import UserError
