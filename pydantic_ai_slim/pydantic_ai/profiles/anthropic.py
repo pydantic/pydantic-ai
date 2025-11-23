@@ -2,7 +2,8 @@ from __future__ import annotations as _annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import assert_never
+
+from typing_extensions import assert_never
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
