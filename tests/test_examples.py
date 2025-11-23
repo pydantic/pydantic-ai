@@ -215,6 +215,10 @@ def test_docs_examples(
     # and https://github.com/pydantic/pytest-examples/issues/46
     if 'import DatabaseConn' in example.source:
         ruff_ignore.append('I001')
+    # `from pydantic_ai import` and `from pydantic_ai.models.* import` wrongly sorted in imports
+    # Same pytest-examples issue as DatabaseConn above
+    if 'from pydantic_ai import' in example.source and 'from pydantic_ai.models.' in example.source:
+        ruff_ignore.append('I001')
 
     if noqa:
         ruff_ignore.extend(noqa.upper().split())
