@@ -233,7 +233,7 @@ agent = Agent(model)
 ```
 
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
-When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("openrouter:google/gemini-2.5-pro-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of building instantiating the provider class explicitly.
+When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of building instantiating the provider class explicitly.
 
 #### Model Profile
 
@@ -380,34 +380,6 @@ model = OpenAIChatModel(
         api_version='your-api-version',
         api_key='your-api-key',
     ),
-)
-agent = Agent(model)
-...
-```
-
-### OpenRouter
-
-To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
-
-You can set the `OPENROUTER_API_KEY` environment variable and use [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('openrouter:anthropic/claude-3.5-sonnet')
-...
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openrouter import OpenRouterProvider
-
-model = OpenAIChatModel(
-    'anthropic/claude-3.5-sonnet',
-    provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
 )
 agent = Agent(model)
 ...

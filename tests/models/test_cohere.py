@@ -12,6 +12,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import (
     Agent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
@@ -397,6 +398,20 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
+
+
+def test_model_non_http_error(allow_model_requests: None) -> None:
+    mock_client = MockAsyncClientV2.create_mock(
+        ApiError(
+            status_code=None,
+            body={'error': 'connection error'},
+        )
+    )
+    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'command-r'
 
 
 @pytest.mark.vcr()
