@@ -1,30 +1,40 @@
-""" """
+"""Tests for Anthropic native JSON schema output and strict tool support.
+
+This module tests the implementation of Anthropic's structured outputs feature,
+including native JSON schema output for final responses and strict tool calling.
+
+Test organization:
+1. Strict Tools - Model Support
+2. Strict Tools - Schema Compatibility
+3. Native Output - Model Support
+4. Auto Mode Selection
+5. Beta Header Management
+6. Edge Cases
+"""
 
 from __future__ import annotations as _annotations
 
-from datetime import timezone
+from typing import Annotated
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.output import NativeOutput
-from pydantic_ai.usage import RequestUsage
 
-from ...conftest import IsNow, IsStr, try_import
-
-# Import reusable test utilities from parent test module
+from ...conftest import try_import
 from ..test_anthropic import MockAnthropic, get_mock_chat_completion_kwargs
-from .conftest import AnthropicModelFactory
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic, omit as OMIT
-    from anthropic.types.beta import BetaMessage
+    from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaUsage
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+from ..test_anthropic import completion_message
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -33,246 +43,15 @@ pytestmark = [
 ]
 
 
-async def test_anthropic_native_output_sonnet_4_5(
-    allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
-    city_location_schema: type[BaseModel],
+# =============================================================================
+# STRICT TOOLS - Model Support
+# =============================================================================
+
+
+def test_strict_tools_supported_model_auto_enabled(
+    allow_model_requests: None, weather_tool_responses: list[BetaMessage]
 ):
-    """Test native JSON schema output with claude-sonnet-4-5 (supporting model)."""
-    model = anthropic_model('claude-sonnet-4-5')
-    agent = Agent(model, output_type=NativeOutput(city_location_schema))
-
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot(city_location_schema(city='Paris', country='France'))
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is the capital of France?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='{"city":"Paris","country":"France"}')],
-                usage=RequestUsage(
-                    input_tokens=177,
-                    output_tokens=12,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 177,
-                        'output_tokens': 12,
-                    },
-                ),
-                model_name=IsStr(),
-                timestamp=IsNow(tz=timezone.utc),
-                provider_name='anthropic',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_anthropic_native_output_with_tools(
-    allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
-    city_location_schema: type[BaseModel],
-):
-    """Test native output combined with tool calls."""
-    model = anthropic_model('claude-sonnet-4-5')
-    agent = Agent(model, output_type=NativeOutput(city_location_schema))
-
-    @agent.tool_plain
-    async def get_user_country() -> str:
-        return 'Mexico'
-
-    result = await agent.run('What is the largest city in the user country?')
-    assert result.output == snapshot(city_location_schema(city='Mexico City', country='Mexico'))
-
-
-async def test_anthropic_no_structured_output_support_sonnet_4_0(
-    allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
-    city_location_schema: type[BaseModel],
-):
-    """Test that claude-sonnet-4-0 raises when NativeOutput is used."""
-    model = anthropic_model('claude-sonnet-4-0')
-    agent = Agent(model, output_type=NativeOutput(city_location_schema))
-
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
-        await agent.run('What is the capital of France?')
-
-
-async def test_anthropic_no_structured_output_support_haiku_4_5(
-    allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
-    city_location_schema: type[BaseModel],
-):
-    """Test haiku-4-5 behavior with native output (expected to raise)."""
-    model = anthropic_model('claude-haiku-4-5')
-    agent = Agent(model, output_type=NativeOutput(city_location_schema))
-
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
-        await agent.run('What is the capital of France?')
-
-
-def test_anthropic_native_output_strict_mode(
-    allow_model_requests: None,
-    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
-    city_location_schema: type[BaseModel],
-):
-    """Test strict mode settings for native output."""
-    model, mock_client = mock_sonnet_4_5
-
-    # Explicit strict=True
-    agent = Agent(model, output_type=NativeOutput(city_location_schema, strict=True))
-    agent.run_sync('What is the capital of Mexico?')
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    output_format = completion_kwargs['output_format']
-    betas = completion_kwargs['betas']
-    assert output_format == snapshot(
-        {
-            'type': 'json_schema',
-            'schema': snapshot(
-                {
-                    'type': 'object',
-                    'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
-                    'additionalProperties': False,
-                    'required': ['city', 'country'],
-                }
-            ),
-        }
-    )
-    assert betas == snapshot(['structured-outputs-2025-11-13'])
-
-    # Explicit strict=False
-    agent = Agent(model, output_type=NativeOutput(city_location_schema, strict=False))
-    agent.run_sync('What is the capital of Mexico?')
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    output_format = completion_kwargs['output_format']
-    betas = completion_kwargs['betas']
-    assert output_format == snapshot(
-        {
-            'type': 'json_schema',
-            'schema': snapshot(
-                {
-                    'type': 'object',
-                    'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
-                    'additionalProperties': False,
-                    'required': ['city', 'country'],
-                }
-            ),
-        }
-    )
-    assert betas == snapshot(['structured-outputs-2025-11-13'])
-
-    # Strict-compatible (should auto-enable)
-    agent = Agent(model, output_type=NativeOutput(city_location_schema))
-    agent.run_sync('What is the capital of Mexico?')
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    output_format = completion_kwargs['output_format']
-    betas = completion_kwargs['betas']
-    assert output_format == snapshot(
-        {
-            'type': 'json_schema',
-            'schema': snapshot(
-                {
-                    'type': 'object',
-                    'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
-                    'additionalProperties': False,
-                    'required': ['city', 'country'],
-                }
-            ),
-        }
-    )
-    assert betas == snapshot(['structured-outputs-2025-11-13'])
-
-    # Strict-incompatible (with extras='allow')
-    city_location_schema.model_config = ConfigDict(extra='allow')
-    agent = Agent(model, output_type=NativeOutput(city_location_schema))
-    agent.run_sync('What is the capital of Mexico?')
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    output_format = completion_kwargs['output_format']
-    betas = completion_kwargs['betas']
-    assert output_format == snapshot(
-        {
-            'type': 'json_schema',
-            'schema': snapshot(
-                {
-                    'type': 'object',
-                    'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
-                    'additionalProperties': False,
-                    'required': ['city', 'country'],
-                }
-            ),
-        }
-    )
-    assert betas == snapshot(['structured-outputs-2025-11-13'])
-
-
-def test_anthropic_native_output_merge_beta_headers(
-    allow_model_requests: None,
-    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
-    city_location_schema: type[BaseModel],
-):
-    """Test that custom anthropic-beta headers are merged with structured output beta features."""
-    from pydantic_ai.models.anthropic import AnthropicModelSettings
-
-    model, mock_client = mock_sonnet_4_5
-
-    # User provides their own beta feature via extra_headers
-    agent = Agent(
-        model,
-        output_type=NativeOutput(city_location_schema),
-        model_settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-2025-01-01'}),
-    )
-    agent.run_sync('What is the capital of France?')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    betas = completion_kwargs['betas']
-
-    # Should merge custom beta with structured-outputs beta
-    assert betas == snapshot(['custom-feature-2025-01-01', 'structured-outputs-2025-11-13'])
-
-
-def test_anthropic_native_output_merge_beta_headers_comma_separated(
-    allow_model_requests: None,
-    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
-    city_location_schema: type[BaseModel],
-):
-    """Test that comma-separated custom anthropic-beta headers are properly split and merged."""
-    from pydantic_ai.models.anthropic import AnthropicModelSettings
-
-    model, mock_client = mock_sonnet_4_5
-
-    # User provides multiple beta features via comma-separated header
-    agent = Agent(
-        model,
-        output_type=NativeOutput(city_location_schema),
-        model_settings=AnthropicModelSettings(
-            extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2, custom-feature-3'}
-        ),
-    )
-    agent.run_sync('What is the capital of France?')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    betas = completion_kwargs['betas']
-
-    # Should split comma-separated values and merge with structured-outputs beta (sorted)
-    assert betas == snapshot(
-        ['custom-feature-1', 'custom-feature-2', 'custom-feature-3', 'structured-outputs-2025-11-13']
-    )
-
-
-def test_anthropic_strict_tools_sonnet_4_5(allow_model_requests: None, weather_tool_responses: list[BetaMessage]):
-    """Test that strict tool definitions are properly sent for supporting models."""
+    """sonnet-4-5: strict=None + compatible schema → auto strict=True + beta header."""
     mock_client = MockAnthropic.create_mock(weather_tool_responses)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
@@ -286,6 +65,7 @@ def test_anthropic_strict_tools_sonnet_4_5(allow_model_requests: None, weather_t
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
     betas = completion_kwargs['betas']
+
     assert tools == snapshot(
         [
             {
@@ -297,6 +77,7 @@ def test_anthropic_strict_tools_sonnet_4_5(allow_model_requests: None, weather_t
                     'additionalProperties': False,
                     'required': ['location'],
                 },
+                # strict is set automatically because the model supports it
                 'strict': True,
             }
         ]
@@ -304,8 +85,33 @@ def test_anthropic_strict_tools_sonnet_4_5(allow_model_requests: None, weather_t
     assert betas == snapshot(['structured-outputs-2025-11-13'])
 
 
-def test_anthropic_strict_tools_sonnet_4_0(allow_model_requests: None, weather_tool_responses: list[BetaMessage]):
-    """Test that strict is NOT sent for non-supporting models."""
+def test_strict_tools_supported_model_explicit_false(
+    allow_model_requests: None, weather_tool_responses: list[BetaMessage]
+):
+    """sonnet-4-5: strict=False → no strict field, no beta header."""
+    mock_client = MockAnthropic.create_mock(weather_tool_responses)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=False)
+    def get_weather(location: str) -> str:  # pragma: no cover
+        return f'Weather in {location}'
+
+    agent.run_sync('What is the weather in Paris?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    betas = completion_kwargs.get('betas')
+
+    assert 'strict' not in tools[0]
+    assert tools[0]['input_schema']['additionalProperties'] is False
+    assert betas is OMIT
+
+
+def test_strict_tools_unsupported_model_no_strict_sent(
+    allow_model_requests: None, weather_tool_responses: list[BetaMessage]
+):
+    """sonnet-4-0: strict=None → no strict field, no beta header (model doesn't support strict)."""
     mock_client = MockAnthropic.create_mock(weather_tool_responses)
     model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
@@ -319,89 +125,120 @@ def test_anthropic_strict_tools_sonnet_4_0(allow_model_requests: None, weather_t
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
     betas = completion_kwargs.get('betas')
-    assert tools == snapshot(
-        [
-            {
-                'name': 'get_weather',
-                'description': '',
-                'input_schema': {
-                    'type': 'object',
-                    'properties': {'location': {'type': 'string'}},
-                    'additionalProperties': False,
-                    'required': ['location'],
-                },
-            }
-        ]
-    )
+
+    # sonnet-4-0 doesn't support strict tools, so no strict field or beta header
+    assert 'strict' not in tools[0]
     assert betas is OMIT
 
 
-async def test_anthropic_native_output_multiple(
-    allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
-    city_location_schema: type[BaseModel],
-    country_language_schema: type[BaseModel],
-):
-    """Test native output with union of multiple schemas."""
-    model = anthropic_model('claude-sonnet-4-5')
-    agent = Agent(model, output_type=NativeOutput([city_location_schema, country_language_schema]))
+# =============================================================================
+# STRICT TOOLS - Schema Compatibility
+# =============================================================================
+
+
+def test_strict_tools_incompatible_schema_not_auto_enabled(allow_model_requests: None):
+    """sonnet-4-5: strict=None + lossy schema → no strict field, no beta header."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Sure', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
 
     @agent.tool_plain
-    async def get_user_country() -> str:
-        return 'France'
+    def constrained_tool(username: Annotated[str, Field(min_length=3)]) -> str:  # pragma: no cover
+        return username
 
-    result = await agent.run('What is the capital of the user country?')
-    # Should return CityLocation since we asked about capital
-    assert isinstance(result.output, city_location_schema | country_language_schema)
-    if isinstance(result.output, city_location_schema):  # pragma: no branch
-        assert result.output.city == 'Paris'  # type: ignore[attr-defined]
-        assert result.output.country == 'France'  # type: ignore[attr-defined]
+    agent.run_sync('Test')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    betas = completion_kwargs.get('betas')
+
+    # Lossy schema: strict is not auto-enabled, so no strict field
+    assert 'strict' not in tools[0]
+    # Schema still has the constraint (not removed)
+    assert tools[0]['input_schema']['properties']['username']['minLength'] == 3
+    assert betas is OMIT
 
 
-async def test_anthropic_native_output_multiple_language(
+# =============================================================================
+# NATIVE OUTPUT - Model Support
+# =============================================================================
+
+
+def test_native_output_supported_model(
     allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
-    city_location_schema: type[BaseModel],
-    country_language_schema: type[BaseModel],
-):
-    """Test native output with union returns the second schema type."""
-    model = anthropic_model('claude-sonnet-4-5')
-    agent = Agent(model, output_type=NativeOutput([city_location_schema, country_language_schema]))
-
-    @agent.tool_plain
-    async def get_user_country() -> str:
-        return 'France'
-
-    result = await agent.run('What language is spoken in the user country?')
-    # Should return CountryLanguage since we asked about language
-    assert isinstance(result.output, country_language_schema), 're run test until llm outputs country_language_schema'
-    assert result.output.country == 'France'  # type: ignore[attr-defined]
-    assert result.output.language == 'French'  # type: ignore[attr-defined]
-
-
-async def test_anthropic_auto_mode_sonnet_4_5(
-    allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
+    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
     city_location_schema: type[BaseModel],
 ):
-    """Test auto mode with sonnet-4.5 (should use native output automatically)."""
-    model = anthropic_model('claude-sonnet-4-5')
-    agent = Agent(model, output_type=city_location_schema)
-    assert agent.model.profile.supports_json_schema_output  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportOptionalMemberAccess]
+    """sonnet-4-5: NativeOutput → strict=True + beta header + output_format."""
+    model, mock_client = mock_sonnet_4_5
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
 
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot(city_location_schema(city='Paris', country='France'))
+    agent.run_sync('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    output_format = completion_kwargs['output_format']
+    betas = completion_kwargs['betas']
+
+    assert output_format['type'] == 'json_schema'
+    assert output_format['schema']['type'] == 'object'
+    assert betas == snapshot(['structured-outputs-2025-11-13'])
 
 
-async def test_anthropic_auto_mode_sonnet_4_0(
+def test_native_output_unsupported_model_raises_error(
+    allow_model_requests: None, city_location_schema: type[BaseModel]
+):
+    """sonnet-4-0: NativeOutput → raises UserError."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='test', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+    model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
+
+    with pytest.raises(UserError, match='Native structured output is not supported by this model'):
+        agent.run_sync('What is the capital of France?')
+
+
+# =============================================================================
+# AUTO MODE Selection
+# =============================================================================
+
+
+def test_auto_mode_model_profile_check(allow_model_requests: None):
+    """Verify profile.supports_json_schema_output is set correctly."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='test', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+
+    sonnet_4_5 = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    assert sonnet_4_5.profile.supports_json_schema_output is True
+
+    sonnet_4_0 = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
+    assert sonnet_4_0.profile.supports_json_schema_output is False
+
+
+# =============================================================================
+# BETA HEADER Management
+# =============================================================================
+
+
+def test_beta_header_merge_custom_headers(
     allow_model_requests: None,
-    anthropic_model: AnthropicModelFactory,
+    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
     city_location_schema: type[BaseModel],
 ):
-    """Test auto mode with sonnet-4.0 (should fall back to prompted output)."""
-    model = anthropic_model('claude-sonnet-4-0')
-    agent = Agent(model, output_type=city_location_schema)
-    assert agent.model.profile.supports_json_schema_output is False  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportOptionalMemberAccess]
+    """Custom beta headers merge with structured-outputs beta."""
+    model, mock_client = mock_sonnet_4_5
 
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot(city_location_schema(city='Paris', country='France'))
+    agent = Agent(
+        model,
+        output_type=NativeOutput(city_location_schema),
+        model_settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2'}),
+    )
+    agent.run_sync('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    betas = completion_kwargs['betas']
+
+    assert betas == snapshot(['custom-feature-1', 'custom-feature-2', 'structured-outputs-2025-11-13'])

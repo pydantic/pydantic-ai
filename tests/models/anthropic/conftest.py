@@ -22,7 +22,7 @@ AnthropicModelFactory = Callable[..., AnthropicModel]
 
 # Model factory fixture for live API tests
 @pytest.fixture
-def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:
+def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:  # pragma: no cover
     """Factory to create Anthropic models with custom configuration."""
 
     def _create_model(
@@ -68,17 +68,6 @@ def city_location_schema() -> type[BaseModel]:
         country: str
 
     return CityLocation
-
-
-@pytest.fixture
-def country_language_schema() -> type[BaseModel]:
-    """Standard CountryLanguage schema for testing."""
-
-    class CountryLanguage(BaseModel):
-        country: str
-        language: str
-
-    return CountryLanguage
 
 
 # Mock response fixtures

@@ -984,17 +984,17 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
     """Customize the tool definition using the given transformer.
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
-    schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
+    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     parameters_json_schema = schema_transformer.walk()
     return replace(
-        t,
+        tool_def,
         parameters_json_schema=parameters_json_schema,
-        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+        strict=schema_transformer.is_strict_compatible if tool_def.strict is None else tool_def.strict,
     )
 
 

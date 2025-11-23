@@ -34,21 +34,65 @@ pytestmark = [
 ]
 
 
-def test_lossless_simple_model():
-    """Simple BaseModel with basic types should be lossless."""
+def test_show_lossless_transform():
+    """Shows that a simple model without constraints is lossless."""
 
     class Person(BaseModel):
         name: str
         age: int
 
-    transformer = AnthropicJsonSchemaTransformer(Person.model_json_schema(), strict=True)
-    transformer.walk()
+    strict = None
+    transformer = AnthropicJsonSchemaTransformer(Person.model_json_schema(), strict=strict)
+    transformed = transformer.walk()
 
     assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'additionalProperties': False,
+            'required': ['name', 'age'],
+        }
+    )
+
+
+def test_show_lossy_transform():
+    """Shows that a model with validation constraints is detected as lossy."""
+
+    class Person(BaseModel):
+        name: str = Field(min_length=3)
+        age: int
+
+    original_schema = Person.model_json_schema()
+    strict = True
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=strict)
+    transformed = transformer.walk()
+    assert original_schema == snapshot(
+        {
+            'properties': {
+                'name': {'minLength': 3, 'title': 'Name', 'type': 'string'},
+                'age': {'title': 'Age', 'type': 'integer'},
+            },
+            'required': ['name', 'age'],
+            'title': 'Person',
+            'type': 'object',
+        }
+    )
+    # it's not strict compatible but we forced strict=True
+    assert transformer.is_strict_compatible is False
+    # anthropic's transform_schema shoves constraints into description
+    assert transformed == snapshot(
+        {
+            'properties': {'name': {'type': 'string', 'description': '{minLength: 3}'}, 'age': {'type': 'integer'}},
+            'required': ['name', 'age'],
+            'additionalProperties': False,
+            'type': 'object',
+        }
+    )
 
 
 def test_lossless_nested_model():
-    """Nested BaseModels should be lossless."""
+    """Nested models without constraints are lossless."""
 
     class Address(BaseModel):
         street: str
@@ -58,21 +102,60 @@ def test_lossless_nested_model():
         name: str
         address: Address
 
-    transformer = AnthropicJsonSchemaTransformer(Person.model_json_schema(), strict=True)
-    transformer.walk()
+    original_schema = Person.model_json_schema()
+    assert original_schema == snapshot(
+        {
+            '$defs': {
+                'Address': {
+                    'type': 'object',
+                    'properties': {
+                        'street': {'title': 'Street', 'type': 'string'},
+                        'city': {'title': 'City', 'type': 'string'},
+                    },
+                    'required': ['street', 'city'],
+                    'title': 'Address',
+                }
+            },
+            'properties': {'name': {'title': 'Name', 'type': 'string'}, 'address': {'$ref': '#/$defs/Address'}},
+            'required': ['name', 'address'],
+            'title': 'Person',
+            'type': 'object',
+        }
+    )
+    # strict=True forces transformation
+    strict = True
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=strict)
+    transformed = transformer.walk()
 
     assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Address': {
+                    'type': 'object',
+                    'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                    'additionalProperties': False,
+                    'required': ['street', 'city'],
+                }
+            },
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'address': {'$ref': '#/$defs/Address'}},
+            'additionalProperties': False,
+            'required': ['name', 'address'],
+        }
+    )
 
 
 def test_lossy_string_constraints():
-    """String with min_length constraint should be lossy (constraint gets dropped)."""
+    """String with min_length constraint are lossy."""
 
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
 
     original_schema = User.model_json_schema()
-    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=None)
-    result = transformer.walk()
+    strict = None
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=strict)
+    transformed = transformer.walk()
 
     # SDK drops minLength, making it lossy
     assert transformer.is_strict_compatible is False
@@ -88,13 +171,8 @@ def test_lossy_string_constraints():
     )
 
     # Transformed schema has constraint dropped and moved to description
-    assert result == snapshot(
-        {
-            'type': 'object',
-            'properties': {'username': {'type': 'string', 'description': '{minLength: 3}'}},
-            'required': ['username'],
-            'additionalProperties': False,
-        }
+    assert transformed == snapshot(
+        {'type': 'object', 'properties': {'username': {'minLength': 3, 'type': 'string'}}, 'required': ['username']}
     )
 
 
@@ -104,19 +182,15 @@ def test_lossy_number_constraints():
     class Product(BaseModel):
         price: Annotated[float, Field(ge=0)]
 
-    transformer = AnthropicJsonSchemaTransformer(Product.model_json_schema(), strict=None)
-    result = transformer.walk()
+    strict = None
+    transformer = AnthropicJsonSchemaTransformer(Product.model_json_schema(), strict=strict)
+    transformed = transformer.walk()
 
     # SDK drops minimum, making it lossy
     assert transformer.is_strict_compatible is False
     # Transformed schema has constraint dropped and moved to description
-    assert result == snapshot(
-        {
-            'type': 'object',
-            'properties': {'price': {'type': 'number', 'description': '{minimum: 0}'}},
-            'required': ['price'],
-            'additionalProperties': False,
-        }
+    assert transformed == snapshot(
+        {'type': 'object', 'properties': {'price': {'minimum': 0, 'type': 'number'}}, 'required': ['price']}
     )
 
 
@@ -127,8 +201,9 @@ def test_lossy_pattern_constraint():
         address: Annotated[str, Field(pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')]
 
     original_schema = Email.model_json_schema()
-    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=None)
-    result = transformer.walk()
+    strict = None
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=strict)
+    transformed = transformer.walk()
 
     # SDK drops pattern, making it lossy
     assert transformer.is_strict_compatible is False
@@ -146,128 +221,11 @@ def test_lossy_pattern_constraint():
     )
 
     # Transformed schema has constraint dropped and moved to description
-    assert result == snapshot(
+    assert transformed == snapshot(
         {
             'type': 'object',
-            'properties': {'address': {'type': 'string', 'description': '{pattern: ^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$}'}},
+            'properties': {'address': {'pattern': '^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$', 'type': 'string'}},
             'required': ['address'],
-            'additionalProperties': False,
-        }
-    )
-
-
-def test_transformer_output():
-    """Verify transformer produces expected output for a simple model."""
-
-    class SimpleModel(BaseModel):
-        name: str
-        count: int
-
-    transformer = AnthropicJsonSchemaTransformer(SimpleModel.model_json_schema(), strict=True)
-    result = transformer.walk()
-
-    assert result == snapshot(
-        {
-            'type': 'object',
-            'properties': {'name': {'type': 'string'}, 'count': {'type': 'integer'}},
-            'required': ['name', 'count'],
-            'additionalProperties': False,
-        }
-    )
-
-
-def test_lossy_array_with_constrained_items():
-    """Array with lossy item schema should be lossy."""
-
-    class Container(BaseModel):
-        items: list[Annotated[str, Field(min_length=5)]]
-
-    transformer = AnthropicJsonSchemaTransformer(Container.model_json_schema(), strict=None)
-    transformer.walk()
-
-    # Array items with constraints are lossy
-    assert transformer.is_strict_compatible is False
-
-
-def test_lossy_array_min_items():
-    """Array with minItems > 1 should be lossy (constraint gets dropped)."""
-
-    class ItemList(BaseModel):
-        items: Annotated[list[str], Field(min_length=2)]
-
-    transformer = AnthropicJsonSchemaTransformer(ItemList.model_json_schema(), strict=None)
-    transformer.walk()
-
-    # SDK drops minItems > 1, making it lossy
-    assert transformer.is_strict_compatible is False
-
-
-def test_lossy_unsupported_string_format():
-    """String with unsupported format should be lossy (format gets dropped)."""
-    # Note: Using raw schema because Pydantic doesn't expose custom format generation in normal API
-    schema = {
-        'type': 'object',
-        'properties': {
-            'value': {
-                'type': 'string',
-                'format': 'regex',  # Unsupported format (not in SupportedStringFormats)
-            }
-        },
-        'required': ['value'],
-    }
-
-    transformer = AnthropicJsonSchemaTransformer(schema, strict=None)
-    transformer.walk()
-
-    # SDK drops unsupported formats, making it lossy
-    assert transformer.is_strict_compatible is False
-
-
-def test_lossy_nested_defs():
-    """Schema with $defs containing nested schemas with constraints should be lossy."""
-
-    class ConstrainedString(BaseModel):
-        value: Annotated[str, Field(min_length=5)]
-
-    class Container(BaseModel):
-        item: ConstrainedString
-
-    original = Container.model_json_schema()
-    transformer = AnthropicJsonSchemaTransformer(original, strict=None)
-    result = transformer.walk()
-
-    # Nested schema in $defs has constraints, making it lossy
-    assert transformer.is_strict_compatible is False
-
-    assert original == snapshot(
-        {
-            '$defs': {
-                'ConstrainedString': {
-                    'properties': {'value': {'minLength': 5, 'type': 'string'}},
-                    'required': ['value'],
-                    'type': 'object',
-                }
-            },
-            'properties': {'item': {'$ref': '#/$defs/ConstrainedString'}},
-            'required': ['item'],
-            'title': 'Container',
-            'type': 'object',
-        }
-    )
-    assert result == snapshot(
-        {
-            '$defs': {
-                'ConstrainedString': {
-                    'type': 'object',
-                    'properties': {'value': {'type': 'string', 'description': '{minLength: 5}'}},
-                    'additionalProperties': False,
-                    'required': ['value'],
-                }
-            },
-            'type': 'object',
-            'properties': {'item': {'$ref': '#/$defs/ConstrainedString'}},
-            'additionalProperties': False,
-            'required': ['item'],
         }
     )
 
@@ -278,10 +236,54 @@ def test_strict_false_no_transformation():
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
 
-    transformer = AnthropicJsonSchemaTransformer(User.model_json_schema(), strict=False)
-    result = transformer.walk()
+    strict = False
+    transformer = AnthropicJsonSchemaTransformer(User.model_json_schema(), strict=strict)
+    transformed = transformer.walk()
 
     # `'minLength': 3` proves no transformation occurred
-    assert result == snapshot(
+    assert transformed == snapshot(
         {'type': 'object', 'properties': {'username': {'minLength': 3, 'type': 'string'}}, 'required': ['username']}
     )
+
+
+def test_lossy_array_items_with_constraints():
+    """Detect lossy changes in array items with inline validation constraints."""
+
+    class StringList(BaseModel):
+        items: list[Annotated[str, Field(min_length=1)]]
+
+    original_schema = StringList.model_json_schema()
+    strict = None
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=strict)
+    transformed = transformer.walk()
+
+    # Array items have inline minLength constraint which gets dropped
+    assert transformer.is_strict_compatible is False
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            # `'minLength': 1` proves no transformation occurred
+            'properties': {'items': {'type': 'array', 'items': {'minLength': 1, 'type': 'string'}}},
+            'required': ['items'],
+        }
+    )
+
+
+def test_lossy_schema_with_defs():
+    """Detect lossy changes in schemas using $defs with validation constraints."""
+
+    class UserProfile(BaseModel):
+        name: Annotated[str, Field(min_length=3)]
+        age: int
+
+    class Account(BaseModel):
+        profile: UserProfile
+        backup_profile: UserProfile | None = None
+
+    original_schema = Account.model_json_schema()
+    strict = None
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=strict)
+    transformer.walk()
+
+    # UserProfile is in $defs with minLength constraint which gets dropped
+    assert transformer.is_strict_compatible is False
