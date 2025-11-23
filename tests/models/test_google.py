@@ -4050,7 +4050,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartStartEvent(index=5, part=TextPart(content=' Tower.'), previous_part_kind='builtin-tool-return'),
                 PartEndEvent(index=5, part=TextPart(content=' Tower.')),
-                BuiltinToolCallEvent(
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                     part=BuiltinToolCallPart(
                         tool_name='file_search',
                         args={'query': 'what is the capital of France?'},
@@ -4058,7 +4058,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google-gla',
                     )
                 ),
-                BuiltinToolResultEvent(
+                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content={
@@ -4077,7 +4077,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google-gla',
                     )
                 ),
-                BuiltinToolCallEvent(
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                     part=BuiltinToolCallPart(
                         tool_name='file_search',
                         args={'query': 'what is the capital of France?'},
@@ -4085,7 +4085,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google-gla',
                     )
                 ),
-                BuiltinToolResultEvent(
+                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content={
