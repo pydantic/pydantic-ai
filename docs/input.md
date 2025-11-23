@@ -146,7 +146,7 @@ Inline a file as a text part:
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-file_bytes = b'PDF content here...'
+file_bytes = Path('path/to/document.pdf').read_bytes()
 mimetype = 'application/pdf'
 
 agent = Agent(model='google-gla:gemini-2.5-flash')
