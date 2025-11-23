@@ -594,28 +594,32 @@ The [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool] enables your ag
 With OpenAI, you need to first [upload files to a vector store](https://platform.openai.com/docs/assistants/tools/file-search), then reference the vector store IDs when using the `FileSearchTool`.
 
 ```py {title="file_search_openai_upload.py" test="skip"}
+import asyncio
 from pydantic_ai import Agent, FileSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-5')
+async def main():
+    model = OpenAIResponsesModel('gpt-5')
 
-with open('my_document.txt', 'rb') as f:
-    file = await model.client.files.create(file=f, purpose='assistants')
+    with open('my_document.txt', 'rb') as f:
+        file = await model.client.files.create(file=f, purpose='assistants')
 
-vector_store = await model.client.vector_stores.create(name='my-docs')
-await model.client.vector_stores.files.create(
-    vector_store_id=vector_store.id,
-    file_id=file.id
-)
+    vector_store = await model.client.vector_stores.create(name='my-docs')
+    await model.client.vector_stores.files.create(
+        vector_store_id=vector_store.id,
+        file_id=file.id
+    )
 
-agent = Agent(
-    model,
-    builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])]
-)
+    agent = Agent(
+        model,
+        builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])]
+    )
 
-result = await agent.run('What information is in my documents about pydantic?')
-print(result.output)
-#> Based on your documents, Pydantic is a data validation library for Python...
+    result = await agent.run('What information is in my documents about pydantic?')
+    print(result.output)
+    #> Based on your documents, Pydantic is a data validation library for Python...
+
+asyncio.run(main())
 ```
 
 #### Google (Gemini)
@@ -623,30 +627,34 @@ print(result.output)
 With Gemini, you need to first [create a file search store via the Files API](https://ai.google.dev/gemini-api/docs/files), then reference the file search store names.
 
 ```py {title="file_search_google_upload.py" test="skip"}
+import asyncio
 from pydantic_ai import Agent, FileSearchTool
 from pydantic_ai.models.google import GoogleModel
 
-model = GoogleModel('gemini-2.5-flash')
+async def main():
+    model = GoogleModel('gemini-2.5-flash')
 
-store = await model.client.aio.file_search_stores.create(
-    config={'display_name': 'my-docs'}
-)
-
-with open('my_document.txt', 'rb') as f:
-    await model.client.aio.file_search_stores.upload_to_file_search_store(
-        file_search_store_name=store.name,
-        file=f,
-        config={'mime_type': 'text/plain'}
+    store = await model.client.aio.file_search_stores.create(
+        config={'display_name': 'my-docs'}
     )
 
-agent = Agent(
-    model,
-    builtin_tools=[FileSearchTool(file_store_ids=[store.name])]
-)
+    with open('my_document.txt', 'rb') as f:
+        await model.client.aio.file_search_stores.upload_to_file_search_store(
+            file_search_store_name=store.name,
+            file=f,
+            config={'mime_type': 'text/plain'}
+        )
 
-result = await agent.run('Summarize the key points from my uploaded documents.')
-print(result.output)
-#> The documents discuss the following key points: ...
+    agent = Agent(
+        model,
+        builtin_tools=[FileSearchTool(file_store_ids=[store.name])]
+    )
+
+    result = await agent.run('Summarize the key points from my uploaded documents.')
+    print(result.output)
+    #> The documents discuss the following key points: ...
+
+asyncio.run(main())
 ```
 
 ## API Reference
