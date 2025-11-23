@@ -115,7 +115,7 @@ def tmp_path_cwd(tmp_path: Path):
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
 )
 @pytest.mark.parametrize('example', find_filter_examples())
-def test_docs_examples(
+def test_docs_examples(  # noqa: C901
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
