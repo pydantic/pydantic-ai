@@ -56,7 +56,7 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
 outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
-outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}"]
+outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 
@@ -142,6 +142,7 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    "typings/**/*.pyi",
 ]
 
 [tool.ruff.lint]
@@ -186,8 +187,10 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
+"typings/**/*.pyi" = ["F401", "PYI044", "PYI035", "ANN401"]
 
 [tool.pyright]
+stubPath = "typings"
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
@@ -217,6 +220,7 @@ exclude = [
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
+mypy_path = "typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]
