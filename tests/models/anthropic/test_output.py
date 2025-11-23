@@ -61,7 +61,7 @@ def test_strict_tools_supported_model_auto_enabled(
     agent = Agent(model)
 
     @agent.tool_plain
-    def get_weather(location: str) -> str:  # pragma: no cover
+    def get_weather(location: str) -> str:
         return f'Weather in {location}'
 
     agent.run_sync('What is the weather in Paris?')
@@ -98,7 +98,7 @@ def test_strict_tools_supported_model_explicit_false(
     agent = Agent(model)
 
     @agent.tool_plain(strict=False)
-    def get_weather(location: str) -> str:  # pragma: no cover
+    def get_weather(location: str) -> str:
         return f'Weather in {location}'
 
     agent.run_sync('What is the weather in Paris?')
@@ -121,7 +121,7 @@ def test_strict_tools_unsupported_model_no_strict_sent(
     agent = Agent(model)
 
     @agent.tool_plain
-    def get_weather(location: str) -> str:  # pragma: no cover
+    def get_weather(location: str) -> str:
         return f'Weather in {location}'
 
     agent.run_sync('What is the weather in Paris?')
@@ -587,7 +587,7 @@ def create_header_verification_hook(case: StrictTestCase):
 
     async def verify_headers(request: httpx.Request):
         # Only verify for messages endpoint (the actual API calls)
-        if '/messages' in str(request.url):
+        if '/messages' in str(request.url):  # pragma: no branch
             beta_header = request.headers.get('anthropic-beta', '')
 
             if case.expect_beta_header:
@@ -598,8 +598,6 @@ def create_header_verification_hook(case: StrictTestCase):
                 assert 'structured-outputs-2025-11-13' not in beta_header, (
                     f'Did not expect beta header for {case.name}, got: {beta_header}'
                 )
-        else:  # pragma: no cover
-            pass
 
     return verify_headers
 

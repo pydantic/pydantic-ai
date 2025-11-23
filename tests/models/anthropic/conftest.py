@@ -23,7 +23,7 @@ AnthropicModelFactory = Callable[..., AnthropicModel]
 
 # Model factory fixture for live API tests
 @pytest.fixture
-def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:  # pragma: no cover
+def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:
     """Factory to create Anthropic models with custom configuration."""
 
     @cache
