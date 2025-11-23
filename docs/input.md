@@ -130,22 +130,26 @@ Upload a file via Files API:
 
 ```py {title="file_upload.py" test="skip" lint="skip"}
 from google import genai
-from pydantic_ai.messages import BinaryContent, DocumentUrl
-from io import BytesIO
+from pydantic_ai import Agent, DocumentUrl
 
-client = genai.Client(api_key=API_KEY)
-uploaded_file = client.files.upload(file=BytesIO(file_bytes), config={"mime_type": mimetype})
-user_prompt = ["Show me the money!", DocumentUrl(url=uploaded_file.uri, media_type=mimetype)]
-await agent.run(user_prompt)
+client = genai.Client()
+file = client.files.upload(file='path/to/document.pdf')
+
+agent = Agent(model='google-gla:gemini-2.5-flash')
+result = agent.run_sync(['What does this document contain?', DocumentUrl(url=file.uri, media_type=file.mime_type)])
+print(result.output)
 ```
 
 Inline a file as a text part:
 
 ```py {title="file_inline.py" test="skip" lint="skip"}
-from google import genai
-from pydantic_ai.messages import BinaryContent, DocumentUrl
+from pydantic_ai import Agent
+from pydantic_ai.messages import BinaryContent
 
-client = genai.Client(api_key=API_KEY)
-user_prompt = ["This seemed important at 3am", BinaryContent(data=file_bytes, media_type=mimetype)]
-await agent.run(user_prompt)
+file_bytes = b'PDF content here...'
+mimetype = 'application/pdf'
+
+agent = Agent(model='google-gla:gemini-2.5-flash')
+result = agent.run_sync(['What does this document contain?', BinaryContent(data=file_bytes, media_type=mimetype)])
+print(result.output)
 ```
