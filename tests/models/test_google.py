@@ -3720,7 +3720,7 @@ The capital of France is Paris.
 
 Paris is a major global center for art, fashion, gastronomy, and culture. A famous landmark in the city is the Eiffel Tower. The city is also known for its 19th-century cityscape, which is crisscrossed by wide boulevards and the River Seine.\
 """
-                        )
+                        ),
                     ],
                     usage=RequestUsage(
                         input_tokens=15,

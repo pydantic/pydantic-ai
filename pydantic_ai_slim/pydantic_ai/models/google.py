@@ -1064,9 +1064,7 @@ def _map_file_search_grounding_metadata(
         return None, None
 
     retrieved_contexts = [
-        chunk.retrieved_context.model_dump(mode='json')
-        for chunk in grounding_chunks
-        if chunk.retrieved_context
+        chunk.retrieved_context.model_dump(mode='json') for chunk in grounding_chunks if chunk.retrieved_context
     ]
 
     if not retrieved_contexts:
@@ -1091,12 +1089,12 @@ def _map_file_search_grounding_metadata(
 
 def _extract_file_search_query(code: str) -> str | None:
     """Extract the query from file_search.query() executable code.
-    
-    Example: 'print(file_search.query(query="what is the capital of France?"))' 
+
+    Example: 'print(file_search.query(query="what is the capital of France?"))'
     Returns: 'what is the capital of France?'
     """
     import re
-    
+
     match = re.search(r'file_search\.query\(query=(["\'])(.+?)\1\)', code)
     if match:
         return match.group(2)
