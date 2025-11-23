@@ -309,18 +309,18 @@ class AnthropicModel(Model):
                     f'Anthropic does not support thinking and output tools at the same time. Use `output_type={output_mode}(...)` instead.'
                 )
 
-        # NOTE: this will be removed after review.
-        # The `AnthropicJsonSchemaTransformer.walk()` logic now handles the default `strict=None` case more precisely.
-        # if model_request_parameters.output_mode == 'native' and model_request_parameters.output_object is not None:
-        #     # force strict=True for native output
-        #     # this needs to be done here because `super().prepare_request` calls
-        #     # -> Model.customize_request_parameters(model_request_parameters) which calls
-        #     # -> -> _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition)
-        #     # which finally instantiates the transformer (default AnthropicJsonSchemaTransformer)
-        #     # `schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)`
-        #     model_request_parameters = replace(
-        #         model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
-        #     )
+        # NOTE forcing `strict=True` here is a bit eager, because the transformer may still determine that the transformation is lossy.
+        # so we're relying on anthropic's strict mode being better than prompting the model with pydantic's schema
+        if model_request_parameters.output_mode == 'native' and model_request_parameters.output_object is not None:
+            # force strict=True for native output
+            # this needs to be done here because `super().prepare_request` calls
+            # -> Model.customize_request_parameters(model_request_parameters) which calls
+            # -> -> _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition)
+            # which finally instantiates the transformer (default AnthropicJsonSchemaTransformer)
+            # `schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)`
+            model_request_parameters = replace(
+                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
+            )
         return super().prepare_request(model_settings, model_request_parameters)
 
     @overload

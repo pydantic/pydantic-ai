@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '422'
+      - '358'
       content-type:
       - application/json
       host:
@@ -18,54 +18,45 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: What is the capital of France?
+        - text: what is Logfire?
           type: text
         role: user
-      model: claude-sonnet-4-0
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: A city and its country.
-        input_schema:
+      model: claude-sonnet-4-5
+      output_format:
+        schema:
           additionalProperties: false
           properties:
-            city:
-              type: string
-            country:
+            username:
+              description: '{minLength: 3, pattern: ^[a-z]+$}'
               type: string
           required:
-          - city
-          - country
+          - username
           type: object
-        name: final_result
+        type: json_schema
+      stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '503'
+      - '432'
       content-type:
       - application/json
       retry-after:
-      - '59'
+      - '53'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - id: toolu_011CgnivckJbK9QLLe9LN1Rt
-        input:
-          city: Paris
-          country: France
-        name: final_result
-        type: tool_use
-      id: msg_01QgYbVnhrJe61wKzuPNxcsQ
-      model: claude-sonnet-4-20250514
+      - text: '{"username":"logfire"}'
+        type: text
+      id: msg_01MQCTfXMrrb99zBoJD95ksW
+      model: claude-sonnet-4-5-20250929
       role: assistant
-      stop_reason: tool_use
+      stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
@@ -74,8 +65,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 402
-        output_tokens: 55
+        input_tokens: 176
+        output_tokens: 9
         service_tier: standard
     status:
       code: 200

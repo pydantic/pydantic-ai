@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
+from functools import cache
 
 import pytest
 
@@ -25,6 +26,7 @@ AnthropicModelFactory = Callable[..., AnthropicModel]
 def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:  # pragma: no cover
     """Factory to create Anthropic models with custom configuration."""
 
+    @cache
     def _create_model(
         model_name: str,
         api_key: str | None = None,

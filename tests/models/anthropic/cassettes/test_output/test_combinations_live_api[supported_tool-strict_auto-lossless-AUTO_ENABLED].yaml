@@ -1,0 +1,96 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '452'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: what is Logfire?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Simple schema with no validation constraints - fully strict-compatible.
+        input_schema:
+          additionalProperties: false
+          properties:
+            location:
+              type: string
+          required:
+          - location
+          type: object
+        name: pydantic_questions_tool
+        strict: true
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1916'
+      content-type:
+      - application/json
+      retry-after:
+      - '57'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          Logfire is a modern observability platform created by Pydantic (the team behind the popular Pydantic Python library). It's designed to help developers monitor, debug, and understand their applications through logging, tracing, and metrics.
+
+          Key features of Logfire include:
+
+          1. **Deep Python Integration** - Built with Python-first design, offering excellent integration with Python applications and frameworks
+
+          2. **Structured Logging** - Uses structured logs that are easy to query and analyze, rather than plain text logs
+
+          3. **Distributed Tracing** - Tracks requests as they flow through different services and components of your application
+
+          4. **Performance Monitoring** - Helps identify bottlenecks and performance issues in your code
+
+          5. **Built on OpenTelemetry** - Uses the open standard OpenTelemetry protocol, ensuring compatibility and avoiding vendor lock-in
+
+          6. **User-Friendly Interface** - Provides an intuitive web interface for exploring and analyzing your application data
+
+          7. **Pydantic Integration** - Naturally integrates with Pydantic models and validation, making it easy to see validation errors and data flow
+
+          Logfire aims to be a modern alternative to traditional logging and monitoring solutions, offering better developer experience and more powerful debugging capabilities, especially for Python applications. It competes with services like Datadog, New Relic, and other observability platforms but with a focus on simplicity and Python ecosystem integration.
+        type: text
+      id: msg_01RMhzpMpDVNWQfn8hd1rGSt
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 579
+        output_tokens: 315
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
