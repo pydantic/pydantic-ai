@@ -2768,13 +2768,13 @@ def test_tool_exceeds_token_limit_error():
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
     ):
         agent.run_sync('Hello')
 
@@ -2795,6 +2795,27 @@ def test_tool_exceeds_token_limit_but_complete_args():
 
     result = agent.run_sync('Hello')
     assert result.output == 'done'
+
+
+def test_empty_response_with_finish_reason_length():
+    def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_empty_response), output_type=str)
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(10\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(provider default\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello')
 
 
 def test_model_requests_blocked(env: TestEnv):
@@ -3778,7 +3799,9 @@ def test_binary_content_serializable():
                 'metadata': None,
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
+                'parts': [
+                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                ],
                 'usage': {
                     'input_tokens': 56,
                     'cache_write_tokens': 0,
@@ -3838,7 +3861,9 @@ def test_image_url_serializable_missing_media_type():
                 'metadata': None,
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
+                'parts': [
+                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                ],
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,
@@ -3905,7 +3930,9 @@ def test_image_url_serializable():
                 'metadata': None,
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
+                'parts': [
+                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                ],
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,

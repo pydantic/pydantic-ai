@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '264'
+      - '561'
       content-type:
       - application/json
       host:
@@ -20,27 +20,43 @@ interactions:
         - text: What is the temperature in Tokyo?
         role: user
       tools:
-        function_declarations:
+        functionDeclarations:
         - description: ''
           name: get_temperature
-          parameters:
+          parameters_json_schema:
+            $defs:
+              CurrentLocation:
+                additionalProperties: false
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - city
+                - country
+                title: CurrentLocation
+                type: object
+            additionalProperties: false
             properties:
               location:
+                additionalProperties:
+                  $ref: '#/$defs/CurrentLocation'
                 type: object
             required:
             - location
             type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '741'
+      - '1227'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=534
+      - gfet4t7; dur=965
       transfer-encoding:
       - chunked
       vary:
@@ -49,24 +65,145 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.15060695580073766
-        content:
+      - content:
           parts:
-          - text: |
-              I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.
+          - functionCall:
+              args:
+                location:
+                  city: Tokyo
+              name: get_temperature
+            thoughtSignature: CqsCAdHtim8g6Mb+p/TOM/hcAQMuHORfvoYEEpINyxRabZ/ZiiBArydE5DaexwckI0MaKPd18/tx5SlEuLBURrOtQr3Fy3i00cItVVR+H6+K+WyxVUe8AmsYWTGntnwflq81uC6P79FHQhc2cOMsKbRNu3mtNF7mncsBJKQ3NZ4ioi1YffVc4V6PNGbw9rjZtVx1iViqNZ6il7LZ/WvwrZR1HCmFd03X0koCTpBt/jMx3fSIJt79YGjEGvb3huk1wGcuWH54Uj7WhU+E7MTrUAz/Oa5lmWwf8NNrbLPepuLVFTPVKukErjwlZlX4oCaXiz3M5OewJwQR14L5Jub7GIdsx/++p9XJgROw9v1vifauXo35zVDUqqosfWvz/iD0Iv4hhlOBipdTtLzYK/k=
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 7PggabeLH--tz7IPmu30uQo
       usageMetadata:
-        candidatesTokenCount: 28
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 28
-        promptTokenCount: 12
+        candidatesTokenCount: 19
+        promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 12
-        totalTokenCount: 40
+          tokenCount: 40
+        thoughtsTokenCount: 65
+        totalTokenCount: 124
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1115'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature in Tokyo?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              location:
+                city: Tokyo
+            name: get_temperature
+          thoughtSignature: context_engineering_is_the_way_to_go
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_temperature
+            response:
+              call_error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "model_type",
+                    "loc": [
+                      "location",
+                      "city"
+                    ],
+                    "msg": "Input should be a valid dictionary or instance of CurrentLocation",
+                    "input": "Tokyo"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      tools:
+        functionDeclarations:
+        - description: ''
+          name: get_temperature
+          parameters_json_schema:
+            $defs:
+              CurrentLocation:
+                additionalProperties: false
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - city
+                - country
+                title: CurrentLocation
+                type: object
+            additionalProperties: false
+            properties:
+              location:
+                additionalProperties:
+                  $ref: '#/$defs/CurrentLocation'
+                type: object
+            required:
+            - location
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '4298'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3078
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is
+              being processed by the tool.
+            thoughtSignature: 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
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 7_ggadDZJfaEz7IPvafbuAg
+      usageMetadata:
+        candidatesTokenCount: 29
+        promptTokenCount: 164
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 164
+        thoughtsTokenCount: 563
+        totalTokenCount: 756
     status:
       code: 200
       message: OK

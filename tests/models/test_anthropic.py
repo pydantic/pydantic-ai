@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -61,7 +62,7 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -181,9 +182,15 @@ class MockAnthropic:
         self.index += 1
         return response
 
+
     async def messages_count_tokens(self, *_args: Any, **kwargs: Any) -> BetaMessageTokensCount:
+        # check if we are configured to raise an exception
+        if self.messages_ is not None:
+            raise_if_exception(self.messages_ if not isinstance(self.messages_, Sequence) else self.messages_[0])
+
+        # record the kwargs used
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
-        # Return a mock token count
+
         return BetaMessageTokensCount(input_tokens=10)
 
 
@@ -433,9 +440,9 @@ def test_cache_control_unsupported_param_type():
 
     # Create a list with an unsupported param type (document)
     # We'll use a mock document block param
-    params: list[dict[str, Any]] = [{'type': 'document', 'source': {'data': 'test'}}]
+    params: list[dict[str, Any]] = [{'type': 'thinking', 'source': {'data': 'test'}}]
 
-    with pytest.raises(UserError, match='Cache control not supported for param type: document'):
+    with pytest.raises(UserError, match='Cache control not supported for param type: thinking'):
         AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
@@ -1261,6 +1268,36 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: claude-sonnet-4-5, body: {'error': 'test error'}"
     )
+
+
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.anthropic.com timed out',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
+
+
+async def test_count_tokens_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.anthropic.com timed out',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
 
 
 async def test_document_binary_content_input(
