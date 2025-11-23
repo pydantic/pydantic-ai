@@ -651,6 +651,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _file_search_tool_call_id: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         code_execution_tool_call_id: str | None = None
@@ -696,6 +697,26 @@ class GeminiStreamedResponse(StreamedResponse):
                 continue  # pragma: no cover
 
             for part in parts:
+                if self._file_search_tool_call_id and candidate.grounding_metadata:
+                    grounding_chunks = candidate.grounding_metadata.grounding_chunks
+                    if grounding_chunks:
+                        retrieved_contexts = [
+                            chunk.retrieved_context.model_dump(mode='json')
+                            for chunk in grounding_chunks
+                            if chunk.retrieved_context
+                        ]
+                        if retrieved_contexts:
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=uuid4(),
+                                part=BuiltinToolReturnPart(
+                                    provider_name=self.provider_name,
+                                    tool_name=FileSearchTool.kind,
+                                    tool_call_id=self._file_search_tool_call_id,
+                                    content={'retrieved_contexts': retrieved_contexts},
+                                ),
+                            )
+                            self._file_search_tool_call_id = None
+
                 if part.thought_signature:
                     # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
                     # - Always send the thought_signature back to the model inside its original Part.
@@ -737,13 +758,26 @@ class GeminiStreamedResponse(StreamedResponse):
                         part=FilePart(content=BinaryContent.narrow_type(content)),
                     )
                 elif part.executable_code is not None:
-                    code_execution_tool_call_id = _utils.generate_tool_call_id()
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=uuid4(),
-                        part=_map_executable_code(
-                            part.executable_code, self.provider_name, code_execution_tool_call_id
-                        ),
-                    )
+                    code = part.executable_code.code
+                    if code and (file_search_query := _extract_file_search_query(code)):
+                        self._file_search_tool_call_id = _utils.generate_tool_call_id()
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=uuid4(),
+                            part=BuiltinToolCallPart(
+                                provider_name=self.provider_name,
+                                tool_name=FileSearchTool.kind,
+                                tool_call_id=self._file_search_tool_call_id,
+                                args={'query': file_search_query},
+                            ),
+                        )
+                    else:
+                        code_execution_tool_call_id = _utils.generate_tool_call_id()
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=uuid4(),
+                            part=_map_executable_code(
+                                part.executable_code, self.provider_name, code_execution_tool_call_id
+                            ),
+                        )
                 elif part.code_execution_result is not None:
                     assert code_execution_tool_call_id is not None
                     yield self._parts_manager.handle_part(
@@ -1033,3 +1067,17 @@ def _map_file_search_grounding_metadata(
             content={'retrieved_contexts': retrieved_contexts},
         ),
     )
+
+
+def _extract_file_search_query(code: str) -> str | None:
+    """Extract the query from file_search.query() executable code.
+    
+    Example: 'print(file_search.query(query="what is the capital of France?"))' 
+    Returns: 'what is the capital of France?'
+    """
+    import re
+    
+    match = re.search(r'file_search\.query\(query=(["\'])(.+?)\1\)', code)
+    if match:
+        return match.group(2)
+    return None

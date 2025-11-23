@@ -3843,22 +3843,20 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ModelResponse(
                     parts=[
                         BuiltinToolCallPart(
-                            tool_name='code_execution',
-                            args={
-                                'code': """\
-   print(file_search.query(query="what is the capital of France?"))
-   \
-""",
-                                'language': 'PYTHON',
-                            },
+                            tool_name='file_search',
+                            args={'query': 'what is the capital of France?'},
                             tool_call_id=IsStr(),
                             provider_name='google-gla',
                         ),
-                        BuiltinToolCallPart(
-                            tool_name='code_execution',
-                            args={
-                                'code': 'print(file_search.query(query="what is the capital of France?"))',
-                                'language': 'PYTHON',
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={
+                                'retrieved_contexts': [
+                                    {
+                                        'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                        'file_search_store': 'fileSearchStores/testfilesearchstream-df5lsen5e6i5',
+                                    }
+                                ]
                             },
                             tool_call_id=IsStr(),
                             provider_name='google-gla',
