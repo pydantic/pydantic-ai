@@ -45,7 +45,7 @@ def on_post_build(config: Config) -> None:
     if bundle_path.exists():
         content = bundle_path.read_text(encoding='utf-8')
         content, _ = re.subn(r'}(\.statediagram)', '}.statediagramTitleText{fill:#888}\1', content, count=1)
-        bundle_path.write_text(content)
+        bundle_path.write_text(content, encoding='utf-8')
 
 
 def replace_uv_python_run(markdown: str) -> str:

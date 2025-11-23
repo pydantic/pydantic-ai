@@ -26,5 +26,5 @@ def test_cli_help(capfd: pytest.CaptureFixture[str]):
     new_content, count = re.subn('^(## Help\n+```).+?```', rf'\1\n{help_output}\n```', content, flags=re.M | re.S)
     assert count, 'help section not found'
     if new_content != content:
-        readme.write_text(new_content)
+        readme.write_text(new_content, encoding='utf-8')
         pytest.fail('`clai --help` output changed.')

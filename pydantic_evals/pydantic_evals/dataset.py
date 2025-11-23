@@ -768,7 +768,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         json_schema = cls.model_json_schema_with_evaluators(custom_evaluator_types)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
         if not path.exists() or path.read_text(encoding='utf-8') != schema_content:  # pragma: no branch
-            path.write_text(schema_content)
+            path.write_text(schema_content, encoding='utf-8')
 
     @classmethod
     @functools.cache
