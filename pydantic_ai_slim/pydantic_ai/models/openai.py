@@ -272,6 +272,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
     """
 
+    openai_include_file_search_results: bool
+    """Whether to include the file search results in the response.
+
+    Corresponds to the `file_search_call.results` value of the `include` parameter in the Responses API.
+    """
+
 
 @dataclass(init=False)
 class OpenAIChatModel(Model):
@@ -1223,6 +1229,8 @@ class OpenAIResponsesModel(Model):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')
+        if model_settings.get('openai_include_file_search_results'):
+            include.append('file_search_call.results')
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
