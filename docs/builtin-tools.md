@@ -595,6 +595,7 @@ With OpenAI, you need to first [upload files to a vector store](https://platform
 
 ```py {title="file_search_openai_upload.py" test="skip"}
 import asyncio
+
 from pydantic_ai import Agent, FileSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
@@ -628,6 +629,7 @@ With Gemini, you need to first [create a file search store via the Files API](ht
 
 ```py {title="file_search_google_upload.py" test="skip"}
 import asyncio
+
 from pydantic_ai import Agent, FileSearchTool
 from pydantic_ai.models.google import GoogleModel
 
