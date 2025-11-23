@@ -6571,6 +6571,20 @@ async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
     assert 'messages' in count_tokens_kwargs
 
 
+async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: None):
+    """Test count_tokens when messages_ is None (no exception configured)."""
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    result = await m.count_tokens(
+        [ModelRequest.user_text_prompt('hello')],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == 10
+
+
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
     """Test that errors convert to ModelHTTPError."""
