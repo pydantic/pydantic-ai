@@ -43,7 +43,7 @@ def on_post_build(config: Config) -> None:
     """Inject extra CSS into mermaid styles to avoid titles being the same color as the background in dark mode."""
     assert bundle_path is not None
     if bundle_path.exists():
-        content = bundle_path.read_text()
+        content = bundle_path.read_text(encoding='utf-8')
         content, _ = re.subn(r'}(\.statediagram)', '}.statediagramTitleText{fill:#888}\1', content, count=1)
         bundle_path.write_text(content)
 
@@ -88,7 +88,7 @@ def render_examples(markdown: str) -> str:
 
 def sub_example(m: re.Match[str]) -> str:
     example_path = EXAMPLES_DIR / m.group(1)
-    content = example_path.read_text().strip()
+    content = example_path.read_text(encoding='utf-8').strip()
     # remove leading docstring which duplicates what's in the docs page
     content = re.sub(r'^""".*?"""', '', content, count=1, flags=re.S).strip()
 
