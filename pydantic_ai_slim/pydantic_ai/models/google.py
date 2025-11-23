@@ -1006,27 +1006,30 @@ def _map_grounding_metadata(
 def _map_file_search_grounding_metadata(
     grounding_metadata: GroundingMetadata | None, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
-    if grounding_metadata and (retrieval_queries := grounding_metadata.retrieval_queries):
-        tool_call_id = _utils.generate_tool_call_id()
-        return (
-            BuiltinToolCallPart(
-                provider_name=provider_name,
-                tool_name=FileSearchTool.kind,
-                tool_call_id=tool_call_id,
-                args={'queries': retrieval_queries},
-            ),
-            BuiltinToolReturnPart(
-                provider_name=provider_name,
-                tool_name=FileSearchTool.kind,
-                tool_call_id=tool_call_id,
-                content=[
-                    chunk.retrieved_context.model_dump(mode='json')
-                    for chunk in grounding_chunks
-                    if chunk.retrieved_context
-                ]
-                if (grounding_chunks := grounding_metadata.grounding_chunks)
-                else None,
-            ),
-        )
-    else:
+    if not grounding_metadata or not (grounding_chunks := grounding_metadata.grounding_chunks):
         return None, None
+
+    retrieved_contexts = [
+        chunk.retrieved_context.model_dump(mode='json')
+        for chunk in grounding_chunks
+        if chunk.retrieved_context
+    ]
+
+    if not retrieved_contexts:
+        return None, None
+
+    tool_call_id = _utils.generate_tool_call_id()
+    return (
+        BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            args={},
+        ),
+        BuiltinToolReturnPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            content={'retrieved_contexts': retrieved_contexts},
+        ),
+    )
