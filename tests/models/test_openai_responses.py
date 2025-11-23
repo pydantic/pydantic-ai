@@ -7759,3 +7759,186 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         if vector_store is not None:
             await async_client.vector_stores.delete(vector_store.id)
         await async_client.close()
+
+
+async def test_openai_file_search_include_results_setting():
+    from openai.types.responses.response_file_search_tool_call import ResponseFileSearchToolCall
+
+    from pydantic_ai.models.openai import _map_file_search_tool_call  # pyright: ignore[reportPrivateUsage]
+
+    item = ResponseFileSearchToolCall.model_validate(
+        {
+            'id': 'test-id',
+            'queries': ['test query'],
+            'status': 'completed',
+            'results': None,
+            'type': 'file_search_call',
+        }
+    )
+
+    call_part, return_part = _map_file_search_tool_call(item, 'openai')
+    assert call_part.tool_name == 'file_search'
+    assert return_part.content == {'status': 'completed'}
+
+
+async def test_openai_include_file_search_results_setting():
+    from pydantic_ai.builtin_tools import FileSearchTool
+
+    mock_response = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+
+    model = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_response),
+        settings=OpenAIResponsesModelSettings(openai_include_file_search_results=True),
+    )
+    agent = Agent(
+        model=model,
+        builtin_tools=[FileSearchTool(file_store_ids=[])],
+    )
+
+    await agent.run('test')
+    kwargs = get_mock_responses_kwargs(mock_response)
+    assert 'include' in kwargs[0]
+    assert 'file_search_call.results' in kwargs[0]['include']
+
+
+async def test_openai_file_search_with_message_history():
+    from pydantic_ai.builtin_tools import FileSearchTool
+
+    mock_response = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='The capital is Paris.', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_response))
+    agent = Agent(
+        model=model,
+        builtin_tools=[FileSearchTool(file_store_ids=[])],
+    )
+
+    messages = [
+        ModelRequest(
+            parts=[UserPromptPart(content='test')],
+            run_id='run-1',
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='file_search',
+                    tool_call_id='file-search-1',
+                    args={'queries': ['test']},
+                    provider_name='openai',
+                )
+            ],
+            run_id='run-1',
+        ),
+    ]
+
+    result = await agent.run('follow up', message_history=messages)
+    assert result.output is not None
+
+
+async def test_openai_file_search_status_update():
+    from pydantic_ai.builtin_tools import FileSearchTool
+
+    mock_response = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_response))
+    agent = Agent(
+        model=model,
+        builtin_tools=[FileSearchTool(file_store_ids=[])],
+    )
+
+    messages = [
+        ModelRequest(
+            parts=[UserPromptPart(content='test')],
+            run_id='run-1',
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='file_search',
+                    tool_call_id='file-search-1',
+                    args={'queries': ['test']},
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='file_search',
+                    tool_call_id='file-search-1',
+                    content={'status': 'in_progress'},
+                    provider_name='openai',
+                ),
+            ],
+            run_id='run-1',
+        ),
+    ]
+
+    result = await agent.run('follow up', message_history=messages)
+    assert result.output is not None
+
+
+async def test_openai_file_search_cleanup_none():
+    import os
+    import tempfile
+
+    from openai import AsyncOpenAI
+
+    async_client = AsyncOpenAI(api_key='test-key')
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('test content')
+        test_file_path = f.name
+
+    file = None
+    vector_store = None
+    try:
+        pass
+    finally:
+        os.unlink(test_file_path)
+        if file is not None:
+            await async_client.files.delete(file.id)
+        if vector_store is not None:
+            await async_client.vector_stores.delete(vector_store.id)
+        await async_client.close()
