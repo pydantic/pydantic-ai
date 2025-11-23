@@ -182,7 +182,6 @@ class MockAnthropic:
         self.index += 1
         return response
 
-
     async def messages_count_tokens(self, *_args: Any, **kwargs: Any) -> BetaMessageTokensCount:
         # check if we are configured to raise an exception
         if self.messages_ is not None:
