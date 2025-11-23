@@ -49,7 +49,6 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolOutputAvailablePart,
-    DynamicToolOutputErrorPart,
     FileUIPart,
     ReasoningUIPart,
     SubmitMessage,
@@ -2199,20 +2198,49 @@ async def test_adapter_dump_messages_with_files():
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
 
-    # Check user message with files
-    assert ui_messages[0].role == 'user'
-    assert len(ui_messages[0].parts) == 3
-    assert isinstance(ui_messages[0].parts[0], TextUIPart)
-    assert isinstance(ui_messages[0].parts[1], FileUIPart)
-    assert ui_messages[0].parts[1].url.startswith('data:image/png;base64,')
-    assert isinstance(ui_messages[0].parts[2], FileUIPart)
-    assert ui_messages[0].parts[2].url == 'https://example.com/image.png'
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
 
-    # Check assistant message with file
-    assert ui_messages[1].role == 'assistant'
-    assert isinstance(ui_messages[1].parts[0], TextUIPart)
-    assert isinstance(ui_messages[1].parts[1], FileUIPart)
-    assert ui_messages[1].parts[1].url.startswith('data:application/pdf;base64,')
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Here is an image:', 'state': 'done', 'provider_metadata': None},
+                    {
+                        'type': 'file',
+                        'media_type': 'image/png',
+                        'filename': None,
+                        'url': 'data:image/png;base64,ZmFrZV9pbWFnZQ==',
+                        'provider_metadata': None,
+                    },
+                    {
+                        'type': 'file',
+                        'media_type': 'image/png',
+                        'filename': None,
+                        'url': 'https://example.com/image.png',
+                        'provider_metadata': None,
+                    },
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Nice image!', 'state': 'done', 'provider_metadata': None},
+                    {
+                        'type': 'file',
+                        'media_type': 'application/pdf',
+                        'filename': None,
+                        'url': 'data:application/pdf;base64,cmVzcG9uc2VfZmlsZQ==',
+                        'provider_metadata': None,
+                    },
+                ],
+            },
+        ]
+    )
 
 
 async def test_adapter_dump_messages_with_retry():
@@ -2237,13 +2265,38 @@ async def test_adapter_dump_messages_with_retry():
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
 
-    # Check assistant message has tool call with error
-    assert ui_messages[1].role == 'assistant'
-    tool_part = ui_messages[1].parts[0]
-    assert isinstance(tool_part, DynamicToolOutputErrorPart)
-    assert tool_part.tool_name == 'my_tool'
-    assert tool_part.state == 'output-error'
-    assert 'Tool failed with error' in tool_part.error_text
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'dynamic-tool',
+                        'tool_name': 'my_tool',
+                        'tool_call_id': 'tool_789',
+                        'state': 'output-error',
+                        'input': '{"arg":"value"}',
+                        'error_text': """\
+Tool failed with error
+
+Fix the errors and try again.\
+""",
+                        'call_provider_metadata': None,
+                    }
+                ],
+            },
+        ]
+    )
 
 
 async def test_adapter_dump_messages_consecutive_text():
@@ -2318,11 +2371,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                     },
                     {
                         'type': 'text',
-                        'text': """\
-
-
-After tool\
-""",
+                        'text': 'After tool',
                         'state': 'done',
                         'provider_metadata': None,
                     },
@@ -2357,33 +2406,19 @@ async def test_adapter_dump_load_roundtrip():
 
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
 
+    def sync_timestamps(original: list[ModelRequest | ModelResponse], new: list[ModelRequest | ModelResponse]) -> None:
+        for orig_msg, new_msg in zip(original, new):
+            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
+                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
+                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
+                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
     # Load back to Pydantic AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    sync_timestamps(original_messages, reloaded_messages)
 
-    # Can't use `assert reloaded_messages == original_messages` because the timestamps will be different
-    assert reloaded_messages == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(content='System message', timestamp=IsDatetime()),
-                    UserPromptPart(content='User message', timestamp=IsDatetime()),
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='Response text'),
-                    ToolCallPart(tool_name='tool1', args={'key': 'value'}, tool_call_id='tc1'),
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(tool_name='tool1', content='tool result', tool_call_id='tc1', timestamp=IsDatetime())
-                ]
-            ),
-            ModelResponse(parts=[TextPart(content='Final response')], timestamp=IsDatetime()),
-        ]
-    )
+    assert reloaded_messages == original_messages
 
 
 async def test_adapter_dump_messages_text_before_thinking():
@@ -2488,11 +2523,7 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                     },
                     {
                         'type': 'text',
-                        'text': """\
-
-
-Some text\
-""",
+                        'text': 'Some text',
                         'state': 'done',
                         'provider_metadata': None,
                     },

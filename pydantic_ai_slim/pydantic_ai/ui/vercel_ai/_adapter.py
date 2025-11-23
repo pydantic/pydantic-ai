@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
@@ -220,8 +220,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def dump_messages(  # noqa: C901
         cls,
         messages: Sequence[ModelMessage],
-        *,
-        _id_generator: Callable[[], str] | None = None,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
@@ -235,61 +233,48 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         def _message_id_generator() -> str:
             """Generate a message ID."""
-            return _id_generator() if _id_generator is not None else str(uuid.uuid4())
+            return uuid.uuid4().hex
 
-        tool_returns: dict[str, ToolReturnPart | BuiltinToolReturnPart] = {}
+        tool_returns: dict[str, ToolReturnPart] = {}
         tool_errors: dict[str, RetryPromptPart] = {}
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart | BuiltinToolReturnPart):
+                    if isinstance(part, ToolReturnPart):
                         tool_returns[part.tool_call_id] = part
-                    elif isinstance(part, RetryPromptPart) and part.tool_name is not None:
+                    elif isinstance(part, RetryPromptPart) and part.tool_call_id:
                         tool_errors[part.tool_call_id] = part
 
         result: list[UIMessage] = []
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                system_parts: list[SystemPromptPart] = []
-                user_parts: list[UserPromptPart | ToolReturnPart | BuiltinToolReturnPart | RetryPromptPart] = []
+                system_ui_parts: list[UIMessagePart] = []
+                user_ui_parts: list[UIMessagePart] = []
 
                 for part in msg.parts:
                     if isinstance(part, SystemPromptPart):
-                        system_parts.append(part)
-                    elif isinstance(  # pragma: no branch - All ModelRequest parts are covered
-                        part, UserPromptPart | ToolReturnPart | BuiltinToolReturnPart | RetryPromptPart
-                    ):
-                        user_parts.append(part)
+                        system_ui_parts.append(TextUIPart(text=part.content, state='done'))
+                    elif isinstance(part, UserPromptPart):
+                        user_ui_parts.extend(_convert_user_prompt_part(part))
+                    elif isinstance(part, ToolReturnPart | RetryPromptPart):
+                        # Tool returns/errors don't create separate UI parts
+                        # They're merged into the tool call in the assistant message
+                        pass
+                    else:
+                        assert_never(part)
 
-                if system_parts:
-                    system_ui_parts: list[UIMessagePart] = [
-                        TextUIPart(text=part.content, state='done') for part in system_parts
-                    ]
+                if system_ui_parts:
                     result.append(UIMessage(id=_message_id_generator(), role='system', parts=system_ui_parts))
 
-                # Note: Tool returns and retry prompts don't create user message parts
-                # They are only used to set the state of tool calls in assistant messages
-                if user_parts:  # pragma: no branch - A ModelRequest with no user-visible parts is not tested
-                    user_ui_parts: list[UIMessagePart] = []
-                    for part in user_parts:
-                        if isinstance(part, UserPromptPart):
-                            user_ui_parts.extend(_convert_user_prompt_part(part))
-                        elif isinstance(part, ToolReturnPart | BuiltinToolReturnPart | RetryPromptPart):
-                            # Tool returns/errors don't create separate UI parts
-                            # They're merged into the tool call in the assistant message
-                            pass
+                if user_ui_parts:
+                    result.append(UIMessage(id=_message_id_generator(), role='user', parts=user_ui_parts))
 
-                    if user_ui_parts:
-                        result.append(UIMessage(id=_message_id_generator(), role='user', parts=user_ui_parts))
-
-            elif isinstance(  # pragma: no branch - All message types are covered (no tests for empty ModelResponse)
+            elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
                 ui_parts: list[UIMessagePart] = []
-                text_parts: list[str] = []
-                had_interruption = False
 
                 # For builtin tools, returns can be in the same ModelResponse as calls
                 # Build a local mapping for this message
@@ -303,44 +288,25 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # Skip builtin tool returns - they're handled by the tool call logic
                         continue
                     elif isinstance(part, TextPart):
-                        # If this is the first text after an interruption, prepend separator
-                        if had_interruption:
-                            text_parts.append('\n\n' + part.content)
+                        # Combine consecutive text parts by checking the last UI part
+                        if ui_parts and isinstance(ui_parts[-1], TextUIPart):
+                            last_text = ui_parts[-1]
+                            ui_parts[-1] = last_text.model_copy(update={'text': last_text.text + part.content})
                         else:
-                            text_parts.append(part.content)
+                            ui_parts.append(TextUIPart(text=part.content, state='done'))
                     elif isinstance(part, ThinkingPart):
-                        if text_parts:
-                            ui_parts.append(TextUIPart(text=''.join(text_parts), state='done'))
-                            text_parts = []
-                            had_interruption = False
                         ui_parts.append(ReasoningUIPart(text=part.content, state='done'))
                     elif isinstance(part, FilePart):
-                        if text_parts:
-                            ui_parts.append(TextUIPart(text=''.join(text_parts), state='done'))
-                            text_parts = []
-                            had_interruption = False
                         ui_parts.append(
                             FileUIPart(
                                 url=part.content.data_uri,
                                 media_type=part.content.media_type,
                             )
                         )
-                    elif isinstance(part, BaseToolCallPart):  # pragma: no branch - All assistant part types are covered
-                        if text_parts:
-                            ui_parts.append(TextUIPart(text=''.join(text_parts), state='done'))
-                            text_parts = []
-
-                        # Mark that we had an interruption for next text part
-                        had_interruption = True
-
+                    elif isinstance(part, BaseToolCallPart):
                         if isinstance(part, BuiltinToolCallPart):
                             prefixed_id = _make_builtin_tool_call_id(part.provider_name, part.tool_call_id)
-                            # Check local returns first (same message), then global returns (from ModelRequest)
-                            builtin_return = local_builtin_returns.get(part.tool_call_id) or (
-                                tool_returns.get(part.tool_call_id)
-                                if isinstance(tool_returns.get(part.tool_call_id), BuiltinToolReturnPart)
-                                else None
-                            )
+                            builtin_return = local_builtin_returns.get(part.tool_call_id)
 
                             if builtin_return:
                                 content = builtin_return.model_response_str()
@@ -360,7 +326,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         call_provider_metadata=call_provider_metadata,
                                     )
                                 )
-                            else:  # pragma: no cover - Builtin tool call without a return is not tested
+                            else:  # pragma: no cover
                                 ui_parts.append(
                                     ToolInputAvailablePart(
                                         type=f'tool-{part.tool_name}',
@@ -405,12 +371,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         state='input-available',
                                     )
                                 )
+                    else:
+                        assert_never(part)
 
-                if text_parts:
-                    ui_parts.append(TextUIPart(text=''.join(text_parts), state='done'))
-
-                if ui_parts:  # pragma: no branch - An empty ModelResponse is not tested
+                if ui_parts:  # pragma: no branch
                     result.append(UIMessage(id=_message_id_generator(), role='assistant', parts=ui_parts))
+            else:
+                assert_never(msg)
 
         return result
 
@@ -432,9 +399,9 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(TextUIPart(text=item, state='done'))
             elif isinstance(item, BinaryContent):
                 ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
-            elif isinstance(
-                item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl
-            ):  # pragma: no branch - All content types are covered
+            elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
+            else:
+                assert_never(item)
 
     return ui_parts
