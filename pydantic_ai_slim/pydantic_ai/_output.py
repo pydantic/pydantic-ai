@@ -15,6 +15,7 @@ from typing_extensions import Self, TypedDict, TypeVar
 from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
+from ._json_schema import JsonSchema
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
@@ -226,6 +227,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     def allows_text(self) -> bool:
         return self.text_processor is not None
 
+    @abstractmethod
+    def json_schema(self) -> JsonSchema:
+        raise NotImplementedError()
+
     @classmethod
     def build(  # noqa: C901
         cls,
@@ -353,7 +358,9 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if len(other_outputs) > 0:
             return AutoOutputSchema(
-                processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
+                processor=cls._build_processor(
+                    outputs=other_outputs, name=name, description=description, strict=strict
+                ),
                 toolset=toolset,
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
@@ -376,6 +383,107 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             return ObjectOutputProcessor(output=outputs[0], name=name, description=description, strict=strict)
 
         return UnionOutputProcessor(outputs=outputs, strict=strict, name=name, description=description)
+
+    @staticmethod
+    def build_json_schema(  # noqa: C901
+        allows_deferred_tools: bool = False,
+        allows_image: bool = False,
+        allows_text: bool = False,
+        base_processor: BaseObjectOutputProcessor[OutputDataT] | None = None,
+        toolset_processors: dict[str, ObjectOutputProcessor[OutputDataT]] | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> JsonSchema:
+        object_keys: list[str] = []
+        json_schemas: list[ObjectJsonSchema] = []
+
+        if not any([allows_deferred_tools, allows_image, allows_text, base_processor, toolset_processors]):
+            return TypeAdapter(str).json_schema()
+
+        if base_processor:
+            json_schema = base_processor.object_def.json_schema
+            json_schema['title'] = base_processor.object_def.name
+            if base_processor.object_def.description:
+                json_schema['description'] = base_processor.object_def.description
+            json_schemas.append(json_schema)
+            object_keys.append(json_schema.get('title', 'result'))
+
+        if toolset_processors:
+            for name, tool_processor in toolset_processors.items():
+                json_schema = tool_processor.object_def.json_schema
+                json_schema['title'] = name
+                if tool_processor.object_def.description:
+                    json_schema['description'] = tool_processor.object_def.description
+                json_schemas.append(json_schema)
+                object_keys.append(name)
+
+        special_output_types: list[type] = []
+        if allows_text:
+            special_output_types.append(str)
+        if allows_deferred_tools:
+            special_output_types.append(DeferredToolRequests)
+        if allows_image:
+            special_output_types.append(_messages.BinaryImage)
+        if special_output_types:
+            for output_type in special_output_types:
+                output_type_json_schema = TypeAdapter(output_type).json_schema()
+                json_schemas.append(output_type_json_schema)
+                object_key = output_type.__name__
+                object_keys.append(object_key)
+
+        json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
+
+        if len(json_schemas) == 1 and not all_defs:
+            return json_schemas[0]
+
+        unique_object_keys: list[str] = []
+        for key in object_keys:
+            count = 1
+            new_key = key
+            while new_key in unique_object_keys:
+                count += 1
+                new_key = f'{key}-{count}'
+            unique_object_keys.append(new_key)
+
+        discriminated_json_schemas: list[ObjectJsonSchema] = []
+        for object_key, json_schema in zip(unique_object_keys, json_schemas):
+            title = json_schema.pop('title', None)
+            description = json_schema.pop('description', None)
+
+            discriminated_json_schema = {
+                'type': 'object',
+                'properties': {
+                    'kind': {
+                        'type': 'string',
+                        'const': object_key,
+                    },
+                    'data': json_schema,
+                },
+                'required': ['kind', 'data'],
+                'additionalProperties': False,
+            }
+            if title:  # pragma: no branch
+                discriminated_json_schema['title'] = title
+            if description:
+                discriminated_json_schema['description'] = description
+
+            discriminated_json_schemas.append(discriminated_json_schema)
+
+        json_schema = {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': discriminated_json_schemas,
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
+        if all_defs:
+            json_schema['$defs'] = all_defs
+
+        return json_schema
 
 
 @dataclass(init=False)
@@ -405,6 +513,13 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
     def mode(self) -> OutputMode:
         return 'auto'
 
+    def json_schema(self) -> JsonSchema:
+        return OutputSchema[OutputDataT].build_json_schema(
+            base_processor=self.processor,
+            allows_deferred_tools=self.allows_deferred_tools,
+            allows_image=self.allows_image,
+        )
+
 
 @dataclass(init=False)
 class TextOutputSchema(OutputSchema[OutputDataT]):
@@ -425,6 +540,14 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
     def mode(self) -> OutputMode:
         return 'text'
 
+    def json_schema(self) -> JsonSchema:
+        if self.allows_deferred_tools or self.allows_image:
+            return OutputSchema.build_json_schema(
+                allows_deferred_tools=self.allows_deferred_tools, allows_image=self.allows_image, allows_text=True
+            )
+
+        return TypeAdapter(str).json_schema()
+
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
     def __init__(self, *, allows_deferred_tools: bool):
@@ -433,6 +556,12 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'image'
+
+    def json_schema(self) -> JsonSchema:
+        if self.allows_deferred_tools:
+            return OutputSchema.build_json_schema(allows_deferred_tools=True, allows_image=True)
+
+        return TypeAdapter(_messages.BinaryImage).json_schema()
 
 
 @dataclass(init=False)
@@ -449,6 +578,13 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
             allows_image=allows_image,
         )
         self.processor = processor
+
+    def json_schema(self) -> JsonSchema:
+        return OutputSchema[OutputDataT].build_json_schema(
+            base_processor=self.processor,
+            allows_deferred_tools=self.allows_deferred_tools,
+            allows_image=self.allows_image,
+        )
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
@@ -515,6 +651,14 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'tool'
+
+    def json_schema(self) -> JsonSchema:
+        return OutputSchema[OutputDataT].build_json_schema(
+            toolset_processors=self.toolset.processors,  # pyright: ignore[reportOptionalMemberAccess]
+            allows_deferred_tools=self.allows_deferred_tools,
+            allows_image=self.allows_image,
+            allows_text=self.allows_text,
+        )
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
@@ -698,11 +842,12 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
+
         for output in outputs:
             processor = ObjectOutputProcessor(output=output, strict=strict)
             object_def = processor.object_def
-
             object_key = object_def.name or output.__name__
+
             i = 1
             original_key = object_key
             while object_key in self._processors:

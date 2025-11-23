@@ -34,6 +34,7 @@ from .._agent_graph import (
     UserPromptNode,
     capture_run_messages,
 )
+from .._json_schema import JsonSchema
 from .._output import OutputToolset
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
@@ -946,6 +947,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             assert not dynamic, "dynamic can't be True in this case"
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
+
+    def output_json_schema(self, output_type: OutputSpec[RunOutputDataT] | None = None) -> JsonSchema:
+        """The output JSON schema."""
+        output_schema = self._prepare_output_schema(output_type)
+        return output_schema.json_schema()
 
     @overload
     def output_validator(
