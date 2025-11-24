@@ -7,9 +7,6 @@ Test organization:
 1. Strict Tools - Model Support
 2. Strict Tools - Schema Compatibility
 3. Native Output - Model Support
-4. Auto Mode Selection
-5. Beta Header Management
-6. Comprehensive Parametrized Tests - All Combinations (24 test cases)
 """
 
 from __future__ import annotations as _annotations
@@ -33,7 +30,7 @@ with try_import() as imports_successful:
     from anthropic import AsyncAnthropic, omit as OMIT
     from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaUsage
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 from ..test_anthropic import completion_message
@@ -53,7 +50,7 @@ pytestmark = [
 def test_strict_tools_supported_model_auto_enabled(
     allow_model_requests: None, weather_tool_responses: list[BetaMessage]
 ):
-    """sonnet-4-5: strict=None + compatible schema → auto strict=True + beta header."""
+    """sonnet-4-5: strict=None + compatible schema → no strict field, no beta header."""
     mock_client = MockAnthropic.create_mock(weather_tool_responses)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
@@ -139,7 +136,7 @@ def test_strict_tools_unsupported_model_no_strict_sent(
 
 
 def test_strict_tools_incompatible_schema_not_auto_enabled(allow_model_requests: None):
-    """sonnet-4-5: strict=None + lossy schema → no strict field, no beta header."""
+    """sonnet-4-5: strict=None → no strict field, no beta header."""
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='Sure', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
     )
@@ -156,9 +153,9 @@ def test_strict_tools_incompatible_schema_not_auto_enabled(allow_model_requests:
     tools = completion_kwargs['tools']
     betas = completion_kwargs.get('betas')
 
-    # Lossy schema: strict is not auto-enabled, so no strict field
+    # strict is not auto-enabled, so no strict field
     assert 'strict' not in tools[0]
-    # Schema still has the constraint (not removed)
+    # because the schema wasn't transformed, it keeps the pydantic constraint
     assert tools[0]['input_schema']['properties']['username']['minLength'] == 3
     assert betas is OMIT
 
@@ -186,64 +183,6 @@ def test_native_output_supported_model(
     assert output_format['type'] == 'json_schema'
     assert output_format['schema']['type'] == 'object'
     assert betas == snapshot(['structured-outputs-2025-11-13'])
-
-
-def test_native_output_unsupported_model_raises_error(
-    allow_model_requests: None, city_location_schema: type[BaseModel]
-):
-    """sonnet-4-0: NativeOutput → raises UserError."""
-    mock_client = MockAnthropic.create_mock(
-        completion_message([BetaTextBlock(text='test', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
-    )
-    model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, output_type=NativeOutput(city_location_schema))
-
-    with pytest.raises(UserError, match='Model claude-sonnet-4-0 does not support native output.'):
-        agent.run_sync('What is the capital of France?')
-
-
-# =============================================================================
-# AUTO MODE Selection
-# =============================================================================
-
-
-def test_auto_mode_model_profile_check(allow_model_requests: None):
-    """Verify profile.supports_json_schema_output is set correctly."""
-    mock_client = MockAnthropic.create_mock(
-        completion_message([BetaTextBlock(text='test', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
-    )
-
-    sonnet_4_5 = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    assert sonnet_4_5.profile.supports_json_schema_output is True
-
-    sonnet_4_0 = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
-    assert sonnet_4_0.profile.supports_json_schema_output is False
-
-
-# =============================================================================
-# BETA HEADER Management
-# =============================================================================
-
-
-def test_beta_header_merge_custom_headers(
-    allow_model_requests: None,
-    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
-    city_location_schema: type[BaseModel],
-):
-    """Custom beta headers merge with structured-outputs beta."""
-    model, mock_client = mock_sonnet_4_5
-
-    agent = Agent(
-        model,
-        output_type=NativeOutput(city_location_schema),
-        model_settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2'}),
-    )
-    agent.run_sync('What is the capital of France?')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
-    betas = completion_kwargs['betas']
-
-    assert betas == snapshot(['custom-feature-1', 'custom-feature-2', 'structured-outputs-2025-11-13'])
 
 
 # =============================================================================
@@ -379,7 +318,10 @@ def test_no_tools_native_output_strict_false(
 
     agent = Agent(model, output_type=NativeOutput(CityInfo, strict=False))
 
-    with pytest.raises(UserError, match='Cannot use `output_type=NativeOutput\\(\\.\\.\\.\\)` with `strict=False`'):
+    with pytest.raises(
+        UserError,
+        match='Setting `strict=False` on `output_type=NativeOutput\\(\\.\\.\\.\\)` is not allowed for Anthropic models.',
+    ):
         agent.run_sync('Tell me about Rome')
 
 

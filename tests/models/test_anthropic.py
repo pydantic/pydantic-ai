@@ -52,7 +52,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
@@ -69,6 +69,7 @@ with try_import() as imports_successful:
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
+        BetaDirectCaller,
         BetaInputJSONDelta,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
@@ -622,6 +623,51 @@ async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_re
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'strict' not in completion_kwargs['tools'][0]
+
+
+async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_requests: None):
+    """Verify beta headers merge from custom headers, builtin tools, and native output."""
+    c = completion_message(
+        [BetaTextBlock(text='{"city": "Mexico City", "country": "Mexico"}', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2'}),
+    )
+
+    agent = Agent(
+        model,
+        builtin_tools=[MemoryTool()],
+        output_type=NativeOutput(CityLocation),
+    )
+
+    @agent.tool_plain
+    def memory(**command: Any) -> Any:  # pragma: no cover
+        return 'memory response'
+
+    await agent.run('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs['betas']
+
+    assert betas == snapshot(
+        [
+            'context-management-2025-06-27',
+            'custom-feature-1',
+            'custom-feature-2',
+            'structured-outputs-2025-11-13',
+        ]
+    )
 
 
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
@@ -5491,26 +5537,34 @@ Mexico City serves as the country's capital and is the political, economic, and 
 async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Test passing web search tool history back to Anthropic."""
     # Create the first mock response with server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me search for the current date.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_123',
+            name='web_search',
+            input={'query': 'current date today'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaWebSearchToolResultBlock(
+            tool_use_id='server_tool_123',
+            type='web_search_tool_result',
+            content=[
+                BetaWebSearchResultBlock(
+                    title='Current Date and Time',
+                    url='https://example.com/date',
+                    type='web_search_result',
+                    encrypted_content='dummy_encrypted_content',
+                )
+            ],
+        ),
+    )
+    content.append(BetaTextBlock(text='Today is January 2, 2025.', type='text'))
     first_response = completion_message(
-        [
-            BetaTextBlock(text='Let me search for the current date.', type='text'),
-            BetaServerToolUseBlock(
-                id='server_tool_123', name='web_search', input={'query': 'current date today'}, type='server_tool_use'
-            ),
-            BetaWebSearchToolResultBlock(
-                tool_use_id='server_tool_123',
-                type='web_search_tool_result',
-                content=[
-                    BetaWebSearchResultBlock(
-                        title='Current Date and Time',
-                        url='https://example.com/date',
-                        type='web_search_result',
-                        encrypted_content='dummy_encrypted_content',
-                    )
-                ],
-            ),
-            BetaTextBlock(text='Today is January 2, 2025.', type='text'),
-        ],
+        content,
         BetaUsage(input_tokens=10, output_tokens=20),
     )
 
@@ -5544,25 +5598,33 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Test passing code execution tool history back to Anthropic."""
     # Create the first mock response with server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me calculate 2 + 2.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_456',
+            name='code_execution',
+            input={'code': 'print(2 + 2)'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_456',
+            type='code_execution_tool_result',
+            content=BetaCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='4\n',
+                type='code_execution_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The result is 4.', type='text'))
     first_response = completion_message(
-        [
-            BetaTextBlock(text='Let me calculate 2 + 2.', type='text'),
-            BetaServerToolUseBlock(
-                id='server_tool_456', name='code_execution', input={'code': 'print(2 + 2)'}, type='server_tool_use'
-            ),
-            BetaCodeExecutionToolResultBlock(
-                tool_use_id='server_tool_456',
-                type='code_execution_tool_result',
-                content=BetaCodeExecutionResultBlock(
-                    content=[],
-                    return_code=0,
-                    stderr='',
-                    stdout='4\n',
-                    type='code_execution_result',
-                ),
-            ),
-            BetaTextBlock(text='The result is 4.', type='text'),
-        ],
+        content,
         BetaUsage(input_tokens=10, output_tokens=20),
     )
 

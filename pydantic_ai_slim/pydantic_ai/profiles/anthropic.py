@@ -5,15 +5,15 @@ from dataclasses import dataclass
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
 
+ANTHROPIC_MODELS_THAT_SUPPORT_JSON_SCHEMA_OUTPUT = ('claude-sonnet-4-5', 'claude-opus-4-1', 'claude-opus-4-5')
+"""These models support both structured outputs and strict tool calling."""
 # TODO update when new models are released that support structured outputs
 # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
-models_that_support_json_schema_output = ('claude-sonnet-4-5', 'claude-opus-4-1')
-"""These models support both structured outputs and strict tool calling."""
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
-    supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
+    supports_json_schema_output = model_name.startswith(ANTHROPIC_MODELS_THAT_SUPPORT_JSON_SCHEMA_OUTPUT)
     return ModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
@@ -43,7 +43,9 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
         # - tool_def.strict = self.is_strict_compatible
         # - output_object.strict = self.is_strict_compatible
         # we need to set it to False if we're not transforming, otherwise anthropic's API will reject the request
-        self.is_strict_compatible = self.strict or False  # default to False if None
+        # if you want this behavior to change, please comment in this issue:
+        # https://github.com/pydantic/pydantic-ai/issues/3541
+        self.is_strict_compatible = self.strict is True  # not compatible is strict is False/None
 
         return transform_schema(schema) if self.strict is True else schema
 

@@ -38,7 +38,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
-from ..profiles.anthropic import models_that_support_json_schema_output
+from ..profiles.anthropic import ANTHROPIC_MODELS_THAT_SUPPORT_JSON_SCHEMA_OUTPUT
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
@@ -311,14 +311,15 @@ class AnthropicModel(Model):
                 )
 
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.output_object is None:  # pragma: no cover
-                raise UserError('Unreachable code: can never set `output_type=NativeOutput(None)`.')
+            assert model_request_parameters.output_object is not None
             if model_request_parameters.output_object.strict is False:
-                raise UserError('Cannot use `output_type=NativeOutput(...)` with `strict=False`.')
+                raise UserError(
+                    'Setting `strict=False` on `output_type=NativeOutput(...)` is not allowed for Anthropic models.'
+                )
             if not self.profile.supports_json_schema_output:
                 raise UserError(
                     f'Model {self.model_name} does not support native output. Use `output_type=PromptedOutput(...)` instead.'
-                    f'Models that support native output include: {models_that_support_json_schema_output}.'
+                    f'Models that support native output include: {ANTHROPIC_MODELS_THAT_SUPPORT_JSON_SCHEMA_OUTPUT}.'
                 )
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
@@ -365,11 +366,11 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
         output_format = self._native_output_format(model_request_parameters)
-        betas_set = self._get_betas_set(tools, model_request_parameters)
-        betas_set.update(builtin_tool_betas)
+        betas = self._get_betas_set(tools, model_request_parameters)
+        betas.update(builtin_tool_betas)
 
         try:
-            betas, extra_headers = self._prepare_betas_and_headers(betas_set, model_settings)
+            betas, extra_headers = self._prepare_betas_and_headers(betas, model_settings)
 
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -380,7 +381,7 @@ class AnthropicModel(Model):
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
                 output_format=output_format or OMIT,
-                betas=betas or OMIT,
+                betas=sorted(betas) or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
@@ -416,11 +417,11 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
         output_format = self._native_output_format(model_request_parameters)
-        betas_set = self._get_betas_set(tools, model_request_parameters)
-        betas_set.update(builtin_tool_betas)
+        betas = self._get_betas_set(tools, model_request_parameters)
+        betas.update(builtin_tool_betas)
 
         try:
-            betas, extra_headers = self._prepare_betas_and_headers(betas_set, model_settings)
+            betas, extra_headers = self._prepare_betas_and_headers(betas, model_settings)
 
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -429,7 +430,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
-                betas=betas or OMIT,
+                betas=sorted(betas) or OMIT,
                 output_format=output_format or OMIT,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -578,7 +579,7 @@ class AnthropicModel(Model):
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
                 # Replace the memory tool definition with the built-in memory tool
-                tools = [tool for tool in tools if tool['name'] != 'memory']
+                tools = [tool for tool in tools if tool.get('name') != 'memory']
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.add('context-management-2025-06-27')
             elif isinstance(tool, MCPServerTool) and tool.url:
@@ -625,18 +626,11 @@ class AnthropicModel(Model):
 
     def _prepare_betas_and_headers(
         self, betas: set[str], model_settings: AnthropicModelSettings
-    ) -> tuple[list[str], dict[str, str]]:
+    ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
-        Handles merging custom anthropic-beta header from extra_headers into betas set
-        and ensuring User-Agent is set.
-
-        Args:
-            betas: Set of beta feature strings (naturally deduplicated)
-            model_settings: Model settings containing extra_headers
-
-        Returns:
-            Tuple of (betas list, extra_headers dict)
+        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set
+        and ensuring `User-Agent` is set.
         """
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
@@ -644,7 +638,7 @@ class AnthropicModel(Model):
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
-        return sorted(betas), extra_headers
+        return betas, extra_headers
 
     async def _map_message(  # noqa: C901
         self,
@@ -922,8 +916,7 @@ class AnthropicModel(Model):
             'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
-        if f.strict and self.profile.supports_json_schema_output:  # pragma: no branch
-            # NOTE we could warn the user that the model doesn't support strict mode to nudge them into one that does
+        if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
         return tool_param
 
@@ -1142,6 +1135,9 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
         )
     elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+    elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
+        # TODO 0.75
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
