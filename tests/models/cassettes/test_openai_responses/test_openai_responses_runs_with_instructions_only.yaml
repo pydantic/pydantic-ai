@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '160'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: ''
+        role: user
+      instructions: Generate a short article about artificial intelligence in 3 sentences.
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2011'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-ajisbeelkk2rx7pyndmnsvib
+      openai-processing-ms:
+      - '2348'
+      openai-project:
+      - proj_9ZxiyOCRVOhB09iY8TYBDFKd
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1763999169
+      error: null
+      id: resp_089b6a543794b4440069247dc1c478819d8204f08e5aeab32f
+      incomplete_details: null
+      instructions: Generate a short article about artificial intelligence in 3 sentences.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Artificial intelligence (AI) is revolutionizing various industries by automating tasks, enhancing data analysis,
+            and improving decision-making processes. From autonomous vehicles to personalized healthcare, AI applications
+            are becoming integral to daily life by increasing efficiency and fostering innovation. Despite its rapid advancement,
+            AI also raises ethical considerations regarding privacy, job displacement, and the necessity of establishing regulatory
+            frameworks to manage its impact on society.
+          type: output_text
+        id: msg_089b6a543794b4440069247dc2a578819d94f7ab73a3a19aab
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 23
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 78
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 101
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
