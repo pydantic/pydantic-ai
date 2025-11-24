@@ -1384,7 +1384,7 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
 class SimpleAgentWorkflowWithRunModel:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, model=model)
+        result = await simple_temporal_agent.run(prompt, model=model)  # type: ignore[arg-type]
         return result.output  # pragma: no cover
 
 
@@ -2509,9 +2509,7 @@ async def test_temporal_agent_multi_model_registration():
     test_model3 = TestModel(custom_output_text='Model 3 response')
 
     agent = Agent(test_model1, name='multi_model_test')
-    temporal_agent = TemporalAgent(
-        agent, name='multi_model_test', additional_models=[test_model2, test_model3]
-    )
+    temporal_agent = TemporalAgent(agent, name='multi_model_test', additional_models=[test_model2, test_model3])
 
     # Verify that all models are registered
     assert 'default' in temporal_agent._models
@@ -2530,13 +2528,17 @@ async def test_temporal_agent_multi_model_registration():
     model1_request_activity = next(
         a for a in model1_activities if '__model__test__request' in a.__temporal_activity_definition.name
     )
-    assert model1_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test__request'
+    assert (
+        model1_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test__request'
+    )
 
     model2_activities = temporal_agent._models['test_1'].temporal_activities
     model2_request_activity = next(
         a for a in model2_activities if '__model__test_1__request' in a.__temporal_activity_definition.name
     )
-    assert model2_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test_1__request'
+    assert (
+        model2_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test_1__request'
+    )
 
     # Verify all activities are included in temporal_activities
     all_activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}
@@ -2701,9 +2703,7 @@ async def test_temporal_agent_multi_model_outside_workflow():
     test_model2 = TestModel(custom_output_text='Model 2 response')
 
     agent = Agent(test_model1, name='outside_workflow_test')
-    temporal_agent = TemporalAgent(
-        agent, name='outside_workflow_test', additional_models=[test_model2]
-    )
+    temporal_agent = TemporalAgent(agent, name='outside_workflow_test', additional_models=[test_model2])
 
     # Outside workflow, should use default model from wrapped agent
     result = await temporal_agent.run('Hello')
