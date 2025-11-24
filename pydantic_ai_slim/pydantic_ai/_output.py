@@ -218,6 +218,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     object_def: OutputObjectDefinition | None = None
     allows_deferred_tools: bool = False
     allows_image: bool = False
+    json_schema: JsonSchema = field(init=False)
 
     @property
     def mode(self) -> OutputMode:
@@ -226,10 +227,6 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     @property
     def allows_text(self) -> bool:
         return self.text_processor is not None
-
-    @abstractmethod
-    def json_schema(self) -> JsonSchema:
-        raise NotImplementedError()
 
     @classmethod
     def build(  # noqa: C901
@@ -391,15 +388,13 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         allows_text: bool = False,
         base_processor: BaseObjectOutputProcessor[OutputDataT] | None = None,
         toolset_processors: dict[str, ObjectOutputProcessor[OutputDataT]] | None = None,
-        *,
-        name: str | None = None,
-        description: str | None = None,
     ) -> JsonSchema:
-        object_keys: list[str] = []
-        json_schemas: list[ObjectJsonSchema] = []
-
+        # allow any output with {'type': 'string'} if no constraints
         if not any([allows_deferred_tools, allows_image, allows_text, base_processor, toolset_processors]):
             return TypeAdapter(str).json_schema()
+
+        object_keys: list[str] = []
+        json_schemas: list[ObjectJsonSchema] = []
 
         if base_processor:
             json_schema = base_processor.object_def.json_schema
@@ -434,6 +429,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
 
+        # do not discriminate JSON if not needed
         if len(json_schemas) == 1 and not all_defs:
             return json_schemas[0]
 
@@ -507,18 +503,16 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
+        self.json_schema = OutputSchema[OutputDataT].build_json_schema(
+            base_processor=processor,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+        )
         self.processor = processor
 
     @property
     def mode(self) -> OutputMode:
         return 'auto'
-
-    def json_schema(self) -> JsonSchema:
-        return OutputSchema[OutputDataT].build_json_schema(
-            base_processor=self.processor,
-            allows_deferred_tools=self.allows_deferred_tools,
-            allows_image=self.allows_image,
-        )
 
 
 @dataclass(init=False)
@@ -535,33 +529,28 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
+        if allows_deferred_tools or allows_image:
+            self.json_schema = OutputSchema[OutputDataT].build_json_schema(
+                allows_deferred_tools=allows_deferred_tools, allows_image=allows_image, allows_text=True
+            )
+        else:
+            self.json_schema = OutputSchema[OutputDataT].build_json_schema()
 
     @property
     def mode(self) -> OutputMode:
         return 'text'
 
-    def json_schema(self) -> JsonSchema:
-        if self.allows_deferred_tools or self.allows_image:
-            return OutputSchema[OutputDataT].build_json_schema(
-                allows_deferred_tools=self.allows_deferred_tools, allows_image=self.allows_image, allows_text=True
-            )
-
-        return OutputSchema[OutputDataT].build_json_schema()
-
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
     def __init__(self, *, allows_deferred_tools: bool):
         super().__init__(allows_deferred_tools=allows_deferred_tools, allows_image=True)
+        self.json_schema = OutputSchema[OutputDataT].build_json_schema(
+            allows_deferred_tools=allows_deferred_tools, allows_image=True
+        )
 
     @property
     def mode(self) -> OutputMode:
         return 'image'
-
-    def json_schema(self) -> JsonSchema:
-        if self.allows_deferred_tools:
-            return OutputSchema[OutputDataT].build_json_schema(allows_deferred_tools=True, allows_image=True)
-
-        return OutputSchema[OutputDataT].build_json_schema(allows_image=True)
 
 
 @dataclass(init=False)
@@ -577,14 +566,12 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
-        self.processor = processor
-
-    def json_schema(self) -> JsonSchema:
-        return OutputSchema[OutputDataT].build_json_schema(
-            base_processor=self.processor,
-            allows_deferred_tools=self.allows_deferred_tools,
-            allows_image=self.allows_image,
+        self.json_schema = OutputSchema[OutputDataT].build_json_schema(
+            base_processor=processor,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
         )
+        self.processor = processor
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
@@ -647,18 +634,16 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
             text_processor=text_processor,
             allows_image=allows_image,
         )
-
-    @property
-    def mode(self) -> OutputMode:
-        return 'tool'
-
-    def json_schema(self) -> JsonSchema:
-        return OutputSchema[OutputDataT].build_json_schema(
+        self.json_schema = OutputSchema[OutputDataT].build_json_schema(
             toolset_processors=self.toolset.processors,  # pyright: ignore[reportOptionalMemberAccess]
             allows_deferred_tools=self.allows_deferred_tools,
             allows_image=self.allows_image,
             allows_text=self.allows_text,
         )
+
+    @property
+    def mode(self) -> OutputMode:
+        return 'tool'
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
