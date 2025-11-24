@@ -178,6 +178,8 @@ validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/j
 
     If the `state` field's type is a Pydantic `BaseModel` subclass, the raw state dictionary on the request is automatically validated. If not, you can validate the raw value yourself in your dependencies dataclass's `__post_init__` method.
 
+    If AG-UI state is provided but your dependencies do not implement [`StateHandler`][pydantic_ai.ag_ui.StateHandler], Pydantic AI will emit a warning and ignore the state. Use [`StateDeps`][pydantic_ai.ag_ui.StateDeps] or a custom [`StateHandler`][pydantic_ai.ag_ui.StateHandler] implementation to receive and validate the incoming state.
+
 
 ```python {title="ag_ui_state.py"}
 from pydantic import BaseModel
