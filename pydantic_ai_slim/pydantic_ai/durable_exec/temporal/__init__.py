@@ -95,7 +95,7 @@ class PydanticAIPlugin(SimplePlugin):
 class AgentPlugin(SimplePlugin):
     """Temporal worker plugin for a specific Pydantic AI agent."""
 
-    def __init__(self, agent: TemporalAgent[Any, Any]):
+    def __init__(self, agent: TemporalAgent[Any, Any, Any]):
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=agent.temporal_activities,
