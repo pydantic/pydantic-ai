@@ -60,37 +60,6 @@ class _EventStreamHandlerParams:
 
 
 class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, OutputDataT, AdditionalModelsT]):
-    """A wrapper agent that enables running inside Temporal workflows.
-
-    The `AdditionalModelsT` type parameter captures the types of models registered via `additional_models`,
-    enabling type-safe model selection at runtime. When you pass models to `additional_models`, the type
-    checker will only allow those same model types (or `None` for the default) in the `model` parameter
-    of `run()` and other methods.
-
-    Example:
-        ```python
-        from pydantic_ai import Agent
-        from pydantic_ai.models.openai import OpenAIModel
-        from pydantic_ai.models.anthropic import AnthropicModel
-
-        # Define your models
-        gpt4 = OpenAIModel('gpt-4')
-        claude = AnthropicModel('claude-3-opus')
-
-        agent = Agent(gpt4, name='my_agent')
-
-        # The type parameter is inferred from additional_models
-        temporal_agent = TemporalAgent(
-            agent,
-            additional_models=[claude],  # AdditionalModelsT = AnthropicModel
-        )
-
-        # Now model parameter only accepts AnthropicModel | None
-        await temporal_agent.run('Hello', model=claude)  # OK
-        await temporal_agent.run('Hello', model=None)    # OK - uses default (gpt4)
-        ```
-    """
-
     @overload
     def __init__(
         self,
