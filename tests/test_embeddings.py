@@ -99,14 +99,14 @@ class TestCohere:
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful, reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
-    async def test_infer_model(self, co_api_key: str):
+    async def test_infer_model(self):
         model = infer_model('sentence-transformers:all-MiniLM-L6-v2')
         assert isinstance(model, SentenceTransformerEmbeddingModel)
         assert model.model_name == 'all-MiniLM-L6-v2'
         assert model.system == 'sentence-transformers'
         assert model.base_url is None
 
-    async def test_query(self, co_api_key: str):
+    async def test_query(self):
         model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
         embedder = Embedder(model)
         embeddings = await embedder.embed_query('Hello, world!')
@@ -117,7 +117,7 @@ class TestSentenceTransformers:
             length=384,
         )
 
-    async def test_documents(self, co_api_key: str):
+    async def test_documents(self):
         model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
         embedder = Embedder(model)
         embeddings = await embedder.embed_documents(['hello', 'world'])
@@ -138,6 +138,7 @@ class TestSentenceTransformers:
         )
 
 
+@pytest.mark.skipif(not openai_imports_successful, reason='OpenAI not installed')
 async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
     model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
     embedder = Embedder(model, instrument=True)
