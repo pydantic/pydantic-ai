@@ -391,7 +391,6 @@ async def test_override_output_json_schema():
 
 async def test_deferred_output_json_schema():
     agent = Agent('test', output_type=[str, DeferredToolRequests])
-
     assert agent.output_json_schema() == snapshot(
         {
             'type': 'object',
@@ -432,6 +431,153 @@ async def test_deferred_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'DeferredToolRequests',
+                        },
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+            '$defs': {
+                'ToolCallPart': {
+                    'description': 'A tool call from a model.',
+                    'properties': {
+                        'tool_name': {'title': 'Tool Name', 'type': 'string'},
+                        'args': {
+                            'anyOf': [
+                                {'type': 'string'},
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Args',
+                        },
+                        'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                        'provider_details': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Provider Details',
+                        },
+                        'part_kind': {
+                            'const': 'tool-call',
+                            'default': 'tool-call',
+                            'title': 'Part Kind',
+                            'type': 'string',
+                        },
+                    },
+                    'required': ['tool_name'],
+                    'title': 'ToolCallPart',
+                    'type': 'object',
+                }
+            },
+        }
+    )
+
+    agent = Agent('test', output_type=[BinaryImage, DeferredToolRequests])
+    assert agent.output_json_schema() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'DeferredToolRequests'},
+                                'data': {
+                                    'properties': {
+                                        'calls': {
+                                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                                            'title': 'Calls',
+                                            'type': 'array',
+                                        },
+                                        'approvals': {
+                                            'items': {'$ref': '#/$defs/ToolCallPart'},
+                                            'title': 'Approvals',
+                                            'type': 'array',
+                                        },
+                                        'metadata': {
+                                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                                            'title': 'Metadata',
+                                            'type': 'object',
+                                        },
+                                    },
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'DeferredToolRequests',
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'BinaryImage'},
+                                'data': {
+                                    'properties': {
+                                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                                        'media_type': {
+                                            'anyOf': [
+                                                {
+                                                    'enum': [
+                                                        'audio/wav',
+                                                        'audio/mpeg',
+                                                        'audio/ogg',
+                                                        'audio/flac',
+                                                        'audio/aiff',
+                                                        'audio/aac',
+                                                    ],
+                                                    'type': 'string',
+                                                },
+                                                {
+                                                    'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+                                                    'type': 'string',
+                                                },
+                                                {
+                                                    'enum': [
+                                                        'application/pdf',
+                                                        'text/plain',
+                                                        'text/csv',
+                                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                                        'text/html',
+                                                        'text/markdown',
+                                                        'application/msword',
+                                                        'application/vnd.ms-excel',
+                                                    ],
+                                                    'type': 'string',
+                                                },
+                                                {'type': 'string'},
+                                            ],
+                                            'title': 'Media Type',
+                                        },
+                                        'vendor_metadata': {
+                                            'anyOf': [
+                                                {'additionalProperties': True, 'type': 'object'},
+                                                {'type': 'null'},
+                                            ],
+                                            'default': None,
+                                            'title': 'Vendor Metadata',
+                                        },
+                                        'identifier': {
+                                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                            'default': None,
+                                            'title': 'Identifier',
+                                        },
+                                        'kind': {
+                                            'const': 'binary',
+                                            'default': 'binary',
+                                            'title': 'Kind',
+                                            'type': 'string',
+                                        },
+                                    },
+                                    'required': ['data', 'media_type'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'BinaryImage',
                         },
                     ]
                 }
