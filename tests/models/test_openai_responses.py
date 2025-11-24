@@ -7785,20 +7785,22 @@ async def test_openai_include_file_search_results_setting():
     from pydantic_ai.builtin_tools import FileSearchTool
 
     mock_response = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='output-1',
-                    content=cast(
-                        list[Content],
-                        [ResponseOutputText(text='Done.', type='output_text', annotations=[])],
-                    ),
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
+        [
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='output-1',
+                        content=cast(
+                            list[Content],
+                            [ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+                        ),
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            )
+        ]
     )
 
     model = OpenAIResponsesModel(
@@ -7813,6 +7815,7 @@ async def test_openai_include_file_search_results_setting():
 
     await agent.run('test')
     kwargs = get_mock_responses_kwargs(mock_response)
+    assert len(kwargs) > 0
     assert 'include' in kwargs[0]
     assert 'file_search_call.results' in kwargs[0]['include']
 
@@ -7821,20 +7824,22 @@ async def test_openai_file_search_with_message_history():
     from pydantic_ai.builtin_tools import FileSearchTool
 
     mock_response = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='output-1',
-                    content=cast(
-                        list[Content],
-                        [ResponseOutputText(text='The capital is Paris.', type='output_text', annotations=[])],
-                    ),
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
+        [
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='output-1',
+                        content=cast(
+                            list[Content],
+                            [ResponseOutputText(text='The capital is Paris.', type='output_text', annotations=[])],
+                        ),
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            )
+        ]
     )
 
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_response))
@@ -7869,20 +7874,22 @@ async def test_openai_file_search_status_update():
     from pydantic_ai.builtin_tools import FileSearchTool
 
     mock_response = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='output-1',
-                    content=cast(
-                        list[Content],
-                        [ResponseOutputText(text='Done.', type='output_text', annotations=[])],
-                    ),
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                )
-            ]
-        )
+        [
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='output-1',
+                        content=cast(
+                            list[Content],
+                            [ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+                        ),
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            )
+        ]
     )
 
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_response))
