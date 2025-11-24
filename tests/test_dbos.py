@@ -69,6 +69,10 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
+try:
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+except ImportError:  # pragma: lax no cover
+    pytest.skip('fastmcp not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -1747,12 +1751,40 @@ def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> Mode
 
 
 model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
-model = FunctionModel(return_settings, settings=model_settings)
+return_settings_model = FunctionModel(return_settings, settings=model_settings)
 
-settings_agent = Agent(model, name='settings_agent')
+settings_agent = Agent(return_settings_model, name='settings_agent')
 settings_dbos_agent = DBOSAgent(settings_agent)
 
 
 async def test_custom_model_settings(allow_model_requests: None, dbos: DBOS):
     result = await settings_dbos_agent.run('Give me those settings')
     assert result.output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+fastmcp_agent = Agent(
+    model,
+    name='fastmcp_agent',
+    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+)
+
+fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)
+
+
+async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
+    result = await fastmcp_dbos_agent.run(
+        'Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
+    )
+    print(result.output)
+    assert result.output == snapshot(
+        """\
+The `pydantic/pydantic-ai` repository is organized into several detailed sections:
+
+1. **Overview**: Provides the project structure and details on installation and setup.
+2. **Core Agent System**: Covers agent fundamentals, execution, tools, dependencies, output processing, and communication.
+3. **LLM Model Integration**: Focuses on various model architectures and providers including OpenAI, Anthropic, Google, and others.
+4. **Advanced Features**: Discusses streaming, observability, the Model Context Protocol, CLI, and integration ecosystem.
+5. **Evaluation and Testing**: Describes the evaluation framework and testing infrastructure used.
+6. **Development and Infrastructure**: Outlines the development workflow, tools, CI/CD pipeline, and documentation system.\
+"""
+    )
