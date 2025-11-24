@@ -659,6 +659,53 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
+async def test_xai_instructions(allow_model_requests: None):
+    """Test that instructions are passed through to xAI SDK as a system message."""
+    response = create_response(content='The capital of France is Paris.')
+    mock_client = MockXai.create_mock(response)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+
+    # Verify the response
+    assert result.output == 'The capital of France is Paris.'
+
+    # Verify that instructions were passed as the first system message
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    messages = kwargs['messages']
+
+    # First message should be the system message with instructions
+    assert messages[0].role == chat_types.chat_pb2.MessageRole.ROLE_SYSTEM
+    # xAI SDK uses protobuf - content is a repeated field with text items
+    assert messages[0].content[0].text == 'You are a helpful assistant.'
+
+    # Second message should be the user message
+    assert messages[1].role == chat_types.chat_pb2.MessageRole.ROLE_USER
+    assert messages[1].content[0].text == 'What is the capital of France?'
+
+    # Verify the message history has instructions
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsNow(tz=timezone.utc))],
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.')],
+                usage=RequestUsage(),
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_xai_image_url_input(allow_model_requests: None):
     response = create_response(content='world')
     mock_client = MockXai.create_mock(response)

@@ -129,8 +129,16 @@ class XaiModel(Model):
         """The model provider."""
         return 'xai'
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat_types.chat_pb2.Message]:
-        """Convert pydantic_ai messages to xAI SDK messages."""
+    async def _map_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[str | None, list[chat_types.chat_pb2.Message]]:
+        """Convert pydantic_ai messages to xAI SDK messages.
+
+        Returns:
+            A tuple of (instructions, xai_messages) where instructions may be None.
+        """
         xai_messages: list[chat_types.chat_pb2.Message] = []
 
         for message in messages:
@@ -142,9 +150,8 @@ class XaiModel(Model):
             else:
                 assert_never(message)
 
-        # TODO(julian): Add self._get_instructions here
-
-        return xai_messages
+        instructions = self._get_instructions(messages, model_request_parameters)
+        return instructions, xai_messages
 
     async def _map_request_parts(self, parts: Sequence[ModelRequestPart]) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
@@ -469,7 +476,11 @@ class XaiModel(Model):
             The xAI SDK chat object, ready to call .sample() or .stream() on.
         """
         # Convert messages to xAI format
-        xai_messages = await self._map_messages(messages)
+        instructions, xai_messages = await self._map_messages(messages, model_request_parameters)
+
+        # Insert instructions as a system message at the beginning if present
+        if instructions:
+            xai_messages.insert(0, system(instructions))
 
         # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
         tools: list[chat_types.chat_pb2.Tool] = []
