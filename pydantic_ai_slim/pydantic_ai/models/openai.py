@@ -722,6 +722,7 @@ class OpenAIChatModel(Model):
 
         texts: list[str] = field(default_factory=list)
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
+        reasoning_texts: list[str] = field(default_factory=list)
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
             for item in message.parts:
@@ -757,6 +758,9 @@ class OpenAIChatModel(Model):
                 message_param['content'] = None
             if self.tool_calls:
                 message_param['tool_calls'] = self.tool_calls
+            if self.reasoning_texts:
+                if reasoning_field := OpenAIModelProfile.from_profile(self._model.profile).openai_chat_reasoning_field:
+                    message_param[reasoning_field] = '\n\n'.join(self.reasoning_texts)
             return message_param
 
         def _map_response_text_part(self, item: TextPart) -> None:
@@ -773,11 +777,16 @@ class OpenAIChatModel(Model):
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for handling thinking parts.
             """
-            # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
-            # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
-            # If you need this changed, please file an issue.
-            start_tag, end_tag = self._model.profile.thinking_tags
-            self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            profile = OpenAIModelProfile.from_profile(self._model.profile)
+            if profile.openai_chat_reasoning_field:
+                self.reasoning_texts.append(item.content)
+            else:
+                # Existing fallback logic
+                # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
+                # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
+                # If you need this changed, please file an issue.
+                start_tag, end_tag = self._model.profile.thinking_tags
+                self.texts.append('\n'.join([start_tag, item.content, end_tag]))
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.

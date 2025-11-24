@@ -3116,3 +3116,36 @@ async def test_cache_point_filtering_responses_model():
     assert len(msg['content']) == 2
     assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
     assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_openai_chat_reasoning_field(allow_model_requests: None):
+    """Test that reasoning content is sent in the configured field when `openai_chat_reasoning_field` is set."""
+    # Mock a response that will trigger a thinking part in history
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    # Configure model with custom profile setting the reasoning field
+    profile = OpenAIModelProfile(openai_chat_reasoning_field='reasoning_content')
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    # Create a history with a ThinkingPart
+    history = [
+        ModelResponse(
+            parts=[ThinkingPart(content='thinking about it'), TextPart(content='hello')],
+            model_name='gpt-4o',
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            provider_name='openai',
+        )
+    ]
+
+    agent = Agent(m)
+    await agent.run('next', message_history=history)
+
+    # Verify the request sent to OpenAI has the extra field
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = kwargs['messages']
+
+    # The history message (index 0) should have the reasoning_content field
+    assert messages[0]['role'] == 'assistant'
+    assert messages[0]['content'] == 'hello'
+    assert messages[0]['reasoning_content'] == 'thinking about it'

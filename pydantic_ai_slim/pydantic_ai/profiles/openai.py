@@ -51,6 +51,13 @@ class OpenAIModelProfile(ModelProfile):
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
+    openai_chat_reasoning_field: str | None = None
+    """The field name to use for sending reasoning content back to the model.
+
+    If set, reasoning content will be sent in this field of the request message
+    instead of being embedded in the content.
+    """
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
