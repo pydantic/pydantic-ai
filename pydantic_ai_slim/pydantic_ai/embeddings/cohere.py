@@ -2,14 +2,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast, overload
 
-from pydantic_ai.embeddings.base import EmbeddingModel
+from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
 from pydantic_ai.embeddings.settings import EmbeddingSettings
 from pydantic_ai.providers import Provider, infer_provider
 
 try:
     from cohere import AsyncClientV2
     from cohere.core.request_options import RequestOptions
-    from cohere.types.embed_input_type import EmbedInputType
 except ImportError as _import_error:
     raise ImportError(
         'Please install `cohere` to use the Cohere embeddings model, '
@@ -39,9 +38,6 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
 
     # We don't support `embedding_types for now because it doesn't affect the user-facing API today..
     # cohere_embedding_types: Literal["float", "int8", "uint8", "binary", "ubinary", "base64"]
-
-    cohere_input_type: EmbedInputType
-    """The input type of the embedding."""
 
 
 @dataclass(init=False)
@@ -93,21 +89,27 @@ class CohereEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     @overload
-    async def embed(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
+    async def embed(
+        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[float]:
         pass
 
     @overload
-    async def embed(self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None) -> list[list[float]]:
+    async def embed(
+        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
         pass
 
     async def embed(
-        self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> list[float] | list[list[float]]:
         documents, is_single_document, settings = self.prepare_embed(documents, settings)
-        embeddings = await self._embed(documents, cast(CohereEmbeddingSettings, settings))
+        embeddings = await self._embed(documents, input_type, cast(CohereEmbeddingSettings, settings))
         return embeddings[0] if is_single_document else embeddings
 
-    async def _embed(self, documents: Sequence[str], settings: CohereEmbeddingSettings) -> list[list[float]]:
+    async def _embed(
+        self, documents: Sequence[str], input_type: EmbedInputType, settings: CohereEmbeddingSettings
+    ) -> list[list[float]]:
         request_options = RequestOptions()
         if extra_headers := settings.get('extra_headers'):
             request_options['additional_headers'] = extra_headers
@@ -118,7 +120,7 @@ class CohereEmbeddingModel(EmbeddingModel):
             model=self.model_name,
             texts=documents,
             output_dimension=settings.get('dimensions'),
-            input_type=settings.get('cohere_input_type', 'search_document'),
+            input_type='search_document' if input_type == 'document' else 'search_query',
             max_tokens=settings.get('cohere_max_tokens'),
             request_options=request_options,
         )

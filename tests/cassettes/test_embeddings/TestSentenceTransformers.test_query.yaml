@@ -1,0 +1,1263 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''modules.json; filename="modules.json";
+      content-length:
+      - '282'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
+      ratelimit:
+      - '"resolvers";r=4989;t=288'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '161'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''modules.json; filename="modules.json";
+      content-length:
+      - '349'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
+      ratelimit:
+      - '"resolvers";r=4998;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config_sentence_transformers.json; filename="config_sentence_transformers.json";
+      content-length:
+      - '324'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
+      ratelimit:
+      - '"resolvers";r=4988;t=288'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '161'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config_sentence_transformers.json; filename="config_sentence_transformers.json";
+      content-length:
+      - '116'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
+      ratelimit:
+      - '"resolvers";r=4996;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config_sentence_transformers.json; filename="config_sentence_transformers.json";
+      content-length:
+      - '324'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
+      ratelimit:
+      - '"resolvers";r=4987;t=288'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '162'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config_sentence_transformers.json; filename="config_sentence_transformers.json";
+      content-length:
+      - '116'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
+      ratelimit:
+      - '"resolvers";r=4996;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/README.md
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''README.md; filename="README.md";
+      content-length:
+      - '276'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2FREADME.md=&etag=%2258d4a9a45664eb9e12de9549c548c09b6134c17f%22
+      ratelimit:
+      - '"resolvers";r=4986;t=287'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '162'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''README.md; filename="README.md";
+      content-length:
+      - '10454'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"58d4a9a45664eb9e12de9549c548c09b6134c17f"'
+      ratelimit:
+      - '"resolvers";r=4993;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''modules.json; filename="modules.json";
+      content-length:
+      - '282'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
+      ratelimit:
+      - '"resolvers";r=4985;t=287'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '162'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''modules.json; filename="modules.json";
+      content-length:
+      - '349'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
+      ratelimit:
+      - '"resolvers";r=4998;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/sentence_bert_config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''sentence_bert_config.json; filename="sentence_bert_config.json";
+      content-length:
+      - '308'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fsentence_bert_config.json=&etag=%2259d594003bf59880a884c574bf88ef7555bb0202%22
+      ratelimit:
+      - '"resolvers";r=4984;t=287'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '161'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''sentence_bert_config.json; filename="sentence_bert_config.json";
+      content-length:
+      - '53'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"59d594003bf59880a884c574bf88ef7555bb0202"'
+      ratelimit:
+      - '"resolvers";r=4990;t=148'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/adapter_config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '15'
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
+      ratelimit:
+      - '"resolvers";r=4983;t=287'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 404
+      message: Not Found
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config.json; filename="config.json";
+      content-length:
+      - '280'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig.json=&etag=%2272b987fd805cfa2b58c4c8c952b274a11bfd5a00%22
+      ratelimit:
+      - '"resolvers";r=4982;t=287'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '161'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config.json; filename="config.json";
+      content-length:
+      - '612'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"72b987fd805cfa2b58c4c8c952b274a11bfd5a00"'
+      ratelimit:
+      - '"resolvers";r=4987;t=148'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''tokenizer_config.json; filename="tokenizer_config.json";
+      content-length:
+      - '300'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/tokenizer_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Ftokenizer_config.json=&etag=%22c79f2b6a0cea6f4b564fed1938984bace9d30ff0%22
+      ratelimit:
+      - '"resolvers";r=4981;t=287'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/tokenizer_config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '157'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''tokenizer_config.json; filename="tokenizer_config.json";
+      content-length:
+      - '350'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"c79f2b6a0cea6f4b564fed1938984bace9d30ff0"'
+      ratelimit:
+      - '"resolvers";r=4985;t=144'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main/additional_chat_templates?recursive=False&expand=False
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '64'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"40-09f9IAqP13xarAhQxFS2W8rvRkM"
+      ratelimit:
+      - '"api";r=997;t=287'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      error: additional_chat_templates does not exist on "main"
+    status:
+      code: 404
+      message: Not Found
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/1_Pooling/config.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config.json; filename="config.json";
+      content-length:
+      - '304'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      location:
+      - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/1_Pooling%2Fconfig.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2F1_Pooling%2Fconfig.json=&etag=%22d1514c3162bbe87b343f565fadc62e6c06f04f03%22
+      ratelimit:
+      - '"resolvers";r=4980;t=286'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin, Accept
+    status:
+      code: 307
+      message: Temporary Redirect
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - identity
+      connection:
+      - keep-alive
+    method: HEAD
+    uri: https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/1_Pooling%2Fconfig.json
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      age:
+      - '157'
+      connection:
+      - keep-alive
+      content-disposition:
+      - inline; filename*=UTF-8''config.json; filename="config.json";
+      content-length:
+      - '190'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - '"d1514c3162bbe87b343f565fadc62e6c06f04f03"'
+      ratelimit:
+      - '"resolvers";r=4983;t=143'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '6920'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"1b08-yXGJ8Y7WAkHIxSYNRy3mc+JOVPw"
+      ratelimit:
+      - '"api";r=996;t=286'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 621ffdc136468d709f180294
+      author: sentence-transformers
+      cardData:
+        datasets:
+        - s2orc
+        - flax-sentence-embeddings/stackexchange_xml
+        - ms_marco
+        - gooaq
+        - yahoo_answers_topics
+        - code_search_net
+        - search_qa
+        - eli5
+        - snli
+        - multi_nli
+        - wikihow
+        - natural_questions
+        - trivia_qa
+        - embedding-data/sentence-compression
+        - embedding-data/flickr30k-captions
+        - embedding-data/altlex
+        - embedding-data/simple-wiki
+        - embedding-data/QQP
+        - embedding-data/SPECTER
+        - embedding-data/PAQ_pairs
+        - embedding-data/WikiAnswers
+        language: en
+        library_name: sentence-transformers
+        license: apache-2.0
+        pipeline_tag: sentence-similarity
+        tags:
+        - sentence-transformers
+        - feature-extraction
+        - sentence-similarity
+        - transformers
+      config:
+        architectures:
+        - BertModel
+        model_type: bert
+        tokenizer_config:
+          cls_token: '[CLS]'
+          mask_token: '[MASK]'
+          pad_token: '[PAD]'
+          sep_token: '[SEP]'
+          unk_token: '[UNK]'
+      createdAt: '2022-03-02T23:29:05.000Z'
+      disabled: false
+      downloads: 146026841
+      gated: false
+      id: sentence-transformers/all-MiniLM-L6-v2
+      inference: warm
+      lastModified: '2025-03-06T13:37:44.000Z'
+      library_name: sentence-transformers
+      likes: 4148
+      mask_token: '[MASK]'
+      model-index: null
+      modelId: sentence-transformers/all-MiniLM-L6-v2
+      pipeline_tag: sentence-similarity
+      private: false
+      safetensors:
+        parameters:
+          F32: 22713216
+          I64: 512
+        total: 22713728
+      sha: c9745ed1d9f207416be6d2e6f8de32d1f16199bf
+      siblings:
+      - rfilename: .gitattributes
+      - rfilename: 1_Pooling/config.json
+      - rfilename: README.md
+      - rfilename: config.json
+      - rfilename: config_sentence_transformers.json
+      - rfilename: data_config.json
+      - rfilename: model.safetensors
+      - rfilename: modules.json
+      - rfilename: onnx/model.onnx
+      - rfilename: onnx/model_O1.onnx
+      - rfilename: onnx/model_O2.onnx
+      - rfilename: onnx/model_O3.onnx
+      - rfilename: onnx/model_O4.onnx
+      - rfilename: onnx/model_qint8_arm64.onnx
+      - rfilename: onnx/model_qint8_avx512.onnx
+      - rfilename: onnx/model_qint8_avx512_vnni.onnx
+      - rfilename: onnx/model_quint8_avx2.onnx
+      - rfilename: openvino/openvino_model.bin
+      - rfilename: openvino/openvino_model.xml
+      - rfilename: openvino/openvino_model_qint8_quantized.bin
+      - rfilename: openvino/openvino_model_qint8_quantized.xml
+      - rfilename: pytorch_model.bin
+      - rfilename: rust_model.ot
+      - rfilename: sentence_bert_config.json
+      - rfilename: special_tokens_map.json
+      - rfilename: tf_model.h5
+      - rfilename: tokenizer.json
+      - rfilename: tokenizer_config.json
+      - rfilename: train_script.py
+      - rfilename: vocab.txt
+      spaces:
+      - onkar-waghmode/neural-humanizer
+      - Tarka-AIR/Tarka-Embedding
+      - BaoNhan/MinerU_2.5_plus_Intelligent_Reasoning_and_Knowledge_Explorer
+      - MCP-1st-Birthday/ragmint-mcp-agent
+      - MCP-1st-Birthday/ragmint-mcp-server
+      - MCP-1st-Birthday/NeatNote
+      - Nawabwaqar/FastMed_RAG_Chatbot
+      - Mr-TD/RAG-PDF-QnA-ChatBot
+      - merterbak/RAG-Llama
+      - himanshukumar378/Mutliple_chat_pdf
+      - kiwinov/strint
+      - noorfatima71/RAG_Pharma_Chatbot
+      - cynstl/ml-sanity-studio
+      - Lesterchia174/FPOC2_AI-Tutor_Chatbot
+      - LuciferMrng/Voice_to_Notes
+      - Sai16216/PDF_Assist
+      - Khalsa-12/ClinIQ-AI
+      - muniparash79/chat-with-your-pdf
+      - MCP-1st-Birthday/cx_ai_agent
+      - Altiuss/aigars-first-agent
+      - Mnkhoma/Yaza
+      - sandhya932/karanam_sandhya_rani
+      - Ayesha-Zafar-03/chatbot
+      - guanqiantong/edu_ai
+      - paivalucass/ai-restaurant-recommend
+      - abhismanc/career_conversation
+      - Benaah/amaniquery
+      - Deeksha11-alt/1_foundations
+      - GopalJee2745/PDF_QA_Chat_Lang_GROQ
+      - cvachet/pdf-chatbot
+      - marcosv/InstructIR
+      - JournalistsonHF/ai-scraper
+      - mteb/arena
+      - Illia56/Ask-AI-Youtube
+      - nickmuchi/semantic-search-with-retrieve-and-rerank
+      - Gradio-Blocks/Ask_Questions_To_YouTube_Videos
+      - Agents-MCP-Hackathon/ScouterAI
+      - nickmuchi/article-text-summarizer
+      - auto-academic/auto-draft
+      - SeaLLMs/SeaLLM-Chat
+      - mteb/leaderboard_legacy
+      - q-future/Co-Instruct
+      - radames/sentence-embeddings-visualization
+      - radames/Candle-BERT-Semantic-Similarity-Wasm
+      - ml6team/post-processing-summarization
+      - gabruarya/legal-advisor
+      - DiffusionGPT/DiffusionGPT-XL
+      - openfree/Cycle-Navigator
+      - Gradio-Blocks/pubmed-abstract-retriever
+      - seanpedrickcase/Light-PDF-Web-QA-Chatbot
+      - seanpedrickcase/topic_modelling
+      - Agents-MCP-Hackathon/Intelligent_Content_Organizer
+      - jscheah/open-webui
+      - ZySec-AI/ZySec
+      - Agents-MCP-Hackathon/KarmaCheck
+      - cffl/Exploring_Intelligent_Writing_Assistance
+      - arshadmangi112/chatpdf.document
+      - Rabbit-Innotech/GBVR_Chatbot
+      - pritamdeka/health-article-keyphrase-generator
+      - taskswithcode/semantic_similarity
+      - zhuolisam/resume-ranker
+      - kenken999/fastapi_django_main_live
+      - Yas1n/CADomatic
+      - ModularityAI/LLama3Rag
+      - pedropauletti/social-ear
+      - tdecae/chatbot
+      - m-ric/Quotes
+      - lihuigu/SciPIP
+      - aseifert/ExplaiNER
+      - somosnlp-hackathon-2022/AbstractGen_ES
+      - DiffusionGPT/DiffusionGPT
+      - Aabbhishekk/ChatPdf
+      - taupirho/gradio_multi_file_rag
+      - ReithBjarkan/SEO_Keyword_Similarity_Tool
+      - Shreyas094/GPT-Researcher
+      - usmanyousaf/AI_Interview_Coach
+      - Vartex39/vizsum-pro
+      - responsible-prompting/demo-multiturn
+      - pritamdeka/pubmed-abstract-retriever
+      - jspr/autodrummer
+      - khalifssa/medicine-chartbot
+      - dnzblgn/RAG_PDF_langchain
+      - Ardaarslan02/finance-chatbot
+      - VIDraft/Local-RAG-llama-3-8b
+      - santanavagner/responsible-prompting-demo
+      - CyberTud/legalchat
+      - RaviRaj988/Asking-question-to-video
+      - vjain/Trading-Chatbot
+      - OuroborosM/STLA-BABY
+      - KrishnaKumar23/documentQABot
+      - CyranoB/search_agent
+      - Gololias/MetroCuadrado
+      - ABBNikit/Nikit_PDF_Chatbot
+      - captain-awesome/Docuverse-zephyr-beta
+      - JDWebProgrammer/chatbot
+      - sickcell/AskCTI
+      - Shashikiran42/Banking_Regulations_Compliance_ChatBOT
+      - Thanos51/ai-recruitment-system
+      - rivapereira123/career-buddy
+      - MarjG/anime-recommendation-engine
+      tags:
+      - sentence-transformers
+      - pytorch
+      - tf
+      - rust
+      - onnx
+      - safetensors
+      - openvino
+      - bert
+      - feature-extraction
+      - sentence-similarity
+      - transformers
+      - en
+      - dataset:s2orc
+      - dataset:flax-sentence-embeddings/stackexchange_xml
+      - dataset:ms_marco
+      - dataset:gooaq
+      - dataset:yahoo_answers_topics
+      - dataset:code_search_net
+      - dataset:search_qa
+      - dataset:eli5
+      - dataset:snli
+      - dataset:multi_nli
+      - dataset:wikihow
+      - dataset:natural_questions
+      - dataset:trivia_qa
+      - dataset:embedding-data/sentence-compression
+      - dataset:embedding-data/flickr30k-captions
+      - dataset:embedding-data/altlex
+      - dataset:embedding-data/simple-wiki
+      - dataset:embedding-data/QQP
+      - dataset:embedding-data/SPECTER
+      - dataset:embedding-data/PAQ_pairs
+      - dataset:embedding-data/WikiAnswers
+      - arxiv:1904.06472
+      - arxiv:2102.07033
+      - arxiv:2104.08727
+      - arxiv:1704.05179
+      - arxiv:1810.09305
+      - license:apache-2.0
+      - autotrain_compatible
+      - text-embeddings-inference
+      - endpoints_compatible
+      - deploy:azure
+      - region:us
+      transformersInfo:
+        auto_model: AutoModel
+        pipeline_tag: feature-extraction
+        processor: AutoTokenizer
+      usedStorage: 1844563487
+      widgetData:
+      - sentences:
+        - That is a happy dog
+        - That is a very happy person
+        - Today is a sunny day
+        source_sentence: That is a happy person
+    status:
+      code: 200
+      message: OK
+version: 1

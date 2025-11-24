@@ -14,6 +14,8 @@ from pydantic_ai.models import OpenAIChatCompatibleProvider, OpenAIResponsesComp
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.providers import Provider, infer_provider
 
+from .base import EmbedInputType
+
 __all__ = [
     'Embedder',
     'EmbeddingModel',
@@ -35,6 +37,10 @@ KnownEmbeddingModelName = TypeAliasType(
 
 `KnownEmbeddingModelName` is provided as a concise way to specify an embedding model.
 """
+
+# For now, we assume that every chat and completions-compatible provider also
+# supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
+OpenAIEmbeddingsCompatibleProvider = OpenAIChatCompatibleProvider | OpenAIResponsesCompatibleProvider
 
 
 def infer_model(
@@ -61,7 +67,8 @@ def infer_model(
 
     if model_kind in (
         'openai',
-        # For now, we assume that every chat and completions-compatible provider also supports the embeddings endpoint.
+        # For now, we assume that every chat and completions-compatible provider also
+        # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
         *get_args(OpenAIChatCompatibleProvider.__value__),
         *get_args(OpenAIResponsesCompatibleProvider.__value__),
     ):
@@ -124,19 +131,53 @@ class Embedder:
                 self._override_model.reset(model_token)
 
     @overload
-    async def embed(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
+    async def embed_query(self, query: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
         pass
 
     @overload
-    async def embed(self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None) -> list[list[float]]:
+    async def embed_query(
+        self, query: Sequence[str], *, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
+        pass
+
+    async def embed_query(
+        self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+    ) -> list[float] | list[list[float]]:
+        return await self.embed(query, input_type='query', settings=settings)
+
+    @overload
+    async def embed_documents(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
+        pass
+
+    @overload
+    async def embed_documents(
+        self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
+        pass
+
+    async def embed_documents(
+        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+    ) -> list[float] | list[list[float]]:
+        return await self.embed(documents, input_type='document', settings=settings)
+
+    @overload
+    async def embed(
+        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[float]:
+        pass
+
+    @overload
+    async def embed(
+        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
         pass
 
     async def embed(
-        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> list[float] | list[list[float]]:
         model = self._get_model()
         settings = merge_embedding_settings(self._settings, settings)
-        return await model.embed(documents, settings=settings)
+        return await model.embed(documents, input_type=input_type, settings=settings)
 
     def _get_model(self) -> EmbeddingModel:
         """Create a model configured for this agent.

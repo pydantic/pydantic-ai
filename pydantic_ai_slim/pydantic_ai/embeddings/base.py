@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import overload
+from typing import Literal, overload
 
 from pydantic_ai.embeddings.settings import EmbeddingSettings, merge_embedding_settings
+
+EmbedInputType = Literal['query', 'document']
+"""The type of input to the embedding model."""
 
 
 class EmbeddingModel(ABC):
@@ -46,16 +49,20 @@ class EmbeddingModel(ABC):
         raise NotImplementedError()
 
     @overload
-    async def embed(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
+    async def embed(
+        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[float]:
         pass
 
     @overload
-    async def embed(self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None) -> list[list[float]]:
+    async def embed(
+        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
         pass
 
     @abstractmethod
     async def embed(
-        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> list[float] | list[list[float]]:
         raise NotImplementedError
 

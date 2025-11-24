@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, overload
 
-from pydantic_ai.embeddings.base import EmbeddingModel
+from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
 from pydantic_ai.embeddings.settings import EmbeddingSettings
 from pydantic_ai.providers import Provider, infer_provider
 
@@ -43,13 +43,13 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         provider: OpenAIEmbeddingsCompatibleProvider | Literal['openai'] | Provider[AsyncOpenAI] = 'openai',
         settings: EmbeddingSettings | None = None,
     ):
-        """Initialize an OpenAI model.
+        """Initialize an OpenAI embedding model.
 
         Args:
             model_name: The name of the OpenAI model to use. List of model names
                 available [here](https://platform.openai.com/docs/guides/embeddings#embedding-models).
             provider: The provider to use for authentication and API access. Can be either the string
-                'OpenAI' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
+                'openai' or an instance of `Provider[AsyncOpenAI]`. If not provided, a new provider will be
                 created using the other parameters.
             settings: Model-specific settings that will be used as defaults for this model.
         """
@@ -77,17 +77,22 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     @overload
-    async def embed(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
+    async def embed(
+        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[float]:
         pass
 
     @overload
-    async def embed(self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None) -> list[list[float]]:
+    async def embed(
+        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
         pass
 
     async def embed(
-        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> list[float] | list[list[float]]:
         documents, is_single_document, settings = self.prepare_embed(documents, settings)
+        # API doesn't currently distinguish between query and document input types
         embeddings = await self._embed(documents, settings)
         return embeddings[0] if is_single_document else embeddings
 
