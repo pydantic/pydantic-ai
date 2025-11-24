@@ -101,6 +101,21 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                         step_config=self._mcp_step_config,
                     )
 
+            # Replace FastMCPToolset with DBOSFastMCPToolset
+            try:
+                from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+                from ._fastmcp_toolset import DBOSFastMCPToolset
+            except ImportError:
+                pass
+            else:
+                if isinstance(toolset, FastMCPToolset):
+                    return DBOSFastMCPToolset(
+                        wrapped=toolset,
+                        step_name_prefix=dbosagent_name,
+                        step_config=self._mcp_step_config,
+                    )
+
             return toolset
 
         dbos_toolsets = [toolset.visit_and_replace(dbosify_toolset) for toolset in wrapped.toolsets]

@@ -1777,14 +1777,22 @@ async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
     )
     print(result.output)
     assert result.output == snapshot(
-        """\
-The `pydantic/pydantic-ai` repository is organized into several detailed sections:
+        'The `pydantic/pydantic-ai` repository is a Python agent framework designed for building production-grade Generative AI applications. It emphasizes type-safety, a model-agnostic design, and an ergonomic developer experience. Key features include type-safe agents using Pydantic, support for over 15 LLM providers, structured outputs with automatic validation, comprehensive observability, and production-ready tooling. The framework is structured as a UV workspace monorepo with core and supporting packages for defining and executing complex applications.'
+    )
 
-1. **Overview**: Provides the project structure and details on installation and setup.
-2. **Core Agent System**: Covers agent fundamentals, execution, tools, dependencies, output processing, and communication.
-3. **LLM Model Integration**: Focuses on various model architectures and providers including OpenAI, Anthropic, Google, and others.
-4. **Advanced Features**: Discusses streaming, observability, the Model Context Protocol, CLI, and integration ecosystem.
-5. **Evaluation and Testing**: Describes the evaluation framework and testing infrastructure used.
-6. **Development and Infrastructure**: Outlines the development workflow, tools, CI/CD pipeline, and documentation system.\
-"""
+    list_workflows = await dbos.list_workflows_async()
+    assert len(list_workflows) == 1
+    workflow = list_workflows[0]
+    assert workflow.name == 'fastmcp_agent.run'
+    wf_id = workflow.workflow_id
+
+    steps = await dbos.list_workflow_steps_async(wf_id)
+    assert [step['function_name'] for step in steps] == snapshot(
+        [
+            'fastmcp_agent__fastmcp_toolset__deepwiki.get_tools',
+            'fastmcp_agent__model.request',
+            'fastmcp_agent__fastmcp_toolset__deepwiki.call_tool',
+            'fastmcp_agent__fastmcp_toolset__deepwiki.get_tools',
+            'fastmcp_agent__model.request',
+        ]
     )
