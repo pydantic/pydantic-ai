@@ -877,16 +877,12 @@ async def test_tool_returning_audio_resource_link(
                 ),
                 ModelResponse(
                     parts=[
-                        ThinkingPart(
-                            content='',
-                            signature=IsStr(),
-                            provider_name='google-gla',
-                        ),
                         ToolCallPart(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
-                        ),
+                            provider_details={'thought_signature': IsStr()},
+                        )
                     ],
                     usage=RequestUsage(
                         input_tokens=605, output_tokens=168, details={'thoughts_tokens': 154, 'text_prompt_tokens': 605}
