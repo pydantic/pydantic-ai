@@ -315,6 +315,16 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
+  devcontainer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run dev container task
+        uses: devcontainers/ci@v0.3
+        with:
+          runCmd: echo "Dev container built and run successfully"
+
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
@@ -327,6 +337,7 @@ jobs:
       - test-lowest-versions
       - test-examples
       - coverage
+      - devcontainer
     runs-on: ubuntu-latest
 
     steps:
