@@ -387,14 +387,24 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         allows_image: bool = False,
         allows_text: bool = False,
         base_processor: BaseObjectOutputProcessor[OutputDataT] | None = None,
-        toolset_processors: dict[str, ObjectOutputProcessor[OutputDataT]] | None = None,
+        tool_defs: Sequence[ToolDefinition] | None = None,
     ) -> JsonSchema:
-        # allow any output with {'type': 'string'} if no constraints
-        if not any([allows_deferred_tools, allows_image, allows_text, base_processor, toolset_processors]):
+        # output of {'type': 'string'} if no constraints
+        if not any([allows_deferred_tools, allows_image, allows_text, base_processor, tool_defs]):
             return TypeAdapter(str).json_schema()
 
         object_keys: list[str] = []
         json_schemas: list[ObjectJsonSchema] = []
+
+        if tool_defs:
+            for tool_def in tool_defs:
+                json_schema = tool_def.parameters_json_schema.copy()
+                json_schema['title'] = tool_def.name
+                if tool_def.description:
+                    json_schema['description'] = tool_def.description
+                json_schemas.append(json_schema)
+                # tool_defs should already have unique names
+                object_keys.append(tool_def.name)
 
         if base_processor:
             json_schema = base_processor.object_def.json_schema.copy()
@@ -402,16 +412,12 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             if base_processor.object_def.description:
                 json_schema['description'] = base_processor.object_def.description
             json_schemas.append(json_schema)
-            object_keys.append(json_schema.get('title', 'result'))
-
-        if toolset_processors:
-            for name, tool_processor in toolset_processors.items():
-                json_schema = tool_processor.object_def.json_schema.copy()
-                json_schema['title'] = name
-                if tool_processor.object_def.description:
-                    json_schema['description'] = tool_processor.object_def.description
-                json_schemas.append(json_schema)
-                object_keys.append(name)
+            object_key = json_schema.get('title', 'result')
+            count = 1
+            while object_key in object_keys:  # pragma: no branch
+                count += 1
+                object_key = f'{object_key}_{count}'
+            object_keys.append(object_key)
 
         special_output_types: list[type] = []
         if allows_text:
@@ -425,6 +431,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 output_type_json_schema = TypeAdapter(output_type).json_schema()
                 json_schemas.append(output_type_json_schema)
                 object_key = output_type.__name__
+                count = 1
+                while object_key in object_keys:  # pragma: no branch
+                    count += 1
+                    object_key = f'{object_key}_{count}'
                 object_keys.append(object_key)
 
         json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
@@ -433,17 +443,8 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         if len(json_schemas) == 1 and not all_defs:
             return json_schemas[0]
 
-        unique_object_keys: list[str] = []
-        for key in object_keys:
-            count = 1
-            new_key = key
-            while new_key in unique_object_keys:  # pragma: no cover
-                count += 1
-                new_key = f'{key}_{count}'
-            unique_object_keys.append(new_key)
-
         discriminated_json_schemas: list[ObjectJsonSchema] = []
-        for object_key, json_schema in zip(unique_object_keys, json_schemas):
+        for object_key, json_schema in zip(object_keys, json_schemas):
             title = json_schema.pop('title', None)
             description = json_schema.pop('description', None)
 
@@ -635,7 +636,7 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
             allows_image=allows_image,
         )
         self.json_schema = OutputSchema[OutputDataT].build_json_schema(
-            toolset_processors=self.toolset.processors,  # pyright: ignore[reportOptionalMemberAccess]
+            tool_defs=self.toolset._tool_defs,  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
             allows_deferred_tools=self.allows_deferred_tools,
             allows_image=self.allows_image,
             allows_text=self.allows_text,
