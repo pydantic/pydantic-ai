@@ -443,7 +443,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             new_key = key
             while new_key in unique_object_keys:
                 count += 1
-                new_key = f'{key}-{count}'
+                new_key = f'{key}_{count}'
             unique_object_keys.append(new_key)
 
         discriminated_json_schemas: list[ObjectJsonSchema] = []
@@ -542,11 +542,11 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
 
     def json_schema(self) -> JsonSchema:
         if self.allows_deferred_tools or self.allows_image:
-            return OutputSchema.build_json_schema(
+            return OutputSchema[OutputDataT].build_json_schema(
                 allows_deferred_tools=self.allows_deferred_tools, allows_image=self.allows_image, allows_text=True
             )
 
-        return TypeAdapter(str).json_schema()
+        return OutputSchema[OutputDataT].build_json_schema()
 
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
@@ -559,9 +559,9 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 
     def json_schema(self) -> JsonSchema:
         if self.allows_deferred_tools:
-            return OutputSchema.build_json_schema(allows_deferred_tools=True, allows_image=True)
+            return OutputSchema[OutputDataT].build_json_schema(allows_deferred_tools=True, allows_image=True)
 
-        return TypeAdapter(_messages.BinaryImage).json_schema()
+        return OutputSchema[OutputDataT].build_json_schema(allows_image=True)
 
 
 @dataclass(init=False)
@@ -842,12 +842,11 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
-
         for output in outputs:
             processor = ObjectOutputProcessor(output=output, strict=strict)
             object_def = processor.object_def
-            object_key = object_def.name or output.__name__
 
+            object_key = object_def.name or output.__name__
             i = 1
             original_key = object_key
             while object_key in self._processors:

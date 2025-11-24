@@ -4,7 +4,6 @@ from inline_snapshot import snapshot
 from pydantic_ai import (
     Agent,
     BinaryImage,
-    RunContext,
 )
 from pydantic_ai._output import (
     NativeOutput,
@@ -36,6 +35,19 @@ async def test_auto_output_json_schema():
 async def test_tool_output_json_schema():
     agent = Agent(
         'test',
+        output_type=[ToolOutput(bool)],
+    )
+    assert agent.output_json_schema() == snapshot(
+        {
+            'type': 'object',
+            'properties': {'response': {'type': 'boolean'}},
+            'required': ['response'],
+            'title': 'final_result',
+        }
+    )
+
+    agent = Agent(
+        'test',
         output_type=[ToolOutput(bool, name='alice', description='Dreaming...')],
     )
     assert agent.output_json_schema() == snapshot(
@@ -50,7 +62,54 @@ async def test_tool_output_json_schema():
 
     agent = Agent(
         'test',
-        output_type=[ToolOutput(bool, name='alice'), ToolOutput(bool, name='bob')],
+        output_type=[ToolOutput(bool, name='alice', description='Dreaming'), ToolOutput(bool, name='bob')],
+    )
+    assert agent.output_json_schema() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'alice'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'alice',
+                            'description': 'Dreaming',
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'bob'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'bob',
+                        },
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
+    )
+
+    agent = Agent(
+        'test',
+        output_type=[ToolOutput(bool, name='alice')] * 3,
     )
     assert agent.output_json_schema() == snapshot(
         {
@@ -75,7 +134,7 @@ async def test_tool_output_json_schema():
                         {
                             'type': 'object',
                             'properties': {
-                                'kind': {'type': 'string', 'const': 'bob'},
+                                'kind': {'type': 'string', 'const': 'alice_2'},
                                 'data': {
                                     'properties': {'response': {'type': 'boolean'}},
                                     'required': ['response'],
@@ -84,7 +143,21 @@ async def test_tool_output_json_schema():
                             },
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'bob',
+                            'title': 'alice_2',
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'alice_3'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'alice_3',
                         },
                     ]
                 }
@@ -96,6 +169,14 @@ async def test_tool_output_json_schema():
 
 
 async def test_native_output_json_schema():
+    agent = Agent(
+        'test',
+        output_type=NativeOutput([bool]),
+    )
+    assert agent.output_json_schema() == snapshot(
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'title': 'bool'}
+    )
+
     agent = Agent(
         'test',
         output_type=NativeOutput([bool], name='native_output_name', description='native_output_description'),
@@ -112,6 +193,14 @@ async def test_native_output_json_schema():
 
 
 async def test_prompted_output_json_schema():
+    agent = Agent(
+        'test',
+        output_type=PromptedOutput([bool]),
+    )
+    assert agent.output_json_schema() == snapshot(
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'title': 'bool'}
+    )
+
     agent = Agent(
         'test',
         output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description'),
@@ -300,17 +389,8 @@ async def test_override_output_json_schema():
     )
 
 
-@pytest.mark.skip(reason="CI expects provider_details key, can't repro locally")
 async def test_deferred_output_json_schema():
     agent = Agent('test', output_type=[str, DeferredToolRequests])
-
-    @agent.tool
-    def update_file(ctx: RunContext, path: str, content: str) -> str:
-        return ''
-
-    @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
-        return ''
 
     assert agent.output_json_schema() == snapshot(
         {
