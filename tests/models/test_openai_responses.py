@@ -7781,7 +7781,7 @@ async def test_openai_file_search_include_results_setting():
     assert return_part.content == {'status': 'completed'}
 
 
-async def test_openai_include_file_search_results_setting():
+async def test_openai_include_file_search_results_setting(allow_model_requests: None):
     from pydantic_ai.builtin_tools import FileSearchTool
 
     mock_response = MockOpenAIResponses.create_mock(
@@ -7820,7 +7820,7 @@ async def test_openai_include_file_search_results_setting():
     assert 'file_search_call.results' in kwargs[0]['include']
 
 
-async def test_openai_file_search_with_message_history():
+async def test_openai_file_search_with_message_history(allow_model_requests: None):
     from pydantic_ai.builtin_tools import FileSearchTool
 
     mock_response = MockOpenAIResponses.create_mock(
@@ -7870,7 +7870,7 @@ async def test_openai_file_search_with_message_history():
     assert result.output is not None
 
 
-async def test_openai_file_search_status_update():
+async def test_openai_file_search_status_update(allow_model_requests: None):
     from pydantic_ai.builtin_tools import FileSearchTool
 
     mock_response = MockOpenAIResponses.create_mock(
