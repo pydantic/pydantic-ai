@@ -544,14 +544,14 @@ server.run()"""
 
         with TemporaryDirectory() as temp_dir:
             server_py: Path = Path(temp_dir) / 'server.py'
-            server_py.write_text(data='')
+            server_py.write_text(data='', encoding='utf-8')
             toolset = FastMCPToolset(server_py)
             assert isinstance(toolset.client.transport, PythonStdioTransport)
             toolset = FastMCPToolset(str(server_py))
             assert isinstance(toolset.client.transport, PythonStdioTransport)
 
             server_js: Path = Path(temp_dir) / 'server.js'
-            server_js.write_text(data='')
+            server_js.write_text(data='', encoding='utf-8')
             toolset = FastMCPToolset(server_js)
             assert isinstance(toolset.client.transport, NodeStdioTransport)
             toolset = FastMCPToolset(str(server_js))
