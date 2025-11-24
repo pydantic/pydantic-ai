@@ -318,6 +318,17 @@ jobs:
   devcontainer:
     runs-on: ubuntu-latest
     steps:
+      - name: Free Disk Space on GitHub Actions runner
+        uses: jlumbroso/free-disk-space-action@v1.3.1
+        with:
+          tool-cache: false
+          # android: true
+          # dotnet: true
+          # haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - uses: actions/checkout@v4
 
       - name: Build and run dev container task
