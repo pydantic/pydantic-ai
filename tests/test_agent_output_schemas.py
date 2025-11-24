@@ -454,6 +454,11 @@ async def test_deferred_output_json_schema():
                         },
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
+                        'provider_details': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Provider Details',
+                        },
                         'part_kind': {
                             'const': 'tool-call',
                             'default': 'tool-call',
