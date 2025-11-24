@@ -107,7 +107,7 @@ with workflow.unsafe.imports_passed_through():
     # Workaround for a race condition when running `logfire.info` inside an activity with attributes to serialize and pandas importable:
     # AttributeError: partially initialized module 'pandas' has no attribute '_pandas_parser_CAPI' (most likely due to a circular import)
     try:
-        import pandas  # pyright: ignore[reportUnusedImport,reportMissingImports] # noqa: F401
+        import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
     except ImportError:  # pragma: lax no cover
         pass
 
