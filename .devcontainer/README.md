@@ -2,5 +2,6 @@
 
 ```bash
 # brew install devcontainer
-devcontainer build --workspace-folder .
+devcontainer read-configuration --workspace-folder . # Validate dev container
+devcontainer build --workspace-folder . # Build the dev container
 ```

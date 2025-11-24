@@ -10,7 +10,6 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}, // gh command
     "ghcr.io/rocker-org/devcontainer-features/pandoc:1": {}, // pandoc command
     "ghcr.io/lukewiwa/features/shellcheck:0": {}, // shellcheck command
-    "ghcr.io/prulloac/devcontainer-features/latex:1": {}, // latex command
     "ghcr.io/devcontainers-extra/features/curl-apt-get:1": {}, // curl and apt-get commands
     "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}, // uv command
     "ghcr.io/devcontainers/features/node:1": {
@@ -38,7 +37,7 @@
   "postCreateCommand": [
     "bash",
     "-c",
-    "sudo apt-get update && sudo apt-get install -y cmake libclang-dev && CMAKE_ARGS='-DGGML_NATIVE=off' uv sync --frozen --all-extras --all-packages --group lint --group docs"
+    "CMAKE_ARGS='-DGGML_NATIVE=off' uv sync --frozen --all-extras --all-packages --group lint --group docs"
   ],
   //"postStartCommand": "",
   // Configure tool-specific properties.
