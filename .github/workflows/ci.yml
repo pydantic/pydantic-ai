@@ -322,9 +322,9 @@ jobs:
         uses: jlumbroso/free-disk-space-action@v1.3.1
         with:
           tool-cache: false
-          # android: true
-          # dotnet: true
-          # haskell: true
+          android: true # Pre-installed on runner but not needed for our build
+          dotnet: true # Pre-installed on runner but not needed for our build
+          haskell: true # Pre-installed on runner but not needed for our build
           large-packages: true
           docker-images: true
           swap-storage: true
