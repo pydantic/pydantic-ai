@@ -37,7 +37,7 @@
   "postCreateCommand": [
     "bash",
     "-c",
-    "CMAKE_ARGS='-DGGML_NATIVE=off' uv sync --frozen --all-extras --all-packages --group lint --group docs"
+    "uv sync --frozen --all-extras --all-packages --group lint --group docs"
   ],
   //"postStartCommand": "",
   // Configure tool-specific properties.
