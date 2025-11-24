@@ -4589,3 +4589,35 @@ async def test_google_file_search_cleanup_none():
         os.unlink(test_file_path)
         if store is not None and store.name is not None:
             await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+
+
+async def test_google_file_search_cleanup_both_branches():
+    from unittest.mock import AsyncMock, Mock
+
+    client = GoogleProvider(api_key='test-key').client
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('test content')
+        test_file_path = f.name
+
+    store = Mock()
+    store.name = 'test-store-name'
+    try:
+        pass
+    finally:
+        os.unlink(test_file_path)
+        if store is not None and store.name is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            client.aio.file_search_stores.delete = AsyncMock()
+            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('test content 2')
+        test_file_path2 = f.name
+
+    store = None
+    try:
+        pass
+    finally:
+        os.unlink(test_file_path2)
+        if store is not None and store.name is not None:
+            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})

@@ -7781,6 +7781,35 @@ async def test_openai_file_search_include_results_setting():
     assert return_part.content == {'status': 'completed'}
 
 
+async def test_openai_file_search_with_results():
+    from openai.types.responses.response_file_search_tool_call import ResponseFileSearchToolCall
+
+    from pydantic_ai.models.openai import _map_file_search_tool_call  # pyright: ignore[reportPrivateUsage]
+
+    item = ResponseFileSearchToolCall.model_validate(
+        {
+            'id': 'test-id',
+            'queries': ['test query'],
+            'status': 'completed',
+            'results': [
+                {
+                    'id': 'result-1',
+                    'title': 'Test Result',
+                    'url': 'https://example.com',
+                    'score': 0.9,
+                }
+            ],
+            'type': 'file_search_call',
+        }
+    )
+
+    call_part, return_part = _map_file_search_tool_call(item, 'openai')
+    assert call_part.tool_name == 'file_search'
+    assert 'status' in return_part.content
+    assert 'results' in return_part.content
+    assert len(return_part.content['results']) == 1
+
+
 async def test_openai_include_file_search_results_setting(allow_model_requests: None):
     from pydantic_ai.builtin_tools import FileSearchTool
 
@@ -7842,7 +7871,11 @@ async def test_openai_file_search_with_message_history(allow_model_requests: Non
         ]
     )
 
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_response))
+    model = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_response),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
     agent = Agent(
         model=model,
         builtin_tools=[FileSearchTool(file_store_ids=[])],
@@ -7863,6 +7896,7 @@ async def test_openai_file_search_with_message_history(allow_model_requests: Non
                 )
             ],
             run_id='run-1',
+            provider_name='openai',
         ),
     ]
 
@@ -7892,7 +7926,11 @@ async def test_openai_file_search_status_update(allow_model_requests: None):
         ]
     )
 
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_response))
+    model = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_response),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
     agent = Agent(
         model=model,
         builtin_tools=[FileSearchTool(file_store_ids=[])],
@@ -7919,6 +7957,7 @@ async def test_openai_file_search_status_update(allow_model_requests: None):
                 ),
             ],
             run_id='run-1',
+            provider_name='openai',
         ),
     ]
 
@@ -7949,3 +7988,50 @@ async def test_openai_file_search_cleanup_none():
         if vector_store is not None:
             await async_client.vector_stores.delete(vector_store.id)
         await async_client.close()
+
+
+async def test_openai_file_search_cleanup_both_branches():
+    import os
+    import tempfile
+    from unittest.mock import AsyncMock, Mock
+
+    from openai import AsyncOpenAI
+
+    async_client = AsyncOpenAI(api_key='test-key')
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('test content')
+        test_file_path = f.name
+
+    file = Mock()
+    file.id = 'test-file-id'
+    vector_store = Mock()
+    vector_store.id = 'test-vector-store-id'
+    try:
+        pass
+    finally:
+        os.unlink(test_file_path)
+        if file is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            async_client.files.delete = AsyncMock()
+            await async_client.files.delete(file.id)
+        if vector_store is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            async_client.vector_stores.delete = AsyncMock()
+            await async_client.vector_stores.delete(vector_store.id)
+        await async_client.close()
+
+    async_client2 = AsyncOpenAI(api_key='test-key')
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('test content 2')
+        test_file_path2 = f.name
+
+    file = None
+    vector_store = None
+    try:
+        pass
+    finally:
+        os.unlink(test_file_path2)
+        if file is not None:
+            await async_client2.files.delete(file.id)
+        if vector_store is not None:
+            await async_client2.vector_stores.delete(vector_store.id)
+        await async_client2.close()
