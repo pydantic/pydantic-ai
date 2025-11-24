@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -32,9 +33,7 @@ class JsonSchemaTransformer(ABC):
     ):
         self.schema = schema
 
-        self.strict = strict
-        # Can be set to False by subclasses to set `strict` on `ToolDefinition`
-        # when not set explicitly by the user.
+        self.strict = strict  # Can be set to False by subclasses to set `strict` on `ToolDefinition `when not set explicitly by the user.
         self.is_strict_compatible = True
 
         self.prefer_inlined_defs = prefer_inlined_defs
@@ -119,24 +118,7 @@ class JsonSchemaTransformer(ABC):
         return schema
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        if properties := schema.get('properties'):
-            handled_properties = {}
-            for key, value in properties.items():
-                handled_properties[key] = self._handle(value)
-            schema['properties'] = handled_properties
-
-        if (additional_properties := schema.get('additionalProperties')) is not None:
-            if isinstance(additional_properties, bool):
-                schema['additionalProperties'] = additional_properties
-            else:
-                schema['additionalProperties'] = self._handle(additional_properties)
-
-        if (pattern_properties := schema.get('patternProperties')) is not None:
-            handled_pattern_properties = {}
-            for key, value in pattern_properties.items():
-                handled_pattern_properties[key] = self._handle(value)
-            schema['patternProperties'] = handled_pattern_properties
-
+        _process_object_nested_schemas(schema, self._handle)
         return schema
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:
@@ -209,24 +191,39 @@ def _get_type_set(schema: JsonSchema) -> set[str] | None:
     return None
 
 
+def _process_object_nested_schemas(schema: JsonSchema, process_fn: Callable[[JsonSchema], JsonSchema]) -> None:
+    """Process nested schemas in an object schema (properties, additionalProperties, patternProperties).
+
+    Args:
+        schema: The object schema to process (modified in place)
+        process_fn: Function to apply to each nested schema
+    """
+    if properties := schema.get('properties'):
+        if isinstance(properties, dict):
+            properties_dict = cast(dict[str, Any], properties)
+            schema['properties'] = {
+                k: process_fn(cast(JsonSchema, v)) if isinstance(v, dict) else v for k, v in properties_dict.items()
+            }
+
+    if (additional_properties := schema.get('additionalProperties')) is not None:
+        if isinstance(additional_properties, dict):
+            schema['additionalProperties'] = process_fn(cast(JsonSchema, additional_properties))
+        # If it's a bool, leave it as is
+
+    if pattern_properties := schema.get('patternProperties'):
+        if isinstance(pattern_properties, dict):
+            pattern_properties_dict = cast(dict[str, Any], pattern_properties)
+            schema['patternProperties'] = {
+                k: process_fn(cast(JsonSchema, v)) if isinstance(v, dict) else v
+                for k, v in pattern_properties_dict.items()
+            }
+
+
 def _process_nested_schemas_without_allof(s: JsonSchema) -> JsonSchema:
     """Process nested schemas recursively when there is no allOf at the current level."""
     schema_type = s.get('type')
     if schema_type == 'object':
-        if isinstance(s.get('properties'), dict):
-            s['properties'] = {
-                k: _recurse_flatten_allof(cast(JsonSchema, v))
-                for k, v in s['properties'].items()
-                if isinstance(v, dict)
-            }
-        if isinstance(s.get('additionalProperties'), dict):
-            s['additionalProperties'] = _recurse_flatten_allof(cast(JsonSchema, s['additionalProperties']))
-        if isinstance(s.get('patternProperties'), dict):
-            s['patternProperties'] = {
-                k: _recurse_flatten_allof(cast(JsonSchema, v))
-                for k, v in s['patternProperties'].items()
-                if isinstance(v, dict)
-            }
+        _process_object_nested_schemas(s, _recurse_flatten_allof)
     elif schema_type == 'array':
         if isinstance(s.get('items'), dict):
             s['items'] = _recurse_flatten_allof(cast(JsonSchema, s['items']))

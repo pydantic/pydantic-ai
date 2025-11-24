@@ -1100,7 +1100,7 @@ def test_filter_incompatible_properties_removes_required_only() -> None:
 
 
 def test_filter_incompatible_properties_removes_required_to_empty() -> None:
-    """Test that filtering incompatible properties can remove all required fields while keeping properties - covers 326->exit."""
+    """Test that filtering incompatible properties can remove all required fields while keeping properties"""
     schema: dict[str, Any] = {
         'type': 'object',
         'allOf': [
@@ -2423,7 +2423,7 @@ def test_array_no_items() -> None:
 
 
 def test_allof_incompatible_props_member_false_additional_not_in_restricted() -> None:
-    """Test that covers lines 328-329: property not in restricted_property_sets but incompatible due to member with False additionalProperties."""
+    """Test property not in restricted_property_sets but incompatible due to member with False additionalProperties."""
     schema: dict[str, Any] = {
         'type': 'object',
         'allOf': [
