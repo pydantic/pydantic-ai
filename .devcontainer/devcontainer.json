@@ -10,7 +10,6 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}, // gh
     "ghcr.io/rocker-org/devcontainer-features/pandoc:1": {}, // pandoc
     "ghcr.io/lukewiwa/features/shellcheck:0": {}, // shellcheck
-    "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}, // uv
     "ghcr.io/devcontainers/features/node:1": {
       "version": "latest"
     },
@@ -30,9 +29,11 @@
     "OLLAMA_HOST": "http://host.docker.internal:11434",
     "COLUMNS": "150",
     "CI": "true",
-    "UV_FROZEN": "1",
     "LOGFIRE_INSPECT_ARGUMENTS": "0",
-    "CMAKE_ARGS": "-DGGML_NATIVE=OFF" // No native architecture optimization! Required for building llama-cpp-python on Apple Silicon.
+    "CMAKE_ARGS": "-DGGML_NATIVE=OFF", // Switch off native architecture optimization! Building llama-cpp-python on Apple Silicon fails otherwise.
+    "UV_FROZEN": "1",
+    "UV_LINK_MODE": "copy",
+    "UV_COMPILE_BYTECODE": "1"
   },
   // Use 'postCreateCommand' to run commands after the container is created.
   "postCreateCommand": [
