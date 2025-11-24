@@ -1325,8 +1325,9 @@ class OpenAIResponsesModel(Model):
             include.append('web_search_call.action.sources')
 
         # When there are no input messages and we're not reusing a previous response,
-        # the OpenAI API will reject a request without any input. To avoid this provide
-        # an explicit empty user message.
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions. 
+        # To avoid this provide an explicit empty user message.
         if not openai_messages and not previous_response_id:
             openai_messages = [
                 responses.EasyInputMessageParam(
