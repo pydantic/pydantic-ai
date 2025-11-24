@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '358'
+      - '621'
       content-type:
       - application/json
       host:
@@ -18,45 +18,72 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: what is Logfire?
+        - text: Give me info about Sydney including its timezone
           type: text
         role: user
       model: claude-sonnet-4-5
-      output_format:
-        schema:
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: ''
+        input_schema:
           additionalProperties: false
           properties:
-            username:
-              description: '{minLength: 3, pattern: ^[a-z]+$}'
+            city:
               type: string
           required:
-          - username
+          - city
           type: object
-        type: json_schema
-      stream: false
+        name: get_timezone
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        name: final_result
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '432'
+      - '637'
       content-type:
       - application/json
       retry-after:
-      - '60'
+      - '3'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: '{"username":"logfire"}'
-        type: text
-      id: msg_018rQpShnVwnDYxoHHmi713w
+      - id: toolu_01RYjj1KsnCvtj9bmK2sZWRv
+        input:
+          city: Sydney
+        name: get_timezone
+        type: tool_use
+      - id: toolu_01XyJoBaLsPJKMnuWZTYKatf
+        input:
+          city: Sydney
+          country: Australia
+          population: 5312000
+        name: final_result
+        type: tool_use
+      id: msg_01M76KcFqyPXkmfHM85UzJ6o
       model: claude-sonnet-4-5-20250929
       role: assistant
-      stop_reason: end_turn
+      stop_reason: tool_use
       stop_sequence: null
       type: message
       usage:
@@ -65,8 +92,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 176
-        output_tokens: 9
+        input_tokens: 731
+        output_tokens: 110
         service_tier: standard
     status:
       code: 200

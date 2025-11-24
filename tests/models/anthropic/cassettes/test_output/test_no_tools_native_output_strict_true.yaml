@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '308'
+      - '387'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: what is Logfire?
+        - text: Tell me about London
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -26,10 +26,16 @@ interactions:
         schema:
           additionalProperties: false
           properties:
-            location:
+            city:
               type: string
+            country:
+              type: string
+            population:
+              type: integer
           required:
-          - location
+          - city
+          - country
+          - population
           type: object
         type: json_schema
       stream: false
@@ -39,20 +45,20 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '460'
+      - '482'
       content-type:
       - application/json
       retry-after:
-      - '1'
+      - '38'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: '{"location":"https://docs.pydantic.dev/logfire/"}'
+      - text: '{"city":"London","country":"United Kingdom","population":9002488}'
         type: text
-      id: msg_01MrDR1fEhtHhLje7Jq6R2b1
+      id: msg_01YPEZK9eZe5ZVi7s6aSAnjr
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -64,8 +70,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 154
-        output_tokens: 20
+        input_tokens: 196
+        output_tokens: 19
         service_tier: standard
     status:
       code: 200

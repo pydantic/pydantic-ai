@@ -38,6 +38,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import models_that_support_json_schema_output
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
@@ -208,7 +209,7 @@ class AnthropicModel(Model):
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
                 instance of `Provider[AsyncAnthropicClient]`. Defaults to 'anthropic'.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
-                The default 'anthropic' provider will use the default `..profiles.anthropic_model_profile`.
+                The default 'anthropic' provider will use the default `..profiles.anthropic.anthropic_model_profile`.
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
@@ -304,20 +305,21 @@ class AnthropicModel(Model):
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
-                output_mode = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
+                suggested_output_type = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
                 raise UserError(
-                    f'Anthropic does not support thinking and output tools at the same time. Use `output_type={output_mode}(...)` instead.'
+                    f'Anthropic does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
 
-        # NOTE forcing `strict=True` here is a bit eager, because the transformer may still determine that the transformation is lossy.
-        # so we're relying on anthropic's strict mode being better than prompting the model with pydantic's schema
-        if model_request_parameters.output_mode == 'native' and model_request_parameters.output_object is not None:
-            # force strict=True for native output
-            # this needs to be done here because `super().prepare_request` calls
-            # -> Model.customize_request_parameters(model_request_parameters) which calls
-            # -> -> _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition)
-            # which finally instantiates the transformer (default AnthropicJsonSchemaTransformer)
-            # `schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)`
+        if model_request_parameters.output_mode == 'native':
+            if model_request_parameters.output_object is None:  # pragma: no cover
+                raise UserError('Unreachable code: can never set `output_type=NativeOutput(None)`.')
+            if model_request_parameters.output_object.strict is False:
+                raise UserError('Cannot use `output_type=NativeOutput(...)` with `strict=False`.')
+            if not self.profile.supports_json_schema_output:
+                raise UserError(
+                    f'Model {self.model_name} does not support native output. Use `output_type=PromptedOutput(...)` instead.'
+                    f'Models that support native output include: {models_that_support_json_schema_output}.'
+                )
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
@@ -357,13 +359,13 @@ class AnthropicModel(Model):
         """
         tools = self._get_tools(model_request_parameters, model_settings)
         tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
-        output_format = self._native_output_format(model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
-        betas_set = self._get_required_betas(tools, model_request_parameters)
+        output_format = self._native_output_format(model_request_parameters)
+        betas_set = self._get_betas_set(tools, model_request_parameters)
         betas_set.update(builtin_tool_betas)
 
         try:
@@ -408,17 +410,17 @@ class AnthropicModel(Model):
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters, model_settings)
         tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
-        output_format = self._native_output_format(model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
-        betas = self._get_required_betas(tools, model_request_parameters)
-        betas.update(builtin_tool_betas)
+        output_format = self._native_output_format(model_request_parameters)
+        betas_set = self._get_betas_set(tools, model_request_parameters)
+        betas_set.update(builtin_tool_betas)
 
         try:
-            betas_list, extra_headers = self._prepare_betas_and_headers(betas, model_settings)
+            betas, extra_headers = self._prepare_betas_and_headers(betas_set, model_settings)
 
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -427,7 +429,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
-                betas=betas_list or OMIT,
+                betas=betas or OMIT,
                 output_format=output_format or OMIT,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -530,7 +532,7 @@ class AnthropicModel(Model):
 
         return tools
 
-    def _get_required_betas(
+    def _get_betas_set(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
     ) -> set[str]:
         """Determine which beta features are needed based on tools and output format.
@@ -921,6 +923,7 @@ class AnthropicModel(Model):
             'input_schema': f.parameters_json_schema,
         }
         if f.strict and self.profile.supports_json_schema_output:  # pragma: no branch
+            # NOTE we could warn the user that the model doesn't support strict mode to nudge them into one that does
             tool_param['strict'] = f.strict
         return tool_param
 

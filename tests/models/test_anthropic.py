@@ -472,6 +472,8 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
     # Verify cache_control was added to the last tool
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
+    has_strict_tools = any('strict' in tool for tool in tools)  # we only ever set strict: True
+    assert has_strict_tools is False  # ensure strict is not set for haiku-4-5
     assert tools == snapshot(
         [
             {
@@ -546,6 +548,8 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
     system = completion_kwargs['system']
+    has_strict_tools = any('strict' in tool for tool in tools)  # we only ever set strict: True
+    assert has_strict_tools is False  # ensure strict is not set for haiku-4-5
     assert tools == snapshot(
         [
             {

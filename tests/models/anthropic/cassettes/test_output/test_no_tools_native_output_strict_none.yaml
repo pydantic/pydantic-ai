@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '358'
+      - '393'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: what is Logfire?
+        - text: Give me facts about Berlin
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -26,11 +26,16 @@ interactions:
         schema:
           additionalProperties: false
           properties:
-            username:
-              description: '{minLength: 3, pattern: ^[a-z]+$}'
+            city:
               type: string
+            country:
+              type: string
+            population:
+              type: integer
           required:
-          - username
+          - city
+          - country
+          - population
           type: object
         type: json_schema
       stream: false
@@ -40,20 +45,20 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '432'
+      - '475'
       content-type:
       - application/json
       retry-after:
-      - '53'
+      - '32'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: '{"username":"logfire"}'
+      - text: '{"city":"Berlin","country":"Germany","population":3645000}'
         type: text
-      id: msg_01MQCTfXMrrb99zBoJD95ksW
+      id: msg_017fV8ELMsyaMksJ96QqyGD8
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -65,8 +70,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 176
-        output_tokens: 9
+        input_tokens: 197
+        output_tokens: 18
         service_tier: standard
     status:
       code: 200

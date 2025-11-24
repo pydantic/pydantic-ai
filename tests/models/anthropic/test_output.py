@@ -15,16 +15,14 @@ Test organization:
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
-from typing_extensions import assert_never
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.output import NativeOutput
 
@@ -69,6 +67,8 @@ def test_strict_tools_supported_model_auto_enabled(
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
     betas = completion_kwargs['betas']
+    tool = tools[0]
+    assert 'strict' not in tool  # strict was not explicitly set
 
     assert tools == snapshot(
         [
@@ -81,12 +81,10 @@ def test_strict_tools_supported_model_auto_enabled(
                     'additionalProperties': False,
                     'required': ['location'],
                 },
-                # strict is set automatically because the model supports it
-                'strict': True,
             }
         ]
     )
-    assert betas == snapshot(['structured-outputs-2025-11-13'])
+    assert betas == OMIT
 
 
 def test_strict_tools_supported_model_explicit_false(
@@ -200,7 +198,7 @@ def test_native_output_unsupported_model_raises_error(
     model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model, output_type=NativeOutput(city_location_schema))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by this model'):
+    with pytest.raises(UserError, match='Model claude-sonnet-4-0 does not support native output.'):
         agent.run_sync('What is the capital of France?')
 
 
@@ -249,334 +247,19 @@ def test_beta_header_merge_custom_headers(
 
 
 # =============================================================================
-# COMPREHENSIVE PARAMETRIZED TESTS - All Combinations
+# COMPREHENSIVE INTEGRATION TESTS - All Combinations
 # =============================================================================
 
 
-class LosslessSchema(BaseModel):
-    """Simple schema with no validation constraints - fully strict-compatible."""
+class CityInfo(BaseModel):
+    """Information about a city."""
 
-    location: str
-
-
-class LossySchema(BaseModel):
-    """Schema with validation constraints that get dropped - not strict-compatible."""
-
-    username: Annotated[str, Field(min_length=3, pattern=r'^[a-z]+$')]
+    city: str
+    country: str
+    population: int
 
 
-@dataclass
-class StrictTestCase:
-    """Defines a test case for strict mode behavior across models, schemas, and modes."""
-
-    name: str
-    model_name: str
-    strict: bool | None
-    schema_type: Literal['lossless', 'lossy']
-    mode: Literal['tool', 'native']
-    expect_strict_field: bool | None  # None means expect error
-    expect_beta_header: bool | None  # None means expect error
-    expect_error: type[Exception] | None = None
-
-
-# =============================================================================
-# TOOL CASES - Supported Model (claude-sonnet-4-5)
-# =============================================================================
-
-SUPPORTED_TOOL_STRICT_TRUE = [
-    StrictTestCase(
-        name='supported_tool-strict_true-lossless',
-        model_name='claude-sonnet-4-5',
-        strict=True,
-        schema_type='lossless',
-        mode='tool',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-    StrictTestCase(
-        name='supported_tool-strict_true-lossy',
-        model_name='claude-sonnet-4-5',
-        strict=True,
-        schema_type='lossy',
-        mode='tool',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-]
-
-SUPPORTED_TOOL_STRICT_NONE = [
-    StrictTestCase(
-        name='supported_tool-strict_auto-lossless-AUTO_ENABLED',
-        model_name='claude-sonnet-4-5',
-        strict=None,
-        schema_type='lossless',
-        mode='tool',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-    StrictTestCase(
-        name='supported_tool-strict_auto-lossy-NOT_AUTO_ENABLED',
-        model_name='claude-sonnet-4-5',
-        strict=None,
-        schema_type='lossy',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-]
-
-SUPPORTED_TOOL_STRICT_FALSE = [
-    StrictTestCase(
-        name='supported_tool-strict_false-lossless',
-        model_name='claude-sonnet-4-5',
-        strict=False,
-        schema_type='lossless',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-    StrictTestCase(
-        name='supported_tool-strict_false-lossy',
-        model_name='claude-sonnet-4-5',
-        strict=False,
-        schema_type='lossy',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-]
-
-
-# =============================================================================
-# TOOL CASES - Unsupported Model (claude-sonnet-4-0)
-# =============================================================================
-
-UNSUPPORTED_TOOL_STRICT_TRUE = [
-    StrictTestCase(
-        name='unsupported_tool-strict_true-lossless-MODEL_IGNORES',
-        model_name='claude-sonnet-4-0',
-        strict=True,
-        schema_type='lossless',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-    StrictTestCase(
-        name='unsupported_tool-strict_true-lossy-MODEL_IGNORES',
-        model_name='claude-sonnet-4-0',
-        strict=True,
-        schema_type='lossy',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-]
-
-UNSUPPORTED_TOOL_STRICT_NONE = [
-    StrictTestCase(
-        name='unsupported_tool-strict_auto-lossless-MODEL_UNSUPPORTED',
-        model_name='claude-sonnet-4-0',
-        strict=None,
-        schema_type='lossless',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-    StrictTestCase(
-        name='unsupported_tool-strict_auto-lossy-MODEL_UNSUPPORTED',
-        model_name='claude-sonnet-4-0',
-        strict=None,
-        schema_type='lossy',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-]
-
-UNSUPPORTED_TOOL_STRICT_FALSE = [
-    StrictTestCase(
-        name='unsupported_tool-strict_false-lossless',
-        model_name='claude-sonnet-4-0',
-        strict=False,
-        schema_type='lossless',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-    StrictTestCase(
-        name='unsupported_tool-strict_false-lossy',
-        model_name='claude-sonnet-4-0',
-        strict=False,
-        schema_type='lossy',
-        mode='tool',
-        expect_strict_field=False,
-        expect_beta_header=False,
-    ),
-]
-
-
-# =============================================================================
-# NATIVE OUTPUT CASES - Supported Model (claude-sonnet-4-5)
-# =============================================================================
-
-SUPPORTED_NATIVE_STRICT_TRUE = [
-    StrictTestCase(
-        name='supported_native-strict_true-lossless',
-        model_name='claude-sonnet-4-5',
-        strict=True,
-        schema_type='lossless',
-        mode='native',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-    StrictTestCase(
-        name='supported_native-strict_true-lossy',
-        model_name='claude-sonnet-4-5',
-        strict=True,
-        schema_type='lossy',
-        mode='native',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-]
-
-SUPPORTED_NATIVE_STRICT_NONE = [
-    StrictTestCase(
-        name='supported_native-strict_auto-lossless-FORCES_TRUE',
-        model_name='claude-sonnet-4-5',
-        strict=None,
-        schema_type='lossless',
-        mode='native',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-    StrictTestCase(
-        name='supported_native-strict_auto-lossy-FORCES_TRUE',
-        model_name='claude-sonnet-4-5',
-        strict=None,
-        schema_type='lossy',
-        mode='native',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-]
-
-SUPPORTED_NATIVE_STRICT_FALSE = [
-    StrictTestCase(
-        name='supported_native-strict_false-lossless-FORCES_TRUE',
-        model_name='claude-sonnet-4-5',
-        strict=False,
-        schema_type='lossless',
-        mode='native',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-    StrictTestCase(
-        name='supported_native-strict_false-lossy-FORCES_TRUE',
-        model_name='claude-sonnet-4-5',
-        strict=False,
-        schema_type='lossy',
-        mode='native',
-        expect_strict_field=True,
-        expect_beta_header=True,
-    ),
-]
-
-
-# =============================================================================
-# NATIVE OUTPUT CASES - Unsupported Model (claude-sonnet-4-0)
-# =============================================================================
-
-UNSUPPORTED_NATIVE_ALL = [
-    StrictTestCase(
-        name='unsupported_native-strict_true-lossless-RAISES',
-        model_name='claude-sonnet-4-0',
-        strict=True,
-        schema_type='lossless',
-        mode='native',
-        expect_strict_field=None,
-        expect_beta_header=None,
-        expect_error=UserError,
-    ),
-    StrictTestCase(
-        name='unsupported_native-strict_true-lossy-RAISES',
-        model_name='claude-sonnet-4-0',
-        strict=True,
-        schema_type='lossy',
-        mode='native',
-        expect_strict_field=None,
-        expect_beta_header=None,
-        expect_error=UserError,
-    ),
-    StrictTestCase(
-        name='unsupported_native-strict_auto-lossless-RAISES',
-        model_name='claude-sonnet-4-0',
-        strict=None,
-        schema_type='lossless',
-        mode='native',
-        expect_strict_field=None,
-        expect_beta_header=None,
-        expect_error=UserError,
-    ),
-    StrictTestCase(
-        name='unsupported_native-strict_auto-lossy-RAISES',
-        model_name='claude-sonnet-4-0',
-        strict=None,
-        schema_type='lossy',
-        mode='native',
-        expect_strict_field=None,
-        expect_beta_header=None,
-        expect_error=UserError,
-    ),
-    StrictTestCase(
-        name='unsupported_native-strict_false-lossless-RAISES',
-        model_name='claude-sonnet-4-0',
-        strict=False,
-        schema_type='lossless',
-        mode='native',
-        expect_strict_field=None,
-        expect_beta_header=None,
-        expect_error=UserError,
-    ),
-    StrictTestCase(
-        name='unsupported_native-strict_false-lossy-RAISES',
-        model_name='claude-sonnet-4-0',
-        strict=False,
-        schema_type='lossy',
-        mode='native',
-        expect_strict_field=None,
-        expect_beta_header=None,
-        expect_error=UserError,
-    ),
-]
-
-
-# =============================================================================
-# Combine All Cases
-# =============================================================================
-
-ALL_CASES = (
-    SUPPORTED_TOOL_STRICT_TRUE
-    + SUPPORTED_TOOL_STRICT_NONE
-    + SUPPORTED_TOOL_STRICT_FALSE
-    + UNSUPPORTED_TOOL_STRICT_TRUE
-    + UNSUPPORTED_TOOL_STRICT_NONE
-    + UNSUPPORTED_TOOL_STRICT_FALSE
-    + SUPPORTED_NATIVE_STRICT_TRUE
-    + SUPPORTED_NATIVE_STRICT_NONE
-    + SUPPORTED_NATIVE_STRICT_FALSE
-    + UNSUPPORTED_NATIVE_ALL
-)
-
-
-# =============================================================================
-# Parametrized Test
-# =============================================================================
-
-ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
-
-
-def create_header_verification_hook(case: StrictTestCase):
+def create_header_verification_hook(expect_beta: bool, test_name: str):
     """Create an httpx event hook to verify request headers.
 
     NOTE: the vcr config doesn't record anthropic-beta headers.
@@ -584,77 +267,439 @@ def create_header_verification_hook(case: StrictTestCase):
 
     TODO: remove when structured outputs is generally available and no longer a beta feature.
     """
+    errors: list[str] = []
 
     async def verify_headers(request: httpx.Request):
-        # Only verify for messages endpoint (the actual API calls)
+        # Only verify for messages endpoint
         if '/messages' in str(request.url):  # pragma: no branch
             beta_header = request.headers.get('anthropic-beta', '')
 
-            if case.expect_beta_header:
-                assert 'structured-outputs-2025-11-13' in beta_header, (
-                    f'Expected beta header for {case.name}, got: {beta_header}'
-                )
+            # excluded from coverage cause the if's shouldn't trigger when the tests are passing
+            if expect_beta:
+                if 'structured-outputs-2025-11-13' not in beta_header:  # pragma: no cover
+                    errors.append(
+                        f'Test "{test_name}": Expected beta header '
+                        f'"structured-outputs-2025-11-13" but got: {beta_header!r}'
+                    )
             else:
-                assert 'structured-outputs-2025-11-13' not in beta_header, (
-                    f'Did not expect beta header for {case.name}, got: {beta_header}'
-                )
+                if 'structured-outputs-2025-11-13' in beta_header:  # pragma: no cover
+                    errors.append(
+                        f'Test "{test_name}": Did not expect beta header '
+                        f'"structured-outputs-2025-11-13" but got: {beta_header!r}'
+                    )
 
+    verify_headers.errors = errors  # type: ignore[attr-defined]
     return verify_headers
 
 
-@pytest.mark.parametrize('case', ALL_CASES, ids=lambda c: c.name)
-@pytest.mark.vcr(record_mode='new_episodes')  # Allow recording new API interactions
-def test_combinations_live_api(
-    case: StrictTestCase,
+ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
+
+
+# =============================================================================
+# Supported Model Tests (claude-sonnet-4-5)
+# =============================================================================
+
+
+@pytest.mark.vcr
+def test_no_tools_no_output(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
 ) -> None:
-    """Test strict mode across all combinations of models, schemas, and output modes with live API."""
-    # live API model factory
-    model = anthropic_model(case.model_name)
+    """Agent with no tools and no output_type → no beta header."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_no_tools_no_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
-    # Add httpx event hook to verify headers on requests
-    if case.expect_beta_header is not None:
-        hook = create_header_verification_hook(case)
-        model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+    agent = Agent(model)
+    agent.run_sync('Tell me a brief fact about Paris')
 
-    assert model.profile.supports_json_schema_output == (case.model_name == 'claude-sonnet-4-5')
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
 
-    if case.mode == 'tool':
-        if case.schema_type == 'lossless':
 
-            def pydantic_questions_tool(  # pyright: ignore[reportRedeclaration]
-                question: LosslessSchema,
-            ) -> str:  # pragma: no cover
-                return 'Ask Samuel'
-        else:  # lossy
+@pytest.mark.vcr
+def test_no_tools_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with no tools and BaseModel output_type → no beta header."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_no_tools_basemodel_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
-            def pydantic_questions_tool(question: LossySchema) -> str:  # pragma: no cover
-                return 'Ask Samuel'
+    agent = Agent(model, output_type=CityInfo)
+    agent.run_sync('Give me information about Tokyo')
 
-        agent = Agent(model, tools=[Tool(pydantic_questions_tool, strict=case.strict)])
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
 
-    elif case.mode == 'native':
-        output_schema = LosslessSchema if case.schema_type == 'lossless' else LossySchema
-        # we're using `NativeOutput` here, but supported models will automatically set its output_mode='native' without using `NativeOutput`.
-        output_type = (
-            NativeOutput(output_schema, strict=case.strict) if case.strict is not None else NativeOutput(output_schema)
-        )
-        agent = Agent(model, output_type=output_type)
-    else:
-        assert_never(case.mode)
 
-    if case.expect_error:
-        with pytest.raises(case.expect_error, match='Native structured output is not supported'):
-            agent.run_sync('what is Pydantic?')
-    else:
-        # The request will include strict field and beta headers as configured
-        result = agent.run_sync('what is Logfire?')
+@pytest.mark.vcr
+def test_no_tools_native_output_strict_true(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with NativeOutput(strict=True) → beta header + output_format."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_no_tools_native_output_strict_true')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
-        # Verify we got a response
-        assert result is not None, f'Expected response for {case.name}'
+    agent = Agent(model, output_type=NativeOutput(CityInfo, strict=True))
+    result = agent.run_sync('Tell me about London')
 
-        # For native output, verify we got structured output
-        if case.mode == 'native':
-            assert hasattr(result, 'output'), f'Expected structured output for {case.name}'
-            assert result.output is not None, f'Expected non-None output for {case.name}'
+    assert isinstance(result.output, CityInfo)
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_no_tools_native_output_strict_none(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with NativeOutput(strict=None) → forces strict=True, beta header + output_format."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_no_tools_native_output_strict_none')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+    result = agent.run_sync('Give me facts about Berlin')
+
+    assert isinstance(result.output, CityInfo)
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+def test_no_tools_native_output_strict_false(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with NativeOutput(strict=False) → raises UserError."""
+    model = anthropic_model('claude-sonnet-4-5')
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo, strict=False))
+
+    with pytest.raises(UserError, match='Cannot use `output_type=NativeOutput\\(\\.\\.\\.\\)` with `strict=False`'):
+        agent.run_sync('Tell me about Rome')
+
+
+@pytest.mark.vcr
+def test_strict_true_tool_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=True, no output_type → beta header, tool has strict field."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_true_tool_no_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: Sunny, 22°C'
+
+    agent.run_sync("What's the weather in San Francisco?")
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_strict_true_tool_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=True, BaseModel output_type → beta header, tool has strict field."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_true_tool_basemodel_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=CityInfo)
+
+    @agent.tool_plain(strict=True)
+    def get_population(city: str) -> int:
+        return 8_000_000 if city == 'New York' else 1_000_000
+
+    agent.run_sync('Get me info about New York including its population')
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_strict_true_tool_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=True, NativeOutput → beta header, tool has strict field + output_format."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_true_tool_native_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain(strict=True)
+    def lookup_country(city: str) -> str:
+        return 'France' if city == 'Paris' else 'Unknown'
+
+    result = agent.run_sync('Give me details about Paris')
+
+    assert isinstance(result.output, CityInfo)
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_strict_none_tool_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=None, no output_type → no beta header, tool has no strict field."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_none_tool_no_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def search_database(query: str) -> str:
+        return f'Found 42 results for "{query}"'
+
+    agent.run_sync('Find cities in Europe')
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_strict_none_tool_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=None, BaseModel output_type → no beta header, tool has no strict field."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_none_tool_basemodel_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=CityInfo)
+
+    @agent.tool_plain
+    def get_timezone(city: str) -> str:  # pragma: no cover
+        return 'UTC+10:00' if city == 'Sydney' else 'UTC+1:00'
+
+    agent.run_sync('Give me info about Sydney including its timezone')
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_strict_none_tool_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=None, NativeOutput → beta from native only, tool has no strict field + output_format."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_none_tool_native_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain
+    def get_coordinates(city: str) -> str:
+        return '41.3874° N, 2.1686° E' if city == 'Barcelona' else 'Unknown'
+
+    result = agent.run_sync('Give me details about Barcelona')
+
+    assert isinstance(result.output, CityInfo)
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_strict_false_tool_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=False, no output_type → no beta header."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_false_tool_no_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=False)
+    def calculate_distance(city_a: str, city_b: str) -> str:
+        return f'Distance from {city_a} to {city_b}: 504 km'
+
+    agent.run_sync('How far is Madrid from Lisbon?')
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_strict_false_tool_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=False, NativeOutput → beta from native only + output_format."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_false_tool_native_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain(strict=False)
+    def get_currency(country: str) -> str:
+        return 'Mexican Peso (MXN)' if country == 'Mexico' else 'Unknown'
+
+    result = agent.run_sync('Give me details about Mexico City')
+
+    assert isinstance(result.output, CityInfo)
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_mixed_tools_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Mixed tools (one strict=True, one strict=None), no output_type → beta, only strict=True has strict field."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_mixed_tools_no_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: Sunny, 22°C'
+
+    @agent.tool_plain
+    def get_elevation(city: str) -> str:
+        return f'Elevation of {city}: 650m above sea level'
+
+    agent.run_sync("What's the weather and elevation in Denver?")
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_mixed_tools_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Mixed tools (one strict=True, one strict=None), BaseModel output_type → beta, only strict=True has strict field."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_mixed_tools_basemodel_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=CityInfo)
+
+    @agent.tool_plain(strict=True)
+    def get_population(city: str) -> int:
+        return 8_900_000 if city == 'London' else 1_000_000
+
+    @agent.tool_plain
+    def get_area(city: str) -> str:
+        return f'Area of {city}: 1,572 km²'
+
+    agent.run_sync('Tell me about London including population and area')
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_mixed_tools_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Mixed tools (one strict=True, one strict=None), NativeOutput → beta, only strict=True has strict field + output_format."""
+    model = anthropic_model('claude-sonnet-4-5')
+    hook = create_header_verification_hook(expect_beta=True, test_name='test_mixed_tools_native_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain(strict=True)
+    def lookup_country(city: str) -> str:
+        return 'Japan' if city == 'Tokyo' else 'Unknown'
+
+    @agent.tool_plain
+    def get_founded_year(city: str) -> str:
+        return '1457' if city == 'Tokyo' else 'Unknown'
+
+    result = agent.run_sync('Give me complete details about Tokyo')
+
+    assert isinstance(result.output, CityInfo)
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+# =============================================================================
+# Unsupported Model Tests (claude-sonnet-4-0)
+# =============================================================================
+
+
+@pytest.mark.vcr
+def test_unsupported_strict_true_tool_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Unsupported model: tool with strict=True, no output_type → no beta, no strict field."""
+    model = anthropic_model('claude-sonnet-4-0')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_unsupported_strict_true_tool_no_output')
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: Sunny, 18°C'
+
+    agent.run_sync("What's the weather in Amsterdam?")
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+@pytest.mark.vcr
+def test_unsupported_strict_true_tool_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Unsupported model: tool with strict=True, BaseModel output_type → no beta, no strict field."""
+    model = anthropic_model('claude-sonnet-4-0')
+    hook = create_header_verification_hook(
+        expect_beta=False, test_name='test_unsupported_strict_true_tool_basemodel_output'
+    )
+    model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model, output_type=CityInfo)
+
+    @agent.tool_plain(strict=True)
+    def get_population(city: str) -> int:
+        return 850_000 if city == 'Amsterdam' else 1_000_000
+
+    agent.run_sync('Get me details about Amsterdam including its population')
+
+    if errors := hook.errors:  # type: ignore[attr-defined]
+        assert False, '\n'.join(sorted(errors))
+
+
+def test_unsupported_native_output_raises(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Unsupported model: NativeOutput → raises UserError."""
+    model = anthropic_model('claude-sonnet-4-0')
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    with pytest.raises(UserError, match='Model claude-sonnet-4-0 does not support native output.'):
+        agent.run_sync('Tell me about Berlin')
