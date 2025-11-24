@@ -138,7 +138,7 @@ print(result.all_messages())
                 tool_call_id='update_file_dotenv',
             ),
         ],
-        usage=RequestUsage(input_tokens=159, output_tokens=340),
+        usage=RequestUsage(input_tokens=63, output_tokens=21),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -183,7 +183,7 @@ print(result.all_messages())
                 tool_call_id='update_file_backup',
             )
         ],
-        usage=RequestUsage(input_tokens=290, output_tokens=738),
+        usage=RequestUsage(input_tokens=86, output_tokens=31),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -205,7 +205,7 @@ print(result.all_messages())
                 content="Here's what I've done:\n- Attempted to delete __init__.py, but deletion is not allowed.\n- Updated README.md with: Hello, world!\n- Cleared .env (set to empty).\n- Created a backup at README.md.bak containing: Hello, world!\n\nIf you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know."
             )
         ],
-        usage=RequestUsage(input_tokens=342, output_tokens=93),
+        usage=RequestUsage(input_tokens=93, output_tokens=89),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
