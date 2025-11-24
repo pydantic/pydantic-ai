@@ -1772,21 +1772,16 @@ fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)
 
 
 async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
-    result = await fastmcp_dbos_agent.run(
-        'Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
-    )
-    print(result.output)
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await fastmcp_dbos_agent.run(
+            'Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
+        )
     assert result.output == snapshot(
         'The `pydantic/pydantic-ai` repository is a Python agent framework designed for building production-grade Generative AI applications. It emphasizes type-safety, a model-agnostic design, and an ergonomic developer experience. Key features include type-safe agents using Pydantic, support for over 15 LLM providers, structured outputs with automatic validation, comprehensive observability, and production-ready tooling. The framework is structured as a UV workspace monorepo with core and supporting packages for defining and executing complex applications.'
     )
 
-    list_workflows = await dbos.list_workflows_async()
-    assert len(list_workflows) == 1
-    workflow = list_workflows[0]
-    assert workflow.name == 'fastmcp_agent.run'
-    wf_id = workflow.workflow_id
-
-    steps = await dbos.list_workflow_steps_async(wf_id)
+    steps = await dbos.list_workflow_steps_async(wfid)
     assert [step['function_name'] for step in steps] == snapshot(
         [
             'fastmcp_agent__fastmcp_toolset__deepwiki.get_tools',

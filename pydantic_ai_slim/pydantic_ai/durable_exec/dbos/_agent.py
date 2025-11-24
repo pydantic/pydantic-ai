@@ -351,6 +351,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
+        if model is not None and not isinstance(model, DBOSModel):
+            raise UserError(
+                'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
+            )
         return await self.dbos_wrapped_run_workflow(
             user_prompt,
             output_type=output_type,
@@ -464,6 +468,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
+        if model is not None and not isinstance(model, DBOSModel):
+            raise UserError(
+                'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
+            )
         return self.dbos_wrapped_run_sync_workflow(
             user_prompt,
             output_type=output_type,
