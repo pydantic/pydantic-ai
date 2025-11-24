@@ -9,6 +9,8 @@ from typing import Any, Literal
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
 
+OpenAICustomReasoningField = Literal['reasoning', 'reasoning_content']
+OpenAIIncludeReasoningInRequest = Literal['combined', 'separated', 'none']
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
@@ -18,6 +20,27 @@ class OpenAIModelProfile(ModelProfile):
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
+
+    openai_chat_custom_reasoning_field: OpenAICustomReasoningField | None = None
+    """Non-standard field name used by some providers for model reasoning content in Chat Completions API responses.
+
+    Plenty of providers use custom field names for reasoning content. Ollama and newer versions of vLLM use `reasoning`,
+    while DeepSeek, older vLLM and some others use `reasoning_content`.
+
+    Notice that the reasoning field configured here is currently limited to `str` type content. If your provider is using
+    complex `reasoning_details` (like newer OpenRouter API), you may want to look into `OpenRouterModel` instead.
+
+    If `openai_chat_include_reasoning_in_request` is set to `'separated'`, this field must be set to a non-None value."""
+
+    openai_chat_include_reasoning_in_request: OpenAIIncludeReasoningInRequest = 'combined'
+    """Whether the model includes reasoning content in requests.
+
+    This can be:
+    * `'combined'` (default): The reasoning content is included in the main `content` field, enclosed within thinking tags.
+    * `'separated'`: The reasoning content is included in a separate field specified by `openai_chat_custom_reasoning_field`.
+    * `'none'`: No reasoning content is sent in the request.
+
+    Defaults to `'combined'` for compatibility reasons."""
 
     openai_supports_strict_tool_definition: bool = True
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
@@ -57,6 +80,11 @@ class OpenAIModelProfile(ModelProfile):
                 'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
                 'Use `openai_unsupported_model_settings` instead.',
                 DeprecationWarning,
+            )
+        if self.openai_chat_include_reasoning_in_request == 'separated' and not self.openai_chat_custom_reasoning_field:
+            raise ValueError(
+                'If `openai_chat_include_reasoning_in_request` is "separated", '
+                '`openai_chat_custom_reasoning_field` must be set to a non-None value.'
             )
 
 
