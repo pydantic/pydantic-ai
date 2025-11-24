@@ -74,6 +74,15 @@ pytestmark = [
 ]
 
 
+async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:
+    """Helper function to clean up OpenAI file search resources if they exist."""
+    if file is not None:
+        await async_client.files.delete(file.id)
+    if vector_store is not None:
+        await async_client.vector_stores.delete(vector_store.id)
+    await async_client.close()
+
+
 def test_openai_responses_model(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     model = OpenAIResponsesModel('gpt-4o')
@@ -7578,11 +7587,7 @@ Would you like to know anything specific about the Eiffel Tower?\
 
     finally:
         os.unlink(test_file_path)
-        if file is not None:
-            await async_client.files.delete(file.id)
-        if vector_store is not None:
-            await async_client.vector_stores.delete(vector_store.id)
-        await async_client.close()
+        await _cleanup_openai_resources(file, vector_store, async_client)
 
 
 @pytest.mark.vcr()
@@ -7754,11 +7759,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
 
     finally:
         os.unlink(test_file_path)
-        if file is not None:
-            await async_client.files.delete(file.id)
-        if vector_store is not None:
-            await async_client.vector_stores.delete(vector_store.id)
-        await async_client.close()
+        await _cleanup_openai_resources(file, vector_store, async_client)
 
 
 async def test_openai_file_search_include_results_setting():
@@ -7983,55 +7984,113 @@ async def test_openai_file_search_cleanup_none():
         pass
     finally:
         os.unlink(test_file_path)
-        if file is not None:
-            await async_client.files.delete(file.id)
-        if vector_store is not None:
-            await async_client.vector_stores.delete(vector_store.id)
-        await async_client.close()
+        await _cleanup_openai_resources(file, vector_store, async_client)
 
 
-async def test_openai_file_search_cleanup_both_branches():
-    import os
-    import tempfile
+async def test_openai_file_search_cleanup_file_none_vector_store_set():
+    """Test cleanup helper when file is None but vector_store is set."""
     from unittest.mock import AsyncMock, Mock
 
     from openai import AsyncOpenAI
 
     async_client = AsyncOpenAI(api_key='test-key')
+    async_client.files.delete = AsyncMock()
+    async_client.vector_stores.delete = AsyncMock()
+    async_client.close = AsyncMock()
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('test content')
-        test_file_path = f.name
+    file = None
+    vector_store = Mock()
+    vector_store.id = 'test-vector-store-id'
+
+    await _cleanup_openai_resources(file, vector_store, async_client)
+    async_client.files.delete.assert_not_called()
+    async_client.vector_stores.delete.assert_called_once_with('test-vector-store-id')
+    async_client.close.assert_called_once()
+
+
+async def test_openai_file_search_cleanup_file_set_vector_store_none():
+    """Test cleanup helper when file is set but vector_store is None."""
+    from unittest.mock import AsyncMock, Mock
+
+    from openai import AsyncOpenAI
+
+    async_client = AsyncOpenAI(api_key='test-key')
+    async_client.files.delete = AsyncMock()
+    async_client.vector_stores.delete = AsyncMock()
+    async_client.close = AsyncMock()
+
+    file = Mock()
+    file.id = 'test-file-id'
+    vector_store = None
+
+    await _cleanup_openai_resources(file, vector_store, async_client)
+    async_client.files.delete.assert_called_once_with('test-file-id')
+    async_client.vector_stores.delete.assert_not_called()
+    async_client.close.assert_called_once()
+
+
+async def test_openai_file_search_cleanup_both_branches():
+    """Test cleanup helper covers all branches."""
+    from unittest.mock import AsyncMock, Mock
+
+    from openai import AsyncOpenAI
+
+    # Test case 1: both file and vector_store are set
+    async_client = AsyncOpenAI(api_key='test-key')
+    async_client.files.delete = AsyncMock()
+    async_client.vector_stores.delete = AsyncMock()
+    async_client.close = AsyncMock()
 
     file = Mock()
     file.id = 'test-file-id'
     vector_store = Mock()
     vector_store.id = 'test-vector-store-id'
-    try:
-        pass
-    finally:
-        os.unlink(test_file_path)
-        if file is not None:  # pyright: ignore[reportUnnecessaryComparison]
-            async_client.files.delete = AsyncMock()
-            await async_client.files.delete(file.id)
-        if vector_store is not None:  # pyright: ignore[reportUnnecessaryComparison]
-            async_client.vector_stores.delete = AsyncMock()
-            await async_client.vector_stores.delete(vector_store.id)
-        await async_client.close()
 
+    await _cleanup_openai_resources(file, vector_store, async_client)
+    async_client.files.delete.assert_called_once_with('test-file-id')
+    async_client.vector_stores.delete.assert_called_once_with('test-vector-store-id')
+    async_client.close.assert_called_once()
+
+    # Test case 2: file is set, vector_store is None
     async_client2 = AsyncOpenAI(api_key='test-key')
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('test content 2')
-        test_file_path2 = f.name
+    async_client2.files.delete = AsyncMock()
+    async_client2.vector_stores.delete = AsyncMock()
+    async_client2.close = AsyncMock()
+
+    file = Mock()
+    file.id = 'test-file-id-2'
+    vector_store = None
+
+    await _cleanup_openai_resources(file, vector_store, async_client2)
+    async_client2.files.delete.assert_called_once_with('test-file-id-2')
+    async_client2.vector_stores.delete.assert_not_called()
+    async_client2.close.assert_called_once()
+
+    # Test case 3: file is None, vector_store is set
+    async_client3 = AsyncOpenAI(api_key='test-key')
+    async_client3.files.delete = AsyncMock()
+    async_client3.vector_stores.delete = AsyncMock()
+    async_client3.close = AsyncMock()
+
+    file = None
+    vector_store = Mock()
+    vector_store.id = 'test-vector-store-id-3'
+
+    await _cleanup_openai_resources(file, vector_store, async_client3)
+    async_client3.files.delete.assert_not_called()
+    async_client3.vector_stores.delete.assert_called_once_with('test-vector-store-id-3')
+    async_client3.close.assert_called_once()
+
+    # Test case 4: both are None
+    async_client4 = AsyncOpenAI(api_key='test-key')
+    async_client4.files.delete = AsyncMock()
+    async_client4.vector_stores.delete = AsyncMock()
+    async_client4.close = AsyncMock()
 
     file = None
     vector_store = None
-    try:
-        pass
-    finally:
-        os.unlink(test_file_path2)
-        if file is not None:
-            await async_client2.files.delete(file.id)
-        if vector_store is not None:
-            await async_client2.vector_stores.delete(vector_store.id)
-        await async_client2.close()
+
+    await _cleanup_openai_resources(file, vector_store, async_client4)
+    async_client4.files.delete.assert_not_called()
+    async_client4.vector_stores.delete.assert_not_called()
+    async_client4.close.assert_called_once()

@@ -3194,7 +3194,9 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
         await agent.run('Generate an image of an axolotl.')
 
 
-async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_image_generation(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
@@ -3624,6 +3626,12 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
+async def _cleanup_file_search_store(store: Any, client: Any) -> None:
+    """Helper function to clean up a file search store if it exists."""
+    if store is not None and store.name is not None:
+        await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+
+
 def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:
     return GenerateContentResponse.model_validate(
         {
@@ -3825,8 +3833,7 @@ Here are some key facts about the Eiffel Tower:
 
     finally:
         os.unlink(test_file_path)
-        if store is not None and store.name is not None:
-            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+        await _cleanup_file_search_store(store, client)
 
 
 @pytest.mark.vcr()
@@ -4109,8 +4116,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
 
     finally:
         os.unlink(test_file_path)
-        if store is not None and store.name is not None:
-            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+        await _cleanup_file_search_store(store, client)
 
 
 async def test_cache_point_filtering():
@@ -4576,48 +4582,44 @@ async def test_google_file_search_retrieved_contexts_empty():
 
 
 async def test_google_file_search_cleanup_none():
+    """Test cleanup helper when store is None."""
     client = GoogleProvider(api_key='test-key').client
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('test content')
-        test_file_path = f.name
-
     store = None
-    try:
-        pass
-    finally:
-        os.unlink(test_file_path)
-        if store is not None and store.name is not None:
-            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+    await _cleanup_file_search_store(store, client)  # Should not raise
+
+
+async def test_google_file_search_cleanup_store_name_none():
+    """Test cleanup helper when store.name is None."""
+    from unittest.mock import Mock
+
+    client = GoogleProvider(api_key='test-key').client
+    store = Mock()
+    store.name = None
+    await _cleanup_file_search_store(store, client)  # Should not raise
 
 
 async def test_google_file_search_cleanup_both_branches():
+    """Test cleanup helper covers all branches."""
     from unittest.mock import AsyncMock, Mock
 
     client = GoogleProvider(api_key='test-key').client
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('test content')
-        test_file_path = f.name
-
+    # Test case 1: store and store.name are both set
     store = Mock()
     store.name = 'test-store-name'
-    try:
-        pass
-    finally:
-        os.unlink(test_file_path)
-        if store is not None and store.name is not None:  # pyright: ignore[reportUnnecessaryComparison]
-            client.aio.file_search_stores.delete = AsyncMock()
-            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+    client.aio.file_search_stores.delete = AsyncMock()
+    await _cleanup_file_search_store(store, client)
+    client.aio.file_search_stores.delete.assert_called_once_with(name='test-store-name', config={'force': True})
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('test content 2')
-        test_file_path2 = f.name
+    # Test case 2: store is set but store.name is None
+    store = Mock()
+    store.name = None
+    client.aio.file_search_stores.delete.reset_mock()
+    await _cleanup_file_search_store(store, client)
+    client.aio.file_search_stores.delete.assert_not_called()
 
+    # Test case 3: store is None
     store = None
-    try:
-        pass
-    finally:
-        os.unlink(test_file_path2)
-        if store is not None and store.name is not None:
-            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+    client.aio.file_search_stores.delete.reset_mock()
+    await _cleanup_file_search_store(store, client)
+    client.aio.file_search_stores.delete.assert_not_called()
