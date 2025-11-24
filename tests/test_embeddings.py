@@ -100,8 +100,7 @@ class TestCohere:
 @pytest.mark.skipif(not sentence_transformers_imports_successful, reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
     async def test_infer_model(self, co_api_key: str):
-        with patch.dict(os.environ, {'CO_API_KEY': co_api_key}):
-            model = infer_model('sentence-transformers:all-MiniLM-L6-v2')
+        model = infer_model('sentence-transformers:all-MiniLM-L6-v2')
         assert isinstance(model, SentenceTransformerEmbeddingModel)
         assert model.model_name == 'all-MiniLM-L6-v2'
         assert model.system == 'sentence-transformers'

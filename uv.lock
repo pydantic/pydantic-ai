@@ -5404,6 +5404,9 @@ outlines-vllm-offline = [
 prefect = [
     { name = "pydantic-ai-slim", extra = ["prefect"] },
 ]
+sentence-transformers = [
+    { name = "pydantic-ai-slim", extra = ["sentence-transformers"] },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -5460,8 +5463,9 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["outlines-transformers"], marker = "extra == 'outlines-transformers'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["outlines-vllm-offline"], marker = "extra == 'outlines-vllm-offline'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "dbos", "examples", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect"]
+provides-extras = ["a2a", "dbos", "examples", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "sentence-transformers"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -59,6 +59,7 @@ outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
 outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
+sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
