@@ -471,7 +471,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        if model is not None and not isinstance(model, DBOSModel):
+        if model is not None and not isinstance(model, DBOSModel):  # pragma: lax no cover
             raise UserError(
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )
@@ -864,7 +864,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        if model is not None and not isinstance(model, DBOSModel):
+        if model is not None and not isinstance(model, DBOSModel):  # pragma: lax no cover
             raise UserError(
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
             )

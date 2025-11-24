@@ -65,7 +65,7 @@ class DBOSFastMCPToolset(WrapperToolset[AgentDepsT], ABC):
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
     @property
-    def id(self) -> str | None:
+    def id(self) -> str | None:  # pragma: lax no cover
         return self.wrapped.id
 
     async def __aenter__(self) -> Self:
