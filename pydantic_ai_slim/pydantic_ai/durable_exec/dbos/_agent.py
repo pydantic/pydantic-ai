@@ -45,6 +45,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         mcp_step_config: StepConfig | None = None,
         model_step_config: StepConfig | None = None,
+        fastmcp_toolset_step_config: StepConfig | None = None,
     ):
         """Wrap an agent to enable it with DBOS durable workflows, by automatically offloading model requests, tool calls, and MCP server communication to DBOS steps.
 
@@ -56,6 +57,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             mcp_step_config: The base DBOS step config to use for MCP server steps. If no config is provided, use the default settings of DBOS.
             model_step_config: The DBOS step config to use for model request steps. If no config is provided, use the default settings of DBOS.
+            fastmcp_toolset_step_config: The base DBOS step config to use for FastMCP toolset steps. If no config is provided, use the default settings of DBOS.
         """
         super().__init__(wrapped)
 
@@ -69,6 +71,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         # Merge the config with the default DBOS config
         self._mcp_step_config = mcp_step_config or {}
         self._model_step_config = model_step_config or {}
+        self._fastmcp_toolset_step_config = fastmcp_toolset_step_config or {}
 
         if not isinstance(wrapped.model, Model):
             raise UserError(
@@ -113,7 +116,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     return DBOSFastMCPToolset(
                         wrapped=toolset,
                         step_name_prefix=dbosagent_name,
-                        step_config=self._mcp_step_config,
+                        step_config=self._fastmcp_toolset_step_config,
                     )
 
             return toolset

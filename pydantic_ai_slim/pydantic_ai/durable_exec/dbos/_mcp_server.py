@@ -8,12 +8,13 @@ from dbos import DBOS
 from typing_extensions import Self
 
 from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.mcp import MCPServer
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._utils import StepConfig
 
 if TYPE_CHECKING:
-    from pydantic_ai.mcp import MCPServer, ToolResult
+    from pydantic_ai.mcp import ToolResult
 
 
 class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
@@ -39,8 +40,12 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
         )
         async def wrapped_get_tools_step(
             ctx: RunContext[AgentDepsT],
-        ) -> dict[str, ToolsetTool[AgentDepsT]]:
-            return await super(DBOSMCPServer, self).get_tools(ctx)
+        ) -> dict[str, ToolDefinition]:
+            # Need to return a serializable dict, so we cannot return ToolsetTool directly.
+            tools = await super(DBOSMCPServer, self).get_tools(ctx)
+            # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
+            # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of the activity.
+            return {name: tool.tool_def for name, tool in tools.items()}
 
         self._dbos_wrapped_get_tools_step = wrapped_get_tools_step
 
@@ -78,7 +83,8 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return await self._dbos_wrapped_get_tools_step(ctx)
+        tool_defs = await self._dbos_wrapped_get_tools_step(ctx)
+        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def call_tool(
         self,
@@ -88,3 +94,7 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
         tool: ToolsetTool[AgentDepsT],
     ) -> ToolResult:
         return await self._dbos_wrapped_call_tool_step(name, tool_args, ctx, tool)
+
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+        assert isinstance(self.wrapped, MCPServer)
+        return self.wrapped.tool_for_tool_def(tool_def)
