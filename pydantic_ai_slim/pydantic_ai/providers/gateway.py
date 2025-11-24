@@ -132,14 +132,14 @@ def gateway_provider(
             environment variable will be used if available. Otherwise, defaults to `https://gateway.pydantic.dev/proxy`.
         http_client: The HTTP client to use for the Gateway.
     """
-    api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY')
+    api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
     if not api_key:
         raise UserError(
             'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(..., api_key=...)`'
             ' to use the Pydantic AI Gateway provider.'
         )
 
-    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', GATEWAY_BASE_URL)
+    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', os.getenv('PAIG_BASE_URL', GATEWAY_BASE_URL))
     http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook(api_key)]}
 

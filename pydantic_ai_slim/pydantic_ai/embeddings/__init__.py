@@ -10,7 +10,7 @@ from pydantic_ai import _utils
 from pydantic_ai.embeddings.base import EmbeddingModel
 from pydantic_ai.embeddings.settings import EmbeddingSettings, merge_embedding_settings
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import OpenAIChatCompatibleProvider
+from pydantic_ai.models import OpenAIChatCompatibleProvider, OpenAIResponsesCompatibleProvider
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.providers import Provider, infer_provider
 
@@ -20,7 +20,6 @@ __all__ = [
     'EmbeddingSettings',
     'merge_embedding_settings',
     'KnownEmbeddingModelName',
-    'OpenAIEmbeddingsCompatibleProvider',
     'infer_model',
 ]
 
@@ -36,9 +35,6 @@ KnownEmbeddingModelName = TypeAliasType(
 
 `KnownEmbeddingModelName` is provided as a concise way to specify an embedding model.
 """
-
-# For now, we assume that every chat completions-compatible provider also supports the embeddings endpoint.
-OpenAIEmbeddingsCompatibleProvider = OpenAIChatCompatibleProvider
 
 
 def infer_model(
@@ -63,10 +59,12 @@ def infer_model(
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    if model_kind in get_args(OpenAIEmbeddingsCompatibleProvider.__value__):
-        model_kind = 'openai'
-
-    if model_kind == 'openai':
+    if model_kind in (
+        'openai',
+        # For now, we assume that every chat and completions-compatible provider also supports the embeddings endpoint.
+        *get_args(OpenAIChatCompatibleProvider.__value__),
+        *get_args(OpenAIResponsesCompatibleProvider.__value__),
+    ):
         from .openai import OpenAIEmbeddingModel
 
         return OpenAIEmbeddingModel(model_name, provider=provider)

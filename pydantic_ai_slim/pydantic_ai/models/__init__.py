@@ -145,24 +145,28 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
+        'google-gla:gemini-flash-latest',
+        'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
+        'google-gla:gemini-2.5-flash-preview-09-2025',
+        'google-gla:gemini-2.5-flash-image',
         'google-gla:gemini-2.5-flash-lite',
         'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
         'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
+        'google-gla:gemini-3-pro-preview',
+        'google-vertex:gemini-flash-latest',
+        'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
+        'google-vertex:gemini-2.5-flash-preview-09-2025',
+        'google-vertex:gemini-2.5-flash-image',
         'google-vertex:gemini-2.5-flash-lite',
         'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
         'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
+        'google-vertex:gemini-3-pro-preview',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
         'grok:grok-3',
@@ -826,12 +830,12 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    if model_kind in ('openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
-        model_kind = 'openai-chat'
-    elif model_kind in ('google-gla', 'google-vertex'):
-        model_kind = 'google'
+    if model_kind == 'openrouter':
+        # OpenRouter needs to be checked before OpenAI, as `openrouter` is in `OpenAIChatCompatibleProvider` but has its own model class.
+        from .openrouter import OpenRouterModel
 
-    if model_kind == 'openai-chat':
+        return OpenRouterModel(model_name, provider=provider)
+    elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
@@ -839,7 +843,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind == 'google':
+    elif model_kind in ('google', 'google-gla', 'google-vertex'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

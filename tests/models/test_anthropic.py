@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -41,6 +42,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UsageLimitExceeded,
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
@@ -53,14 +55,14 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -143,7 +145,7 @@ class MockAnthropic:
 
     @cached_property
     def messages(self) -> Any:
-        return type('Messages', (), {'create': self.messages_create})
+        return type('Messages', (), {'create': self.messages_create, 'count_tokens': self.messages_count_tokens})
 
     @classmethod
     def create_mock(cls, messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage]) -> AsyncAnthropic:
@@ -178,6 +180,11 @@ class MockAnthropic:
                 response = cast(BetaMessage, self.messages_)
         self.index += 1
         return response
+
+    async def messages_count_tokens(self, *_args: Any, **_kwargs: Any) -> Any:
+        if self.messages_ is not None:
+            raise_if_exception(self.messages_ if not isinstance(self.messages_, Sequence) else self.messages_[0])
+        return None  # pragma: no cover
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
@@ -314,7 +321,11 @@ async def test_cache_point_adds_cache_control(allow_model_requests: None):
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'Some context to cache', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
                     {'text': 'Now the question', 'type': 'text'},
                 ],
             }
@@ -339,8 +350,8 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
 
     assert content == snapshot(
         [
-            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
-            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
             {'text': 'Question', 'type': 'text'},
         ]
     )
@@ -389,7 +400,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
             {
                 'source': {'type': 'url', 'url': 'https://example.com/image.jpg'},
                 'type': 'image',
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
             {'text': 'What is in this image?', 'type': 'text'},
         ]
@@ -422,9 +433,9 @@ def test_cache_control_unsupported_param_type():
 
     # Create a list with an unsupported param type (document)
     # We'll use a mock document block param
-    params: list[dict[str, Any]] = [{'type': 'document', 'source': {'data': 'test'}}]
+    params: list[dict[str, Any]] = [{'type': 'thinking', 'source': {'data': 'test'}}]
 
-    with pytest.raises(UserError, match='Cache control not supported for param type: document'):
+    with pytest.raises(UserError, match='Cache control not supported for param type: thinking'):
         AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
@@ -466,7 +477,7 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
                 'name': 'tool_two',
                 'description': '',
                 'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
         ]
     )
@@ -496,7 +507,7 @@ async def test_anthropic_cache_instructions(allow_model_requests: None):
             {
                 'type': 'text',
                 'text': 'This is a test system prompt with instructions.',
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )
@@ -540,13 +551,47 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
                     'required': ['value'],
                     'type': 'object',
                 },
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )
     assert system == snapshot(
-        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral'}}]
+        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
     )
+
+
+async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
+    """Test that cache settings support custom TTL values ('5m' or '1h')."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions='1h',  # Custom 1h TTL
+            anthropic_cache_instructions='5m',  # Explicit 5m TTL
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool(value: str) -> str:  # pragma: no cover
+        return f'Result: {value}'
+
+    await agent.run('test prompt')
+
+    # Verify custom TTL values are applied
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    system = completion_kwargs['system']
+
+    # Tool definitions should have 1h TTL
+    assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
+    # System instructions should have 5m TTL
+    assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -1164,6 +1209,36 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: claude-sonnet-4-5, body: {'error': 'test error'}"
     )
+
+
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.anthropic.com timed out',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
+
+
+async def test_count_tokens_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.anthropic.com timed out',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
 
 
 async def test_document_binary_content_input(
@@ -6405,3 +6480,75 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
 
 According to my memory, you live in **Mexico City**.\
 """)
+
+
+async def test_anthropic_model_usage_limit_exceeded(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=19\\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
+        )
+
+
+async def test_anthropic_model_usage_limit_not_exceeded(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        """\
+I noticed a small typo in that famous pangram! It should be:
+
+"The quick brown fox jumps over the **lazy dog**."
+
+(There should be a space between "lazy" and "dog")
+
+This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.\
+"""
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'claude-does-not-exist'
+    model = AnthropicModel(model_id, provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.model_name == model_id
+
+
+async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
+    """Test that AsyncAnthropicBedrock raises UserError for count_tokens."""
+    from anthropic import AsyncAnthropicBedrock
+
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key='test-access-key',
+        aws_secret_key='test-secret-key',
+        aws_region='us-east-1',
+    )
+    provider = AnthropicProvider(anthropic_client=bedrock_client)
+    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))

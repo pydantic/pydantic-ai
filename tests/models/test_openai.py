@@ -20,6 +20,7 @@ from pydantic_ai import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelProfile,
     ModelRequest,
@@ -56,7 +57,7 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
@@ -1146,6 +1147,36 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")
 
 
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIConnectionError(
+            message='Connection to http://localhost:11434/v1 timed out',
+            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+        )
+    )
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'gpt-4o'
+    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
+def test_responses_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAIResponses.create_mock(
+        APIConnectionError(
+            message='Connection to http://localhost:11434/v1 timed out',
+            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+        )
+    )
+    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'o3-mini'
+    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
 async def test_max_completion_tokens(allow_model_requests: None, model_name: str, openai_api_key: str):
     m = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
@@ -1182,6 +1213,57 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
         'What is the capital of England?', model=openai_model, message_history=result.all_messages()
     )
     assert result.output == snapshot('The capital of England is London.')
+
+
+async def test_message_history_can_start_with_model_response(allow_model_requests: None, openai_api_key: str):
+    """Test that an agent run with message_history starting with ModelResponse is executed correctly."""
+
+    openai_model = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    message_history = [ModelResponse(parts=[TextPart('Where do you want to go today?')])]
+
+    agent = Agent(model=openai_model)
+
+    result = await agent.run('Answer in 5 words only. Who is Tux?', message_history=message_history)
+
+    assert result.output == snapshot('Linux mascot, a penguin character.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Where do you want to go today?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Answer in 5 words only. Who is Tux?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Linux mascot, a penguin character.')],
+                usage=RequestUsage(
+                    input_tokens=31,
+                    output_tokens=8,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
@@ -2926,7 +3008,7 @@ async def test_invalid_response(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message.startswith(
-        'Invalid response from OpenAI chat completions endpoint: 4 validation errors for ChatCompletion'
+        'Invalid response from openai chat completions endpoint: 4 validation errors for ChatCompletion'
     )
 
 
@@ -2940,7 +3022,7 @@ async def test_text_response(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message == snapshot(
-        'Invalid response from OpenAI chat completions endpoint, expected JSON data'
+        'Invalid response from openai chat completions endpoint, expected JSON data'
     )
 
 

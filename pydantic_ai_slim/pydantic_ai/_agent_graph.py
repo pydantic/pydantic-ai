@@ -113,9 +113,9 @@ class GraphAgentState:
                 try:
                     tool_call.args_as_dict()
                 except Exception:
-                    max_tokens = (model_settings or {}).get('max_tokens') if model_settings else None
+                    max_tokens = model_settings.get('max_tokens') if model_settings else None
                     raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({max_tokens if max_tokens is not None else "provider default"}) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.'
+                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
@@ -221,6 +221,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message: _messages.ModelRequest | None = None
 
+        run_context: RunContext[DepsT] | None = None
+        instructions: str | None = None
+
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
@@ -242,15 +245,19 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
-                    # Skip ModelRequestNode and go directly to CallToolsNode
-                    return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    if not instructions:
+                        # If there's no new prompt or instructions, skip ModelRequestNode and go directly to CallToolsNode
+                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
                     )
 
-        # Build the run context after `ctx.deps.prompt` has been updated
-        run_context = build_run_context(ctx)
+        if not run_context:
+            run_context = build_run_context(ctx)
+            instructions = await ctx.deps.get_instructions(run_context)
 
         if messages:
             await self._reevaluate_dynamic_prompts(messages, run_context)
@@ -267,7 +274,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
             next_message = _messages.ModelRequest(parts=parts)
 
-        next_message.instructions = await ctx.deps.get_instructions(run_context)
+        next_message.instructions = instructions
 
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
@@ -572,6 +579,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 if not self.model_response.parts:
+                    # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
+                    if self.model_response.finish_reason == 'length':
+                        model_settings = ctx.deps.model_settings
+                        max_tokens = model_settings.get('max_tokens') if model_settings else None
+                        raise exceptions.UnexpectedModelBehavior(
+                            f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                        )
+
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
@@ -592,8 +607,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                     try:
                                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                                         return
-                                    except ToolRetryError:
-                                        # If the text from the preview response was invalid, ignore it.
+                                    except ToolRetryError:  # pragma: no cover
+                                        # If the text from the previous response was invalid, ignore it.
                                         pass
 
                     # Go back to the model request node with an empty request, which means we'll essentially
@@ -888,6 +903,7 @@ async def process_tool_calls(  # noqa: C901
         calls_to_run = [call for call in calls_to_run if call.tool_call_id in calls_to_run_results]
 
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
+    deferred_metadata: dict[str, dict[str, Any]] = {}
 
     if calls_to_run:
         async for event in _call_tools(
@@ -899,6 +915,7 @@ async def process_tool_calls(  # noqa: C901
             usage_limits=ctx.deps.usage_limits,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
+            output_deferred_metadata=deferred_metadata,
         ):
             yield event
 
@@ -932,6 +949,7 @@ async def process_tool_calls(  # noqa: C901
         deferred_tool_requests = _output.DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
+            metadata=deferred_metadata,
         )
 
         final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
@@ -949,10 +967,12 @@ async def _call_tools(
     usage_limits: _usage.UsageLimits,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    output_deferred_metadata: dict[str, dict[str, Any]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
@@ -987,10 +1007,12 @@ async def _call_tools(
                 tool_part, tool_user_content = (
                     (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
-            except exceptions.CallDeferred:
+            except exceptions.CallDeferred as e:
                 deferred_calls_by_index[index] = 'external'
-            except exceptions.ApprovalRequired:
+                deferred_metadata_by_index[index] = e.metadata
+            except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
+                deferred_metadata_by_index[index] = e.metadata
             else:
                 tool_parts_by_index[index] = tool_part
                 if tool_user_content:
@@ -1028,8 +1050,25 @@ async def _call_tools(
     output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
+    _populate_deferred_calls(
+        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+    )
+
+
+def _populate_deferred_calls(
+    tool_calls: list[_messages.ToolCallPart],
+    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None],
+    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    output_deferred_metadata: dict[str, dict[str, Any]],
+) -> None:
+    """Populate deferred calls and metadata from indexed mappings."""
     for k in sorted(deferred_calls_by_index):
-        output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])
+        call = tool_calls[k]
+        output_deferred_calls[deferred_calls_by_index[k]].append(call)
+        metadata = deferred_metadata_by_index[k]
+        if metadata is not None:
+            output_deferred_metadata[call.tool_call_id] = metadata
 
 
 async def _call_tool(

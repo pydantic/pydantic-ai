@@ -14,7 +14,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -55,7 +55,14 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
 
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream, omit as OMIT
+    from anthropic import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIStatusError,
+        AsyncAnthropicBedrock,
+        AsyncStream,
+        omit as OMIT,
+    )
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -76,6 +83,7 @@ try:
         BetaMemoryTool20250818Param,
         BetaMessage,
         BetaMessageParam,
+        BetaMessageTokensCount,
         BetaMetadataParam,
         BetaPlainTextSourceParam,
         BetaRawContentBlockDeltaEvent,
@@ -150,19 +158,21 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
     """
 
-    anthropic_cache_tool_definitions: bool
+    anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last tool definition.
 
     When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing Anthropic to cache tool definitions and reduce costs.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
-    anthropic_cache_instructions: bool
+    anthropic_cache_instructions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last system prompt block.
 
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -239,6 +249,23 @@ class AnthropicModel(Model):
         model_response = self._process_response(response)
         return model_response
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+
+        response = await self._messages_count_tokens(
+            messages, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+        )
+
+        return usage.RequestUsage(input_tokens=response.input_tokens)
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -310,28 +337,12 @@ class AnthropicModel(Model):
         tools = self._get_tools(model_request_parameters, model_settings)
         tools, mcp_servers, beta_features = self._add_builtin_tools(tools, model_request_parameters)
 
-        tool_choice: BetaToolChoiceParam | None
-
-        if not tools:
-            tool_choice = None
-        else:
-            if not model_request_parameters.allow_text_output:
-                tool_choice = {'type': 'any'}
-            else:
-                tool_choice = {'type': 'auto'}
-
-            if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
-                tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
+        tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
         try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
-            if beta_features:
-                if 'anthropic-beta' in extra_headers:
-                    beta_features.insert(0, extra_headers['anthropic-beta'])
-                extra_headers['anthropic-beta'] = ','.join(beta_features)
+            extra_headers = self._map_extra_headers(beta_features, model_settings)
 
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -354,7 +365,48 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+    async def _messages_count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> BetaMessageTokensCount:
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
+
+        # standalone function to make it easier to override
+        tools = self._get_tools(model_request_parameters, model_settings)
+        tools, mcp_servers, beta_features = self._add_builtin_tools(tools, model_request_parameters)
+
+        tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
+
+        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+
+        try:
+            extra_headers = self._map_extra_headers(beta_features, model_settings)
+
+            return await self.client.beta.messages.count_tokens(
+                system=system_prompt or OMIT,
+                messages=anthropic_messages,
+                model=self._model_name,
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
+                mcp_servers=mcp_servers or OMIT,
+                thinking=model_settings.get('anthropic_thinking', OMIT),
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                extra_headers=extra_headers,
+                extra_body=model_settings.get('extra_body'),
+            )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -437,9 +489,11 @@ class AnthropicModel(Model):
         ]
 
         # Add cache_control to the last tool if enabled
-        if tools and model_settings.get('anthropic_cache_tool_definitions'):
+        if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
+            # If True, use '5m'; otherwise use the specified ttl value
+            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = tools[-1]
-            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
         return tools
 
@@ -492,6 +546,37 @@ class AnthropicModel(Model):
                 )
         return tools, mcp_servers, beta_features
 
+    def _infer_tool_choice(
+        self,
+        tools: list[BetaToolUnionParam],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> BetaToolChoiceParam | None:
+        if not tools:
+            return None
+        else:
+            tool_choice: BetaToolChoiceParam
+
+            if not model_request_parameters.allow_text_output:
+                tool_choice = {'type': 'any'}
+            else:
+                tool_choice = {'type': 'auto'}
+
+            if 'parallel_tool_calls' in model_settings:
+                tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']
+
+            return tool_choice
+
+    def _map_extra_headers(self, beta_features: list[str], model_settings: AnthropicModelSettings) -> dict[str, str]:
+        """Apply beta_features to extra_headers in model_settings."""
+        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers.setdefault('User-Agent', get_user_agent())
+        if beta_features:
+            if 'anthropic-beta' in extra_headers:
+                beta_features.insert(0, extra_headers['anthropic-beta'])
+            extra_headers['anthropic-beta'] = ','.join(beta_features)
+        return extra_headers
+
     async def _map_message(  # noqa: C901
         self,
         messages: list[ModelMessage],
@@ -510,7 +595,7 @@ class AnthropicModel(Model):
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
-                                self._add_cache_control_to_last_param(user_content_params)
+                                self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
@@ -674,10 +759,14 @@ class AnthropicModel(Model):
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
-        if system_prompt and model_settings.get('anthropic_cache_instructions'):
+        if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
+            # If True, use '5m'; otherwise use the specified ttl value
+            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
             system_prompt_blocks = [
                 BetaTextBlockParam(
-                    type='text', text=system_prompt, cache_control=BetaCacheControlEphemeralParam(type='ephemeral')
+                    type='text',
+                    text=system_prompt,
+                    cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
                 )
             ]
             return system_prompt_blocks, anthropic_messages
@@ -685,7 +774,7 @@ class AnthropicModel(Model):
         return system_prompt, anthropic_messages
 
     @staticmethod
-    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam]) -> None:
+    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m') -> None:
         """Add cache control to the last content block param.
 
         See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
@@ -698,7 +787,7 @@ class AnthropicModel(Model):
 
         # Only certain types support cache_control
         # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
-        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result'}
+        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
         # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
         # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
         last_param = cast(dict[str, Any], params[-1])
@@ -706,7 +795,7 @@ class AnthropicModel(Model):
             raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
 
         # Add cache_control to the last param
-        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
     @staticmethod
     async def _map_user_prompt(
