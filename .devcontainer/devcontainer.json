@@ -10,7 +10,6 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}, // gh command
     "ghcr.io/rocker-org/devcontainer-features/pandoc:1": {}, // pandoc command
     "ghcr.io/lukewiwa/features/shellcheck:0": {}, // shellcheck command
-    "ghcr.io/devcontainers-extra/features/curl-apt-get:1": {}, // curl and apt-get commands
     "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}, // uv command
     "ghcr.io/devcontainers/features/node:1": {
       "version": "latest"
