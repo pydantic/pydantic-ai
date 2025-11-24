@@ -124,9 +124,7 @@ class TemporalModel(WrapperModel):
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         request_stream_activity.__annotations__['deps'] = deps_type
 
-        self.request_stream_activity = activity.defn(name=request_stream_activity_name)(
-            request_stream_activity
-        )
+        self.request_stream_activity = activity.defn(name=request_stream_activity_name)(request_stream_activity)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

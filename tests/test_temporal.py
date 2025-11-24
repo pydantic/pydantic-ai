@@ -107,7 +107,7 @@ with workflow.unsafe.imports_passed_through():
     # Workaround for a race condition when running `logfire.info` inside an activity with attributes to serialize and pandas importable:
     # AttributeError: partially initialized module 'pandas' has no attribute '_pandas_parser_CAPI' (most likely due to a circular import)
     try:
-        import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+        import pandas  # pyright: ignore[reportUnusedImport,reportMissingImports] # noqa: F401
     except ImportError:  # pragma: lax no cover
         pass
 
@@ -2512,36 +2512,42 @@ async def test_temporal_agent_multi_model_registration():
     temporal_agent = TemporalAgent(agent, name='multi_model_test', additional_models=[test_model2, test_model3])
 
     # Verify that all models are registered
-    assert 'default' in temporal_agent._models
-    assert 'test' in temporal_agent._models
-    assert 'test_1' in temporal_agent._models
+    assert 'default' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test_1' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
 
     # Verify default model has no suffix in activity name
-    default_activities = temporal_agent._models['default'].temporal_activities
+    default_activities = temporal_agent._models['default'].temporal_activities  # pyright: ignore[reportPrivateUsage]
     default_request_activity = next(
-        a for a in default_activities if a.__temporal_activity_definition.name.endswith('__model_request')
+        a
+        for a in default_activities
+        if a.__temporal_activity_definition.name.endswith('__model_request')  # type: ignore[attr-defined]
     )
-    assert default_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model_request'
+    assert default_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model_request'  # type: ignore[attr-defined]
 
     # Verify additional models have suffixes in activity names
-    model1_activities = temporal_agent._models['test'].temporal_activities
+    model1_activities = temporal_agent._models['test'].temporal_activities  # pyright: ignore[reportPrivateUsage]
     model1_request_activity = next(
-        a for a in model1_activities if '__model__test__request' in a.__temporal_activity_definition.name
+        a
+        for a in model1_activities
+        if '__model__test__request' in a.__temporal_activity_definition.name  # type: ignore[attr-defined]
     )
     assert (
-        model1_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test__request'
+        model1_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test__request'  # type: ignore[attr-defined]
     )
 
-    model2_activities = temporal_agent._models['test_1'].temporal_activities
+    model2_activities = temporal_agent._models['test_1'].temporal_activities  # pyright: ignore[reportPrivateUsage]
     model2_request_activity = next(
-        a for a in model2_activities if '__model__test_1__request' in a.__temporal_activity_definition.name
+        a
+        for a in model2_activities
+        if '__model__test_1__request' in a.__temporal_activity_definition.name  # type: ignore[attr-defined]
     )
     assert (
-        model2_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test_1__request'
+        model2_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test_1__request'  # type: ignore[attr-defined]
     )
 
     # Verify all activities are included in temporal_activities
-    all_activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}
+    all_activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}  # type: ignore[attr-defined]
     assert 'agent__multi_model_test__model_request' in all_activity_names
     assert 'agent__multi_model_test__model__test__request' in all_activity_names
     assert 'agent__multi_model_test__model__test_1__request' in all_activity_names
@@ -2563,13 +2569,13 @@ async def test_temporal_agent_multi_model_with_strings():
     )
 
     # Verify that models are registered with sanitized keys
-    assert 'default' in temporal_agent._models
-    assert 'test' in temporal_agent._models
-    assert 'test_1' in temporal_agent._models
+    assert 'default' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test_1' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
 
     # Verify lookup mappings for Model instances
-    assert id(test_model_str1) in temporal_agent._model_to_key
-    assert id(test_model_str2) in temporal_agent._model_to_key
+    assert id(test_model_str1) in temporal_agent._model_to_key  # pyright: ignore[reportPrivateUsage]
+    assert id(test_model_str2) in temporal_agent._model_to_key  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_temporal_agent_multi_model_duplicate_names():
@@ -2586,12 +2592,12 @@ async def test_temporal_agent_multi_model_duplicate_names():
     )
 
     # Verify that all models have unique keys
-    assert 'default' in temporal_agent._models
-    assert 'test' in temporal_agent._models
-    assert 'test_1' in temporal_agent._models
+    assert 'default' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test_1' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
 
     # Verify each has unique activities
-    activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}
+    activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}  # type: ignore[attr-defined]
     assert 'agent__duplicate_test__model_request' in activity_names
     assert 'agent__duplicate_test__model__test__request' in activity_names
     assert 'agent__duplicate_test__model__test_1__request' in activity_names
@@ -2681,14 +2687,14 @@ async def test_temporal_agent_multi_model_backward_compatibility():
     temporal_agent = TemporalAgent(agent, name='backward_compat_test')
 
     # Should only have default model
-    assert list(temporal_agent._models.keys()) == ['default']
+    assert list(temporal_agent._models.keys()) == ['default']  # pyright: ignore[reportPrivateUsage]
 
     # Should work without additional_models parameter
     assert isinstance(temporal_agent.model, TemporalModel)
     assert temporal_agent.model.wrapped == test_model
 
     # Activity names should not have suffixes (no __model__<suffix>__ pattern)
-    activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}
+    activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}  # type: ignore[attr-defined]
     assert 'agent__backward_compat_test__model_request' in activity_names
     # Verify no activities have the __model__<key>__ pattern (only __model_request and __model_request_stream allowed)
     for name in activity_names:
@@ -2731,10 +2737,10 @@ async def test_temporal_agent_multi_model_mixed_types():
     )
 
     # Verify all models are registered
-    assert 'default' in temporal_agent._models
-    assert 'test' in temporal_agent._models
-    assert 'test_1' in temporal_agent._models
+    assert 'default' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test_1' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
 
     # Verify lookups work for all model instances
-    assert id(test_model2) in temporal_agent._model_to_key
-    assert id(test_model3) in temporal_agent._model_to_key
+    assert id(test_model2) in temporal_agent._model_to_key  # pyright: ignore[reportPrivateUsage]
+    assert id(test_model3) in temporal_agent._model_to_key  # pyright: ignore[reportPrivateUsage]
