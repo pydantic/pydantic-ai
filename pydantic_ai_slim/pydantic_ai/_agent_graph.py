@@ -113,9 +113,9 @@ class GraphAgentState:
                 try:
                     tool_call.args_as_dict()
                 except Exception:
-                    max_tokens = (model_settings or {}).get('max_tokens') if model_settings else None
+                    max_tokens = model_settings.get('max_tokens') if model_settings else None
                     raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({max_tokens if max_tokens is not None else "provider default"}) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.'
+                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
@@ -221,6 +221,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message: _messages.ModelRequest | None = None
 
+        run_context: RunContext[DepsT] | None = None
+        instructions: str | None = None
+
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
@@ -242,15 +245,19 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
-                    # Skip ModelRequestNode and go directly to CallToolsNode
-                    return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    if not instructions:
+                        # If there's no new prompt or instructions, skip ModelRequestNode and go directly to CallToolsNode
+                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
                     )
 
-        # Build the run context after `ctx.deps.prompt` has been updated
-        run_context = build_run_context(ctx)
+        if not run_context:
+            run_context = build_run_context(ctx)
+            instructions = await ctx.deps.get_instructions(run_context)
 
         if messages:
             await self._reevaluate_dynamic_prompts(messages, run_context)
@@ -267,7 +274,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
             next_message = _messages.ModelRequest(parts=parts)
 
-        next_message.instructions = await ctx.deps.get_instructions(run_context)
+        next_message.instructions = instructions
 
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
@@ -572,6 +579,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 if not self.model_response.parts:
+                    # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
+                    if self.model_response.finish_reason == 'length':
+                        model_settings = ctx.deps.model_settings
+                        max_tokens = model_settings.get('max_tokens') if model_settings else None
+                        raise exceptions.UnexpectedModelBehavior(
+                            f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                        )
+
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
@@ -592,8 +607,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                     try:
                                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                                         return
-                                    except ToolRetryError:
-                                        # If the text from the preview response was invalid, ignore it.
+                                    except ToolRetryError:  # pragma: no cover
+                                        # If the text from the previous response was invalid, ignore it.
                                         pass
 
                     # Go back to the model request node with an empty request, which means we'll essentially

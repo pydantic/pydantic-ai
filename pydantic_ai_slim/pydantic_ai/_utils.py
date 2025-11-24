@@ -467,12 +467,14 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*\})', flags=re.DOTALL)
+
+
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
 
-    regex = r'```(?:\w+)?\n(\{.*\})\n```'
-    match = re.search(regex, text, re.DOTALL)
+    match = re.search(_MARKDOWN_FENCES_PATTERN, text)
     if match:
         return match.group(1)
 
