@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 
@@ -1972,3 +1973,18 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
     assert output == snapshot(
         'The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer experience.'
     )
+
+
+async def test_custom_http_client_not_closed():
+    custom_http_client = httpx.AsyncClient()
+
+    assert not custom_http_client.is_closed
+
+    my_mcp_server = MCPServerStreamableHTTP(
+        url='https://mcp.deepwiki.com/mcp', http_client=custom_http_client, timeout=30
+    )
+
+    tools = await my_mcp_server.list_tools()
+    assert len(tools) > 0
+
+    assert not custom_http_client.is_closed
