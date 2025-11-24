@@ -93,10 +93,20 @@ for call in requests.approvals:
 
     results.approvals[call.tool_call_id] = result
 
-result = agent.run_sync(message_history=messages, deferred_tool_results=results)
+result = agent.run_sync(
+    'Now create a backup of README.md',  # (2)!
+    message_history=messages,
+    deferred_tool_results=results,
+)
 print(result.output)
 """
-I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.
+Here's what I've done:
+- Attempted to delete __init__.py, but deletion is not allowed.
+- Updated README.md with: Hello, world!
+- Cleared .env (set to empty).
+- Created a backup at README.md.bak containing: Hello, world!
+
+If you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know.
 """
 print(result.all_messages())
 """
@@ -128,7 +138,7 @@ print(result.all_messages())
                 tool_call_id='update_file_dotenv',
             ),
         ],
-        usage=RequestUsage(input_tokens=63, output_tokens=21),
+        usage=RequestUsage(input_tokens=159, output_tokens=340),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -158,16 +168,44 @@ print(result.all_messages())
                 tool_call_id='delete_file',
                 timestamp=datetime.datetime(...),
             ),
+            UserPromptPart(
+                content='Now create a backup of README.md',
+                timestamp=datetime.datetime(...),
+            ),
+        ],
+        run_id='...',
+    ),
+    ModelResponse(
+        parts=[
+            ToolCallPart(
+                tool_name='update_file',
+                args={'path': 'README.md.bak', 'content': 'Hello, world!'},
+                tool_call_id='update_file_backup',
+            )
+        ],
+        usage=RequestUsage(input_tokens=290, output_tokens=738),
+        model_name='gpt-5',
+        timestamp=datetime.datetime(...),
+        run_id='...',
+    ),
+    ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='update_file',
+                content="File 'README.md.bak' updated: 'Hello, world!'",
+                tool_call_id='update_file_backup',
+                timestamp=datetime.datetime(...),
+            )
         ],
         run_id='...',
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.'
+                content="Here's what I've done:\n- Attempted to delete __init__.py, but deletion is not allowed.\n- Updated README.md with: Hello, world!\n- Cleared .env (set to empty).\n- Created a backup at README.md.bak containing: Hello, world!\n\nIf you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know."
             )
         ],
-        usage=RequestUsage(input_tokens=79, output_tokens=39),
+        usage=RequestUsage(input_tokens=342, output_tokens=93),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -177,6 +215,7 @@ print(result.all_messages())
 ```
 
 1. The optional `metadata` parameter can attach arbitrary context to deferred tool calls, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+2. This second agent run continues from where the first run left off, providing the tool approval results and optionally a new `user_prompt` to give the model additional instructions alongside the deferred results.
 
 _(This example is complete, it can be run "as is")_
 
