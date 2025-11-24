@@ -1160,7 +1160,7 @@ class OpenAIResponsesModel(Model):
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
-                            part_provider_details = {'logprobs' : _map_logprobs(content.logprobs)}
+                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
                         items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
@@ -2292,7 +2292,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
 # Convert logprobs to a serializable format
 def _map_logprobs(
-    logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob] | list[responses.response_output_text.Logprob]
+    logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
+    | list[responses.response_output_text.Logprob],
 ) -> list[dict[str, Any]]:
     return [
         {
@@ -2305,6 +2306,7 @@ def _map_logprobs(
         }
         for lp in logprobs
     ]
+
 
 def _map_usage(
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
