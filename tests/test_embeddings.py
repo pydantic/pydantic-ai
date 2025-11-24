@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 from dirty_equals import IsList
 from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
 
 from pydantic_ai.embeddings import Embedder, infer_model
 
@@ -136,3 +137,42 @@ class TestSentenceTransformers:
             ),
             length=2,
         )
+
+
+async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
+    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
+    embedder = Embedder(model, instrument=True)
+    await embedder.embed_query('Hello, world!')
+
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+        [
+            {
+                'name': 'embed text-embedding-3-small',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'embed',
+                    'gen_ai.system': 'openai',
+                    'gen_ai.request.model': 'text-embedding-3-small',
+                    'server.address': 'api.openai.com',
+                    'gen_ai.embedding.input_type': 'query',
+                    'gen_ai.embedding.num_inputs': 1,
+                    'gen_ai.prompt': 'Hello, world!',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'embedding_settings': {'type': 'object'},
+                            'gen_ai.prompt': {'type': ['string', 'array']},
+                        },
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'embed text-embedding-3-small',
+                    'gen_ai.embedding.dimension': 1536,
+                    'gen_ai.embedding.num_outputs': 1,
+                    'gen_ai.response.model': 'text-embedding-3-small',
+                },
+            }
+        ]
+    )

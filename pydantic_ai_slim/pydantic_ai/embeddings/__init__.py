@@ -2,7 +2,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Literal, get_args, overload
+from typing import Any, ClassVar, Literal, get_args, overload
 
 from typing_extensions import TypeAliasType
 
@@ -15,6 +15,8 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.providers import Provider, infer_provider
 
 from .base import EmbedInputType
+from .instrumented import InstrumentedEmbeddingModel, instrument_embedding_model
+from .wrapper import WrapperEmbeddingModel
 
 __all__ = [
     'Embedder',
@@ -23,6 +25,9 @@ __all__ = [
     'merge_embedding_settings',
     'KnownEmbeddingModelName',
     'infer_model',
+    'WrapperEmbeddingModel',
+    'InstrumentedEmbeddingModel',
+    'instrument_embedding_model',
 ]
 
 KnownEmbeddingModelName = TypeAliasType(
@@ -92,7 +97,17 @@ class Embedder:
     """TODO: Docstring."""
 
     instrument: InstrumentationSettings | bool | None
-    """Options to automatically instrument with OpenTelemetry."""
+    """Options to automatically instrument with OpenTelemetry.
+
+    Set to `True` to use default instrumentation settings, which will use Logfire if it's configured.
+    Set to an instance of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] to customize.
+    If this isn't set, then the last value set by
+    [`Embedder.instrument_all()`][pydantic_ai.embeddings.Embedder.instrument_all]
+    will be used, which defaults to False.
+    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    """
+
+    _instrument_default: ClassVar[InstrumentationSettings | bool] = False
 
     def __init__(
         self,
@@ -100,14 +115,33 @@ class Embedder:
         *,
         settings: EmbeddingSettings | None = None,
         defer_model_check: bool = True,
-        # TODO: Figure out instrumentation later..
         instrument: InstrumentationSettings | bool | None = None,
     ) -> None:
+        """Initialize an Embedder.
+
+        Args:
+            model: The embedding model to use - can be a model instance, model name, or string.
+            settings: Optional embedding settings to use as defaults.
+            defer_model_check: Whether to defer model validation until first use.
+            instrument: OpenTelemetry instrumentation settings. Set to `True` to enable with defaults,
+                or pass an `InstrumentationSettings` instance to customize. If `None`, uses the value
+                from `Embedder.instrument_all()`.
+        """
         self._model = model if defer_model_check else infer_model(model)
         self._settings = settings
-        self._instrument = instrument
+        self.instrument = instrument
 
         self._override_model: ContextVar[EmbeddingModel | None] = ContextVar('_override_model', default=None)
+
+    @staticmethod
+    def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
+        """Set the instrumentation options for all embedders where `instrument` is not set.
+
+        Args:
+            instrument: Instrumentation settings to use as the default. Set to `True` for default settings,
+                `False` to disable, or pass an `InstrumentationSettings` instance to customize.
+        """
+        Embedder._instrument_default = instrument
 
     @property
     def model(self) -> EmbeddingModel | KnownEmbeddingModelName | str:
@@ -179,11 +213,58 @@ class Embedder:
         settings = merge_embedding_settings(self._settings, settings)
         return await model.embed(documents, input_type=input_type, settings=settings)
 
+    @overload
+    def embed_query_sync(self, query: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
+        pass
+
+    @overload
+    def embed_query_sync(self, query: Sequence[str], *, settings: EmbeddingSettings | None = None) -> list[list[float]]:
+        pass
+
+    def embed_query_sync(
+        self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+    ) -> list[float] | list[list[float]]:
+        return _utils.get_event_loop().run_until_complete(self.embed_query(query, settings=settings))
+
+    @overload
+    def embed_documents_sync(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
+        pass
+
+    @overload
+    def embed_documents_sync(
+        self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
+        pass
+
+    def embed_documents_sync(
+        self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
+    ) -> list[float] | list[list[float]]:
+        return _utils.get_event_loop().run_until_complete(self.embed_documents(documents, settings=settings))
+
+    @overload
+    def embed_sync(
+        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[float]:
+        pass
+
+    @overload
+    def embed_sync(
+        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[list[float]]:
+        pass
+
+    def embed_sync(
+        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> list[float] | list[list[float]]:
+        return _utils.get_event_loop().run_until_complete(
+            self.embed(documents, input_type=input_type, settings=settings)
+        )
+
     def _get_model(self) -> EmbeddingModel:
-        """Create a model configured for this agent.
+        """Create a model configured for this embedder.
 
         Returns:
-            The embedding model to use
+            The embedding model to use, with instrumentation applied if configured.
         """
         model_: EmbeddingModel
         if some_model := self._override_model.get():
@@ -191,11 +272,8 @@ class Embedder:
         else:
             model_ = self._model = infer_model(self.model)
 
-        # TODO: Port the instrumentation logic from Model once we settle on an embeddings API
-        # instrument = self.instrument
-        # if instrument is None:
-        #     instrument = Agent._instrument_default
-        #
-        # return instrument_model(model_, instrument)
+        instrument = self.instrument
+        if instrument is None:
+            instrument = self._instrument_default
 
-        return model_
+        return instrument_embedding_model(model_, instrument)
