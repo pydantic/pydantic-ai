@@ -142,6 +142,8 @@ class XaiModel(Model):
             else:
                 assert_never(message)
 
+        # TODO(julian): Add self._get_instructions here
+
         return xai_messages
 
     async def _map_request_parts(self, parts: Sequence[ModelRequestPart]) -> list[chat_types.chat_pb2.Message]:
@@ -455,20 +457,17 @@ class XaiModel(Model):
         # TypedDict is just a dict at runtime, so we can iterate over it directly
         return {setting_mapping[key]: value for key, value in model_settings.items() if key in setting_mapping}
 
-    async def request(
+    async def _create_chat(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        """Make a request to the xAI model."""
-        check_allow_model_requests()
-        model_settings, model_request_parameters = self.prepare_request(
-            model_settings,
-            model_request_parameters,
-        )
-        client = self._provider.client
+    ) -> Any:
+        """Create an xAI chat instance with common setup for both request and stream.
 
+        Returns:
+            The xAI SDK chat object, ready to call .sample() or .stream() on.
+        """
         # Convert messages to xAI format
         xai_messages = await self._map_messages(messages)
 
@@ -483,13 +482,29 @@ class XaiModel(Model):
         # Map model settings to xAI SDK parameters
         xai_settings = self._map_model_settings(model_settings)
 
-        # Create chat instance
-        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools_param, **xai_settings)
+        # Create and return chat instance
+        return self._provider.client.chat.create(
+            model=self._model_name,
+            messages=xai_messages,
+            tools=tools_param,
+            **xai_settings,
+        )
 
-        # Sample the response
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """Make a request to the xAI model."""
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+
+        chat = await self._create_chat(messages, model_settings, model_request_parameters)
         response = await chat.sample()
-
-        # Convert response to pydantic_ai format
         return self._process_response(response)
 
     @asynccontextmanager
@@ -506,35 +521,16 @@ class XaiModel(Model):
             model_settings,
             model_request_parameters,
         )
-        client = self._provider.client
 
-        # Convert messages to xAI format
-        xai_messages = await self._map_messages(messages)
-
-        # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
-        tools: list[chat_types.chat_pb2.Tool] = []
-        if model_request_parameters.builtin_tools:
-            tools.extend(self._get_builtin_tools(model_request_parameters))
-        if model_request_parameters.tool_defs:
-            tools.extend(self._map_tools(model_request_parameters))
-        tools_param = tools if tools else None
-
-        # Map model settings to xAI SDK parameters
-        xai_settings = self._map_model_settings(model_settings)
-
-        # Create chat instance
-        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools_param, **xai_settings)
-
-        # Stream the response
+        chat = await self._create_chat(messages, model_settings, model_request_parameters)
         response_stream = chat.stream()
-        streamed_response = XaiStreamedResponse(
+        yield XaiStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=response_stream,
             _timestamp=now_utc(),
             _provider_name='xai',
         )
-        yield streamed_response
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse."""
