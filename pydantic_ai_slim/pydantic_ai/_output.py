@@ -397,7 +397,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         json_schemas: list[ObjectJsonSchema] = []
 
         if base_processor:
-            json_schema = base_processor.object_def.json_schema
+            json_schema = base_processor.object_def.json_schema.copy()
             json_schema['title'] = base_processor.object_def.name
             if base_processor.object_def.description:
                 json_schema['description'] = base_processor.object_def.description
@@ -406,7 +406,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if toolset_processors:
             for name, tool_processor in toolset_processors.items():
-                json_schema = tool_processor.object_def.json_schema
+                json_schema = tool_processor.object_def.json_schema.copy()
                 json_schema['title'] = name
                 if tool_processor.object_def.description:
                     json_schema['description'] = tool_processor.object_def.description
