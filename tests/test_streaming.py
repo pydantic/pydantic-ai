@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
@@ -1585,12 +1586,12 @@ async def test_output_tool_validation_failure_events():
             FunctionToolResultEvent(
                 result=RetryPromptPart(
                     content=[
-                        {
-                            'type': 'missing',
-                            'loc': ('value',),
-                            'msg': 'Field required',
-                            'input': {'bad_value': 'invalid'},
-                        }
+                        ErrorDetails(
+                            type='missing',
+                            loc=('value',),
+                            msg='Field required',
+                            input={'bad_value': 'invalid'},
+                        ),
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
@@ -2207,14 +2208,49 @@ async def test_exhaustive_strategy_multiple_final_results_with_retry():
         # Should use the first final result
         assert response.value == snapshot('first')
 
-        messages = result.all_messages()
-        # Check that we got a retry prompt for the second final_result
-        retry_parts = [
-            p for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, RetryPromptPart)
-        ]
-        assert len(retry_parts) >= 1
-        # The retry should mention validation error
-        assert any('value' in str(p.content).lower() for p in retry_parts)
+        # Verify we got the expected message flow with retry for the second final_result
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test retry', timestamp=IsNow(tz=timezone.utc))],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args='{"value": 123}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=7),
+                    model_name='function::sf',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        RetryPromptPart(
+                            content=[
+                                ErrorDetails(
+                                    type='string_type',
+                                    loc=('value',),
+                                    msg='Input should be a valid string',
+                                    input=123,
+                                )
+                            ],
+                            tool_name='final_result',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 async def test_exhaustive_strategy_final_result_unexpected_behavior():
