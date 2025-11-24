@@ -319,7 +319,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Free Disk Space on GitHub Actions runner
-        uses: jlumbroso/free-disk-space-action@v1.3.1
+        uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
           android: true # Pre-installed on runner but not needed for our build
