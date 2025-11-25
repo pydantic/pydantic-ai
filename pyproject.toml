@@ -134,6 +134,7 @@ include = ["/README.md", "/Makefile", "/tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+preview = true  # For `PLW1514`
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
@@ -155,6 +156,7 @@ extend-select = [
     "I",
     "D",
     "TID251",
+    "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -181,6 +183,7 @@ convention = "google"
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
 docstring-code-format = false
+preview = false  # Override [tool.ruff] preview setting
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
