@@ -341,10 +341,10 @@ jobs:
               uv --version
               uvx --version
               pre-commit --version
-              ollama --version
+              ollama --version  # Warning expected, since host instance not available.
               make lint
               make typecheck
-              # make test
+              make test
               echo "Dev container built and run successfully"
             '
 
