@@ -8,7 +8,6 @@ from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
 
-import aiohttp
 import pytest
 from huggingface_hub import (
     AsyncInferenceClient,
@@ -741,23 +740,6 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
 def test_system_property():
     model = HuggingFaceModel('some-model', provider=HuggingFaceProvider(hf_client=Mock(), api_key='x'))
     assert model.system == 'huggingface'
-
-
-async def test_model_client_response_error(allow_model_requests: None) -> None:
-    request_info = Mock(spec=aiohttp.RequestInfo)
-    request_info.url = 'http://test.com'
-    request_info.method = 'POST'
-    request_info.headers = {}
-    request_info.real_url = 'http://test.com'
-    error = aiohttp.ClientResponseError(request_info, history=(), status=400, message='Bad Request')
-    error.response_error_payload = {'error': 'test error'}  # type: ignore
-
-    mock_client = MockHuggingFace.create_mock(error)
-    m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('hello')
-    assert str(exc_info.value) == snapshot("status_code: 400, model_name: not_a_model, body: {'error': 'test error'}")
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):

@@ -49,7 +49,6 @@ from . import (
 )
 
 try:
-    import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -252,12 +251,6 @@ class HuggingFaceModel(Model):
                 top_logprobs=model_settings.get('top_logprobs', None),
                 extra_body=model_settings.get('extra_body'),  # type: ignore
             )
-        except aiohttp.ClientResponseError as e:
-            raise ModelHTTPError(
-                status_code=e.status,
-                model_name=self.model_name,
-                body=e.response_error_payload,  # type: ignore
-            ) from e
         except HfHubHTTPError as e:
             raise ModelHTTPError(
                 status_code=e.response.status_code,
