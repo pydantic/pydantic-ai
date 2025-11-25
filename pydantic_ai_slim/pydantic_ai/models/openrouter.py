@@ -452,6 +452,8 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
         extra_body['preset'] = preset
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
+    if reasoning := model_settings.pop('openrouter_reasoning', None):
+        extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
