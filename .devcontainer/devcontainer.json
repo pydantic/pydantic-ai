@@ -47,50 +47,23 @@
     "vscode": {
       "settings": {
         "python.defaultInterpreterPath": ".venv/bin/python"
-      },
-      "extensions": [
-        // Python
-        "nicohlr.pycharm",
-        "ms-python.python",
-        "anysphere.pyright",
-        "ms-python.debugpy",
-        "ms-python.vscode-pylance",
-        "charliermarsh.ruff",
-        "njpwerner.autodocstring",
-        // yaml + toml
-        "redhat.vscode-yaml",
-        "tamasfe.even-better-toml",
-        // Bash
-        "timonwong.shellcheck",
-        "mkhl.shfmt",
-        // LaTeX
-        "mathematic.vscode-latex",
-        "lgarcin.vscode-pweave",
-        // git + GitHub Actions
-        "ivanhofer.git-assistant",
-        "GitHub.vscode-github-actions",
-        "me-dutour-mathieu.vscode-github-actions",
-        "GitHub.vscode-pull-request-github",
-        // Copilot
-        "GitHub.copilot",
-        "GitHub.copilot-chat",
-        "ms-vscode.vscode-copilot-data-analysis",
-        "AutomataLabs.copilot-mcp",
-        // spell checker
-        "streetsidesoftware.code-spell-checker",
-        // logging
-        "berublan.vscode-log-viewer",
-        // mermaid
-        "bierner.markdown-mermaid",
-        // container
-        "ms-vscode-remote.remote-containers"
-      ]
+      }
+    },
+    "cursor": {
+      "settings": {
+        "python.defaultInterpreterPath": ".venv/bin/python"
+      }
     }
   }
-  // Uncomment to mount a .cursor directory from another repository
+  // Uncomment to mount .vscode and .cursor directories from other repositories or directories.
   // "mounts": [
   //   {
-  //     "source": "${localWorkspaceFolder}/../rules-pydantic-evals/.cursor",
+  //     "source": "${localWorkspaceFolder}/../my-vscode-config/.vscode",
+  //     "target": "${containerWorkspaceFolder}/.vscode",
+  //     "type": "bind"
+  //   },
+  //   {
+  //     "source": "${localWorkspaceFolder}/../my-cursor-config/.cursor",
   //     "target": "${containerWorkspaceFolder}/.cursor",
   //     "type": "bind"
   //   }
