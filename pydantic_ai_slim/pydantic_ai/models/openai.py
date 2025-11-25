@@ -1152,8 +1152,15 @@ class OpenAIResponsesModel(Model):
                             provider_name=self.system,
                         )
                     )
-                # NOTE: We don't currently handle the raw CoT from gpt-oss `reasoning_text`: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
-                # If you need this, please file an issue.
+                # Handle raw CoT content from gpt-oss models (via LM Studio, vLLM, etc.)
+                if item.content:
+                    for idx, content_item in enumerate(item.content):
+                        items.append(
+                            ThinkingPart(
+                                content=content_item.text,
+                                id=f'{item.id}-content-{idx}',
+                            )
+                        )
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
@@ -2137,6 +2144,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     content=chunk.delta,
                     id=chunk.item_id,
                 )
+
+            elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=f'{chunk.item_id}-content-{chunk.content_index}',
+                    content=chunk.delta,
+                    id=chunk.item_id,
+                )
+
+            elif isinstance(chunk, responses.ResponseReasoningTextDoneEvent):
+                pass  # content already accumulated via delta events
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                 # TODO(Marcelo): We should support annotations in the future.
