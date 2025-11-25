@@ -77,3 +77,11 @@ class EmbeddingModel(ABC):
         settings = merge_embedding_settings(self._settings, settings) or {}
 
         return documents, is_single_document, settings
+
+    async def max_input_tokens(self) -> int | None:
+        """Get the maximum number of tokens that can be input to the model."""
+        return None
+
+    async def count_tokens(self, text: str) -> int:
+        """Count the number of tokens in the text."""
+        raise NotImplementedError

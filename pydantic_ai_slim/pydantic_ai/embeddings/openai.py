@@ -105,3 +105,11 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             extra_body=settings.get('extra_body'),
         )
         return [item.embedding for item in response.data]
+
+    async def max_input_tokens(self) -> int | None:
+        # TODO (DouweM): Implement with tiktoken when https://github.com/pydantic/pydantic-ai/pull/3447 lands.
+        raise NotImplementedError('Max input tokens is not currently supported for OpenAI embeddings models.')
+
+    async def count_tokens(self, text: str) -> int:
+        # TODO (DouweM): Implement with tiktoken when https://github.com/pydantic/pydantic-ai/pull/3447 lands.
+        raise NotImplementedError('Counting tokens is not currently supported for OpenAI embeddings models.')

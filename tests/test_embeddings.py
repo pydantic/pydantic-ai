@@ -68,6 +68,18 @@ class TestOpenAI:
             length=2,
         )
 
+    async def test_max_input_tokens(self, openai_api_key: str):
+        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(NotImplementedError):
+            await embedder.model.max_input_tokens()
+
+    async def test_count_tokens(self, openai_api_key: str):
+        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(NotImplementedError):
+            await embedder.count_tokens('Hello, world!')
+
 
 @pytest.mark.skipif(not cohere_imports_successful, reason='Cohere not installed')
 class TestCohere:
@@ -95,6 +107,18 @@ class TestCohere:
             IsList(-0.0060736495, -0.015005487, 0.00033246286, length=1536),
             length=2,
         )
+
+    async def test_max_input_tokens(self, co_api_key: str):
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.model.max_input_tokens()
+        assert max_input_tokens == snapshot(128000)
+
+    async def test_count_tokens(self, co_api_key: str):
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+        embedder = Embedder(model)
+        count = await embedder.count_tokens('Hello, world!')
+        assert count == snapshot(4)
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful, reason='SentenceTransformers not installed')
@@ -136,6 +160,18 @@ class TestSentenceTransformers:
             ),
             length=2,
         )
+
+    async def test_max_input_tokens(self):
+        model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
+        embedder = Embedder(model)
+        max_input_tokens = await embedder.model.max_input_tokens()
+        assert max_input_tokens == snapshot(512)
+
+    async def test_count_tokens(self):
+        model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
+        embedder = Embedder(model)
+        count = await embedder.count_tokens('Hello, world!')
+        assert count == snapshot(6)
 
 
 @pytest.mark.skipif(not openai_imports_successful, reason='OpenAI not installed')

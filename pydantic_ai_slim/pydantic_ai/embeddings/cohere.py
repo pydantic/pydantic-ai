@@ -4,11 +4,15 @@ from typing import Any, Literal, cast, overload
 
 from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
 from pydantic_ai.embeddings.settings import EmbeddingSettings
-from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.providers import infer_provider
 
 try:
-    from cohere import AsyncClientV2
     from cohere.core.request_options import RequestOptions
+    from cohere.v2.client import EmbedInputType as CohereEmbedInputType
+    from cohere.v2.types.v2embed_request_truncate import V2EmbedRequestTruncate
+
+    from pydantic_ai.providers.cohere import CohereProvider
 except ImportError as _import_error:
     raise ImportError(
         'Please install `cohere` to use the Cohere embeddings model, '
@@ -17,7 +21,8 @@ except ImportError as _import_error:
 
 LatestCohereEmbeddingModelNames = Literal[
     'cohere:embed-v4.0',
-    'embed-english-v3.0embed-english-light-v3.0',
+    'embed-english-v3.0',
+    'embed-english-light-v3.0',
     'embed-multilingual-v3.0',
     'embed-multilingual-light-v3.0',
 ]
@@ -25,6 +30,14 @@ LatestCohereEmbeddingModelNames = Literal[
 
 CohereEmbeddingModelName = str | LatestCohereEmbeddingModelNames
 """Possible Cohere embeddings model names."""
+
+_MAX_INPUT_TOKENS = {
+    'embed-v4.0': 128000,
+    'embed-english-v3.0': 512,
+    'embed-english-light-v3.0': 512,
+    'embed-multilingual-v3.0': 512,
+    'embed-multilingual-light-v3.0': 512,
+}
 
 
 class CohereEmbeddingSettings(EmbeddingSettings, total=False):
@@ -36,8 +49,16 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
     cohere_max_tokens: int
     """The maximum number of tokens to generate before stopping."""
 
-    # We don't support `embedding_types for now because it doesn't affect the user-facing API today..
-    # cohere_embedding_types: Literal["float", "int8", "uint8", "binary", "ubinary", "base64"]
+    cohere_input_type: CohereEmbedInputType
+    """The input type to use for the embedding model. Overrides the `input_type` argument which only takes `query` and `document`."""
+
+    cohere_truncate: V2EmbedRequestTruncate
+    """The truncation strategy to use for the embedding model:
+
+    - `NONE` (default): Do not truncate the input text and raise an error if the input text is too long.
+    - `END`: Truncate the input text to the maximum number of tokens.
+    - `START`: Truncate the start of the input text.
+    """
 
 
 @dataclass(init=False)
@@ -45,13 +66,13 @@ class CohereEmbeddingModel(EmbeddingModel):
     """Cohere embedding model."""
 
     _model_name: CohereEmbeddingModelName = field(repr=False)
-    _provider: Provider[AsyncClientV2] = field(repr=False)
+    _provider: CohereProvider = field(repr=False)
 
     def __init__(
         self,
         model_name: CohereEmbeddingModelName,
         *,
-        provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
+        provider: Literal['cohere'] | CohereProvider = 'cohere',
         settings: EmbeddingSettings | None = None,
     ):
         """Initialize an Cohere model.
@@ -60,7 +81,7 @@ class CohereEmbeddingModel(EmbeddingModel):
             model_name: The name of the Cohere model to use. List of model names
                 available [here](https://docs.cohere.com/docs/cohere-embed).
             provider: The provider to use for authentication and API access. Can be either the string
-                'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
+                'cohere' or an instance of `CohereProvider`. If not provided, a new provider will be
                 created using the other parameters.
             settings: Model-specific settings that will be used as defaults for this model.
         """
@@ -70,6 +91,7 @@ class CohereEmbeddingModel(EmbeddingModel):
             provider = infer_provider(provider)
         self._provider = provider
         self._client = provider.client
+        self._v1_client = provider.v1_client
 
         super().__init__(settings=settings)
 
@@ -116,15 +138,37 @@ class CohereEmbeddingModel(EmbeddingModel):
         if extra_body := settings.get('extra_body'):
             request_options['additional_body_parameters'] = cast(dict[str, Any], extra_body)
 
+        cohere_input_type = settings.get(
+            'cohere_input_type', 'search_document' if input_type == 'document' else 'search_query'
+        )
+
         response = await self._client.embed(
             model=self.model_name,
             texts=documents,
             output_dimension=settings.get('dimensions'),
-            input_type='search_document' if input_type == 'document' else 'search_query',
+            input_type=cohere_input_type,
             max_tokens=settings.get('cohere_max_tokens'),
+            truncate=settings.get('cohere_truncate', 'NONE'),
             request_options=request_options,
         )
         embeddings = response.embeddings.float_
-        assert embeddings is not None, 'This is a bug in cohere?'
+        if embeddings is None:
+            raise UnexpectedModelBehavior(
+                'The Cohere embeddings response did not have an `embeddings` field holding a list of floats',
+                str(response.data),
+            )
 
         return embeddings
+
+    async def max_input_tokens(self) -> int | None:
+        return _MAX_INPUT_TOKENS.get(self.model_name)
+
+    async def count_tokens(self, text: str) -> int:
+        if self._v1_client is None:
+            raise NotImplementedError('Counting tokens requires the Cohere v1 client')
+        result = await self._v1_client.tokenize(
+            model=self.model_name,
+            text=text,  # Has a max length of 65536 characters
+            offline=False,
+        )
+        return len(result.tokens)

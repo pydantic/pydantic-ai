@@ -260,6 +260,13 @@ class Embedder:
             self.embed(documents, input_type=input_type, settings=settings)
         )
 
+    async def count_tokens(self, text: str) -> int:
+        model = self._get_model()
+        return await model.count_tokens(text)
+
+    def count_tokens_sync(self, text: str) -> int:
+        return _utils.get_event_loop().run_until_complete(self.count_tokens(text))
+
     def _get_model(self) -> EmbeddingModel:
         """Create a model configured for this embedder.
 

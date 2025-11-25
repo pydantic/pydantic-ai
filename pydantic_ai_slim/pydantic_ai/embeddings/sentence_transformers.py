@@ -7,9 +7,11 @@ from typing import Any, cast, overload
 import pydantic_ai._utils as _utils
 from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
 from pydantic_ai.embeddings.settings import EmbeddingSettings
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 try:
     import numpy as np
+    import torch
     from sentence_transformers import SentenceTransformer
 except ImportError as _import_error:
     raise ImportError(
@@ -97,7 +99,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         normalize = settings.get('sentence_transformers_normalize_embeddings', False)
         batch_size = settings.get('sentence_transformers_batch_size', None)
 
-        # TODO: Update /typings
+        # TODO: Update /typings so we can remove the type ignores
         encode_func = self._model.encode_query if input_type == 'query' else self._model.encode_document  # type: ignore[reportUnknownReturnType]
 
         np_embeddings: np.ndarray[Any, float] = await _utils.run_in_executor(  # type: ignore[reportAssignmentType]
@@ -111,3 +113,18 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
         )
         return np_embeddings.tolist()
+
+    async def max_input_tokens(self) -> int | None:
+        return self._model.get_max_seq_length()
+
+    async def count_tokens(self, text: str) -> int:
+        result: dict[str, torch.Tensor] = await _utils.run_in_executor(
+            self._model.tokenize,  # type: ignore[reportArgumentType]
+            [text],
+        )
+        if 'input_ids' not in result or not isinstance(result['input_ids'], torch.Tensor):
+            raise UnexpectedModelBehavior(
+                'The SentenceTransformers tokenizer output did not have an `input_ids` field holding a tensor',
+                str(result),
+            )
+        return len(result['input_ids'][0])
