@@ -594,6 +594,163 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
+async def test_anthropic_cache_messages(allow_model_requests: None):
+    """Test that anthropic_cache_messages caches only the last message."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages=True,
+        ),
+    )
+
+    await agent.run('User message')
+
+    # Verify only last message has cache_control, not system
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    messages = completion_kwargs['messages']
+
+    # System should NOT have cache_control (should be a plain string)
+    assert system == snapshot('System instructions to cache.')
+
+    # Last message content should have cache_control
+    assert messages[-1]['content'][-1] == snapshot(
+        {'type': 'text', 'text': 'User message', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
+    )
+
+
+async def test_anthropic_cache_messages_with_custom_ttl(allow_model_requests: None):
+    """Test that anthropic_cache_messages supports custom TTL values."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages='1h',  # Custom 1h TTL
+        ),
+    )
+
+    await agent.run('User message')
+
+    # Verify use 1h TTL
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+
+    assert messages[-1]['content'][-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
+
+
+async def test_limit_cache_points_with_cache_messages(allow_model_requests: None):
+    """Test that cache points are limited when using cache_messages + CachePoint markers."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages=True,  # Uses 1 cache point
+        ),
+    )
+
+    # Add 4 CachePoint markers (total would be 5: 1 from cache_messages + 4 from markers)
+    # Only 3 CachePoint markers should be kept (newest ones)
+    await agent.run(
+        [
+            'Context 1',
+            CachePoint(),  # Oldest, should be removed
+            'Context 2',
+            CachePoint(),  # Should be kept
+            'Context 3',
+            CachePoint(),  # Should be kept
+            'Context 4',
+            CachePoint(),  # Should be kept
+            'Question',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+
+    # Count cache_control occurrences in messages
+    cache_count = 0
+    for msg in messages:
+        for block in msg['content']:
+            if 'cache_control' in block:
+                cache_count += 1
+
+    # anthropic_cache_messages uses 1 cache point (last message only)
+    # With 4 CachePoint markers, we'd have 5 total
+    # Limit is 4, so 1 oldest CachePoint should be removed
+    # Result: 3 cache points from CachePoint markers + 1 from cache_messages = 4 total
+    assert cache_count == 4
+
+
+async def test_limit_cache_points_all_settings(allow_model_requests: None):
+    """Test cache point limiting with all cache settings enabled."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(
+        m,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_instructions=True,  # 1 cache point
+            anthropic_cache_tool_definitions=True,  # 1 cache point
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    # Add 3 CachePoint markers (total would be 5: 2 from settings + 3 from markers)
+    # Only 2 CachePoint markers should be kept
+    await agent.run(
+        [
+            'Context 1',
+            CachePoint(),  # Oldest, should be removed
+            'Context 2',
+            CachePoint(),  # Should be kept
+            'Context 3',
+            CachePoint(),  # Should be kept
+            'Question',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+
+    # Count cache_control in messages (excluding system and tools)
+    cache_count = 0
+    for msg in messages:
+        for block in msg['content']:
+            if 'cache_control' in block:
+                cache_count += 1
+
+    # Should have exactly 2 cache points in messages
+    # (4 total - 1 system - 1 tool = 2 available for messages)
+    assert cache_count == 2
+
+
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='world', type='text')],
@@ -7415,3 +7572,45 @@ async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
 
     with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+
+@pytest.mark.vcr()
+async def test_anthropic_cache_messages_real_api(allow_model_requests: None, anthropic_api_key: str):
+    """Test that anthropic_cache_messages setting adds cache_control and produces cache usage metrics.
+
+    This test uses a cassette to verify the cache behavior without making real API calls in CI.
+    When run with real API credentials, it demonstrates that:
+    1. The first call with a long context creates a cache (cache_write_tokens > 0)
+    2. Follow-up messages in the same conversation can read from that cache (cache_read_tokens > 0)
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='You are a helpful assistant.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages=True,
+        ),
+    )
+
+    # First call with a longer message - this will cache the message content
+    result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
+    usage1 = result1.usage()
+
+    # With anthropic_cache_messages, the first call should write cache for the last message
+    # (cache_write_tokens > 0 indicates that caching occurred)
+    assert usage1.requests == 1
+    assert usage1.cache_write_tokens > 0
+    assert usage1.output_tokens > 0
+
+    # Continue the conversation - this message appends to history
+    # The previous cached message should still be in the request
+    result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
+    usage2 = result2.usage()
+
+    # The second call should potentially read from cache if the previous message is still cached
+    # (cache_read_tokens > 0 when cache hit occurs)
+    # (cache_write_tokens > 0 as new message is added to cache)
+    assert usage2.requests == 1
+    assert usage2.cache_read_tokens > 0
+    assert usage2.cache_write_tokens > 0
+    assert usage2.output_tokens > 0
