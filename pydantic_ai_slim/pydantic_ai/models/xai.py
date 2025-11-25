@@ -1,5 +1,6 @@
 """xAI model implementation using xAI SDK."""
 
+import json
 from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
@@ -15,7 +16,7 @@ try:
     # Import xai_sdk components
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
-    from xai_sdk.proto.v6 import usage_pb2
+    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
 except ImportError as _import_error:
     raise ImportError(
@@ -24,6 +25,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 from .. import _utils
+from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
 from ..exceptions import UnexpectedModelBehavior, UserError
@@ -396,86 +398,6 @@ class XaiModel(Model):
 
         return None
 
-    def _map_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
-        """Convert pydantic_ai tool definitions to xAI SDK tools."""
-        tools: list[chat_types.chat_pb2.Tool] = []
-        for tool_def in model_request_parameters.tool_defs.values():
-            xai_tool = tool(
-                name=tool_def.name,
-                description=tool_def.description or '',
-                parameters=tool_def.parameters_json_schema,
-            )
-            tools.append(xai_tool)
-        return tools
-
-    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
-        """Convert pydantic_ai built-in tools to xAI SDK server-side tools."""
-        tools: list[chat_types.chat_pb2.Tool] = []
-        for builtin_tool in model_request_parameters.builtin_tools:
-            if isinstance(builtin_tool, WebSearchTool):
-                # xAI web_search supports:
-                # - excluded_domains (from blocked_domains)
-                # - allowed_domains
-                # Note: user_location and search_context_size are not supported by xAI SDK
-                tools.append(
-                    web_search(
-                        excluded_domains=builtin_tool.blocked_domains,
-                        allowed_domains=builtin_tool.allowed_domains,
-                        enable_image_understanding=False,  # Not supported by PydanticAI
-                    )
-                )
-            elif isinstance(builtin_tool, CodeExecutionTool):
-                # xAI code_execution takes no parameters
-                tools.append(code_execution())
-            elif isinstance(builtin_tool, MCPServerTool):
-                # xAI mcp supports:
-                # - server_url, server_label, server_description
-                # - allowed_tool_names, authorization, extra_headers
-                tools.append(
-                    mcp(
-                        server_url=builtin_tool.url,
-                        server_label=builtin_tool.id,
-                        server_description=builtin_tool.description,
-                        allowed_tool_names=builtin_tool.allowed_tools,
-                        authorization=builtin_tool.authorization_token,
-                        extra_headers=builtin_tool.headers,
-                    )
-                )
-            else:
-                raise UserError(
-                    f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
-                    f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
-                    f'If XSearchTool should be supported, please file an issue.'
-                )
-        return tools
-
-    def _map_model_settings(self, model_settings: ModelSettings | None) -> dict[str, Any]:
-        """Map pydantic_ai ModelSettings to xAI SDK parameters."""
-        if not model_settings:
-            return {}
-
-        # Mapping of pydantic_ai setting keys to xAI SDK parameter names
-        # Most keys are the same, but 'stop_sequences' maps to 'stop'
-        setting_mapping = {
-            'temperature': 'temperature',
-            'top_p': 'top_p',
-            'max_tokens': 'max_tokens',
-            'stop_sequences': 'stop',
-            'parallel_tool_calls': 'parallel_tool_calls',
-            'presence_penalty': 'presence_penalty',
-            'frequency_penalty': 'frequency_penalty',
-            'logprobs': 'logprobs',
-            'top_logprobs': 'top_logprobs',
-            'reasoning_effort': 'reasoning_effort',
-            'use_encrypted_content': 'use_encrypted_content',
-            'store_messages': 'store_messages',
-            'user': 'user',
-        }
-
-        # Build the settings dict, only including keys that are present in the input
-        # TypedDict is just a dict at runtime, so we can iterate over it directly
-        return {setting_mapping[key]: value for key, value in model_settings.items() if key in setting_mapping}
-
     async def _create_chat(
         self,
         messages: list[ModelMessage],
@@ -513,6 +435,19 @@ class XaiModel(Model):
         else:
             tool_choice = 'auto'
 
+        # Set response_format based on the output_mode
+        response_format: chat_pb2.ResponseFormat | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_json_schema(output_object)
+        elif (
+            model_request_parameters.output_mode == 'prompted'
+            and not tools
+            and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            response_format = self._map_json_object()
+
         # Map model settings to xAI SDK parameters
         xai_settings = self._map_model_settings(model_settings)
 
@@ -522,6 +457,7 @@ class XaiModel(Model):
             messages=xai_messages,
             tools=tools_param,
             tool_choice=tool_choice,
+            response_format=response_format,
             **xai_settings,
         )
 
@@ -594,7 +530,7 @@ class XaiModel(Model):
             if is_server_side_tool:
                 # Server-side tools are executed by xAI, so we add both call and return parts
                 # The final result is in response.content
-                builtin_tool_name = self.get_builtin_tool_name(tool_call)
+                builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
                 parts.append(
                     BuiltinToolCallPart(
                         tool_name=builtin_tool_name,
@@ -771,6 +707,103 @@ class XaiModel(Model):
         else:
             return 'unknown'
 
+    @staticmethod
+    def _map_json_schema(o: OutputObjectDefinition) -> chat_pb2.ResponseFormat:
+        """Convert OutputObjectDefinition to xAI ResponseFormat protobuf object."""
+        # xAI uses a simpler ResponseFormat structure with format_type and schema (as JSON string)
+        return chat_pb2.ResponseFormat(
+            format_type=chat_pb2.FORMAT_TYPE_JSON_SCHEMA,
+            schema=json.dumps(o.json_schema),
+        )
+
+    @staticmethod
+    def _map_json_object() -> chat_pb2.ResponseFormat:
+        """Create a ResponseFormat for JSON object mode (prompted output)."""
+        return chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)
+
+    @staticmethod
+    def _map_model_settings(model_settings: ModelSettings | None) -> dict[str, Any]:
+        """Map pydantic_ai ModelSettings to xAI SDK parameters."""
+        if not model_settings:
+            return {}
+
+        # Mapping of pydantic_ai setting keys to xAI SDK parameter names
+        # Most keys are the same, but 'stop_sequences' maps to 'stop'
+        setting_mapping = {
+            'temperature': 'temperature',
+            'top_p': 'top_p',
+            'max_tokens': 'max_tokens',
+            'stop_sequences': 'stop',
+            'parallel_tool_calls': 'parallel_tool_calls',
+            'presence_penalty': 'presence_penalty',
+            'frequency_penalty': 'frequency_penalty',
+            'logprobs': 'logprobs',
+            'top_logprobs': 'top_logprobs',
+            'reasoning_effort': 'reasoning_effort',
+            'use_encrypted_content': 'use_encrypted_content',
+            'store_messages': 'store_messages',
+            'user': 'user',
+        }
+
+        # Build the settings dict, only including keys that are present in the input
+        # TypedDict is just a dict at runtime, so we can iterate over it directly
+        return {setting_mapping[key]: value for key, value in model_settings.items() if key in setting_mapping}
+
+    @staticmethod
+    def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
+        """Convert pydantic_ai tool definitions to xAI SDK tools."""
+        tools: list[chat_types.chat_pb2.Tool] = []
+        for tool_def in model_request_parameters.tool_defs.values():
+            xai_tool = tool(
+                name=tool_def.name,
+                description=tool_def.description or '',
+                parameters=tool_def.parameters_json_schema,
+            )
+            tools.append(xai_tool)
+        return tools
+
+    @staticmethod
+    def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
+        """Convert pydantic_ai built-in tools to xAI SDK server-side tools."""
+        tools: list[chat_types.chat_pb2.Tool] = []
+        for builtin_tool in model_request_parameters.builtin_tools:
+            if isinstance(builtin_tool, WebSearchTool):
+                # xAI web_search supports:
+                # - excluded_domains (from blocked_domains)
+                # - allowed_domains
+                # Note: user_location and search_context_size are not supported by xAI SDK
+                tools.append(
+                    web_search(
+                        excluded_domains=builtin_tool.blocked_domains,
+                        allowed_domains=builtin_tool.allowed_domains,
+                        enable_image_understanding=False,  # Not supported by PydanticAI
+                    )
+                )
+            elif isinstance(builtin_tool, CodeExecutionTool):
+                # xAI code_execution takes no parameters
+                tools.append(code_execution())
+            elif isinstance(builtin_tool, MCPServerTool):
+                # xAI mcp supports:
+                # - server_url, server_label, server_description
+                # - allowed_tool_names, authorization, extra_headers
+                tools.append(
+                    mcp(
+                        server_url=builtin_tool.url,
+                        server_label=builtin_tool.id,
+                        server_description=builtin_tool.description,
+                        allowed_tool_names=builtin_tool.allowed_tools,
+                        authorization=builtin_tool.authorization_token,
+                        extra_headers=builtin_tool.headers,
+                    )
+                )
+            else:
+                raise UserError(
+                    f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
+                    f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
+                    f'If XSearchTool should be supported, please file an issue.'
+                )
+        return tools
+
 
 @dataclass
 class XaiStreamedResponse(StreamedResponse):
@@ -859,7 +892,7 @@ class XaiStreamedResponse(StreamedResponse):
         if is_server_side_tool:
             # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
             # These tools are already executed by xAI's infrastructure
-            builtin_tool_name = self.get_builtin_tool_name(tool_call)
+            builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
             call_part = BuiltinToolCallPart(
                 tool_name=builtin_tool_name,
                 args=tool_call.function.arguments,
