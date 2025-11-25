@@ -9,7 +9,6 @@ from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
-import anyio
 import anyio.to_thread
 from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
