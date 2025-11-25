@@ -1211,7 +1211,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content='Let me think: 2+2 equals 4', signature=None, provider_name='xai'),
+                    ThinkingPart(content='Let me think: 2+2 equals 4', signature=None),
                     TextPart(content='The answer is 4'),
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=20),
@@ -1331,9 +1331,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='I need to use the calculate tool to solve this', signature=None, provider_name='xai'
-                    ),
+                    ThinkingPart(content='I need to use the calculate tool to solve this', signature=None),
                     ToolCallPart(
                         tool_name='calculate',
                         args={'expression': '2+2'},

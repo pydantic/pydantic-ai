@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
@@ -20,10 +21,10 @@ except ImportError as _import_error:
         'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
     ) from _import_error
 
+from .. import _utils
 from .._run_context import RunContext
-from .._utils import now_utc
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -535,13 +536,7 @@ class XaiModel(Model):
 
         chat = await self._create_chat(messages, model_settings, model_request_parameters)
         response_stream = chat.stream()
-        yield XaiStreamedResponse(
-            model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
-            _response=response_stream,
-            _timestamp=now_utc(),
-            _provider_name='xai',
-        )
+        yield await self._process_streamed_response(response_stream, model_request_parameters)
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse."""
@@ -549,11 +544,12 @@ class XaiModel(Model):
 
         # Add reasoning/thinking content first if present
         if response.reasoning_content or response.encrypted_content:
+            signature = response.encrypted_content or None
             parts.append(
                 ThinkingPart(
                     content=response.reasoning_content or '',  # Empty string if only encrypted
-                    signature=response.encrypted_content or None,
-                    provider_name='xai',
+                    signature=signature,
+                    provider_name=self.system if signature else None,
                 )
             )
 
@@ -580,7 +576,7 @@ class XaiModel(Model):
                         tool_name=tool_call.function.name,
                         args=tool_call.function.arguments,
                         tool_call_id=tool_call.id,
-                        provider_name='xai',
+                        provider_name=self.system,
                     )
                 )
                 # Always add the return part for server-side tools since they're already executed
@@ -589,7 +585,7 @@ class XaiModel(Model):
                         tool_name=tool_call.function.name,
                         content={'status': 'completed'},
                         tool_call_id=tool_call.id,
-                        provider_name='xai',
+                        provider_name=self.system,
                     )
                 )
             else:
@@ -628,8 +624,8 @@ class XaiModel(Model):
             parts=parts,
             usage=usage,
             model_name=self._model_name,
-            timestamp=now_utc(),
-            provider_name='xai',
+            timestamp=response.created,
+            provider_name=self.system,
             provider_response_id=response.id,
             finish_reason=finish_reason,
         )
@@ -692,17 +688,43 @@ class XaiModel(Model):
                 output_tokens=completion_tokens,
             )
 
+    async def _process_streamed_response(
+        self,
+        response: AsyncIterator[tuple[chat_types.Response, Any]],
+        model_request_parameters: ModelRequestParameters,
+    ) -> 'XaiStreamedResponse':
+        """Process a streamed response, and prepare a streaming response to return."""
+        peekable_response = _utils.PeekableAsyncStream(response)
+        first_item = await peekable_response.peek()
+        if isinstance(first_item, _utils.Unset):  # pragma: no cover
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+
+        first_response, _ = first_item
+
+        return XaiStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=first_response.created,
+            _provider=self._provider,
+        )
+
 
 @dataclass
 class XaiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
 
     _model_name: str
-    _response: Any  # xai_sdk chat stream
-    _timestamp: Any
-    _provider_name: str
+    _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, Any]]
+    _timestamp: datetime
+    _provider: Provider[AsyncClient]
 
-    def _update_response_state(self, response: Any) -> None:
+    @property
+    def system(self) -> str:
+        """The model provider system name."""
+        return self._provider.name
+
+    def _update_response_state(self, response: chat_types.Response) -> None:
         """Update response state including usage, response ID, and finish reason."""
         # Update usage
         if response.usage:
@@ -725,7 +747,9 @@ class XaiStreamedResponse(StreamedResponse):
             mapped_reason = finish_reason_map.get(response.finish_reason, 'stop')
             self.finish_reason = cast(FinishReason, mapped_reason)
 
-    def _handle_reasoning_content(self, response: Any, reasoning_handled: bool) -> Iterator[ModelResponseStreamEvent]:
+    def _handle_reasoning_content(
+        self, response: chat_types.Response, reasoning_handled: bool
+    ) -> Iterator[ModelResponseStreamEvent]:
         """Handle reasoning content (both readable and encrypted)."""
         if reasoning_handled:
             return
@@ -735,7 +759,7 @@ class XaiStreamedResponse(StreamedResponse):
             thinking_part = ThinkingPart(
                 content=response.reasoning_content,
                 signature=None,
-                provider_name='xai',
+                provider_name=None,
             )
             yield self._parts_manager.handle_part(vendor_part_id='reasoning', part=thinking_part)
         elif response.encrypted_content:
@@ -743,7 +767,7 @@ class XaiStreamedResponse(StreamedResponse):
             thinking_part = ThinkingPart(
                 content='',  # No readable content for encrypted-only reasoning
                 signature=response.encrypted_content,
-                provider_name='xai',
+                provider_name=self.system,
             )
             yield self._parts_manager.handle_part(vendor_part_id='encrypted_reasoning', part=thinking_part)
 
@@ -757,7 +781,7 @@ class XaiStreamedResponse(StreamedResponse):
             if event is not None:
                 yield event
 
-    def _handle_single_tool_call(self, tool_call: Any) -> Iterator[ModelResponseStreamEvent]:
+    def _handle_single_tool_call(self, tool_call: chat_types.chat_pb2.ToolCall) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single tool call, routing to server-side or client-side handler."""
         if not tool_call.function.name:
             return
@@ -777,7 +801,7 @@ class XaiStreamedResponse(StreamedResponse):
                 tool_name=tool_call.function.name,
                 args=tool_call.function.arguments,
                 tool_call_id=tool_call.id,
-                provider_name='xai',
+                provider_name=self.system,
             )
             yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
 
@@ -786,7 +810,7 @@ class XaiStreamedResponse(StreamedResponse):
                 tool_name=tool_call.function.name,
                 content={'status': 'completed'},
                 tool_call_id=tool_call.id,
-                provider_name='xai',
+                provider_name=self.system,
             )
             yield self._parts_manager.handle_part(vendor_part_id=f'{tool_call.id}_return', part=return_part)
         else:
@@ -798,7 +822,7 @@ class XaiStreamedResponse(StreamedResponse):
                 tool_call_id=tool_call.id,
             )
 
-    def _handle_tool_calls(self, response: Any) -> Iterator[ModelResponseStreamEvent]:
+    def _handle_tool_calls(self, response: chat_types.Response) -> Iterator[ModelResponseStreamEvent]:
         """Handle tool calls (both client-side and server-side)."""
         if not response.tool_calls:
             return
@@ -835,10 +859,10 @@ class XaiStreamedResponse(StreamedResponse):
 
     @property
     def provider_name(self) -> str:
-        """Get the provider name."""
-        return self._provider_name
+        """The model provider."""
+        return self.system
 
     @property
-    def timestamp(self):
+    def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp

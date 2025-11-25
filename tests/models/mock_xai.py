@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
 
@@ -136,6 +137,7 @@ class MockXaiResponse:
     usage: Any | None = None  # Would be usage_pb2.SamplingUsage in real xai_sdk
     reasoning_content: str = ''  # Human-readable reasoning trace
     encrypted_content: str = ''  # Encrypted reasoning signature
+    created: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     # Note: The real xAI SDK usage object uses protobuf fields:
     # - prompt_tokens (not input_tokens)
