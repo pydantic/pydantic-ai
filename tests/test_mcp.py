@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 from inline_snapshot import snapshot
 
@@ -39,7 +38,7 @@ from pydantic_ai.mcp import (
     ServerCapabilities,
     load_mcp_servers,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -1976,7 +1975,7 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
 
 
 async def test_custom_http_client_not_closed():
-    custom_http_client = httpx.AsyncClient()
+    custom_http_client = cached_async_http_client()
 
     assert not custom_http_client.is_closed
 
