@@ -60,6 +60,7 @@ from ..models import (
     download_item,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..providers.grok import GrokModelName
 from ..settings import ModelSettings
@@ -460,7 +461,6 @@ class XaiModel(Model):
             'top_p': 'top_p',
             'max_tokens': 'max_tokens',
             'stop_sequences': 'stop',
-            'seed': 'seed',
             'parallel_tool_calls': 'parallel_tool_calls',
             'presence_penalty': 'presence_penalty',
             'frequency_penalty': 'frequency_penalty',
@@ -502,6 +502,17 @@ class XaiModel(Model):
             tools.extend(self._map_tools(model_request_parameters))
         tools_param = tools if tools else None
 
+        # Set tool_choice based on whether tools are available and text output is allowed
+        if not tools:
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
+        elif (
+            not model_request_parameters.allow_text_output
+            and GrokModelProfile.from_profile(self.profile).grok_supports_tool_choice_required
+        ):
+            tool_choice = 'required'
+        else:
+            tool_choice = 'auto'
+
         # Map model settings to xAI SDK parameters
         xai_settings = self._map_model_settings(model_settings)
 
@@ -510,6 +521,7 @@ class XaiModel(Model):
             model=self._model_name,
             messages=xai_messages,
             tools=tools_param,
+            tool_choice=tool_choice,
             **xai_settings,
         )
 
@@ -685,7 +697,9 @@ class XaiModel(Model):
             for server_side_tool in usage_obj.server_side_tools_used:
                 tool_name = XaiModel._map_server_side_tool_to_builtin_name(server_side_tool)
                 tool_counts[tool_name] += 1
-            details['server_side_tools_used'] = dict(tool_counts)  # type: ignore[assignment]
+            # Add each tool as a separate details entry (server_side_tools must be flattened to comply with details being dict[str, int])
+            for tool_name, count in tool_counts.items():
+                details[f'server_side_tools_{tool_name}'] = count
 
         if details:
             return RequestUsage(

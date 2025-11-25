@@ -70,6 +70,7 @@ from .mock_xai import (
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
+    from xai_sdk.proto.v6 import usage_pb2
 
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
@@ -89,6 +90,23 @@ pytestmark = [
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
+
+
+def create_usage(
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    reasoning_tokens: int = 0,
+    cached_prompt_text_tokens: int = 0,
+    server_side_tools_used: list[usage_pb2.ServerSideTool] | None = None,
+) -> usage_pb2.SamplingUsage:
+    """Helper to create xAI SamplingUsage protobuf objects for tests with all required fields."""
+    return usage_pb2.SamplingUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        reasoning_tokens=reasoning_tokens,
+        cached_prompt_text_tokens=cached_prompt_text_tokens,
+        server_side_tools_used=server_side_tools_used or [],
+    )
 
 
 def test_xai_init():
@@ -152,7 +170,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
 async def test_xai_request_simple_usage(allow_model_requests: None):
     response = create_response(
         content='world',
-        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1),
+        usage=create_usage(prompt_tokens=2, completion_tokens=1),
     )
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
@@ -236,11 +254,11 @@ async def test_xai_request_tool_call(allow_model_requests: None):
     responses = [
         create_response(
             tool_calls=[create_tool_call(id='1', name='get_location', arguments={'loc_name': 'San Fransisco'})],
-            usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1),
+            usage=create_usage(prompt_tokens=2, completion_tokens=1),
         ),
         create_response(
             tool_calls=[create_tool_call(id='2', name='get_location', arguments={'loc_name': 'London'})],
-            usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2),
+            usage=create_usage(prompt_tokens=3, completion_tokens=2),
         ),
         create_response(content='final response'),
     ]
@@ -363,7 +381,7 @@ def grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.
         content=text,  # This will be accumulated by the streaming handler
         tool_calls=[],
         finish_reason=finish_reason if finish_reason else '',
-        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
+        usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
     )
 
     return (cast(chat_types.Response, response), chunk)
@@ -389,7 +407,7 @@ def grok_reasoning_text_chunk(
         content=text,
         tool_calls=[],
         finish_reason=finish_reason if finish_reason else '',
-        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
+        usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,
     )
@@ -491,7 +509,7 @@ def grok_tool_chunk(
         content='',
         tool_calls=[response_tool_call] if (effective_tool_name is not None or accumulated_args) else [],
         finish_reason=finish_reason,
-        usage=SimpleNamespace(prompt_tokens=20, completion_tokens=1) if finish_reason else None,
+        usage=create_usage(prompt_tokens=20, completion_tokens=1) if finish_reason else None,
     )
 
     return (cast(chat_types.Response, response), chunk)
@@ -1195,7 +1213,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
     response = create_response(
         content='The answer is 4',
         reasoning_content='Let me think: 2+2 equals 4',
-        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=20),
+        usage=create_usage(prompt_tokens=10, completion_tokens=20),
     )
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
@@ -1231,7 +1249,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
     response = create_response(
         content='4',
         encrypted_content='abc123signature',
-        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
     )
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
@@ -1306,11 +1324,11 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
         create_response(
             tool_calls=[create_tool_call(id='1', name='calculate', arguments={'expression': '2+2'})],
             reasoning_content='I need to use the calculate tool to solve this',
-            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=30),
+            usage=create_usage(prompt_tokens=10, completion_tokens=30),
         ),
         create_response(
             content='The calculation shows that 2+2 equals 4',
-            usage=SimpleNamespace(prompt_tokens=15, completion_tokens=10),
+            usage=create_usage(prompt_tokens=15, completion_tokens=10),
         ),
     ]
     mock_client = MockXai.create_mock(responses)
@@ -1377,11 +1395,11 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
         create_response(
             tool_calls=[create_tool_call(id='1', name='get_weather', arguments={'city': 'San Francisco'})],
             encrypted_content='encrypted_reasoning_abc123',
-            usage=SimpleNamespace(prompt_tokens=20, completion_tokens=40),
+            usage=create_usage(prompt_tokens=20, completion_tokens=40),
         ),
         create_response(
             content='The weather in San Francisco is sunny',
-            usage=SimpleNamespace(prompt_tokens=25, completion_tokens=12),
+            usage=create_usage(prompt_tokens=25, completion_tokens=12),
         ),
     ]
     mock_client = MockXai.create_mock(responses)
@@ -1502,7 +1520,7 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
 async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     """Test that xAI model properly extracts reasoning_tokens and cache_read_tokens from usage."""
     # Create a mock usage object with reasoning_tokens and cached_prompt_text_tokens
-    mock_usage = SimpleNamespace(
+    mock_usage = create_usage(
         prompt_tokens=100,
         completion_tokens=50,
         reasoning_tokens=25,
@@ -1530,10 +1548,7 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
 
 async def test_xai_usage_without_details(allow_model_requests: None):
     """Test that xAI model handles usage without reasoning_tokens or cached tokens."""
-    mock_usage = SimpleNamespace(
-        prompt_tokens=20,
-        completion_tokens=10,
-    )
+    mock_usage = create_usage(prompt_tokens=20, completion_tokens=10)
     response = create_response(
         content='Simple answer',
         usage=mock_usage,
@@ -1557,12 +1572,11 @@ async def test_xai_usage_without_details(allow_model_requests: None):
 async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     """Test that xAI model properly extracts server_side_tools_used from usage."""
     # Create a mock usage object with server_side_tools_used
-    # Note: In the real SDK, server_side_tools_used is a repeated field (list-like),
-    # but we use an int in mocks for simplicity
-    mock_usage = SimpleNamespace(
+    # In the real SDK, server_side_tools_used is a repeated field (list-like)
+    mock_usage = create_usage(
         prompt_tokens=50,
         completion_tokens=30,
-        server_side_tools_used=2,
+        server_side_tools_used=[usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH, usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH],
     )
     response = create_response(
         content='The answer based on web search',
@@ -1580,7 +1594,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     assert usage.input_tokens == 50
     assert usage.output_tokens == 30
     assert usage.total_tokens == 80
-    assert usage.details == snapshot({'server_side_tools_used': 2})
+    assert usage.details == snapshot({'server_side_tools_web_search': 2})
 
 
 # End of tests

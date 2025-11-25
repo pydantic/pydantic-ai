@@ -18,6 +18,9 @@ class GrokModelProfile(ModelProfile):
     grok_is_reasoning_model: bool = False
     """Whether the model is a reasoning model (supports extended thinking/reasoning)."""
 
+    grok_supports_tool_choice_required: bool = True
+    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
