@@ -256,13 +256,11 @@ class HuggingFaceModel(Model):
             raise ModelHTTPError(
                 status_code=e.status,
                 model_name=self.model_name,
-                body=e.response_error_payload,  # type: ignore
+                body=e.message,
             ) from e
         except HfHubHTTPError as e:
             raise ModelHTTPError(
-                status_code=e.response.status_code,
-                model_name=self.model_name,
-                body=e.response.content,
+                status_code=e.response.status_code, model_name=self.model_name, body=e.response.content
             ) from e
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
