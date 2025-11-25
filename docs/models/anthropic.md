@@ -77,3 +77,71 @@ model = AnthropicModel(
 agent = Agent(model)
 ...
 ```
+
+## Prompt Caching
+
+Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides three ways to use prompt caching:
+
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
+2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+
+You can combine all three strategies for maximum savings:
+
+```python {test="skip"}
+from pydantic_ai import Agent, CachePoint, RunContext
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    system_prompt='Detailed instructions...',
+    model_settings=AnthropicModelSettings(
+        # Use True for default 5m TTL, or specify '5m' / '1h' directly
+        anthropic_cache_instructions=True,
+        anthropic_cache_tool_definitions='1h',  # Longer cache for tool definitions
+    ),
+)
+
+@agent.tool
+def search_docs(ctx: RunContext, query: str) -> str:
+    """Search documentation."""
+    return f'Results for {query}'
+
+async def main():
+    # First call - writes to cache
+    result1 = await agent.run([
+        'Long context from documentation...',
+        CachePoint(),
+        'First question'
+    ])
+
+    # Subsequent calls - read from cache (90% cost reduction)
+    result2 = await agent.run([
+        'Long context from documentation...',  # Same content
+        CachePoint(),
+        'Second question'
+    ])
+    print(f'First: {result1.output}')
+    print(f'Second: {result2.output}')
+```
+
+Access cache usage statistics via `result.usage()`:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    system_prompt='Instructions...',
+    model_settings=AnthropicModelSettings(
+        anthropic_cache_instructions=True  # Default 5m TTL
+    ),
+)
+
+async def main():
+    result = await agent.run('Your question')
+    usage = result.usage()
+    print(f'Cache write tokens: {usage.cache_write_tokens}')
+    print(f'Cache read tokens: {usage.cache_read_tokens}')
+```

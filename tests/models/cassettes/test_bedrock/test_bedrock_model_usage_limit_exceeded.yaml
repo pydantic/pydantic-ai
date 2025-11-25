@@ -1,0 +1,32 @@
+interactions:
+- request:
+    body: '{"input": {"converse": {"messages": [{"role": "user", "content": [{"text": "The quick brown fox jumps over the
+      lazydog."}]}], "system": []}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZDYxNmVkOTktYzgwMi00MDE0LTljZGUtYWFjMjk5N2I2MDFj
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '141'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-20250514-v1%3A0/count-tokens
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '18'
+      content-type:
+      - application/json
+    parsed_body:
+      inputTokens: 19
+    status:
+      code: 200
+      message: OK
+version: 1

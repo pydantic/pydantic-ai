@@ -20,9 +20,11 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -40,6 +42,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UsageLimitExceeded,
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
@@ -48,17 +51,18 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -141,7 +145,7 @@ class MockAnthropic:
 
     @cached_property
     def messages(self) -> Any:
-        return type('Messages', (), {'create': self.messages_create})
+        return type('Messages', (), {'create': self.messages_create, 'count_tokens': self.messages_count_tokens})
 
     @classmethod
     def create_mock(cls, messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage]) -> AsyncAnthropic:
@@ -176,6 +180,11 @@ class MockAnthropic:
                 response = cast(BetaMessage, self.messages_)
         self.index += 1
         return response
+
+    async def messages_count_tokens(self, *_args: Any, **_kwargs: Any) -> Any:
+        if self.messages_ is not None:
+            raise_if_exception(self.messages_ if not isinstance(self.messages_, Sequence) else self.messages_[0])
+        return None  # pragma: no cover
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
@@ -221,18 +230,10 @@ async def test_sync_request_text_response(allow_model_requests: None):
     )
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
-                model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_name='anthropic',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='123',
-                finish_reason='stop',
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
@@ -242,6 +243,22 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -283,6 +300,300 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
 
 
+async def test_cache_point_adds_cache_control(allow_model_requests: None):
+    """Test that CachePoint correctly adds cache_control to content blocks."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with CachePoint after text content
+    await agent.run(['Some context to cache', CachePoint(), 'Now the question'])
+
+    # Verify cache_control was added to the right content block
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_cache_point_multiple_markers(allow_model_requests: None):
+    """Test multiple CachePoint markers in a single prompt."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+
+    assert content == snapshot(
+        [
+            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            {'text': 'Question', 'type': 'text'},
+        ]
+    )
+
+
+async def test_cache_point_as_first_content_raises_error(allow_model_requests: None):
+    """Test that CachePoint as first content raises UserError."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        UserError,
+        match='CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.',
+    ):
+        await agent.run([CachePoint(), 'This should fail'])
+
+
+async def test_cache_point_with_image_content(allow_model_requests: None):
+    """Test CachePoint works with image content."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(
+        [
+            ImageUrl('https://example.com/image.jpg'),
+            CachePoint(),
+            'What is in this image?',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+
+    assert content == snapshot(
+        [
+            {
+                'source': {'type': 'url', 'url': 'https://example.com/image.jpg'},
+                'type': 'image',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {'text': 'What is in this image?', 'type': 'text'},
+        ]
+    )
+
+
+async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
+    """Test that CachePoint is handled correctly in otel message parts conversion."""
+    from pydantic_ai.agent import InstrumentationSettings
+    from pydantic_ai.messages import UserPromptPart
+
+    # Create a UserPromptPart with CachePoint
+    part = UserPromptPart(content=['text before', CachePoint(), 'text after'])
+
+    # Convert to otel message parts
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+
+    # Should have 2 text parts, CachePoint is skipped
+    assert otel_parts == snapshot(
+        [{'type': 'text', 'content': 'text before'}, {'type': 'text', 'content': 'text after'}]
+    )
+
+
+def test_cache_control_unsupported_param_type():
+    """Test that cache control raises error for unsupported param types."""
+
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    # Create a list with an unsupported param type (document)
+    # We'll use a mock document block param
+    params: list[dict[str, Any]] = [{'type': 'thinking', 'source': {'data': 'test'}}]
+
+    with pytest.raises(UserError, match='Cache control not supported for param type: thinking'):
+        AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+
+
+async def test_anthropic_cache_tools(allow_model_requests: None):
+    """Test that anthropic_cache_tool_definitions adds cache_control to last tool."""
+    c = completion_message(
+        [BetaTextBlock(text='Tool result', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='Test system prompt',
+        model_settings=AnthropicModelSettings(anthropic_cache_tool_definitions=True),
+    )
+
+    @agent.tool_plain
+    def tool_one() -> str:  # pragma: no cover
+        return 'one'
+
+    @agent.tool_plain
+    def tool_two() -> str:  # pragma: no cover
+        return 'two'
+
+    await agent.run('test prompt')
+
+    # Verify cache_control was added to the last tool
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'tool_one',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            },
+            {
+                'name': 'tool_two',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions(allow_model_requests: None):
+    """Test that anthropic_cache_instructions adds cache_control to system prompt."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='This is a test system prompt with instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    await agent.run('test prompt')
+
+    # Verify system is a list with cache_control on last block
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'This is a test system prompt with instructions.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
+    )
+
+
+async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None):
+    """Test that both cache settings work together."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_instructions=True,
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool(value: str) -> str:  # pragma: no cover
+        return f'Result: {value}'
+
+    await agent.run('test prompt')
+
+    # Verify both have cache_control
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    system = completion_kwargs['system']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'my_tool',
+                'description': '',
+                'input_schema': {
+                    'additionalProperties': False,
+                    'properties': {'value': {'type': 'string'}},
+                    'required': ['value'],
+                    'type': 'object',
+                },
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
+    )
+    assert system == snapshot(
+        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+    )
+
+
+async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
+    """Test that cache settings support custom TTL values ('5m' or '1h')."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions='1h',  # Custom 1h TTL
+            anthropic_cache_instructions='5m',  # Explicit 5m TTL
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool(value: str) -> str:  # pragma: no cover
+        return f'Result: {value}'
+
+    await agent.run('test prompt')
+
+    # Verify custom TTL values are applied
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    system = completion_kwargs['system']
+
+    # Tool definitions should have 1h TTL
+    assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
+    # System instructions should have 5m TTL
+    assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='world', type='text')],
@@ -317,7 +628,10 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.output == [1, 2, 3]
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -333,6 +647,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -342,7 +657,8 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -383,7 +699,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -400,6 +717,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -409,7 +727,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -426,6 +745,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -435,7 +755,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -446,6 +767,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -787,7 +1109,8 @@ async def test_image_as_binary_content_tool_response(
                         content=['What fruit is in the image you can get from the get_image tool?'],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -810,6 +1133,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -826,7 +1150,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -850,6 +1175,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -883,6 +1209,36 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot(
         "status_code: 500, model_name: claude-sonnet-4-5, body: {'error': 'test error'}"
     )
+
+
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.anthropic.com timed out',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
+
+
+async def test_count_tokens_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockAnthropic.create_mock(
+        APIConnectionError(
+            message='Connection to https://api.anthropic.com timed out',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
 
 
 async def test_document_binary_content_input(
@@ -955,6 +1311,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -974,6 +1331,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -987,7 +1345,10 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -1025,6 +1386,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1041,7 +1403,8 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1080,6 +1443,7 @@ I'll keep the format similar to my street-crossing response for consistency.\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1101,7 +1465,8 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1129,6 +1494,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1145,7 +1511,8 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         content='What was that?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1173,6 +1540,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1202,7 +1570,8 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1236,6 +1605,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1343,7 +1713,8 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1382,6 +1753,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1403,7 +1775,8 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1430,6 +1803,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1457,7 +1831,8 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1484,6 +1859,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1865,7 +2241,8 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())]
+                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2057,6 +2434,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2071,7 +2449,8 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         content='how about Mexico City?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2254,6 +2633,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2282,7 +2662,8 @@ async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2535,6 +2916,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3328,7 +3710,8 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3396,6 +3779,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3410,7 +3794,8 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         content='How about the pydantic repo in the same org?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3529,6 +3914,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3573,7 +3959,8 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3636,6 +4023,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3835,6 +4223,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
             ModelRequest(
                 parts=[UserPromptPart(content='How much is 3 * 12390?', timestamp=IsDatetime())],
                 instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3885,6 +4274,7 @@ print(f"3 * 12390 = {result}")\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3900,6 +4290,7 @@ print(f"3 * 12390 = {result}")\
                     )
                 ],
                 instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3950,6 +4341,7 @@ print(f"4 * 12390 = {result}")\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3977,7 +4369,8 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                         content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4057,6 +4450,7 @@ Here's how it breaks down following the order of operations:
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4572,7 +4966,10 @@ It's being celebrated as:
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     TextPart(
@@ -4587,6 +4984,7 @@ It's being celebrated as:
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4629,14 +5027,14 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     messages_empty_string: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_empty_string)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot([])  # Empty content should be filtered out
 
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_mixed_content)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_mixed_content, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot(
         [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
     )
@@ -4647,7 +5045,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
         ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     # The empty assistant message should be filtered out
     assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]}])
 
@@ -4655,7 +5053,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     messages_resp: list[ModelMessage] = [
         ModelResponse(parts=[TextPart(content=''), TextPart(content='')], kind='response'),
     ]
-    _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_resp, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert len(anthropic_messages) == 0  # No messages should be added
 
 
@@ -4683,7 +5081,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4705,6 +5104,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4714,7 +5114,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4740,6 +5141,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4749,7 +5151,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4782,7 +5185,8 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4807,6 +5211,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4816,7 +5221,8 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4840,6 +5246,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4872,13 +5279,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4900,6 +5301,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4910,13 +5312,7 @@ Don't include any text or Markdown fencing before or after.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -4936,6 +5332,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4966,13 +5363,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4996,6 +5387,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5021,7 +5413,7 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
     )
 
-    agent = Agent(m, output_type=int)
+    agent = Agent(m, output_type=ToolOutput(int))
 
     with pytest.raises(
         UserError,
@@ -5031,7 +5423,8 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
     ):
         await agent.run('What is 3 + 3?')
 
-    agent = Agent(m, output_type=PromptedOutput(int))
+    # Will default to prompted output
+    agent = Agent(m, output_type=int)
 
     result = await agent.run('What is 3 + 3?')
     assert result.output == snapshot(6)
@@ -6087,3 +6480,75 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
 
 According to my memory, you live in **Mexico City**.\
 """)
+
+
+async def test_anthropic_model_usage_limit_exceeded(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=19\\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
+        )
+
+
+async def test_anthropic_model_usage_limit_not_exceeded(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        """\
+I noticed a small typo in that famous pangram! It should be:
+
+"The quick brown fox jumps over the **lazy dog**."
+
+(There should be a space between "lazy" and "dog")
+
+This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.\
+"""
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'claude-does-not-exist'
+    model = AnthropicModel(model_id, provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.model_name == model_id
+
+
+async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
+    """Test that AsyncAnthropicBedrock raises UserError for count_tokens."""
+    from anthropic import AsyncAnthropicBedrock
+
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key='test-access-key',
+        aws_secret_key='test-secret-key',
+        aws_region='us-east-1',
+    )
+    provider = AnthropicProvider(anthropic_client=bedrock_client)
+    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))

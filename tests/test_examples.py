@@ -179,6 +179,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
+    env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -258,7 +259,9 @@ def test_docs_examples(
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
-    return re.sub(r'datetime.date\(', 'date(', s)
+    s = re.sub(r'datetime.date\(', 'date(', s)
+    s = re.sub(r"run_id='.+?'", "run_id='...'", s)
+    return s
 
 
 def mock_render_duration(seconds: float, force_signed: bool) -> str:
@@ -300,6 +303,10 @@ class MockMCPServer(AbstractToolset[Any]):
     @property
     def id(self) -> str | None:
         return None  # pragma: no cover
+
+    @property
+    def instructions(self) -> str | None:
+        return None
 
     async def __aenter__(self) -> MockMCPServer:
         return self
@@ -522,6 +529,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Where do I live?': 'You live in Mexico City.',
     'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
+    'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -858,7 +866,7 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'delete_file':
         return ModelResponse(
             parts=[
                 TextPart(

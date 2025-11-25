@@ -515,8 +515,14 @@ async def test_a2a_error_handling():
             task_id = result['id']
 
             # Wait for task to fail
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            max_attempts = 50  # 5 seconds total
+            for _ in range(max_attempts):
+                task = await a2a_client.get_task(task_id)
+                if 'result' in task and task['result']['status']['state'] == 'failed':
+                    break
+                await anyio.sleep(0.1)
+            else:  # pragma: no cover
+                raise AssertionError(f'Task did not fail within {max_attempts * 0.1} seconds')
 
             assert 'result' in task
             assert task['result']['status']['state'] == 'failed'
@@ -570,7 +576,12 @@ async def test_a2a_multiple_tasks_same_context():
             assert len(messages_received) == 1
             first_run_history = messages_received[0]
             assert first_run_history == snapshot(
-                [ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())])]
+                [
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        run_id=IsStr(),
+                    )
+                ]
             )
 
             # Second message - reuse the same context_id
@@ -605,7 +616,10 @@ async def test_a2a_multiple_tasks_same_context():
 
             assert second_run_history == snapshot(
                 [
-                    ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        run_id=IsStr(),
+                    ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
@@ -615,6 +629,7 @@ async def test_a2a_multiple_tasks_same_context():
                         usage=RequestUsage(input_tokens=52, output_tokens=7),
                         model_name='function:track_messages:',
                         timestamp=IsDatetime(),
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -626,6 +641,7 @@ async def test_a2a_multiple_tasks_same_context():
                             ),
                             UserPromptPart(content='Second message', timestamp=IsDatetime()),
                         ],
+                        run_id=IsStr(),
                     ),
                 ]
             )

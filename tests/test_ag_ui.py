@@ -19,6 +19,8 @@ from pydantic import BaseModel
 from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -29,6 +31,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
@@ -36,7 +39,6 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -221,6 +223,27 @@ async def simple_stream(messages: list[ModelMessage], agent_info: AgentInfo) -> 
     """A simple function that returns a text response without tool calls."""
     yield 'success '
     yield '(no tool calls)'
+
+
+async def test_agui_adapter_state_none() -> None:
+    """Ensure adapter exposes `None` state when no frontend state provided."""
+    agent = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+    )
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    assert adapter.state is None
 
 
 async def test_basic_user_message() -> None:
@@ -1182,12 +1205,33 @@ async def test_request_with_state_without_handler() -> None:
         state=StateInt(value=41),
     )
 
-    with pytest.raises(
-        UserError,
-        match='State is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
+    with pytest.warns(
+        UserWarning,
+        match='State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps\\[\\.\\.\\.\\]` or implement `StateHandler` to receive AG-UI state.',
     ):
-        async for _ in run_ag_ui(agent, run_input):
-            pass
+        events = list[dict[str, Any]]()
+        async for event in run_ag_ui(agent, run_input):
+            events.append(json.loads(event.removeprefix('data: ')))
+
+    assert events == simple_result()
+
+
+async def test_request_with_empty_state_without_handler() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        ),
+        state={},
+    )
+
+    events = list[dict[str, Any]]()
+    async for event in run_ag_ui(agent, run_input):
+        events.append(json.loads(event.removeprefix('data: ')))
+
+    assert events == simple_result()
 
 
 async def test_request_with_state_with_custom_handler() -> None:
@@ -1659,6 +1703,194 @@ async def test_event_stream_back_to_back_text():
             },
         ]
     )
+
+
+async def test_event_stream_multiple_responses_with_tool_calls():
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='tool-call')
+
+        yield PartStartEvent(
+            index=1,
+            part=ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+            previous_part_kind='text',
+        )
+        yield PartDeltaEvent(
+            index=1, delta=ToolCallPartDelta(args_delta='{"query": "Hello world"}', tool_call_id='tool_call_1')
+        )
+        yield PartEndEvent(
+            index=1,
+            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello world"}', tool_call_id='tool_call_1'),
+            next_part_kind='tool-call',
+        )
+
+        yield PartStartEvent(
+            index=2,
+            part=ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
+            previous_part_kind='tool-call',
+        )
+        yield PartDeltaEvent(
+            index=2, delta=ToolCallPartDelta(args_delta='{"query": "Goodbye world"}', tool_call_id='tool_call_2')
+        )
+        yield PartEndEvent(
+            index=2,
+            part=ToolCallPart(tool_name='tool_call_2', args='{"query": "Hello world"}', tool_call_id='tool_call_2'),
+            next_part_kind=None,
+        )
+
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello world"}', tool_call_id='tool_call_1')
+        )
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_call_2', args='{"query": "Goodbye world"}', tool_call_id='tool_call_2')
+        )
+
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
+        )
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
+        )
+
+        yield PartStartEvent(
+            index=0,
+            part=ToolCallPart(tool_name='tool_call_3', args='{}', tool_call_id='tool_call_3'),
+            previous_part_kind=None,
+        )
+        yield PartDeltaEvent(
+            index=0, delta=ToolCallPartDelta(args_delta='{"query": "Hello world"}', tool_call_id='tool_call_3')
+        )
+        yield PartEndEvent(
+            index=0,
+            part=ToolCallPart(tool_name='tool_call_3', args='{"query": "Hello world"}', tool_call_id='tool_call_3'),
+            next_part_kind='tool-call',
+        )
+
+        yield PartStartEvent(
+            index=1,
+            part=ToolCallPart(tool_name='tool_call_4', args='{}', tool_call_id='tool_call_4'),
+            previous_part_kind='tool-call',
+        )
+        yield PartDeltaEvent(
+            index=1, delta=ToolCallPartDelta(args_delta='{"query": "Goodbye world"}', tool_call_id='tool_call_4')
+        )
+        yield PartEndEvent(
+            index=1,
+            part=ToolCallPart(tool_name='tool_call_4', args='{"query": "Goodbye world"}', tool_call_id='tool_call_4'),
+            next_part_kind=None,
+        )
+
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_call_3', args='{"query": "Hello world"}', tool_call_id='tool_call_3')
+        )
+        yield FunctionToolCallEvent(
+            part=ToolCallPart(tool_name='tool_call_4', args='{"query": "Goodbye world"}', tool_call_id='tool_call_4')
+        )
+
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
+        )
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
+        )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'tool_call_1',
+                'toolCallName': 'tool_call_1',
+                'parentMessageId': message_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_1', 'delta': '{}'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_1', 'delta': '{"query": "Hello world"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_1'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'tool_call_2',
+                'toolCallName': 'tool_call_2',
+                'parentMessageId': message_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_2', 'delta': '{}'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_2', 'delta': '{"query": "Goodbye world"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_2'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': 'tool_call_1',
+                'content': 'Hi!',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': (result_message_id := IsSameStr()),
+                'toolCallId': 'tool_call_2',
+                'content': 'Bye!',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'tool_call_3',
+                'toolCallName': 'tool_call_3',
+                'parentMessageId': (new_message_id := IsSameStr()),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_3', 'delta': '{}'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_3', 'delta': '{"query": "Hello world"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_3'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'tool_call_4',
+                'toolCallName': 'tool_call_4',
+                'parentMessageId': new_message_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_4', 'delta': '{}'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_4', 'delta': '{"query": "Goodbye world"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_4'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': 'tool_call_3',
+                'content': 'Hi!',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': 'tool_call_4',
+                'content': 'Bye!',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+    assert result_message_id != new_message_id
 
 
 async def test_handle_ag_ui_request():

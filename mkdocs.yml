@@ -14,6 +14,7 @@ nav:
   - install.md
   - help.md
   - troubleshooting.md
+  - Pydantic AI Gateway: gateway.md
 
   - Documentation:
       - Core Concepts:
@@ -31,8 +32,9 @@ nav:
           - models/bedrock.md
           - models/cohere.md
           - models/groq.md
-          - models/mistral.md
           - models/huggingface.md
+          - models/mistral.md
+          - models/openrouter.md
           - models/outlines.md
       - Tools & Toolsets:
           - tools.md
@@ -87,14 +89,14 @@ nav:
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
       - Durable Execution:
-        - Overview: durable_execution/overview.md
-        - Temporal: durable_execution/temporal.md
-        - DBOS: durable_execution/dbos.md
-        - Prefect: durable_execution/prefect.md
+          - Overview: durable_execution/overview.md
+          - Temporal: durable_execution/temporal.md
+          - DBOS: durable_execution/dbos.md
+          - Prefect: durable_execution/prefect.md
       - UI Event Streams:
-        - Overview: ui/overview.md
-        - AG-UI: ui/ag-ui.md
-        - Vercel AI: ui/vercel-ai.md
+          - Overview: ui/overview.md
+          - AG-UI: ui/ag-ui.md
+          - Vercel AI: ui/vercel-ai.md
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
@@ -233,6 +235,7 @@ theme:
     - navigation.sections
     - navigation.tracking
     - toc.follow
+    - announce.dismiss
   logo: "img/logo-white.svg"
   favicon: "favicon.ico"
 

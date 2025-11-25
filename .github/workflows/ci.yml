@@ -80,7 +80,7 @@ jobs:
       - run: make docs
 
       - run: make docs-insiders
-        if: github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main'
+        if: (github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main') && github.repository == 'pydantic/pydantic-ai'
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
@@ -103,7 +103,7 @@ jobs:
   test-live:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    if: (github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push') && github.repository == 'pydantic/pydantic-ai'
     steps:
       - uses: actions/checkout@v4
 
@@ -157,6 +157,9 @@ jobs:
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      # We only run the llama_cpp tests on the latest Python as they have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
+      # https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
+      RUN_LLAMA_CPP_TESTS: ${{ matrix.python-version == '3.13' && matrix.install.name == 'all-extras' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -202,10 +205,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # TODO(Marcelo): Enable 3.11 again.
+        python-version: ["3.10", "3.12", "3.13"]
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      RUN_LLAMA_CPP_TESTS: false
     steps:
       - uses: actions/checkout@v4
 

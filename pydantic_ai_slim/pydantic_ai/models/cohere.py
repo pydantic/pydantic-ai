@@ -6,7 +6,7 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
@@ -178,7 +178,7 @@ class CohereModel(Model):
         if model_request_parameters.builtin_tools:
             raise UserError('Cohere does not support built-in tools')
 
-        cohere_messages = self._map_messages(messages)
+        cohere_messages = self._map_messages(messages, model_request_parameters)
         try:
             return await self.client.chat(
                 model=self._model_name,
@@ -195,7 +195,7 @@ class CohereModel(Model):
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -229,7 +229,9 @@ class CohereModel(Model):
             provider_details=provider_details,
         )
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
+    def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
         cohere_messages: list[ChatMessageV2] = []
         for message in messages:
@@ -268,7 +270,7 @@ class CohereModel(Model):
                 cohere_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
         return cohere_messages
 

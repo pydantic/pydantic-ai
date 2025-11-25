@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -147,6 +147,8 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
 
 @dataclass(kw_only=True)
@@ -240,16 +242,20 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         return s
 
 
+ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
+"""Type variable for agent dependencies for a tool."""
+
+
 @dataclass(init=False)
-class Tool(Generic[AgentDepsT]):
+class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[AgentDepsT]
+    function: ToolFuncEither[ToolAgentDepsT]
     takes_ctx: bool
     max_retries: int | None
     name: str
     description: str | None
-    prepare: ToolPrepareFunc[AgentDepsT] | None
+    prepare: ToolPrepareFunc[ToolAgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
@@ -265,13 +271,13 @@ class Tool(Generic[AgentDepsT]):
 
     def __init__(
         self,
-        function: ToolFuncEither[AgentDepsT],
+        function: ToolFuncEither[ToolAgentDepsT],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
-        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -411,9 +417,10 @@ class Tool(Generic[AgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            kind='unapproved' if self.requires_approval else 'function',
         )
 
-    async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
+    async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
         By default, this method creates a tool definition, then either returns it, or calls `self.prepare`
@@ -423,9 +430,6 @@ class Tool(Generic[AgentDepsT]):
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
         base_tool_def = self.tool_def
-
-        if self.requires_approval and not ctx.tool_call_approved:
-            base_tool_def = replace(base_tool_def, kind='unapproved')
 
         if self.prepare is not None:
             return await self.prepare(ctx, base_tool_def)

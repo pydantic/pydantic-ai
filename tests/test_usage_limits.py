@@ -98,7 +98,10 @@ async def test_streamed_text_limits() -> None:
             assert not result.is_complete
             assert result.all_messages() == snapshot(
                 [
-                    ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                        run_id=IsStr(),
+                    ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
@@ -111,6 +114,7 @@ async def test_streamed_text_limits() -> None:
                         model_name='test',
                         timestamp=IsNow(tz=timezone.utc),
                         provider_name='test',
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -120,7 +124,8 @@ async def test_streamed_text_limits() -> None:
                                 timestamp=IsNow(tz=timezone.utc),
                                 tool_call_id=IsStr(),
                             )
-                        ]
+                        ],
+                        run_id=IsStr(),
                     ),
                 ]
             )
