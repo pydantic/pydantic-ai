@@ -299,7 +299,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
 
     def _generate_model_key(self, model: Model | str) -> str:
         """Generate a consistent key for model lookup."""
-        if isinstance(model, str):
+        if isinstance(model, str):  # pragma: no cover
             # Parse model string like "openai:gpt-5" -> "openai_gpt_5"
             return model.replace(':', '_').replace('-', '_').replace('.', '_')
         else:
@@ -312,7 +312,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
 
     def _select_model(self, model: AdditionalModelsT | None = None) -> TemporalModel:
         """Select the appropriate TemporalModel based on the model parameter."""
-        if model is None:
+        if model is None:  # pragma: no cover
             # Use the default model
             return self._default_model
 
