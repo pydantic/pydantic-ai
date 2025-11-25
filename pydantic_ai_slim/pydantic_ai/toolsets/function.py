@@ -233,6 +233,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool = False,
+        allowed_callers: list[str] | None = None,
+        input_examples: list[dict[str, Any]] | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -267,6 +270,12 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            defer_loading: Whether to defer loading this tool until discovered via tool search. Defaults to False.
+                See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] for more info.
+            allowed_callers: List of tool types that can call this tool programmatically. Defaults to None.
+                See [`ToolDefinition.allowed_callers`][pydantic_ai.tools.ToolDefinition.allowed_callers] for more info.
+            input_examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.input_examples`][pydantic_ai.tools.ToolDefinition.input_examples] for more info.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -295,6 +304,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            defer_loading=defer_loading,
+            allowed_callers=allowed_callers,
+            input_examples=input_examples,
         )
         self.add_tool(tool)
 
