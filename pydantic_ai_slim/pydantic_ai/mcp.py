@@ -1041,7 +1041,7 @@ class _MCPServerHTTP(MCPServer):
         )
 
         if self.http_client is not None:
-
+            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
             @asynccontextmanager
             async def httpx_client_factory(
                 headers: dict[str, str] | None = None,
