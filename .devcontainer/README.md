@@ -8,7 +8,7 @@ The dev container is built using a hybrid approach: the `Dockerfile` provides lo
 
 1. The `Dockerfile` is based on Microsoft's Debian-style [Bookworm image for Python 3.11](https://hub.docker.com/r/microsoft/devcontainers-python). It uses a non-root user named `vscode` and installs system dependencies, `uv`, and the Ollama client. Note that the Ollama instance runs on the host machine for performance reasons.
 
-2. The `devcontainer.json` is based on Microsoft's [dev container template](https://github.com/devcontainers/templates/tree/main/src/python) for Python 3. It installs additional development tools via `features`, sets important environment variables, and runs `uv sync`. The container does not enforce any specific IDE configuration; you are encouraged to mount your own `.vscode/` or `.cursor/` folders externally.
+2. The `devcontainer.json` is based on Microsoft's [dev container template](https://github.com/devcontainers/templates/tree/main/src/python) for Python 3. It installs additional development tools via `features`, sets important environment variables, and runs `uv sync`. The container does not enforce any specific IDE configuration; developers are encouraged to mount their own `.vscode/` or `.cursor/` folders externally.
 
 ## Building and testing the container locally
 
