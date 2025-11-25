@@ -87,9 +87,9 @@ Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-wit
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache All Messages**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache all messages
 
-### Example 1: Automatic Last Message Caching
+### Example 1: Automatic Message Caching
 
-Use `anthropic_cache_messages` to automatically cache the last user message:
+Use `anthropic_cache_messages` to automatically cache all messages up to and including the newest user message:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
