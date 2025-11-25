@@ -245,7 +245,9 @@ class _BaseReasoningDetail(BaseModel, frozen=True):
 
     id: str | None = None
     format: (
-        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1'] | None
+        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
+        | str
+        | None
     )
     index: int | None
     type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
