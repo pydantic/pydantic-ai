@@ -244,7 +244,9 @@ class _BaseReasoningDetail(BaseModel, frozen=True):
     """Common fields shared across all reasoning detail types."""
 
     id: str | None = None
-    format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1'] | None
+    format: (
+        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1'] | None
+    )
     index: int | None
     type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
 
@@ -608,13 +610,21 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         assert isinstance(choice, _OpenRouterChunkChoice)
 
         if reasoning_details := choice.delta.reasoning_details:
-            for detail in reasoning_details:
+            for i, detail in enumerate(reasoning_details):
                 thinking_part = _from_reasoning_detail(detail)
+                # Use unique vendor_part_id for each reasoning detail type to prevent
+                # different detail types (e.g., reasoning.text, reasoning.encrypted)
+                # from being incorrectly merged into a single ThinkingPart.
+                # This is required for Gemini 3 Pro which returns multiple reasoning
+                # detail types that must be preserved separately for thought_signature handling.
+                vendor_id = f'reasoning_detail_{detail.type}_{i}'
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning_detail',
+                    vendor_part_id=vendor_id,
                     id=thinking_part.id,
                     content=thinking_part.content,
+                    signature=thinking_part.signature,
                     provider_name=self._provider_name,
+                    provider_details=thinking_part.provider_details,
                 )
         else:
             return super()._map_thinking_delta(choice)

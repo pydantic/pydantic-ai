@@ -108,23 +108,23 @@ async def test_openrouter_stream_with_reasoning(allow_model_requests: None, open
 
         thinking_event_start = chunks[0]
         assert isinstance(thinking_event_start, PartStartEvent)
-        assert thinking_event_start.part == snapshot(
-            ThinkingPart(
-                content='',
-                id='rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f',
-                provider_name='openrouter',
-            )
-        )
+        thinking_part = thinking_event_start.part
+        assert isinstance(thinking_part, ThinkingPart)
+        assert thinking_part.id == 'rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f'
+        assert thinking_part.content == ''
+        assert thinking_part.provider_name == 'openrouter'
+        # After fix: signature and provider_details are now properly preserved
+        assert thinking_part.signature is not None
+        assert thinking_part.provider_details is not None
+        assert thinking_part.provider_details['type'] == 'reasoning.encrypted'
+        assert thinking_part.provider_details['format'] == 'openai-responses-v1'
 
         thinking_event_end = chunks[1]
         assert isinstance(thinking_event_end, PartEndEvent)
-        assert thinking_event_end.part == snapshot(
-            ThinkingPart(
-                content='',
-                id='rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f',
-                provider_name='openrouter',
-            )
-        )
+        thinking_part_end = thinking_event_end.part
+        assert isinstance(thinking_part_end, ThinkingPart)
+        assert thinking_part_end.id == 'rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f'
+        assert thinking_part_end.signature is not None
 
 
 async def test_openrouter_stream_error(allow_model_requests: None, openrouter_api_key: str) -> None:
