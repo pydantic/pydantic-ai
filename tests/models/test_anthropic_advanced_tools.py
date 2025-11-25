@@ -185,12 +185,13 @@ class TestAnthropicModelAdvancedToolUse:
             description='A test tool',
             parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
         )
-        result = AnthropicModel._map_tool_definition(tool_def)
-        assert result['name'] == 'test_tool'
-        assert result['description'] == 'A test tool'
-        assert 'defer_loading' not in result
-        assert 'allowed_callers' not in result
-        assert 'input_examples' not in result
+        result = AnthropicModel._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+        result_dict = cast(dict[str, Any], result)
+        assert result_dict['name'] == 'test_tool'
+        assert result_dict['description'] == 'A test tool'
+        assert 'defer_loading' not in result_dict
+        assert 'allowed_callers' not in result_dict
+        assert 'input_examples' not in result_dict
 
     def test_map_tool_definition_with_defer_loading(self):
         """Test tool definition mapping with defer_loading."""
@@ -199,8 +200,9 @@ class TestAnthropicModelAdvancedToolUse:
             description='A test tool',
             defer_loading=True,
         )
-        result = AnthropicModel._map_tool_definition(tool_def)
-        assert result['defer_loading'] is True  # type: ignore
+        result = AnthropicModel._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+        result_dict = cast(dict[str, Any], result)
+        assert result_dict['defer_loading'] is True
 
     def test_map_tool_definition_with_allowed_callers(self):
         """Test tool definition mapping with allowed_callers."""
@@ -209,8 +211,9 @@ class TestAnthropicModelAdvancedToolUse:
             description='A test tool',
             allowed_callers=['code_execution_20250825'],
         )
-        result = AnthropicModel._map_tool_definition(tool_def)
-        assert result['allowed_callers'] == ['code_execution_20250825']  # type: ignore
+        result = AnthropicModel._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+        result_dict = cast(dict[str, Any], result)
+        assert result_dict['allowed_callers'] == ['code_execution_20250825']
 
     def test_map_tool_definition_with_input_examples(self):
         """Test tool definition mapping with input_examples."""
@@ -220,8 +223,9 @@ class TestAnthropicModelAdvancedToolUse:
             description='A test tool',
             input_examples=examples,
         )
-        result = AnthropicModel._map_tool_definition(tool_def)
-        assert result['input_examples'] == examples  # type: ignore
+        result = AnthropicModel._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+        result_dict = cast(dict[str, Any], result)
+        assert result_dict['input_examples'] == examples
 
     def test_map_tool_definition_all_advanced_fields(self):
         """Test tool definition mapping with all advanced fields."""
@@ -233,10 +237,11 @@ class TestAnthropicModelAdvancedToolUse:
             allowed_callers=['code_execution_20250825'],
             input_examples=examples,
         )
-        result = AnthropicModel._map_tool_definition(tool_def)
-        assert result['defer_loading'] is True  # type: ignore
-        assert result['allowed_callers'] == ['code_execution_20250825']  # type: ignore
-        assert result['input_examples'] == examples  # type: ignore
+        result = AnthropicModel._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+        result_dict = cast(dict[str, Any], result)
+        assert result_dict['defer_loading'] is True
+        assert result_dict['allowed_callers'] == ['code_execution_20250825']
+        assert result_dict['input_examples'] == examples
 
     async def test_add_builtin_tools_tool_search_regex(self):
         """Test adding ToolSearchTool with regex type."""
@@ -248,11 +253,12 @@ class TestAnthropicModelAdvancedToolUse:
             builtin_tools=[ToolSearchTool(search_type='regex')],
         )
 
-        tools, mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)
+        tools, _mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)  # pyright: ignore[reportPrivateUsage]
 
         assert len(tools) == 1
-        assert tools[0]['type'] == 'tool_search_tool_regex_20251119'
-        assert tools[0]['name'] == 'tool_search_tool_regex'
+        tool_dict = cast(dict[str, Any], tools[0])
+        assert tool_dict['type'] == 'tool_search_tool_regex_20251119'
+        assert tool_dict['name'] == 'tool_search_tool_regex'
         assert 'advanced-tool-use-2025-11-20' in beta_features
 
     async def test_add_builtin_tools_tool_search_bm25(self):
@@ -265,11 +271,12 @@ class TestAnthropicModelAdvancedToolUse:
             builtin_tools=[ToolSearchTool(search_type='bm25')],
         )
 
-        tools, mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)
+        tools, _mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)  # pyright: ignore[reportPrivateUsage]
 
         assert len(tools) == 1
-        assert tools[0]['type'] == 'tool_search_tool_bm25_20251119'
-        assert tools[0]['name'] == 'tool_search_tool_bm25'
+        tool_dict = cast(dict[str, Any], tools[0])
+        assert tool_dict['type'] == 'tool_search_tool_bm25_20251119'
+        assert tool_dict['name'] == 'tool_search_tool_bm25'
         assert 'advanced-tool-use-2025-11-20' in beta_features
 
     async def test_add_builtin_tools_programmatic_code_execution(self):
@@ -282,11 +289,12 @@ class TestAnthropicModelAdvancedToolUse:
             builtin_tools=[ProgrammaticCodeExecutionTool()],
         )
 
-        tools, mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)
+        tools, _mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)  # pyright: ignore[reportPrivateUsage]
 
         assert len(tools) == 1
-        assert tools[0]['type'] == 'code_execution_20250825'
-        assert tools[0]['name'] == 'code_execution'
+        tool_dict = cast(dict[str, Any], tools[0])
+        assert tool_dict['type'] == 'code_execution_20250825'
+        assert tool_dict['name'] == 'code_execution'
         assert 'advanced-tool-use-2025-11-20' in beta_features
 
     async def test_beta_header_added_for_defer_loading(self):
@@ -304,7 +312,7 @@ class TestAnthropicModelAdvancedToolUse:
             builtin_tools=[],
         )
 
-        tools, mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)
+        _tools, _mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)  # pyright: ignore[reportPrivateUsage]
 
         assert 'advanced-tool-use-2025-11-20' in beta_features
 
@@ -323,7 +331,7 @@ class TestAnthropicModelAdvancedToolUse:
             builtin_tools=[],
         )
 
-        tools, mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)
+        _tools, _mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)  # pyright: ignore[reportPrivateUsage]
 
         assert 'advanced-tool-use-2025-11-20' in beta_features
 
@@ -342,7 +350,7 @@ class TestAnthropicModelAdvancedToolUse:
             builtin_tools=[],
         )
 
-        tools, mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)
+        _tools, _mcp_servers, beta_features = model._add_builtin_tools([], model_request_params)  # pyright: ignore[reportPrivateUsage]
 
         assert 'advanced-tool-use-2025-11-20' in beta_features
 
@@ -363,7 +371,7 @@ class TestAgentWithAdvancedToolUse:
         )
 
         # Verify the tool was registered with defer_loading
-        tool = agent._function_toolset.tools.get('my_tool')
+        tool = agent._function_toolset.tools.get('my_tool')  # pyright: ignore[reportPrivateUsage]
         assert tool is not None
         assert tool.defer_loading is True
 
@@ -380,7 +388,7 @@ class TestAgentWithAdvancedToolUse:
         )
 
         # Verify the tool was registered with allowed_callers
-        tool = agent._function_toolset.tools.get('my_tool')
+        tool = agent._function_toolset.tools.get('my_tool')  # pyright: ignore[reportPrivateUsage]
         assert tool is not None
         assert tool.allowed_callers == ['code_execution_20250825']
 
@@ -398,7 +406,7 @@ class TestAgentWithAdvancedToolUse:
         )
 
         # Verify the tool was registered with input_examples
-        tool = agent._function_toolset.tools.get('my_tool')
+        tool = agent._function_toolset.tools.get('my_tool')  # pyright: ignore[reportPrivateUsage]
         assert tool is not None
         assert tool.input_examples == examples
 
@@ -411,7 +419,7 @@ class TestAgentWithAdvancedToolUse:
             """A deferred tool."""
             return str(x)
 
-        tool = agent._function_toolset.tools.get('my_deferred_tool')
+        tool = agent._function_toolset.tools.get('my_deferred_tool')  # pyright: ignore[reportPrivateUsage]
         assert tool is not None
         assert tool.defer_loading is True
 
@@ -424,7 +432,7 @@ class TestAgentWithAdvancedToolUse:
             """A callable tool."""
             return str(x)
 
-        tool = agent._function_toolset.tools.get('my_callable_tool')
+        tool = agent._function_toolset.tools.get('my_callable_tool')  # pyright: ignore[reportPrivateUsage]
         assert tool is not None
         assert tool.allowed_callers == ['code_execution_20250825']
 
@@ -439,6 +447,6 @@ class TestAgentWithAdvancedToolUse:
             """A tool with examples."""
             return str(x)
 
-        tool = agent._function_toolset.tools.get('my_example_tool')
+        tool = agent._function_toolset.tools.get('my_example_tool')  # pyright: ignore[reportPrivateUsage]
         assert tool is not None
         assert tool.input_examples == examples

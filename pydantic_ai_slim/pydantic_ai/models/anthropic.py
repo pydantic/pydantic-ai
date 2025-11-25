@@ -533,30 +533,42 @@ class AnthropicModel(Model):
                 )
             elif isinstance(tool, ToolSearchTool):
                 # Tool Search Tool for dynamic tool discovery
+                # Note: These tool types are new in Anthropic's advanced-tool-use beta
+                # and may not yet be in the SDK's type definitions
                 if tool.search_type == 'regex':
                     tools.append(
-                        {
-                            'type': 'tool_search_tool_regex_20251119',
-                            'name': 'tool_search_tool_regex',
-                        }
-                    )  # type: ignore[arg-type]
+                        cast(
+                            BetaToolUnionParam,
+                            {
+                                'type': 'tool_search_tool_regex_20251119',
+                                'name': 'tool_search_tool_regex',
+                            },
+                        )
+                    )
                 else:  # bm25
                     tools.append(
-                        {
-                            'type': 'tool_search_tool_bm25_20251119',
-                            'name': 'tool_search_tool_bm25',
-                        }
-                    )  # type: ignore[arg-type]
+                        cast(
+                            BetaToolUnionParam,
+                            {
+                                'type': 'tool_search_tool_bm25_20251119',
+                                'name': 'tool_search_tool_bm25',
+                            },
+                        )
+                    )
                 if 'advanced-tool-use-2025-11-20' not in beta_features:
                     beta_features.append('advanced-tool-use-2025-11-20')
             elif isinstance(tool, ProgrammaticCodeExecutionTool):
                 # Programmatic Code Execution Tool (newer version that supports allowed_callers)
+                # Note: This tool type is new in Anthropic's advanced-tool-use beta
                 tools.append(
-                    {
-                        'type': 'code_execution_20250825',
-                        'name': 'code_execution',
-                    }
-                )  # type: ignore[arg-type]
+                    cast(
+                        BetaToolUnionParam,
+                        {
+                            'type': 'code_execution_20250825',
+                            'name': 'code_execution',
+                        },
+                    )
+                )
                 if 'advanced-tool-use-2025-11-20' not in beta_features:
                     beta_features.append('advanced-tool-use-2025-11-20')
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
@@ -1113,7 +1125,9 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
+    # Note: Tool search tool names are new in Anthropic's advanced-tool-use beta
+    # and may not yet be in the SDK's type definitions for item.name
+    elif cast(str, item.name) in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
         # Tool Search Tool for dynamic tool discovery
         return BuiltinToolCallPart(
             provider_name=provider_name,
@@ -1121,7 +1135,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+    elif cast(str, item.name) in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         # For new server tools we don't recognize yet, return a generic BuiltinToolCallPart
