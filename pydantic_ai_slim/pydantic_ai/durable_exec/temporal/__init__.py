@@ -30,7 +30,7 @@ __all__ = [
 # Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
 # when you have a @pytest.mark.anyio somewhere.
 # I suppose we could add a test that runs a python script in a separate process, but I have not done that...
-import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]
+import anyio._backends._asyncio  # noqa F401  # pyright: ignore[reportUnusedImport]
 
 try:
     import anyio._backends._trio  # noqa F401  # pyright: ignore[reportUnusedImport]
