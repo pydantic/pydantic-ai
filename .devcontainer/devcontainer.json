@@ -39,7 +39,7 @@
   "postCreateCommand": [
     "bash",
     "-c",
-    "uv sync --frozen --all-extras --all-packages --group lint --group docs"
+    "uv tool install pre-commit && uv sync --frozen --all-extras --all-packages --group lint --group docs"
   ],
   //"postStartCommand": "",
   // Configure tool-specific properties.
