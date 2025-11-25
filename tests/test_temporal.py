@@ -2744,3 +2744,75 @@ async def test_temporal_agent_multi_model_mixed_types():
     # Verify lookups work for all model instances
     assert id(test_model2) in temporal_agent._model_to_key  # pyright: ignore[reportPrivateUsage]
     assert id(test_model3) in temporal_agent._model_to_key  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_agent_multi_model_with_model_strings():
+    """Test that TemporalAgent can register models using actual model strings like 'test'."""
+    test_model1 = TestModel()
+
+    agent = Agent(test_model1, name='model_string_test')
+    # Using the 'test' model string which creates a TestModel via models.infer_model
+    temporal_agent = TemporalAgent(
+        agent,
+        name='model_string_test',
+        additional_models=['test'],  # This is a valid model string
+    )
+
+    # Verify that models are registered with sanitized keys
+    assert 'default' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    assert 'test' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+
+    # Verify lookup mapping for the string model
+    assert 'test' in temporal_agent._model_to_key  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_agent_model_without_model_name():
+    """Test that TemporalAgent handles models without model_name attribute."""
+    test_model1 = TestModel()
+
+    # Create a model instance and remove its model_name to trigger the fallback
+    test_model2 = TestModel()
+    test_model2._model_name = ''  # pyright: ignore[reportPrivateUsage]  # Empty string is falsy, so fallback will be used
+
+    agent = Agent(test_model1, name='no_model_name_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='no_model_name_test',
+        additional_models=[test_model2],
+    )
+
+    # Verify that the model is registered using the class name as fallback
+    assert 'default' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+    # When model_name is empty, it falls back to __class__.__name__.lower() = 'testmodel'
+    assert 'testmodel' in temporal_agent._models  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_agent_select_model_by_string():
+    """Test selecting a model by its string key."""
+    test_model1 = TestModel()
+
+    agent = Agent(test_model1, name='string_select_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='string_select_test',
+        additional_models=['test'],
+    )
+
+    # Select model by string - this exercises the string lookup path
+    selected = temporal_agent._select_model('test')  # pyright: ignore[reportPrivateUsage]
+    assert selected is temporal_agent._models['test']  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_agent_unregistered_string_model_error():
+    """Test that using an unregistered string model raises a helpful error."""
+    test_model1 = TestModel()
+
+    agent = Agent(test_model1, name='unregistered_string_test')
+    temporal_agent = TemporalAgent(agent, name='unregistered_string_test')
+
+    # Try to select an unregistered string model
+    with pytest.raises(UserError) as exc_info:
+        temporal_agent._select_model('unregistered:model')  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+    assert '"unregistered:model"' in str(exc_info.value)
+    assert 'is not registered with this TemporalAgent' in str(exc_info.value)
