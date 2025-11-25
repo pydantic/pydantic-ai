@@ -883,7 +883,7 @@ async def model_logic(  # noqa: C901
         raise RuntimeError(f'Unexpected message: {m}')
 
 
-async def stream_model_logic(  # noqa C901
+async def stream_model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: lax no cover
     async def stream_text_response(r: str) -> AsyncIterator[str]:
