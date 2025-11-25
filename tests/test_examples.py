@@ -205,7 +205,7 @@ def test_docs_examples(
         for req in requires.split(','):
             known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
-                (tmp_path_cwd / req).write_text(ex.source)
+                (tmp_path_cwd / req).write_text(ex.source, encoding='utf-8')
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 

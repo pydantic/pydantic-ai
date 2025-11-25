@@ -521,7 +521,7 @@ async def test_tool(param1: str, param2: int = 0) -> str:
 server.run()"""
         with TemporaryDirectory() as temp_dir:
             server_py = Path(temp_dir) / 'server.py'
-            server_py.write_text(server_script)
+            server_py.write_text(server_script, encoding='utf-8')
             toolset = FastMCPToolset(server_py)
 
             assert isinstance(toolset, FastMCPToolset)

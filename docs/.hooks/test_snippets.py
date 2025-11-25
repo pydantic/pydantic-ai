@@ -541,7 +541,7 @@ def test_inject_snippets_with_title():
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" title="Custom Title"}'
 
@@ -561,7 +561,7 @@ line 5"""
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" fragment="important"}'
 
@@ -586,7 +586,7 @@ def other():
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" highlight="important"}'
 
@@ -611,8 +611,8 @@ def test_inject_snippets_multiple():
         docs_dir = Path(temp_dir)
         file1 = docs_dir / 'test1.py'
         file2 = docs_dir / 'test2.py'
-        file1.write_text(content1)
-        file2.write_text(content2)
+        file1.write_text(content1, encoding='utf-8')
+        file2.write_text(content2, encoding='utf-8')
 
         markdown = """Some text
 ```snippet {path="test1.py"}
@@ -640,7 +640,7 @@ def test_inject_snippets_extra_attrs():
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" custom="value" another="attr"}'
 

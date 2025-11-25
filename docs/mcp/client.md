@@ -539,9 +539,9 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
         path = Path(f'{subject}_{style}.svg')
         # remove triple backticks if the svg was returned within markdown
         if m := re.search(r'^```\w*$(.+?)```$', result.content.text, re.S | re.M):
-            path.write_text(m.group(1))
+            path.write_text(m.group(1), encoding='utf-8')
         else:
-            path.write_text(result.content.text)
+            path.write_text(result.content.text, encoding='utf-8')
         return f'See {path}'
 
 

@@ -671,11 +671,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
-            path.write_text(content)
+            path.write_text(content, encoding='utf-8')
         else:
             context['$schema'] = schema_ref
             json_data = self.model_dump_json(indent=2, by_alias=True, context=context)
-            path.write_text(json_data + '\n')
+            path.write_text(json_data + '\n', encoding='utf-8')
 
     @classmethod
     def model_json_schema_with_evaluators(
