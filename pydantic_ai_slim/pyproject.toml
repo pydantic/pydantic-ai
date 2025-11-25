@@ -89,7 +89,7 @@ cli = [
     "rich>=13",
     "prompt-toolkit>=3",
     "pyperclip>=1.9.0",
-    "click>=8.3.0",
+    "click>=8.1.0",
 ]
 # MCP
 mcp = ["mcp>=1.12.3"]
