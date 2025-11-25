@@ -134,7 +134,6 @@ include = ["/README.md", "/Makefile", "/tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-preview = true  # For `PLW1514`
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
@@ -147,6 +146,7 @@ include = [
 ]
 
 [tool.ruff.lint]
+preview = true  # For `PLW1514`
 extend-select = [
     "Q",
     "RUF100",
@@ -183,7 +183,6 @@ convention = "google"
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
 docstring-code-format = false
-preview = false  # Override [tool.ruff] preview setting
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
