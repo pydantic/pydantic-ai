@@ -73,6 +73,7 @@ class ModelResponsePartsManager:
         vendor_part_id: VendorId | None,
         content: str,
         id: str | None = None,
+        provider_details: dict[str, Any] | None = None,
         thinking_tags: tuple[str, str] | None = None,
         ignore_leading_whitespace: bool = False,
     ) -> ModelResponseStreamEvent | None:
@@ -88,6 +89,7 @@ class ModelResponsePartsManager:
                 a TextPart.
             content: The text content to append to the appropriate TextPart.
             id: An optional id for the text part.
+            provider_details: An optional dictionary of provider-specific details for the text part.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
             ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
 
@@ -121,7 +123,9 @@ class ModelResponsePartsManager:
                         self._vendor_id_to_part_index.pop(vendor_part_id)
                         return None
                     else:
-                        return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=content)
+                        return self.handle_thinking_delta(
+                            vendor_part_id=vendor_part_id, content=content, provider_details=provider_details
+                        )
                 elif isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
@@ -130,7 +134,9 @@ class ModelResponsePartsManager:
         if thinking_tags and content == thinking_tags[0]:
             # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
-            return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
+            return self.handle_thinking_delta(
+                vendor_part_id=vendor_part_id, content='', provider_details=provider_details
+            )
 
         if existing_text_part_and_index is None:
             # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
@@ -140,7 +146,7 @@ class ModelResponsePartsManager:
 
             # There is no existing text part that should be updated, so create a new one
             new_part_index = len(self._parts)
-            part = TextPart(content=content, id=id)
+            part = TextPart(content=content, id=id, provider_details=provider_details)
             if vendor_part_id is not None:
                 self._vendor_id_to_part_index[vendor_part_id] = new_part_index
             self._parts.append(part)
@@ -148,7 +154,7 @@ class ModelResponsePartsManager:
         else:
             # Update the existing TextPart with the new content delta
             existing_text_part, part_index = existing_text_part_and_index
-            part_delta = TextPartDelta(content_delta=content)
+            part_delta = TextPartDelta(content_delta=content, provider_details=provider_details)
             self._parts[part_index] = part_delta.apply(existing_text_part)
             return PartDeltaEvent(index=part_index, delta=part_delta)
 
@@ -160,6 +166,7 @@ class ModelResponsePartsManager:
         id: str | None = None,
         signature: str | None = None,
         provider_name: str | None = None,
+        provider_details: dict[str, Any] | None = None,
     ) -> ModelResponseStreamEvent:
         """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
 
@@ -175,6 +182,7 @@ class ModelResponsePartsManager:
             id: An optional id for the thinking part.
             signature: An optional signature for the thinking content.
             provider_name: An optional provider name for the thinking part.
+            provider_details: An optional dictionary of provider-specific details for the thinking part.
 
         Returns:
             A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
@@ -204,7 +212,13 @@ class ModelResponsePartsManager:
             if content is not None or signature is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
-                part = ThinkingPart(content=content or '', id=id, signature=signature, provider_name=provider_name)
+                part = ThinkingPart(
+                    content=content or '',
+                    id=id,
+                    signature=signature,
+                    provider_name=provider_name,
+                    provider_details=provider_details,
+                )
                 if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)
@@ -216,7 +230,10 @@ class ModelResponsePartsManager:
                 # Update the existing ThinkingPart with the new content and/or signature delta
                 existing_thinking_part, part_index = existing_thinking_part_and_index
                 part_delta = ThinkingPartDelta(
-                    content_delta=content, signature_delta=signature, provider_name=provider_name
+                    content_delta=content,
+                    signature_delta=signature,
+                    provider_name=provider_name,
+                    provider_details=provider_details,
                 )
                 self._parts[part_index] = part_delta.apply(existing_thinking_part)
                 return PartDeltaEvent(index=part_index, delta=part_delta)
@@ -230,6 +247,7 @@ class ModelResponsePartsManager:
         tool_name: str | None = None,
         args: str | dict[str, Any] | None = None,
         tool_call_id: str | None = None,
+        provider_details: dict[str, Any] | None = None,
     ) -> ModelResponseStreamEvent | None:
         """Handle or update a tool call, creating or updating a `ToolCallPart`, `BuiltinToolCallPart`, or `ToolCallPartDelta`.
 
@@ -246,6 +264,7 @@ class ModelResponsePartsManager:
                 a name match when `vendor_part_id` is None.
             args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
             tool_call_id: An optional string representing an identifier for this tool call.
+            provider_details: An optional dictionary of provider-specific details for the tool call part.
 
         Returns:
             - A `PartStartEvent` if a new ToolCallPart or BuiltinToolCallPart is created.
@@ -280,7 +299,9 @@ class ModelResponsePartsManager:
 
         if existing_matching_part_and_index is None:
             # No matching part/delta was found, so create a new ToolCallPartDelta (or ToolCallPart if fully formed)
-            delta = ToolCallPartDelta(tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id)
+            delta = ToolCallPartDelta(
+                tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id, provider_details=provider_details
+            )
             part = delta.as_part() or delta
             if vendor_part_id is not None:
                 self._vendor_id_to_part_index[vendor_part_id] = len(self._parts)
@@ -292,7 +313,9 @@ class ModelResponsePartsManager:
         else:
             # Update the existing part or delta with the new information
             existing_part, part_index = existing_matching_part_and_index
-            delta = ToolCallPartDelta(tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id)
+            delta = ToolCallPartDelta(
+                tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id, provider_details=provider_details
+            )
             updated_part = delta.apply(existing_part)
             self._parts[part_index] = updated_part
             if isinstance(updated_part, ToolCallPart | BuiltinToolCallPart):
@@ -313,6 +336,7 @@ class ModelResponsePartsManager:
         args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
         id: str | None = None,
+        provider_details: dict[str, Any] | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a ToolCallPart with the given information.
 
@@ -325,6 +349,7 @@ class ModelResponsePartsManager:
             args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
             id: An optional identifier for this tool call part.
+            provider_details: An optional dictionary of provider-specific details for the tool call part.
 
         Returns:
             ModelResponseStreamEvent: A `PartStartEvent` indicating that a new tool call part
@@ -335,6 +360,7 @@ class ModelResponsePartsManager:
             args=args,
             tool_call_id=tool_call_id or _generate_tool_call_id(),
             id=id,
+            provider_details=provider_details,
         )
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
