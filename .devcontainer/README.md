@@ -10,3 +10,7 @@ devcontainer build --workspace-folder . # Builds the dev container
 
 devcontainer up --workspace-folder . # Starts the dev container including postCreateCommand. Complete startup test.
 ```
+
+## IDE Configuration
+
+The dev container is unopinionated about IDE configs. Please uncomment the `mounts` section in `devcontainer.json` and provide your own `.vscode/` or `.cursor/` configurations.
