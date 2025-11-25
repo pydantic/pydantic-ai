@@ -47,12 +47,28 @@
     "vscode": {
       "settings": {
         "python.defaultInterpreterPath": ".venv/bin/python"
-      }
+      },
+      "extensions": [
+        // Python
+        "ms-python.python",
+        "charliermarsh.ruff",
+        // yaml + toml
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml"
+      ]
     },
     "cursor": {
       "settings": {
         "python.defaultInterpreterPath": ".venv/bin/python"
-      }
+      },
+      "extensions": [
+        // Python
+        "anysphere.pyright",
+        "charliermarsh.ruff",
+        // yaml + toml
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml"
+      ]
     }
   }
   // Uncomment to mount .vscode and .cursor directories from other repositories or directories.

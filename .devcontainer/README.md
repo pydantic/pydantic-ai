@@ -1,4 +1,6 @@
-The dev container is using Debian Bookworm as the base image. It comes with a non-root user `vscode`. The customizations is using a hybrid approach: `Dockerfile` for low-level customization and `devcontainer.json` for fine-tuning and IDE integration. Regarding IDE configurations, the container is rather unopinionated. `.vscode/` or `.cursor/` folders need to be mounted externally. The Ollama CLI is installed in the container, but the Ollama instance on the host machine is used. Building and startup of the container are tested in the CI pipeline. The `make lint`, `make typecheck` and `make test` targets run successfully in the container.
+The dev container is using Debian Bookworm as the base image. It comes with a non-root user `vscode`. The customizations is using a hybrid approach: `Dockerfile` for low-level customization and `devcontainer.json` for fine-tuning and IDE integration. The approach reduces build time in case some minor tweaking in `devcontainer.json` is needed.
+
+The container is rather unopinionated about IDE configurations. `.vscode/` or `.cursor/` folders should be mounted externally. The Ollama CLI is installed in the container, but the Ollama instance on the host machine is used for performance reasons. Building and startup of the container are tested in the CI pipeline. The `make lint`, `make typecheck` and `make test` targets run successfully in the container.
 
 ## Requirements
 
