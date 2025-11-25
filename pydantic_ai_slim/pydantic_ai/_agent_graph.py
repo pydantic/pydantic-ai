@@ -874,7 +874,9 @@ async def process_tool_calls(  # noqa: C901
                     final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
         # Unknown strategy or invalid state
         else:
-            assert_never(ctx.deps.end_strategy)
+            assert False, (
+                f'Unexpected state: end_strategy={ctx.deps.end_strategy!r}, final_result={final_result!r};'
+            )  # pragma: no cover
 
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
