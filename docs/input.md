@@ -128,7 +128,7 @@ The situation is different for certain models:
 
 Use uploaded files:
 
-```py {title="file_upload.py" test="skip"}
+```py {title="file_upload.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 from pydantic_ai.providers.google import GoogleProvider
 
@@ -148,10 +148,9 @@ print(result.output)
 
 Inline a file as a text part:
 
-```py {title="file_inline.py" test="skip"}
+```py {title="file_inline.py" test="skip" lint="skip"}
 from pathlib import Path
-from pydantic_ai import Agent
-from pydantic_ai import BinaryContent
+from pydantic_ai import Agent, BinaryContent
 
 file_bytes = Path('path/to/document.pdf').read_bytes()
 mimetype = 'application/pdf'
