@@ -5,7 +5,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [OpenAI](openai.md)
 * [Anthropic](anthropic.md)
 * [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
-* [Grok](grok.md)
+* [Xai](xai.md)
 * [Groq](groq.md)
 * [Mistral](mistral.md)
 * [Cohere](cohere.md)
@@ -18,7 +18,6 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
 
 - [DeepSeek](openai.md#deepseek)
-- [Grok (xAI)](openai.md#grok-xai)
 - [Ollama](openai.md#ollama)
 - [OpenRouter](openai.md#openrouter)
 - [Vercel AI Gateway](openai.md#vercel-ai-gateway)
