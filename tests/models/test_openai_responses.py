@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from openai.types import responses
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -41,6 +42,7 @@ from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    ModelMessage,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -198,30 +200,6 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
             'Enjoy your homemade Uruguayan alfajores!',
         ]
     )
-
-
-async def test_openai_responses_reasoning_generate_summary(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('computer-use-preview', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(
-        model=model,
-        model_settings=OpenAIResponsesModelSettings(
-            openai_reasoning_summary='concise',
-            openai_truncation='auto',
-        ),
-    )
-    result = await agent.run('What should I do to cross the street?')
-    assert result.output == snapshot("""\
-To cross the street safely, follow these steps:
-
-1. **Use a Crosswalk**: Always use a designated crosswalk or pedestrian crossing whenever available.
-2. **Press the Button**: If there is a pedestrian signal button, press it and wait for the signal.
-3. **Look Both Ways**: Look left, right, and left again before stepping off the curb.
-4. **Wait for the Signal**: Cross only when the pedestrian signal indicates it is safe to do so or when there is a clear gap in traffic.
-5. **Stay Alert**: Be mindful of turning vehicles and stay attentive while crossing.
-6. **Walk, Don't Run**: Walk across the street; running can increase the risk of falling or not noticing an oncoming vehicle.
-
-Always follow local traffic rules and be cautious, even when crossing at a crosswalk. Safety is the priority.\
-""")
 
 
 async def test_openai_responses_system_prompt(allow_model_requests: None, openai_api_key: str):
@@ -2645,6 +2623,135 @@ async def test_openai_responses_thinking_with_summary_and_raw_cot(allow_model_re
             ),
         ]
     )
+
+
+async def test_openai_responses_raw_cot_filtered_in_multiturn(allow_model_requests: None):
+    """Test that raw CoT from gpt-oss is NOT sent back in multi-turn conversations."""
+    # Turn 1: Create initial response with raw CoT
+    c1 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[],
+                type='reasoning',
+                content=[
+                    ReasoningContent(type='reasoning_text', text='Raw CoT step 1'),
+                    ReasoningContent(type='reasoning_text', text='Raw CoT step 2'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+
+    # Turn 2: Second response
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-oss-20b', provider=OpenAIProvider(openai_client=mock_client))
+
+    # we're patching _map_messages to track what gets sent to the API
+    sent_openai_messages: list[list[responses.ResponseInputItemParam]] = []
+    original_map = model._map_messages  # pyright: ignore[reportPrivateUsage]
+
+    async def tracking_map(
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ):
+        instructions, openai_messages = await original_map(messages, model_settings, model_request_parameters)
+        sent_openai_messages.append(openai_messages)
+        return instructions, openai_messages
+
+    model._map_messages = tracking_map  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(model=model)
+
+    # Turn 1
+    result1 = await agent.run('What is 2+2?')
+
+    # Verify Turn 1 captured raw CoT
+    assert len(result1.all_messages()) == 2
+    response1 = result1.all_messages()[1]
+    assert isinstance(response1, ModelResponse)
+    assert len(response1.parts) == 3  # 2 ThinkingParts (raw CoT) + 1 TextPart
+    assert response1.parts[0].part_kind == 'thinking'
+    assert response1.parts[1].part_kind == 'thinking'
+    assert response1.parts[2].part_kind == 'text'
+
+    # Turn 2 with message history
+    await agent.run('Add 5 to that', message_history=result1.all_messages())
+
+    # Verify Turn 2 API call did NOT include raw CoT
+    assert len(sent_openai_messages) == 2  # Two API calls made
+    turn2_messages = sent_openai_messages[1]
+
+    # Turn 2 should have: user message from Turn 1, assistant text from Turn 1, user message from Turn 2
+    # Raw CoT should be filtered out
+    assert len(turn2_messages) == 3
+
+    # verify no reasoning items are in Turn 2 request
+    reasoning_items = [msg for msg in turn2_messages if msg.get('type') == 'reasoning']
+    assert len(reasoning_items) == 0, 'Raw CoT should be filtered out in multi-turn'
+
+
+@pytest.mark.vcr
+@pytest.mark.anyio
+async def test_openai_responses_raw_cot_stream_openrouter(
+    allow_model_requests: None,
+    openrouter_api_key: str,
+) -> None:
+    """Test streaming raw CoT from gpt-oss models via OpenRouter.
+
+    This test covers ResponseReasoningTextDeltaEvent and ResponseReasoningTextDoneEvent
+    handling which are emitted by gpt-oss but not by official OpenAI API.
+    """
+    from pydantic_ai.models.openai import _RAW_COT_ID_SUFFIX  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openrouter import OpenRouterProvider
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenAIResponsesModel('openai/gpt-oss-20b', provider=provider)
+    agent = Agent(model=model)
+
+    async with agent.run_stream('What is 2+2?') as result:
+        async for _ in result.stream_text():
+            pass
+
+    messages = result.all_messages()
+    assert len(messages) == 2  # request + response
+    response_parts = messages[1].parts
+
+    # Should have ThinkingParts with raw CoT
+    thinking_parts = [p for p in response_parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) > 0, 'Should have at least one ThinkingPart from raw CoT'
+
+    # Verify raw CoT characteristics
+    for thinking_part in thinking_parts:
+        # Raw CoT has no signature (not encrypted)
+        assert thinking_part.signature is None
+        # Raw CoT has no provider_name (not official thinking)
+        assert thinking_part.provider_name is None
+        # Raw CoT has -content- suffix in ID
+        assert _RAW_COT_ID_SUFFIX in (thinking_part.id or '')
+
+    # Verify we got text output as well
+    text_parts = [p for p in response_parts if isinstance(p, TextPart)]
+    assert len(text_parts) > 0, 'Should have TextPart with final answer'
 
 
 async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):

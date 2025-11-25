@@ -233,8 +233,6 @@ KnownModelName = TypeAliasType(
         'moonshotai:moonshot-v1-8k-vision-preview',
         'openai:chatgpt-4o-latest',
         'openai:codex-mini-latest',
-        'openai:computer-use-preview',
-        'openai:computer-use-preview-2025-03-11',
         'openai:gpt-3.5-turbo',
         'openai:gpt-3.5-turbo-0125',
         'openai:gpt-3.5-turbo-0301',

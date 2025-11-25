@@ -137,6 +137,12 @@ Prefix for OpenAI connector IDs. OpenAI supports either a URL or a connector ID 
 by using that prefix like `x-openai-connector:<connector-id>` in a URL, you can pass a connector ID to a model.
 """
 
+_RAW_COT_ID_SUFFIX = '-content-'
+"""
+Suffix used in ThinkingPart IDs to identify raw Chain of Thought from gpt-oss models.
+Raw CoT IDs follow the pattern 'rs_123-content-0', 'rs_123-content-1', etc.
+"""
+
 _CHAT_FINISH_REASON_MAP: dict[
     Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason
 ] = {
@@ -1158,7 +1164,7 @@ class OpenAIResponsesModel(Model):
                         items.append(
                             ThinkingPart(
                                 content=content_item.text,
-                                id=f'{item.id}-content-{idx}',
+                                id=f'{item.id}{_RAW_COT_ID_SUFFIX}{idx}',
                             )
                         )
             elif isinstance(item, responses.ResponseOutputMessage):
@@ -1675,6 +1681,11 @@ class OpenAIResponsesModel(Model):
                         # If `send_item_ids` is false, we won't send the `BuiltinToolReturnPart`, but OpenAI does not have a type for files from the assistant.
                         pass
                     elif isinstance(item, ThinkingPart):
+                        # we don't send back raw CoT
+                        # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
+                        if not item.signature and not item.provider_name and item.id and _RAW_COT_ID_SUFFIX in item.id:
+                            continue
+
                         if item.id and send_item_ids:
                             signature: str | None = None
                             if (
@@ -2146,10 +2157,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
             elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
+                raw_cot_id = f'{chunk.item_id}{_RAW_COT_ID_SUFFIX}{chunk.content_index}'
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=f'{chunk.item_id}-content-{chunk.content_index}',
+                    vendor_part_id=raw_cot_id,
                     content=chunk.delta,
-                    id=chunk.item_id,
+                    id=raw_cot_id,
                 )
 
             elif isinstance(chunk, responses.ResponseReasoningTextDoneEvent):
