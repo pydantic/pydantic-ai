@@ -128,18 +128,18 @@ The situation is different for certain models:
 
 Use uploaded files:
 
-```py {title="file_upload.py"}
+```py {title="file_upload.py" test="skip"}
 from pydantic_ai import Agent, DocumentUrl
 from pydantic_ai.providers.google import GoogleProvider
 
 provider = GoogleProvider(api_key=GEMINI_API_KEY)
-file = provider.client.files.upload(file="path/to/document.pdf")
+file = provider.client.files.upload(file='path/to/document.pdf')
 assert file.uri is not None
 
-agent = Agent(model="google-gla:gemini-2.5-flash")
+agent = Agent(model='google-gla:gemini-2.5-flash')
 result = agent.run_sync(
     [
-        "What does this document contain?",
+        'What does this document contain?',
         DocumentUrl(url=file.uri, media_type=file.mime_type),
     ]
 )
@@ -148,10 +148,10 @@ print(result.output)
 
 Inline a file as a text part:
 
-```py {title="file_inline.py"}
+```py {title="file_inline.py" test="skip"}
+from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai import BinaryContent
-from pathlib import Path
 
 file_bytes = Path('path/to/document.pdf').read_bytes()
 mimetype = 'application/pdf'
