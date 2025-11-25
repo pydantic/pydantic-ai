@@ -26,3 +26,11 @@ devcontainer up --workspace-folder .  # Starts the dev container and runs postCr
 ## Building and testing the container in the CI pipeline
 
 The container build and startup process are tested in the CI pipeline defined in `.github/workflows/ci.yml`. The availability of major development tools and the successful execution of `make lint`, `make typecheck`, and `make test` are verified.
+
+## Known Issue in Cursor IDE
+
+Occasionally, the dev container may fail to start properly in the Cursor IDE. A [suggested workaround](https://forum.cursor.com/t/dev-containers-support/1510/13) is:
+
+1. Start the container using VS Code.
+2. In Cursor, attach to the already running container.
+3. Inside the container, navigate to `/workspaces/pydantic-ai`.
