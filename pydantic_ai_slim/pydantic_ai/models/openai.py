@@ -1197,7 +1197,7 @@ class OpenAIResponsesModel(Model):
                     items.append(file_part)
                 items.append(return_part)
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
-                # Pydantic AI doesn't yet support the ComputerUse built-in tool
+                # OpenAI's `computer-use` model is no longer available
                 pass
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
