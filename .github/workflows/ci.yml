@@ -336,7 +336,17 @@ jobs:
       - name: Build and run dev container task
         uses: devcontainers/ci@v0.3
         with:
-          runCmd: echo "Dev container built and run successfully"
+          runCmd: |
+            bash -c '
+              uv --version
+              uvx --version
+              pre-commit --version
+              ollama --version
+              make lint
+              make typecheck
+              # make test
+              echo "Dev container built and run successfully"
+            '
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:

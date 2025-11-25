@@ -7,6 +7,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.11 /uv /uvx /bin/
 # Set non-interactive frontend for apt
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Enable Docker BuildKit for cache mounts
+ENV DOCKER_BUILDKIT=1
+
 # Install system dependencies with cache mount for faster rebuilds (pinned versions)
 RUN --mount=type=cache,target=/var/cache/apt \
   --mount=type=cache,target=/var/lib/apt/lists \
