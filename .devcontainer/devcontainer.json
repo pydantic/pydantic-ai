@@ -7,9 +7,9 @@
   },
   // Features to add to the dev container. More info: https://containers.dev/features.
   "features": {
-    "ghcr.io/devcontainers/features/github-cli:1": {}, // gh
-    "ghcr.io/rocker-org/devcontainer-features/pandoc:1": {}, // pandoc
-    "ghcr.io/lukewiwa/features/shellcheck:0": {}, // shellcheck
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/rocker-org/devcontainer-features/pandoc:1": {},
+    "ghcr.io/lukewiwa/features/shellcheck:0": {},
     "ghcr.io/devcontainers/features/node:1": {
       "version": "latest"
     },
