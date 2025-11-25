@@ -1683,7 +1683,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # we don't send back raw CoT
                         # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
-                        if not item.signature and not item.provider_name and item.id and _RAW_COT_ID_SUFFIX in item.id:
+                        if _RAW_COT_ID_SUFFIX in (item.id or ''):
                             continue
 
                         if item.id and send_item_ids:
