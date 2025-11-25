@@ -2720,6 +2720,8 @@ async def test_openai_responses_raw_cot_stream_openrouter(
 
     This test covers ResponseReasoningTextDeltaEvent and ResponseReasoningTextDoneEvent
     handling which are emitted by gpt-oss but not by official OpenAI API.
+
+    NOTE: test can be flakey on coverage if cassette is re-recorded.
     """
     from pydantic_ai.models.openai import _RAW_COT_ID_SUFFIX  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.models.openrouter import OpenRouterProvider
