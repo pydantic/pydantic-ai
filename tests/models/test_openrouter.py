@@ -101,7 +101,11 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
 
 async def test_openrouter_stream_with_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/o3', provider=provider)
+    model = OpenRouterModel(
+        'openai/o3',
+        provider=provider,
+        settings=OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'}),
+    )
 
     async with model_request_stream(model, [ModelRequest.user_text_prompt('Who are you')]) as stream:
         chunks = [chunk async for chunk in stream]
