@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
@@ -335,7 +336,10 @@ def test_video_url_invalid():
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
     original_delta = ThinkingPartDelta(
-        content_delta='original', signature_delta='sig1', provider_name='original_provider'
+        content_delta='original',
+        signature_delta='sig1',
+        provider_name='original_provider',
+        provider_details={'foo': 'bar', 'baz': 'qux'},
     )
 
     # Test applying delta with no content or signature - should raise error
@@ -360,6 +364,14 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
     assert result.provider_name == 'new_provider'
+
+    # Test applying delta with provider_details
+    provider_details_delta = ThinkingPartDelta(
+        content_delta='', provider_details={'finish_reason': 'STOP', 'foo': 'qux'}
+    )
+    result = provider_details_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.provider_details == {'foo': 'qux', 'baz': 'qux', 'finish_reason': 'STOP'}
 
 
 def test_pre_usage_refactor_messages_deserializable():
@@ -422,6 +434,14 @@ def test_pre_usage_refactor_messages_deserializable():
     )
 
 
+def test_file_part_has_content():
+    filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
+    assert not filepart.has_content()
+
+    filepart.content.data = b'not empty'
+    assert filepart.has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
@@ -443,6 +463,7 @@ def test_file_part_serialization_roundtrip():
                         'id': None,
                         'provider_name': None,
                         'part_kind': 'file',
+                        'provider_details': None,
                     }
                 ],
                 'usage': {
@@ -462,11 +483,29 @@ def test_file_part_serialization_roundtrip():
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
+                'run_id': None,
+                'metadata': None,
             }
         ]
     )
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
     assert deserialized == messages
+
+
+def test_model_messages_type_adapter_preserves_run_id():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            run_id='run-123',
+            metadata={'key': 'value'},
+        ),
+        ModelResponse(parts=[TextPart(content='Hello!')], run_id='run-123', metadata={'key': 'value'}),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
 
 
 def test_model_response_convenience_methods():
@@ -585,4 +624,38 @@ def test_binary_content_validation_with_optional_identifier():
             'media_type': 'image/png',
             'identifier': 'foo',
         }
+    )
+
+
+def test_binary_content_from_path(tmp_path: Path):
+    # test normal file
+    test_xml_file = tmp_path / 'test.xml'
+    test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_xml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
+
+    # test non-existent file
+    non_existent_file = tmp_path / 'non-existent.txt'
+    with pytest.raises(FileNotFoundError, match='File not found:'):
+        BinaryContent.from_path(non_existent_file)
+
+    # test file with unknown media type
+    test_unknown_file = tmp_path / 'test.unknownext'
+    test_unknown_file.write_text('some content', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_unknown_file)
+    assert binary_content == snapshot(BinaryContent(data=b'some content', media_type='application/octet-stream'))
+
+    # test string path
+    test_txt_file = tmp_path / 'test.txt'
+    test_txt_file.write_text('just some text', encoding='utf-8')
+    string_path = test_txt_file.as_posix()
+    binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
+    assert binary_content == snapshot(BinaryContent(data=b'just some text', media_type='text/plain'))
+
+    # test image file
+    test_jpg_file = tmp_path / 'test.jpg'
+    test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
+    binary_content = BinaryContent.from_path(test_jpg_file)
+    assert binary_content == snapshot(
+        BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
     )

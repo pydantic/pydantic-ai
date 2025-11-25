@@ -39,7 +39,6 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -224,6 +223,27 @@ async def simple_stream(messages: list[ModelMessage], agent_info: AgentInfo) -> 
     """A simple function that returns a text response without tool calls."""
     yield 'success '
     yield '(no tool calls)'
+
+
+async def test_agui_adapter_state_none() -> None:
+    """Ensure adapter exposes `None` state when no frontend state provided."""
+    agent = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+    )
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    assert adapter.state is None
 
 
 async def test_basic_user_message() -> None:
@@ -1185,12 +1205,33 @@ async def test_request_with_state_without_handler() -> None:
         state=StateInt(value=41),
     )
 
-    with pytest.raises(
-        UserError,
-        match='State is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
+    with pytest.warns(
+        UserWarning,
+        match='State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps\\[\\.\\.\\.\\]` or implement `StateHandler` to receive AG-UI state.',
     ):
-        async for _ in run_ag_ui(agent, run_input):
-            pass
+        events = list[dict[str, Any]]()
+        async for event in run_ag_ui(agent, run_input):
+            events.append(json.loads(event.removeprefix('data: ')))
+
+    assert events == simple_result()
+
+
+async def test_request_with_empty_state_without_handler() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        ),
+        state={},
+    )
+
+    events = list[dict[str, Any]]()
+    async for event in run_ag_ui(agent, run_input):
+        events.append(json.loads(event.removeprefix('data: ')))
+
+    assert events == simple_result()
 
 
 async def test_request_with_state_with_custom_handler() -> None:

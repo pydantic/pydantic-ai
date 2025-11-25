@@ -15,6 +15,7 @@ from pydantic_core import to_json
 
 from pydantic_ai import (
     Agent,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelProfile,
@@ -32,7 +33,7 @@ from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsNow, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -75,13 +76,15 @@ def test_first_successful() -> None:
             ModelRequest(
                 parts=[
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -100,13 +103,15 @@ def test_first_failed() -> None:
                         content='hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -126,13 +131,15 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         content='hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -239,6 +246,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -479,6 +487,7 @@ async def test_first_success_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -514,6 +523,7 @@ async def test_first_failed_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -555,6 +565,18 @@ def potato_exception_response(_model_messages: list[ModelMessage], _agent_info: 
 async def test_fallback_condition_tuple() -> None:
     potato_model = FunctionModel(potato_exception_response)
     fallback_model = FallbackModel(potato_model, success_model, fallback_on=(PotatoException, ModelHTTPError))
+    agent = Agent(model=fallback_model)
+
+    response = await agent.run('hello')
+    assert response.output == 'success'
+
+
+async def test_fallback_connection_error() -> None:
+    def connection_error_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='test-connection-model', message='Connection timed out')
+
+    connection_error_model = FunctionModel(connection_error_response)
+    fallback_model = FallbackModel(connection_error_model, success_model)
     agent = Agent(model=fallback_model)
 
     response = await agent.run('hello')
@@ -794,12 +816,14 @@ Don't include any text or Markdown fencing before or after.
                     )
                 ],
                 instructions='Be kind',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:prompted_output_func:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )

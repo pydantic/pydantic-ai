@@ -8,8 +8,7 @@ the graph-based workflow system.
 from __future__ import annotations as _annotations
 
 import sys
-import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast, get_args, get_origin, overload
@@ -22,7 +21,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_graph import exceptions
 from pydantic_graph._utils import AbstractSpan, get_traceparent, infer_obj_name, logfire_span
 from pydantic_graph.beta.decision import Decision
-from pydantic_graph.beta.id_types import ForkID, ForkStack, ForkStackItem, GraphRunID, JoinID, NodeID, NodeRunID, TaskID
+from pydantic_graph.beta.id_types import ForkID, ForkStack, ForkStackItem, JoinID, NodeID, NodeRunID, TaskID
 from pydantic_graph.beta.join import Join, JoinNode, JoinState, ReducerContext
 from pydantic_graph.beta.node import (
     EndNode,
@@ -44,9 +43,9 @@ from pydantic_graph.beta.util import unpack_type_expression
 from pydantic_graph.nodes import BaseNode, End
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 if TYPE_CHECKING:
     from pydantic_graph.beta.mermaid import StateDiagramDirection
@@ -306,14 +305,13 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
 
 
 @dataclass
-class GraphTask:
-    """A single task representing the execution of a node in the graph.
+class GraphTaskRequest:
+    """A request to run a task representing the execution of a node in the graph.
 
-    GraphTask encapsulates all the information needed to execute a specific
+    GraphTaskRequest encapsulates all the information needed to execute a specific
     node, including its inputs and the fork context it's executing within.
     """
 
-    # With our current BaseNode thing, next_node_id and next_node_inputs are merged into `next_node` itself
     node_id: NodeID
     """The ID of the node to execute."""
 
@@ -326,8 +324,25 @@ class GraphTask:
     Used by the GraphRun to decide when to proceed through joins.
     """
 
-    task_id: TaskID = field(default_factory=lambda: TaskID(str(uuid.uuid4())), repr=False)
+
+@dataclass
+class GraphTask(GraphTaskRequest):
+    """A task representing the execution of a node in the graph.
+
+    GraphTask encapsulates all the information needed to execute a specific
+    node, including its inputs and the fork context it's executing within,
+    and has a unique ID to identify the task within the graph run.
+    """
+
+    task_id: TaskID = field(repr=False)
     """Unique identifier for this task."""
+
+    @staticmethod
+    def from_request(request: GraphTaskRequest, get_task_id: Callable[[], TaskID]) -> GraphTask:
+        # Don't call the get_task_id callable, this is already a task
+        if isinstance(request, GraphTask):
+            return request
+        return GraphTask(request.node_id, request.inputs, request.fork_stack, get_task_id())
 
 
 class GraphRun(Generic[StateT, DepsT, OutputT]):
@@ -378,12 +393,20 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self._next: EndMarker[OutputT] | Sequence[GraphTask] | None = None
         """The next item to be processed."""
 
-        run_id = GraphRunID(str(uuid.uuid4()))
-        initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, NodeRunID(run_id), 0),)
-        self._first_task = GraphTask(node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack)
+        self._next_task_id = 0
+        self._next_node_run_id = 0
+        initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, self._get_next_node_run_id(), 0),)
+        self._first_task = GraphTask(
+            node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack, task_id=self._get_next_task_id()
+        )
         self._iterator_task_group = create_task_group()
         self._iterator_instance = _GraphIterator[StateT, DepsT, OutputT](
-            self.graph, self.state, self.deps, self._iterator_task_group
+            self.graph,
+            self.state,
+            self.deps,
+            self._iterator_task_group,
+            self._get_next_node_run_id,
+            self._get_next_task_id,
         )
         self._iterator = self._iterator_instance.iter_graph(self._first_task)
 
@@ -449,7 +472,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         return self._next
 
     async def next(
-        self, value: EndMarker[OutputT] | Sequence[GraphTask] | None = None
+        self, value: EndMarker[OutputT] | Sequence[GraphTaskRequest] | None = None
     ) -> EndMarker[OutputT] | Sequence[GraphTask]:
         """Advance the graph execution by one step.
 
@@ -467,7 +490,10 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             # if `next` is called before the `first_node` has run.
             await anext(self)
         if value is not None:
-            self._next = value
+            if isinstance(value, EndMarker):
+                self._next = value
+            else:
+                self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
         return await anext(self)
 
     @property
@@ -490,6 +516,16 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             return self._next.value
         return None
 
+    def _get_next_task_id(self) -> TaskID:
+        next_id = TaskID(f'task:{self._next_task_id}')
+        self._next_task_id += 1
+        return next_id
+
+    def _get_next_node_run_id(self) -> NodeRunID:
+        next_id = NodeRunID(f'task:{self._next_node_run_id}')
+        self._next_node_run_id += 1
+        return next_id
+
 
 @dataclass
 class _GraphTaskAsyncIterable:
@@ -510,6 +546,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
     state: StateT
     deps: DepsT
     task_group: TaskGroup
+    get_next_node_run_id: Callable[[], NodeRunID]
+    get_next_task_id: Callable[[], TaskID]
 
     cancel_scopes: dict[TaskID, CancelScope] = field(init=False)
     active_tasks: dict[TaskID, GraphTask] = field(init=False)
@@ -522,6 +560,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.active_tasks = {}
         self.active_reducers = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
+        self._next_node_run_id = 1
 
     async def iter_graph(  # noqa C901
         self, first_task: GraphTask
@@ -782,12 +821,12 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         fork_stack: ForkStack,
     ) -> Sequence[GraphTask] | JoinItem | EndMarker[OutputT]:
         if isinstance(next_node, StepNode):
-            return [GraphTask(next_node.step.id, next_node.inputs, fork_stack)]
+            return [GraphTask(next_node.step.id, next_node.inputs, fork_stack, self.get_next_task_id())]
         elif isinstance(next_node, JoinNode):
             return JoinItem(next_node.join.id, next_node.inputs, fork_stack)
         elif isinstance(next_node, BaseNode):
             node_step = NodeStep(next_node.__class__)
-            return [GraphTask(node_step.id, next_node, fork_stack)]
+            return [GraphTask(node_step.id, next_node, fork_stack, self.get_next_task_id())]
         elif isinstance(next_node, End):
             return EndMarker(next_node.data)
         else:
@@ -821,7 +860,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             'These markers should be removed from paths during graph building'
         )
         if isinstance(item, DestinationMarker):
-            return [GraphTask(item.destination_id, inputs, fork_stack)]
+            return [GraphTask(item.destination_id, inputs, fork_stack, self.get_next_task_id())]
         elif isinstance(item, TransformMarker):
             inputs = item.transform(StepContext(state=self.state, deps=self.deps, inputs=inputs))
             return self._handle_path(path.next_path, inputs, fork_stack)
@@ -853,7 +892,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         )  # this should have already been ensured during graph building
 
         new_tasks: list[GraphTask] = []
-        node_run_id = NodeRunID(str(uuid.uuid4()))
+        node_run_id = self.get_next_node_run_id()
         if node.is_map:
             # If the map specifies a downstream join id, eagerly create a join state for it
             if (join_id := node.downstream_join_id) is not None:
@@ -931,7 +970,7 @@ def _unwrap_exception_groups():
     else:
         try:
             yield
-        except ExceptionGroup as e:
+        except BaseExceptionGroup as e:
             exception = e.exceptions[0]
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire
