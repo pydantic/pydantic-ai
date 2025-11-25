@@ -38,7 +38,7 @@ from pydantic_ai.mcp import (
     ServerCapabilities,
     load_mcp_servers,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -1996,3 +1996,18 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
     assert output == snapshot(
         'The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer experience.'
     )
+
+
+async def test_custom_http_client_not_closed():
+    custom_http_client = cached_async_http_client()
+
+    assert not custom_http_client.is_closed
+
+    my_mcp_server = MCPServerStreamableHTTP(
+        url='https://mcp.deepwiki.com/mcp', http_client=custom_http_client, timeout=30
+    )
+
+    tools = await my_mcp_server.list_tools()
+    assert len(tools) > 0
+
+    assert not custom_http_client.is_closed
