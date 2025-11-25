@@ -763,6 +763,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
             'my chat span',
             **{  # type: ignore
                 'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
                 'gen_ai.usage.details.special_tokens': 2,
                 'other_attribute': 3,
