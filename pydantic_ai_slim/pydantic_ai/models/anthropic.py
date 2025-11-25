@@ -13,7 +13,14 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
+from ..builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    ProgrammaticCodeExecutionTool,
+    ToolSearchTool,
+    WebSearchTool,
+)
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -502,6 +509,15 @@ class AnthropicModel(Model):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], list[str]]:
         beta_features: list[str] = []
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+
+        # Check if any tools use advanced tool use features (defer_loading, allowed_callers, input_examples)
+        uses_advanced_tool_use = any(
+            tool_def.defer_loading or tool_def.allowed_callers or tool_def.input_examples
+            for tool_def in model_request_parameters.tool_defs.values()
+        )
+        if uses_advanced_tool_use:
+            beta_features.append('advanced-tool-use-2025-11-20')
+
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
@@ -515,6 +531,34 @@ class AnthropicModel(Model):
                         user_location=user_location,
                     )
                 )
+            elif isinstance(tool, ToolSearchTool):
+                # Tool Search Tool for dynamic tool discovery
+                if tool.search_type == 'regex':
+                    tools.append(
+                        {
+                            'type': 'tool_search_tool_regex_20251119',
+                            'name': 'tool_search_tool_regex',
+                        }
+                    )  # type: ignore[arg-type]
+                else:  # bm25
+                    tools.append(
+                        {
+                            'type': 'tool_search_tool_bm25_20251119',
+                            'name': 'tool_search_tool_bm25',
+                        }
+                    )  # type: ignore[arg-type]
+                if 'advanced-tool-use-2025-11-20' not in beta_features:
+                    beta_features.append('advanced-tool-use-2025-11-20')
+            elif isinstance(tool, ProgrammaticCodeExecutionTool):
+                # Programmatic Code Execution Tool (newer version that supports allowed_callers)
+                tools.append(
+                    {
+                        'type': 'code_execution_20250825',
+                        'name': 'code_execution',
+                    }
+                )  # type: ignore[arg-type]
+                if 'advanced-tool-use-2025-11-20' not in beta_features:
+                    beta_features.append('advanced-tool-use-2025-11-20')
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.append('code-execution-2025-05-22')
@@ -848,11 +892,19 @@ class AnthropicModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> BetaToolParam:
-        return {
+        tool_param: BetaToolParam = {
             'name': f.name,
             'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
+        # Add advanced tool use fields (Anthropic beta: advanced-tool-use-2025-11-20)
+        if f.defer_loading:
+            tool_param['defer_loading'] = True  # type: ignore[typeddict-unknown-key]
+        if f.allowed_callers:
+            tool_param['allowed_callers'] = f.allowed_callers  # type: ignore[typeddict-unknown-key]
+        if f.input_examples:
+            tool_param['input_examples'] = f.input_examples  # type: ignore[typeddict-unknown-key]
+        return tool_param
 
 
 def _map_usage(
@@ -1061,10 +1113,24 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
+    elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
+        # Tool Search Tool for dynamic tool discovery
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=ToolSearchTool.kind,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
     elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
-        assert_never(item.name)
+        # For new server tools we don't recognize yet, return a generic BuiltinToolCallPart
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=item.name,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
 
 
 web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockContent] = TypeAdapter(

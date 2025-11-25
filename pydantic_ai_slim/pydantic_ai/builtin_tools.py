@@ -13,10 +13,12 @@ __all__ = (
     'WebSearchTool',
     'WebSearchUserLocation',
     'CodeExecutionTool',
+    'ProgrammaticCodeExecutionTool',
     'UrlContextTool',
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'ToolSearchTool',
 )
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -332,6 +334,55 @@ class MCPServerTool(AbstractBuiltinTool):
     @property
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
+
+
+@dataclass(kw_only=True)
+class ToolSearchTool(AbstractBuiltinTool):
+    """A builtin tool that enables dynamic tool discovery without loading all definitions upfront.
+
+    Instead of consuming tokens on hundreds of tool definitions, Claude searches for relevant tools
+    on-demand. Only matching tools get expanded into full definitions in the model's context.
+
+    You should mark tools with `defer_loading=True` to make them discoverable on-demand while
+    keeping critical tools always loaded (with `defer_loading=False`).
+
+    Supported by:
+
+    * Anthropic (with `advanced-tool-use-2025-11-20` beta)
+
+    See https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-search-tool for more info.
+    """
+
+    search_type: Literal['regex', 'bm25'] = 'regex'
+    """The type of search to use for tool discovery.
+
+    - `'regex'`: Constructs Python `re.search()` patterns. Max 200 characters per query. Case-sensitive by default.
+    - `'bm25'`: Uses natural language queries with semantic matching across tool metadata.
+    """
+
+    kind: str = 'tool_search'
+    """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class ProgrammaticCodeExecutionTool(AbstractBuiltinTool):
+    """A builtin tool that enables programmatic tool calling via code execution.
+
+    This is an enhanced version of CodeExecutionTool that allows Claude to write Python code
+    that calls your custom tools programmatically within the execution container.
+
+    Tools that should be callable from code must have `allowed_callers=['code_execution_20250825']`
+    set in their ToolDefinition.
+
+    Supported by:
+
+    * Anthropic (with `advanced-tool-use-2025-11-20` beta)
+
+    See https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/code-execution-tool for more info.
+    """
+
+    kind: str = 'programmatic_code_execution'
+    """The kind of tool."""
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
