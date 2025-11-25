@@ -542,6 +542,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     model_response: _messages.ModelResponse
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
     user_prompt: str | Sequence[_messages.UserContent] | None = None
+    """Optional user prompt to include alongside tool call results.
+
+    This prompt is only sent to the model when the `model_response` contains tool calls.
+    If the `model_response` has final output instead, this user prompt is ignored.
+    The user prompt will be appended after all tool return parts in the next model request.
+    """
 
     _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(

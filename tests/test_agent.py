@@ -5661,6 +5661,26 @@ async def test_user_prompt_with_deferred_tool_results():
     assert len(result.output.approvals) == 1
 
     messages = result.all_messages()
+    # Snapshot the message history after first run to show the state before deferred tool results
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Update .env file', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='update_file', tool_call_id='update_file_1', args={'path': '.env', 'content': ''}
+                    )
+                ],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     # Second run: provide approvals AND user prompt
     results = DeferredToolResults(approvals={result.output.approvals[0].tool_call_id: True})
@@ -5668,6 +5688,32 @@ async def test_user_prompt_with_deferred_tool_results():
 
     assert isinstance(result2.output, str)
     assert 'continue with the operation' in result2.output
+
+    # Snapshot the new messages to show how tool results and user prompt are combined
+    new_messages = result2.new_messages()
+    assert new_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='update_file',
+                        content="File '.env' updated",
+                        tool_call_id='update_file_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content='continue with the operation', timestamp=IsDatetime()),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Approved and continue with the operation')],
+                usage=RequestUsage(input_tokens=61, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_tool_requires_approval_error():
