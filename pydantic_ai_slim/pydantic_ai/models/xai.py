@@ -1,5 +1,6 @@
 """xAI model implementation using xAI SDK."""
 
+from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ try:
     # Import xai_sdk components
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
+    from xai_sdk.proto.v6 import usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
 except ImportError as _import_error:
     raise ImportError(
@@ -65,6 +67,15 @@ from ..usage import RequestUsage
 
 # Type alias for consistency
 XaiModelName = GrokModelName
+
+_FINISH_REASON_MAP: dict[str, FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'content_filter': 'content_filter',
+    'max_output_tokens': 'length',
+    'cancelled': 'error',
+    'failed': 'error',
+}
 
 
 class XaiModelSettings(ModelSettings, total=False):
@@ -571,9 +582,10 @@ class XaiModel(Model):
             if is_server_side_tool:
                 # Server-side tools are executed by xAI, so we add both call and return parts
                 # The final result is in response.content
+                builtin_tool_name = self.get_builtin_tool_name(tool_call)
                 parts.append(
                     BuiltinToolCallPart(
-                        tool_name=tool_call.function.name,
+                        tool_name=builtin_tool_name,
                         args=tool_call.function.arguments,
                         tool_call_id=tool_call.id,
                         provider_name=self.system,
@@ -582,7 +594,7 @@ class XaiModel(Model):
                 # Always add the return part for server-side tools since they're already executed
                 parts.append(
                     BuiltinToolReturnPart(
-                        tool_name=tool_call.function.name,
+                        tool_name=builtin_tool_name,
                         content={'status': 'completed'},
                         tool_call_id=tool_call.id,
                         provider_name=self.system,
@@ -603,22 +615,10 @@ class XaiModel(Model):
             parts.append(TextPart(content=response.content))
 
         # Convert usage with detailed token information
-        usage = self._map_usage(response)
+        usage = self.extract_usage(response)
 
         # Map finish reason
-        finish_reason_map = {
-            'stop': 'stop',
-            'length': 'length',
-            'content_filter': 'content_filter',
-            'max_output_tokens': 'length',
-            'cancelled': 'error',
-            'failed': 'error',
-        }
-        raw_finish_reason = response.finish_reason
-        mapped_reason = (
-            finish_reason_map.get(raw_finish_reason, 'stop') if isinstance(raw_finish_reason, str) else 'stop'
-        )
-        finish_reason = cast(FinishReason, mapped_reason)
+        finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
 
         return ModelResponse(
             parts=parts,
@@ -630,9 +630,26 @@ class XaiModel(Model):
             finish_reason=finish_reason,
         )
 
-    def _map_usage(self, response: chat_types.Response) -> RequestUsage:
-        """Extract usage information from xAI SDK response, including reasoning tokens and cache tokens."""
-        return XaiModel.extract_usage(response)
+    async def _process_streamed_response(
+        self,
+        response: AsyncIterator[tuple[chat_types.Response, Any]],
+        model_request_parameters: ModelRequestParameters,
+    ) -> 'XaiStreamedResponse':
+        """Process a streamed response, and prepare a streaming response to return."""
+        peekable_response = _utils.PeekableAsyncStream(response)
+        first_item = await peekable_response.peek()
+        if isinstance(first_item, _utils.Unset):  # pragma: no cover
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+
+        first_response, _ = first_item
+
+        return XaiStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=first_response.created,
+            _provider=self._provider,
+        )
 
     @staticmethod
     def extract_usage(response: chat_types.Response) -> RequestUsage:
@@ -655,26 +672,20 @@ class XaiModel(Model):
         details: dict[str, int] = {}
 
         # Add reasoning tokens if available (optional attribute)
-        reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', None)
-        if reasoning_tokens:
-            details['reasoning_tokens'] = reasoning_tokens
+        if usage_obj.reasoning_tokens:
+            details['reasoning_tokens'] = usage_obj.reasoning_tokens
 
         # Add cached prompt tokens if available (optional attribute)
-        cached_tokens = getattr(usage_obj, 'cached_prompt_text_tokens', None)
-        if cached_tokens:
-            details['cache_read_tokens'] = cached_tokens
+        if usage_obj.cached_prompt_text_tokens:
+            details['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
 
-        # Add server-side tools used count if available (optional attribute)
-        server_side_tools = getattr(usage_obj, 'server_side_tools_used', None)
-        if server_side_tools:
-            # server_side_tools_used is a repeated field (list-like) in the real SDK
-            # but may be an int in mocks for simplicity
-            if isinstance(server_side_tools, int):
-                tools_count = server_side_tools
-            else:
-                tools_count = len(server_side_tools)
-            if tools_count:
-                details['server_side_tools_used'] = tools_count
+        # Aggregate server-side tools used by PydanticAI builtin tool name
+        if usage_obj.server_side_tools_used:
+            tool_counts: dict[str, int] = defaultdict(int)
+            for server_side_tool in usage_obj.server_side_tools_used:
+                tool_name = XaiModel._map_server_side_tool_to_builtin_name(server_side_tool)
+                tool_counts[tool_name] += 1
+            details['server_side_tools_used'] = dict(tool_counts)  # type: ignore[assignment]
 
         if details:
             return RequestUsage(
@@ -688,26 +699,63 @@ class XaiModel(Model):
                 output_tokens=completion_tokens,
             )
 
-    async def _process_streamed_response(
-        self,
-        response: AsyncIterator[tuple[chat_types.Response, Any]],
-        model_request_parameters: ModelRequestParameters,
-    ) -> 'XaiStreamedResponse':
-        """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
-        first_item = await peekable_response.peek()
-        if isinstance(first_item, _utils.Unset):  # pragma: no cover
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+    @staticmethod
+    def get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
+        """Get the PydanticAI tool name for an xAI builtin tool call.
 
-        first_response, _ = first_item
+        Maps xAI SDK tool call types to PydanticAI builtin tool names.
 
-        return XaiStreamedResponse(
-            model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
-            _response=peekable_response,
-            _timestamp=first_response.created,
-            _provider=self._provider,
-        )
+        Args:
+            tool_call: The xAI SDK tool call.
+
+        Returns:
+            The PydanticAI tool name (e.g., 'web_search', 'code_execution').
+        """
+        tool_type = get_tool_call_type(tool_call)
+
+        if tool_type == 'web_search_tool':
+            return WebSearchTool.kind
+        elif tool_type == 'code_execution_tool':
+            return CodeExecutionTool.kind
+        elif tool_type == 'mcp_tool':
+            # For MCP tools, use the function name which includes the server label/tool name
+            return tool_call.function.name
+        elif tool_type == 'x_search_tool':
+            # X search not currently supported in PydanticAI, use function name as fallback
+            return tool_call.function.name
+        elif tool_type == 'collections_search_tool':
+            # Collections search not currently supported in PydanticAI, use function name as fallback
+            return tool_call.function.name
+        else:
+            # Fallback to function name for unknown types
+            return tool_call.function.name
+
+    @staticmethod
+    def _map_server_side_tool_to_builtin_name(server_side_tool: usage_pb2.ServerSideTool) -> str:
+        """Map xAI SDK ServerSideTool enum to PydanticAI builtin tool name.
+
+        Args:
+            server_side_tool: The ServerSideTool enum value.
+
+        Returns:
+            The PydanticAI tool name (e.g., 'web_search', 'code_execution').
+        """
+        if server_side_tool == usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH:
+            return WebSearchTool.kind
+        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION:
+            return CodeExecutionTool.kind
+        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_MCP:
+            return MCPServerTool.kind
+        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_X_SEARCH:
+            return 'x_search'  # Not yet supported in PydanticAI
+        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH:
+            return 'collections_search'  # Not yet supported in PydanticAI
+        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE:
+            return 'view_image'  # Not yet supported in PydanticAI
+        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO:
+            return 'view_x_video'  # Not yet supported in PydanticAI
+        else:
+            return 'unknown'
 
 
 @dataclass
@@ -797,8 +845,9 @@ class XaiStreamedResponse(StreamedResponse):
         if is_server_side_tool:
             # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
             # These tools are already executed by xAI's infrastructure
+            builtin_tool_name = self.get_builtin_tool_name(tool_call)
             call_part = BuiltinToolCallPart(
-                tool_name=tool_call.function.name,
+                tool_name=builtin_tool_name,
                 args=tool_call.function.arguments,
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
@@ -807,7 +856,7 @@ class XaiStreamedResponse(StreamedResponse):
 
             # Immediately yield the return part since the tool was already executed
             return_part = BuiltinToolReturnPart(
-                tool_name=tool_call.function.name,
+                tool_name=builtin_tool_name,
                 content={'status': 'completed'},
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
