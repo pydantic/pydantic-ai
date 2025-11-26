@@ -35,7 +35,7 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('claude-sonnet-4-5')
+        agent = Agent('anthropic:claude-sonnet-4-5')
 
         @agent.tool_plain  # -> defaults to strict=False
         def my_tool(x: str) -> dict[str, int]:
