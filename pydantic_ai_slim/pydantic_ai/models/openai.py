@@ -1329,18 +1329,18 @@ class OpenAIResponsesModel(Model):
         # even if there are instructions.
         # To avoid this provide an explicit empty user message.
         if not openai_messages and not previous_response_id:
-            openai_messages = [
+            openai_messages.append(
                 responses.EasyInputMessageParam(
                     role='user',
                     content='',
                 )
-            ]
+            )
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
-                input=cast(responses.ResponseInputParam, openai_messages),
+                input=openai_messages,
                 model=self._model_name,
                 instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
