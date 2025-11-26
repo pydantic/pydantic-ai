@@ -701,6 +701,7 @@ async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthr
         for part in message.parts
     )
 
+
 async def test_anthropic_cache_messages(allow_model_requests: None):
     """Test that anthropic_cache_messages caches only the last message."""
     c = completion_message(
