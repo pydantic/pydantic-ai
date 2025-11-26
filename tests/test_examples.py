@@ -881,6 +881,30 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
+    elif isinstance(m, UserPromptPart) and m.content == 'Now create a backup of README.md':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='update_file',
+                    args={'path': 'README.md.bak', 'content': 'Hello, world!'},
+                    tool_call_id='update_file_backup',
+                )
+            ],
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in m.content:
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    "Here's what I've done:\n"
+                    '- Attempted to delete __init__.py, but deletion is not allowed.\n'
+                    '- Updated README.md with: Hello, world!\n'
+                    '- Cleared .env (set to empty).\n'
+                    '- Created a backup at README.md.bak containing: Hello, world!\n'
+                    '\n'
+                    'If you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know.'
+                )
+            ],
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
