@@ -369,9 +369,9 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
 )
 def test_format_display_name(model_name: str, expected: str):
     """Test model display name formatting for UI."""
-    from clai.web.cli import _format_display_name  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.ui.web import format_model_display_name
 
-    assert _format_display_name(model_name) == expected
+    assert format_model_display_name(model_name) == expected
 
 
 def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):

@@ -15,34 +15,7 @@ from pydantic_ai.builtin_tools import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import infer_model
-from pydantic_ai.ui.web import AIModel, create_web_app, load_mcp_server_tools
-
-
-def _format_display_name(model_name: str) -> str:
-    """Format model name for display in UI.
-
-    Handles common patterns:
-    - gpt-5 -> GPT 5
-    - claude-sonnet-4-5 -> Claude Sonnet 4.5
-    - gemini-2.5-pro -> Gemini 2.5 Pro
-    """
-    uppercase_prefixes = {'gpt', 'o1', 'o3'}
-
-    parts = model_name.split('-')
-    result: list[str] = []
-
-    for i, part in enumerate(parts):
-        if i == 0 and part.lower() in uppercase_prefixes:
-            result.append(part.upper())
-        elif part.replace('.', '').isdigit():
-            if result and result[-1].replace('.', '').isdigit():
-                result[-1] = f'{result[-1]}.{part}'
-            else:
-                result.append(part)
-        else:
-            result.append(part.capitalize())
-
-    return ' '.join(result)
+from pydantic_ai.ui.web import AIModel, create_web_app, format_model_display_name, load_mcp_server_tools
 
 
 def run_web_command(  # noqa: C901
@@ -109,7 +82,7 @@ def run_web_command(  # noqa: C901
                     print(f'Error: Model "{model_str}" requires a provider prefix (e.g., "openai:{model_str}")')
                     return 1
 
-            display_name = _format_display_name(model_name)
+            display_name = format_model_display_name(model_name)
 
             parsed_models.append(
                 AIModel(
