@@ -635,7 +635,17 @@ class BinaryImage(BinaryContent):
 
 @dataclass(repr=False)
 class UploadedFile:
-    """File uploaded to the LLM provider."""
+    """File uploaded to the LLM provider.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel],
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel].
+
+    - For OpenAI-compatible models, provide an `openai.types.FileObject` or a file ID string returned by the Files API.
+    - For Gemini, provide a `google.genai.types.File` or the file URI string returned by the Files API.
+
+    Other models raise `NotImplementedError` when they receive this part.
+    """
 
     file: Any
     """A provider-specific file object, e.g. a file ID or a file URL."""

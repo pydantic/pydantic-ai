@@ -102,6 +102,28 @@ print(result.output)
 #> The document discusses...
 ```
 
+## Uploaded files
+
+Use [`UploadedFile`][pydantic_ai.UploadedFile] when you've already uploaded content to the model provider.
+
+- [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] accept an `openai.types.FileObject` or a file ID string returned by the OpenAI Files API.
+- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] accepts a `google.genai.types.File` or a file URI string from the Gemini Files API.
+- Other models currently raise `NotImplementedError` when they receive an `UploadedFile`.
+
+```py {title="uploaded_file_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, UploadedFile
+
+agent = Agent(model='openai:gpt-5')
+result = agent.run_sync(
+    [
+        'Give me a short description of this image',
+        UploadedFile(file='file-abc123'),  # file-abc123 is a file ID returned by the provider
+    ]
+)
+print(result.output)
+#> The image is a simple design of a classic yellow smiley face...
+```
+
 ## User-side download vs. direct file URL
 
 As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI downloads the file content and then sends it as part of the API request.

@@ -17,12 +17,10 @@ interactions:
     parsed_body:
       contents:
       - parts:
+        - text: Give me a short description of this image
         - fileData:
             fileUri: https://generativelanguage.googleapis.com/v1beta/files/6myu0b1v3mxl
             mimeType: application/pdf
-        role: user
-      - parts:
-        - text: Give me a short description of this image
         role: user
       generationConfig: {}
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent

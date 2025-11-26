@@ -10,7 +10,6 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
-from httpx import URL
 from pydantic import ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
@@ -980,8 +979,8 @@ class OpenAIChatModel(Model):
                             )
                         )
                 elif isinstance(item, UploadedFile):
-                    file = _map_uploaded_file(item, self._provider)
-                    content.append(File(file=FileFile(file_id=file.id), type='file'))
+                    file_id = _map_uploaded_file(item, self._provider)
+                    content.append(File(file=FileFile(file_id=file_id), type='file'))
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 elif isinstance(item, CachePoint):
@@ -1800,8 +1799,8 @@ class OpenAIResponsesModel(Model):
                         )
                     )
                 elif isinstance(item, UploadedFile):
-                    file = _map_uploaded_file(item, self._provider)
-                    content.append(responses.ResponseInputFileParam(file_id=file.id, type='input_file'))
+                    file_id = _map_uploaded_file(item, self._provider)
+                    content.append(responses.ResponseInputFileParam(file_id=file_id, type='input_file'))
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 elif isinstance(item, CachePoint):
@@ -2319,20 +2318,19 @@ def _map_usage(
     )
 
 
-def _map_openai_uploaded_file(item: UploadedFile) -> FileObject:
-    if not isinstance(item.file, FileObject):
-        raise UserError('UploadedFile.file must be an openai.types.FileObject')
-    return item.file
+def _map_uploaded_file(uploaded_file: UploadedFile, _provider: Provider[Any]) -> str:
+    """Map an UploadedFile to a file ID understood by OpenAI-compatible APIs."""
+    file = uploaded_file.file
+    if isinstance(file, str):
+        return file
+    if isinstance(file, FileObject):
+        return file.id
 
+    file_id = getattr(file, 'id', None)
+    if isinstance(file_id, str):
+        return file_id
 
-def _map_uploaded_file(uploaded_file: UploadedFile, provider: Provider[Any]) -> FileObject:
-    """Map an UploadedFile to a File object."""
-    url = URL(provider.base_url)
-
-    if url.host == 'api.openai.com':
-        return _map_openai_uploaded_file(uploaded_file)
-    else:
-        raise UserError(f'UploadedFile is not supported for `{provider.name}` with base_url {provider.base_url}.')
+    raise UserError('UploadedFile.file must be a file ID string or an object with an `id` attribute')
 
 
 def _map_provider_details(

@@ -546,7 +546,7 @@ class GoogleModel(Model):
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        message_parts.extend(await self._map_user_prompt(part, contents))
+                        message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(
                             {
@@ -592,7 +592,7 @@ class GoogleModel(Model):
 
         return system_instruction, contents
 
-    async def _map_user_prompt(self, part: UserPromptPart, contents: list[ContentUnionDict]) -> list[PartDict]:
+    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
         if isinstance(part.content, str):
             return [{'text': part.content}]
         else:
@@ -629,17 +629,38 @@ class GoogleModel(Model):
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                         content.append({'file_data': file_data_dict})  # pragma: lax no cover
                 elif isinstance(item, UploadedFile):
-                    if not isinstance(item.file, File):
-                        raise UserError('UploadedFile.file must be a genai.types.File object')
-                    # genai.types.File is its own ContentUnionDict and not a
-                    # PartDict, so append to the contents directly.
-                    contents.append(item.file)
+                    content.append({'file_data': self._map_uploaded_file(item)})
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass
                 else:
                     assert_never(item)
         return content
+
+    @staticmethod
+    def _map_uploaded_file(item: UploadedFile) -> FileDataDict:
+        """Convert an UploadedFile into the structure expected by Gemini."""
+        file = item.file
+        if isinstance(file, File):
+            file_uri = file.uri
+            mime_type = file.mime_type
+            display_name = getattr(file, 'display_name', None)
+        elif isinstance(file, str):
+            file_uri = file
+            mime_type = None
+            display_name = None
+        else:
+            raise UserError('UploadedFile.file must be a genai.types.File or file URI string')
+
+        if not file_uri:
+            raise UserError('UploadedFile.file must include a file URI')
+
+        file_data: FileDataDict = {'file_uri': file_uri}
+        if mime_type:
+            file_data['mime_type'] = mime_type
+        if display_name:
+            file_data['display_name'] = display_name
+        return file_data
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()

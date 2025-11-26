@@ -80,6 +80,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        _map_uploaded_file,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -3104,12 +3105,25 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
     assert result.output == snapshot('Paris.')
 
 
+def test_openai_uploaded_file_accepts_id_string(openai_api_key: str):
+    file_id = 'file-abc123'
+    provider = OpenAIProvider(api_key=openai_api_key)
+
+    assert _map_uploaded_file(UploadedFile(file=file_id), provider) == file_id
+
+
+def test_openai_uploaded_file_accepts_object_with_id(openai_api_key: str):
+    class FileStub:
+        id = 'file-stub'
+
+    provider = OpenAIProvider(api_key=openai_api_key)
+
+    assert _map_uploaded_file(UploadedFile(file=FileStub()), provider) == 'file-stub'
+
+
 async def test_uploaded_file_input(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIChatModel('gpt-4o', provider=provider)
-    # VCR recording breaks when dealing with openai file upload request due to
-    # binary contents. For that reason, we have manually run once the upload
-    # and rebuild the FileObject manually (from the print command output).
     openai_file = FileObject(
         id='file-7yEHnJNSSBeUYfkLq6G8KG',
         bytes=5930,

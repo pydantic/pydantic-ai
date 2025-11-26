@@ -2774,6 +2774,12 @@ def test_map_usage():
     )
 
 
+def test_google_uploaded_file_accepts_uri_string():
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/123'
+
+    assert GoogleModel._map_uploaded_file(UploadedFile(file=file_uri)) == {'file_uri': file_uri}
+
+
 async def test_uploaded_file_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     google_file = File(
@@ -3663,7 +3669,7 @@ async def test_cache_point_filtering():
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     # Test that CachePoint in a list is handled (triggers line 606)
-    content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']), [])  # pyright: ignore[reportPrivateUsage]
+    content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain
     assert len(content) == 2
