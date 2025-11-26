@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,19 @@ from snippets import (
     parse_file_sections,
     parse_snippet_directive,
 )
+
+
+@contextmanager
+def temp_text_file(content: str):
+    """Context manager for temporary text file with common params."""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', encoding='utf-8', delete=False) as f:
+        f.write(content)
+        temp_name = f.name
+
+    try:
+        yield Path(temp_name)
+    finally:
+        os.unlink(temp_name)
 
 
 def test_parse_snippet_directive_basic():
@@ -87,21 +101,16 @@ content 2
 ### [/section1]
 line 6"""
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        result = parse_file_sections(temp_path)
 
-        try:
-            result = parse_file_sections(Path(f.name))
-            assert result == snapshot(
-                ParsedFile(
-                    lines=['line 1', 'content 1', 'content 2', 'line 6'],
-                    sections={'section1': [LineRange(start_line=1, end_line=3)]},
-                    lines_mapping={0: 0, 1: 2, 2: 3, 3: 5},
-                )
-            )
-        finally:
-            os.unlink(f.name)
+    assert result == snapshot(
+        ParsedFile(
+            lines=['line 1', 'content 1', 'content 2', 'line 6'],
+            sections={'section1': [LineRange(start_line=1, end_line=3)]},
+            lines_mapping={0: 0, 1: 2, 2: 3, 3: 5},
+        )
+    )
 
 
 def test_parse_file_sections_multiple_ranges():
@@ -116,27 +125,22 @@ content 2
 ### [/section1]
 end line"""
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        result = parse_file_sections(temp_path)
 
-        try:
-            result = parse_file_sections(Path(f.name))
-            assert result == snapshot(
-                ParsedFile(
-                    lines=[
-                        'line 1',
-                        'content 1',
-                        'middle line',
-                        'content 2',
-                        'end line',
-                    ],
-                    sections={'section1': [LineRange(start_line=1, end_line=2), LineRange(start_line=3, end_line=4)]},
-                    lines_mapping={0: 0, 1: 2, 2: 4, 3: 6, 4: 8},
-                )
-            )
-        finally:
-            os.unlink(f.name)
+    assert result == snapshot(
+        ParsedFile(
+            lines=[
+                'line 1',
+                'content 1',
+                'middle line',
+                'content 2',
+                'end line',
+            ],
+            sections={'section1': [LineRange(start_line=1, end_line=2), LineRange(start_line=3, end_line=4)]},
+            lines_mapping={0: 0, 1: 2, 2: 4, 3: 6, 4: 8},
+        )
+    )
 
 
 def test_parse_file_sections_comment_style():
@@ -147,21 +151,16 @@ content 1
 /// [/section1]
 line 5"""
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        result = parse_file_sections(temp_path)
 
-        try:
-            result = parse_file_sections(Path(f.name))
-            assert result == snapshot(
-                ParsedFile(
-                    lines=['line 1', 'content 1', 'line 5'],
-                    sections={'section1': [LineRange(start_line=1, end_line=2)]},
-                    lines_mapping={0: 0, 1: 2, 2: 4},
-                )
-            )
-        finally:
-            os.unlink(f.name)
+    assert result == snapshot(
+        ParsedFile(
+            lines=['line 1', 'content 1', 'line 5'],
+            sections={'section1': [LineRange(start_line=1, end_line=2)]},
+            lines_mapping={0: 0, 1: 2, 2: 4},
+        )
+    )
 
 
 def test_parse_file_sections_nested():
@@ -176,30 +175,25 @@ more outer
 ### [/outer]
 end"""
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        result = parse_file_sections(temp_path)
 
-        try:
-            result = parse_file_sections(Path(f.name))
-            assert result == snapshot(
-                ParsedFile(
-                    lines=[
-                        'line 1',
-                        'outer content',
-                        'inner content',
-                        'more outer',
-                        'end',
-                    ],
-                    sections={
-                        'inner': [LineRange(start_line=2, end_line=3)],
-                        'outer': [LineRange(start_line=1, end_line=4)],
-                    },
-                    lines_mapping={0: 0, 1: 2, 2: 4, 3: 6, 4: 8},
-                )
-            )
-        finally:
-            os.unlink(f.name)
+    assert result == snapshot(
+        ParsedFile(
+            lines=[
+                'line 1',
+                'outer content',
+                'inner content',
+                'more outer',
+                'end',
+            ],
+            sections={
+                'inner': [LineRange(start_line=2, end_line=3)],
+                'outer': [LineRange(start_line=1, end_line=4)],
+            },
+            lines_mapping={0: 0, 1: 2, 2: 4, 3: 6, 4: 8},
+        )
+    )
 
 
 def test_extract_fragment_content_entire_file():
@@ -210,47 +204,44 @@ content 1
 ### [/section1]
 line 5"""
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        parsed = parse_file_sections(temp_path)
 
-        try:
-            parsed = parse_file_sections(Path(f.name))
-            assert parsed.render([], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+    assert parsed.render([], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 1
 content 1
 line 5\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=0, end_line=5),
-                )
-            )
-            assert parsed.render(['section1'], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=0, end_line=5),
+        )
+    )
+
+    assert parsed.render(['section1'], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 content 1
 
 ...\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=2, end_line=3),
-                )
-            )
-            assert parsed.render([], ['section1']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=2, end_line=3),
+        )
+    )
+
+    assert parsed.render([], ['section1']) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 1
 content 1
 line 5\
 """,
-                    highlights=[LineRange(start_line=1, end_line=2)],
-                    original_range=LineRange(start_line=0, end_line=5),
-                )
-            )
-        finally:
-            os.unlink(f.name)
+            highlights=[LineRange(start_line=1, end_line=2)],
+            original_range=LineRange(start_line=0, end_line=5),
+        )
+    )
 
 
 def test_extract_fragment_content_specific_section():
@@ -262,50 +253,47 @@ content 2
 ### [/section1]
 line 6"""
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        parsed = parse_file_sections(temp_path)
 
-        try:
-            parsed = parse_file_sections(Path(f.name))
-            assert parsed.render([], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+    assert parsed.render([], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 1
 content 1
 content 2
 line 6\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=0, end_line=6),
-                )
-            )
-            assert parsed.render(['section1'], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=0, end_line=6),
+        )
+    )
+
+    assert parsed.render(['section1'], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 content 1
 content 2
 
 ...\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=2, end_line=4),
-                )
-            )
-            assert parsed.render([], ['section1']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=2, end_line=4),
+        )
+    )
+
+    assert parsed.render([], ['section1']) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 1
 content 1
 content 2
 line 6\
 """,
-                    highlights=[LineRange(start_line=1, end_line=3)],
-                    original_range=LineRange(start_line=0, end_line=6),
-                )
-            )
-        finally:
-            os.unlink(f.name)
+            highlights=[LineRange(start_line=1, end_line=3)],
+            original_range=LineRange(start_line=0, end_line=6),
+        )
+    )
 
 
 def test_extract_fragment_content_multiple_sections():
@@ -320,28 +308,26 @@ content 2
 ### [/section2]
 end"""
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        parsed = parse_file_sections(temp_path)
 
-        try:
-            parsed = parse_file_sections(Path(f.name))
-            assert parsed.render([], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+    assert parsed.render([], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 1
 content 1
 middle
 content 2
 end\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=0, end_line=9),
-                )
-            )
-            assert parsed.render(['section1', 'section2'], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=0, end_line=9),
+        )
+    )
+
+    assert parsed.render(['section1', 'section2'], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 content 1
 
 ...
@@ -350,13 +336,14 @@ content 2
 
 ...\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=2, end_line=7),
-                )
-            )
-            assert parsed.render(['section1', 'section2'], ['section1']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=2, end_line=7),
+        )
+    )
+
+    assert parsed.render(['section1', 'section2'], ['section1']) == snapshot(
+        RenderedSnippet(
+            content="""\
 content 1
 
 ...
@@ -365,13 +352,14 @@ content 2
 
 ...\
 """,
-                    highlights=[LineRange(start_line=0, end_line=1)],
-                    original_range=LineRange(start_line=2, end_line=7),
-                )
-            )
-            assert parsed.render(['section1', 'section2'], ['section1', 'section2']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[LineRange(start_line=0, end_line=1)],
+            original_range=LineRange(start_line=2, end_line=7),
+        )
+    )
+
+    assert parsed.render(['section1', 'section2'], ['section1', 'section2']) == snapshot(
+        RenderedSnippet(
+            content="""\
 content 1
 
 ...
@@ -380,36 +368,36 @@ content 2
 
 ...\
 """,
-                    highlights=[LineRange(start_line=0, end_line=1), LineRange(start_line=2, end_line=3)],
-                    original_range=LineRange(start_line=2, end_line=7),
-                )
-            )
-            assert parsed.render(['section1'], ['section2']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[LineRange(start_line=0, end_line=1), LineRange(start_line=2, end_line=3)],
+            original_range=LineRange(start_line=2, end_line=7),
+        )
+    )
+
+    assert parsed.render(['section1'], ['section2']) == snapshot(
+        RenderedSnippet(
+            content="""\
 content 1
 
 ...\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=2, end_line=3),
-                )
-            )
-            assert parsed.render([], ['section1', 'section2']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=2, end_line=3),
+        )
+    )
+
+    assert parsed.render([], ['section1', 'section2']) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 1
 content 1
 middle
 content 2
 end\
 """,
-                    highlights=[LineRange(start_line=1, end_line=2), LineRange(start_line=3, end_line=4)],
-                    original_range=LineRange(start_line=0, end_line=9),
-                )
-            )
-        finally:
-            os.unlink(f.name)
+            highlights=[LineRange(start_line=1, end_line=2), LineRange(start_line=3, end_line=4)],
+            original_range=LineRange(start_line=0, end_line=9),
+        )
+    )
 
 
 def test_complicated_example():
@@ -428,15 +416,12 @@ line 6
 ### [/highlight2]
 """
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with temp_text_file(content) as temp_path:
+        parsed = parse_file_sections(temp_path)
 
-        try:
-            parsed = parse_file_sections(Path(f.name))
-            assert parsed.render([], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+    assert parsed.render([], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 1
 line 2
 line 3
@@ -444,39 +429,42 @@ line 4
 line 5
 line 6\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=0, end_line=11),
-                )
-            )
-            assert parsed.render(['fragment1'], ['highlight1']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[],
+            original_range=LineRange(start_line=0, end_line=11),
+        )
+    )
+
+    assert parsed.render(['fragment1'], ['highlight1']) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 2
 line 3
 line 4
 
 ...\
 """,
-                    highlights=[LineRange(start_line=2, end_line=3)],
-                    original_range=LineRange(start_line=2, end_line=7),
-                )
-            )
-            assert parsed.render(['fragment1'], ['highlight2']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[LineRange(start_line=2, end_line=3)],
+            original_range=LineRange(start_line=2, end_line=7),
+        )
+    )
+
+    assert parsed.render(['fragment1'], ['highlight2']) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 2
 line 3
 line 4
 
 ...\
 """,
-                    highlights=[LineRange(start_line=2, end_line=5)],
-                    original_range=LineRange(start_line=2, end_line=7),
-                )
-            )
-            assert parsed.render(['fragment2'], ['highlight2']) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[LineRange(start_line=2, end_line=5)],
+            original_range=LineRange(start_line=2, end_line=7),
+        )
+    )
+
+    assert parsed.render(['fragment2'], ['highlight2']) == snapshot(
+        RenderedSnippet(
+            content="""\
 ...
 
 line 3
@@ -485,13 +473,14 @@ line 5
 
 ...\
 """,
-                    highlights=[LineRange(start_line=2, end_line=5)],
-                    original_range=LineRange(start_line=4, end_line=9),
-                )
-            )
-            assert parsed.render(['fragment1', 'fragment2'], []) == snapshot(
-                RenderedSnippet(
-                    content="""\
+            highlights=[LineRange(start_line=2, end_line=5)],
+            original_range=LineRange(start_line=4, end_line=9),
+        )
+    )
+
+    assert parsed.render(['fragment1', 'fragment2'], []) == snapshot(
+        RenderedSnippet(
+            content="""\
 line 2
 line 3
 line 4
@@ -499,12 +488,10 @@ line 5
 
 ...\
 """,
-                    highlights=[],
-                    original_range=LineRange(start_line=2, end_line=9),
-                )
-            )
-        finally:
-            os.unlink(f.name)
+            highlights=[],
+            original_range=LineRange(start_line=2, end_line=9),
+        )
+    )
 
 
 def test_format_highlight_lines_empty():
@@ -534,25 +521,17 @@ def test_inject_snippets_basic():
     content = """def hello():
     return "world" """
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(content)
-        f.flush()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        docs_dir = Path(temp_dir)
 
-    try:
-        # Create a temporary docs directory structure
-        with tempfile.TemporaryDirectory() as temp_dir:
-            docs_dir = Path(temp_dir)
+        # Mock the docs directory resolution by copying file
+        target_file = docs_dir / 'test.py'
+        target_file.write_text(content, encoding='utf-8')
 
-            # Mock the docs directory resolution by copying file
-            target_file = docs_dir / 'test.py'
-            target_file.write_text(content)
+        markdown = '```snippet {path="test.py"}'
+        result = inject_snippets(markdown, docs_dir)
 
-            markdown = '```snippet {path="test.py"}'
-            result = inject_snippets(markdown, docs_dir)
-        assert result == snapshot('```snippet {path="test.py"}')
-
-    finally:
-        os.unlink(f.name)
+    assert result == snapshot('```snippet {path="test.py"}')
 
 
 def test_inject_snippets_with_title():
@@ -562,11 +541,12 @@ def test_inject_snippets_with_title():
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" title="Custom Title"}'
 
         result = inject_snippets(markdown, docs_dir)
+
     assert result == snapshot('```snippet {path="test.py" title="Custom Title"}')
 
 
@@ -581,11 +561,12 @@ line 5"""
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" fragment="important"}'
 
         result = inject_snippets(markdown, docs_dir)
+
     assert result == snapshot('```snippet {path="test.py" fragment="important"}')
 
 
@@ -605,11 +586,12 @@ def other():
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" highlight="important"}'
 
         result = inject_snippets(markdown, docs_dir)
+
     assert result == snapshot('```snippet {path="test.py" highlight="important"}')
 
 
@@ -629,8 +611,8 @@ def test_inject_snippets_multiple():
         docs_dir = Path(temp_dir)
         file1 = docs_dir / 'test1.py'
         file2 = docs_dir / 'test2.py'
-        file1.write_text(content1)
-        file2.write_text(content2)
+        file1.write_text(content1, encoding='utf-8')
+        file2.write_text(content2, encoding='utf-8')
 
         markdown = """Some text
 ```snippet {path="test1.py"}
@@ -639,6 +621,7 @@ More text
 Final text"""
 
         result = inject_snippets(markdown, docs_dir)
+
     assert result == snapshot(
         """\
 Some text
@@ -657,9 +640,10 @@ def test_inject_snippets_extra_attrs():
     with tempfile.TemporaryDirectory() as temp_dir:
         docs_dir = Path(temp_dir)
         target_file = docs_dir / 'test.py'
-        target_file.write_text(content)
+        target_file.write_text(content, encoding='utf-8')
 
         markdown = '```snippet {path="test.py" custom="value" another="attr"}'
 
         result = inject_snippets(markdown, docs_dir)
+
     assert result == snapshot('```snippet {path="test.py" custom="value" another="attr"}')
