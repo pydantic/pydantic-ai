@@ -146,6 +146,7 @@ include = [
 ]
 
 [tool.ruff.lint]
+preview = true  # For `PLW1514`
 extend-select = [
     "Q",
     "RUF100",
@@ -155,6 +156,7 @@ extend-select = [
     "I",
     "D",
     "TID251",
+    "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
