@@ -13,8 +13,8 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
-from ..exceptions import UserError
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -55,11 +55,19 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
 
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropicBedrock, AsyncStream, omit as OMIT
+    from anthropic import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIStatusError,
+        AsyncAnthropicBedrock,
+        AsyncStream,
+        omit as OMIT,
+    )
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
         BetaCacheControlEphemeralParam,
+        BetaCitationsConfigParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
@@ -107,11 +115,17 @@ try:
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
+        BetaWebFetchTool20250910Param,
+        BetaWebFetchToolResultBlock,
+        BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
+    )
+    from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
+        Content as WebFetchToolResultBlockParamContent,
     )
     from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
     from anthropic.types.model_param import ModelParam
@@ -166,6 +180,19 @@ class AnthropicModelSettings(ModelSettings, total=False):
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    """
+
+    anthropic_cache_messages: bool | Literal['5m', '1h']
+    """Convenience setting to enable caching for the last user message.
+
+    When enabled, this automatically adds a cache point to the last content block
+    in the final user message, which is useful for caching conversation history
+    or context in multi-turn conversations.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+
+    Note: Uses 1 of Anthropic's 4 available cache points per request. Any additional CachePoint
+    markers in messages will be automatically limited to respect the 4-cache-point maximum.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -333,7 +360,7 @@ class AnthropicModel(Model):
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
-
+        self._limit_cache_points(system_prompt, anthropic_messages, tools)
         try:
             extra_headers = self._map_extra_headers(beta_features, model_settings)
 
@@ -358,7 +385,9 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     async def _messages_count_tokens(
         self,
@@ -376,7 +405,7 @@ class AnthropicModel(Model):
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
-
+        self._limit_cache_points(system_prompt, anthropic_messages, tools)
         try:
             extra_headers = self._map_extra_headers(beta_features, model_settings)
 
@@ -395,7 +424,9 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -412,6 +443,8 @@ class AnthropicModel(Model):
                 items.append(_map_web_search_tool_result_block(item, self.system))
             elif isinstance(item, BetaCodeExecutionToolResultBlock):
                 items.append(_map_code_execution_tool_result_block(item, self.system))
+            elif isinstance(item, BetaWebFetchToolResultBlock):
+                items.append(_map_web_fetch_tool_result_block(item, self.system))
             elif isinstance(item, BetaRedactedThinkingBlock):
                 items.append(
                     ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
@@ -507,6 +540,20 @@ class AnthropicModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.append('code-execution-2025-05-22')
+            elif isinstance(tool, WebFetchTool):  # pragma: no branch
+                citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+                tools.append(
+                    BetaWebFetchTool20250910Param(
+                        name='web_fetch',
+                        type='web_fetch_20250910',
+                        max_uses=tool.max_uses,
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        citations=citations,
+                        max_content_tokens=tool.max_content_tokens,
+                    )
+                )
+                beta_features.append('web-fetch-2025-09-10')
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
@@ -616,6 +663,7 @@ class AnthropicModel(Model):
                     | BetaServerToolUseBlockParam
                     | BetaWebSearchToolResultBlockParam
                     | BetaCodeExecutionToolResultBlockParam
+                    | BetaWebFetchToolResultBlockParam
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
@@ -678,6 +726,14 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name == WebFetchTool.kind:
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name='web_fetch',
+                                    input=response_part.args_as_dict(),
+                                )
+                                assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
@@ -724,6 +780,19 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
+                            elif response_part.tool_name == WebFetchTool.kind and isinstance(
+                                response_part.content, dict
+                            ):
+                                assistant_content_params.append(
+                                    BetaWebFetchToolResultBlockParam(
+                                        tool_use_id=tool_use_id,
+                                        type='web_fetch_tool_result',
+                                        content=cast(
+                                            WebFetchToolResultBlockParamContent,
+                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                        ),
+                                    )
+                                )
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
@@ -747,6 +816,25 @@ class AnthropicModel(Model):
             system_prompt_parts.insert(0, instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
+        # Add cache_control to the last message content if anthropic_cache_messages is enabled
+        if anthropic_messages and (cache_messages := model_settings.get('anthropic_cache_messages')):
+            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
+            m = anthropic_messages[-1]
+            content = m['content']
+            if isinstance(content, str):
+                # Convert string content to list format with cache_control
+                m['content'] = [  # pragma: no cover
+                    BetaTextBlockParam(
+                        text=content,
+                        type='text',
+                        cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
+                    )
+                ]
+            else:
+                # Add cache_control to the last content block
+                content = cast(list[BetaContentBlockParam], content)
+                self._add_cache_control_to_last_param(content, ttl)
+
         # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
         if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
             # If True, use '5m'; otherwise use the specified ttl value
@@ -763,6 +851,75 @@ class AnthropicModel(Model):
         return system_prompt, anthropic_messages
 
     @staticmethod
+    def _limit_cache_points(
+        system_prompt: str | list[BetaTextBlockParam],
+        anthropic_messages: list[BetaMessageParam],
+        tools: list[BetaToolUnionParam],
+    ) -> None:
+        """Limit the number of cache points in the request to Anthropic's maximum.
+
+        Anthropic enforces a maximum of 4 cache points per request. This method ensures
+        compliance by counting existing cache points and removing excess ones from messages.
+
+        Strategy:
+        1. Count cache points in system_prompt (can be multiple if list of blocks)
+        2. Count cache points in tools (can be in any position, not just last)
+        3. Raise UserError if system + tools already exceed MAX_CACHE_POINTS
+        4. Calculate remaining budget for message cache points
+        5. Traverse messages from newest to oldest, keeping the most recent cache points
+           within the remaining budget
+        6. Remove excess cache points from older messages to stay within limit
+
+        Cache point priority (always preserved):
+        - System prompt cache points
+        - Tool definition cache points
+        - Message cache points (newest first, oldest removed if needed)
+
+        Raises:
+            UserError: If system_prompt and tools combined already exceed MAX_CACHE_POINTS (4).
+                      This indicates a configuration error that cannot be auto-fixed.
+        """
+        MAX_CACHE_POINTS = 4
+
+        # Count existing cache points in system prompt
+        used_cache_points = (
+            sum(1 for block in system_prompt if 'cache_control' in cast(dict[str, Any], block))
+            if isinstance(system_prompt, list)
+            else 0
+        )
+
+        # Count existing cache points in tools (any tool may have cache_control)
+        # Note: cache_control can be in the middle of tools list if builtin tools are added after
+        for tool in tools:
+            if 'cache_control' in tool:
+                used_cache_points += 1
+
+        # Calculate remaining cache points budget for messages
+        remaining_budget = MAX_CACHE_POINTS - used_cache_points
+        if remaining_budget < 0:  # pragma: no cover
+            raise UserError(
+                f'Too many cache points for Anthropic request. '
+                f'System prompt and tool definitions already use {used_cache_points} cache points, '
+                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
+            )
+        # Remove excess cache points from messages (newest to oldest)
+        for message in reversed(anthropic_messages):
+            content = message['content']
+            if isinstance(content, str):  # pragma: no cover
+                continue
+
+            # Process content blocks in reverse order (newest first)
+            for block in reversed(cast(list[BetaContentBlockParam], content)):
+                block_dict = cast(dict[str, Any], block)
+
+                if 'cache_control' in block_dict:
+                    if remaining_budget > 0:
+                        remaining_budget -= 1
+                    else:
+                        # Exceeded limit, remove this cache point
+                        del block_dict['cache_control']
+
+    @staticmethod
     def _add_cache_control_to_last_param(params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m') -> None:
         """Add cache control to the last content block param.
 
@@ -776,7 +933,7 @@ class AnthropicModel(Model):
 
         # Only certain types support cache_control
         # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
-        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result'}
+        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
         # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
         # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
         last_param = cast(dict[str, Any], params[-1])
@@ -944,6 +1101,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id=event.index,
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )
+                elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=event.index,
+                        part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
+                    )
                 elif isinstance(current_block, BetaMCPToolUseBlock):
                     call_part = _map_mcp_server_use_block(current_block, self.provider_name)
                     builtin_tool_calls[call_part.tool_call_id] = call_part
@@ -1050,7 +1212,14 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+    elif item.name == 'web_fetch':
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=WebFetchTool.kind,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
+    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
@@ -1082,6 +1251,16 @@ def _map_code_execution_tool_result_block(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_call_id=item.tool_use_id,
+    )
+
+
+def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=WebFetchTool.kind,
+        # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
+        content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
     )
 

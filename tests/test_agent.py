@@ -2492,8 +2492,6 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
 
 def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_prompt():
-    """Test that an agent run raises error when message_history ends on ModelResponse without tool calls or a new prompt."""
-
     def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
 
@@ -2522,7 +2520,54 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
         ]
     )
 
-    assert result.new_messages() == []
+    assert result.new_messages() == snapshot([])
+
+
+async def test_message_history_ending_on_model_response_with_instructions():
+    model = TestModel(custom_output_text='James likes cars in general, especially the Fiat 126p that his parents had.')
+    summarize_agent = Agent(
+        model,
+        instructions="""
+        Summarize this conversation to include all important facts about the user and
+        what their interactions were about.
+        """,
+    )
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hi, my name is James')]),
+        ModelResponse(parts=[TextPart(content='Nice to meet you, James.')]),
+        ModelRequest(parts=[UserPromptPart(content='I like cars')]),
+        ModelResponse(parts=[TextPart(content='I like them too. Sport cars?')]),
+        ModelRequest(parts=[UserPromptPart(content='No, cars in general.')]),
+        ModelResponse(parts=[TextPart(content='Awesome. Which one do you like most?')]),
+        ModelRequest(parts=[UserPromptPart(content='Fiat 126p')]),
+        ModelResponse(parts=[TextPart(content="That's an old one, isn't it?")]),
+        ModelRequest(parts=[UserPromptPart(content='Yes, it is. My parents had one.')]),
+        ModelResponse(parts=[TextPart(content='Cool. Was it fast?')]),
+    ]
+
+    result = await summarize_agent.run(message_history=message_history)
+
+    assert result.output == snapshot('James likes cars in general, especially the Fiat 126p that his parents had.')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[],
+                instructions="""\
+Summarize this conversation to include all important facts about the user and
+        what their interactions were about.\
+""",
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='James likes cars in general, especially the Fiat 126p that his parents had.')],
+                usage=RequestUsage(input_tokens=73, output_tokens=43),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_empty_response():
@@ -2723,13 +2768,13 @@ def test_tool_exceeds_token_limit_error():
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
     ):
         agent.run_sync('Hello')
 
@@ -2750,6 +2795,27 @@ def test_tool_exceeds_token_limit_but_complete_args():
 
     result = agent.run_sync('Hello')
     assert result.output == 'done'
+
+
+def test_empty_response_with_finish_reason_length():
+    def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_empty_response), output_type=str)
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(10\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(provider default\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello')
 
 
 def test_model_requests_blocked(env: TestEnv):
@@ -3733,7 +3799,9 @@ def test_binary_content_serializable():
                 'metadata': None,
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
+                'parts': [
+                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                ],
                 'usage': {
                     'input_tokens': 56,
                     'cache_write_tokens': 0,
@@ -3793,7 +3861,9 @@ def test_image_url_serializable_missing_media_type():
                 'metadata': None,
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
+                'parts': [
+                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                ],
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,
@@ -3860,7 +3930,9 @@ def test_image_url_serializable():
                 'metadata': None,
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
+                'parts': [
+                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                ],
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,
@@ -4216,11 +4288,32 @@ def test_multi_agent_instructions_with_structured_output():
 
     result1 = agent1.run_sync('Hello')
 
-    # TestModel doesn't support structured output, so this will fail with retries
-    # But we can still verify that Agent2's instructions are used in retry requests
-    with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior):
-            agent2.run_sync(message_history=result1.new_messages())
+    result2 = agent2.run_sync(message_history=result1.new_messages())
+    messages = result2.new_messages()
+
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[], instructions='Agent 2 instructions', run_id=IsStr()),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'text': 'a'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     # Verify Agent2's retry requests used Agent2's instructions (not Agent1's)
     requests = [m for m in messages if isinstance(m, ModelRequest)]
@@ -5490,15 +5583,6 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
-    with pytest.raises(
-        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
-    ):
-        await agent.run(
-            'Hello again',
-            message_history=message_history,
-            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
-        )
-
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
@@ -5533,6 +5617,103 @@ async def test_run_with_deferred_tool_results_errors():
                 calls={'run_me_too': 'Success', 'defer_me': 'Failure'},
             ),
         )
+
+
+async def test_user_prompt_with_deferred_tool_results():
+    """Test that user_prompt can be provided alongside deferred_tool_results."""
+    from pydantic_ai.exceptions import ApprovalRequired
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # First call: model requests tool approval
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='update_file', tool_call_id='update_file_1', args={'path': '.env', 'content': ''}
+                    ),
+                ]
+            )
+        # Second call: model responds to tool results and user prompt
+        else:
+            # Verify we received both tool results and user prompt
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+            has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
+            has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
+            assert has_tool_return, 'Expected tool return part in request'
+            assert has_user_prompt, 'Expected user prompt part in request'
+
+            # Get user prompt content
+            user_prompt_content = next(p.content for p in last_request.parts if isinstance(p, UserPromptPart))
+            return ModelResponse(parts=[TextPart(f'Approved and {user_prompt_content}')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def update_file(ctx: RunContext, path: str, content: str) -> str:
+        if path == '.env' and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return f'File {path!r} updated'
+
+    # First run: get deferred tool requests
+    result = await agent.run('Update .env file')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    messages = result.all_messages()
+    # Snapshot the message history after first run to show the state before deferred tool results
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Update .env file', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='update_file', tool_call_id='update_file_1', args={'path': '.env', 'content': ''}
+                    )
+                ],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second run: provide approvals AND user prompt
+    results = DeferredToolResults(approvals={result.output.approvals[0].tool_call_id: True})
+    result2 = await agent.run('continue with the operation', message_history=messages, deferred_tool_results=results)
+
+    assert isinstance(result2.output, str)
+    assert 'continue with the operation' in result2.output
+
+    # Snapshot the new messages to show how tool results and user prompt are combined
+    new_messages = result2.new_messages()
+    assert new_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='update_file',
+                        content="File '.env' updated",
+                        tool_call_id='update_file_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content='continue with the operation', timestamp=IsDatetime()),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Approved and continue with the operation')],
+                usage=RequestUsage(input_tokens=61, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_tool_requires_approval_error():
