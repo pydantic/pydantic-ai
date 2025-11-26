@@ -661,7 +661,7 @@ class OpenAIChatModel(Model):
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
-        model_name = first_chunk.model or self._model_name
+        model_name = first_chunk.model or self.model_name
 
         return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
@@ -682,7 +682,7 @@ class OpenAIChatModel(Model):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
+        return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -1220,7 +1220,7 @@ class OpenAIResponsesModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1328,12 +1328,24 @@ class OpenAIResponsesModel(Model):
         if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')
 
+        # When there are no input messages and we're not reusing a previous response,
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions.
+        # To avoid this provide an explicit empty user message.
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
-                model=self._model_name,
+                model=self.model_name,
                 instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
                 tools=tools or OMIT,
@@ -1937,7 +1949,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         return _map_provider_details(chunk.choices[0])
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
@@ -2259,7 +2271,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:
