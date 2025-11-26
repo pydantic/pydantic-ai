@@ -2273,7 +2273,6 @@ async def test_openai_instructions_with_responses_logprobs(allow_model_requests:
     )
     messages = result.all_messages()
     response = cast(Any, messages[1])
-    assert response.provider_details is not None
     text_part = response.parts[0]
     assert hasattr(text_part, 'provider_details')
     assert text_part.provider_details is not None

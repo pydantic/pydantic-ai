@@ -170,7 +170,11 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
     openai_logprobs: bool
-    """Include log probabilities in the response."""
+    """Include log probabilities in the response.
+
+    For Chat models, these will be included in `ModelResponse.provider_details['logprobs']`.
+    For Responses models, these will be included in the response output parts `TextPart.provider_details['logprobs']`.
+    """
 
     openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
