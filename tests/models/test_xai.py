@@ -69,7 +69,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
     MockXaiResponse,
@@ -797,28 +797,58 @@ async def test_xai_image_url_tool_response(allow_model_requests: None):
 
     result = await agent.run(['What food is in the image you can get from the get_image tool?'])
 
-    # Verify structure with matchers for dynamic values
-    messages = result.all_messages()
-    assert len(messages) == 4
-
-    # Verify message types and key content
-    assert isinstance(messages[0], ModelRequest)
-    assert isinstance(messages[1], ModelResponse)
-    assert isinstance(messages[2], ModelRequest)
-    assert isinstance(messages[3], ModelResponse)
-
-    # Verify tool was called
-    assert isinstance(messages[1].parts[0], ToolCallPart)
-    assert messages[1].parts[0].tool_name == 'get_image'
-
-    # Verify image was passed back to model
-    assert isinstance(messages[2].parts[1], UserPromptPart)
-    assert isinstance(messages[2].parts[1].content, list)
-    assert any(isinstance(item, ImageUrl) for item in messages[2].parts[1].content)
-
-    # Verify model responded about the image
-    assert isinstance(messages[3].parts[0], TextPart)
-    assert 'potato' in messages[3].parts[0].content.lower()
+    # Verify the complete message history with snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What food is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool_001')],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file bd38f5',
+                        tool_call_id='tool_001',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file bd38f5:',
+                            ImageUrl(
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a potato.')],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_xai_image_as_binary_content_tool_response(allow_model_requests: None, image_content: BinaryContent):
@@ -841,30 +871,56 @@ async def test_xai_image_as_binary_content_tool_response(allow_model_requests: N
 
     result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
 
-    # Verify structure with matchers for dynamic values
-    messages = result.all_messages()
-    assert len(messages) == 4
-
-    # Verify message types and key content
-    assert isinstance(messages[0], ModelRequest)
-    assert isinstance(messages[1], ModelResponse)
-    assert isinstance(messages[2], ModelRequest)
-    assert isinstance(messages[3], ModelResponse)
-
-    # Verify tool was called
-    assert isinstance(messages[1].parts[0], ToolCallPart)
-    assert messages[1].parts[0].tool_name == 'get_image'
-
-    # Verify binary image content was passed back to model
-    assert isinstance(messages[2].parts[1], UserPromptPart)
-    assert isinstance(messages[2].parts[1].content, list)
-    has_binary_image = any(isinstance(item, BinaryContent) and item.is_image for item in messages[2].parts[1].content)
-    assert has_binary_image, 'Expected BinaryContent image in tool response'
-
-    # Verify model responded about the image
-    assert isinstance(messages[3].parts[0], TextPart)
-    response_text = messages[3].parts[0].content.lower()
-    assert 'kiwi' in response_text or 'fruit' in response_text
+    # Verify the complete message history with snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool_001')],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='tool_001',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            IsInstance(BinaryContent),
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a kiwi fruit.')],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_xai_image_as_binary_content_input(allow_model_requests: None, image_content: BinaryContent):
@@ -1978,14 +2034,29 @@ async def test_xai_stream_with_reasoning(allow_model_requests: None):
         assert result.is_complete
 
     # Verify the final response includes both reasoning and text
-    messages = result.all_messages()
-    assert len(messages) == 2
-    assert isinstance(messages[1], ModelResponse)
-    assert len(messages[1].parts) == 2
-    assert isinstance(messages[1].parts[0], ThinkingPart)
-    assert messages[1].parts[0].content == 'Let me think about this...'
-    assert isinstance(messages[1].parts[1], TextPart)
-    assert messages[1].parts[1].content == 'The answer is 4'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...'), TextPart(content='The answer is 4')],
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
@@ -2005,15 +2076,32 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
         assert result.is_complete
 
     # Verify the final response includes both encrypted reasoning and text
-    messages = result.all_messages()
-    assert len(messages) == 2
-    assert isinstance(messages[1], ModelResponse)
-    assert len(messages[1].parts) == 2
-    assert isinstance(messages[1].parts[0], ThinkingPart)
-    assert messages[1].parts[0].content == ''  # No readable content for encrypted-only
-    assert messages[1].parts[0].signature == 'encrypted_abc123'
-    assert isinstance(messages[1].parts[1], TextPart)
-    assert messages[1].parts[1].content == 'The weather is sunny'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', signature='encrypted_abc123', provider_name='xai'),
+                    TextPart(content='The weather is sunny'),
+                ],
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                model_name='grok-3',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
