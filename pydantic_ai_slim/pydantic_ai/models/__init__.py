@@ -709,7 +709,7 @@ class Model(ABC):
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.
         """
-        return frozenset()
+        return frozenset()  # pragma: no cover
 
     @cached_property
     def profile(self) -> ModelProfile:
