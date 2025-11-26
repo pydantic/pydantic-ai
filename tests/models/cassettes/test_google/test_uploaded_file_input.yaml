@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '280'
+      - '281'
       content-type:
       - application/json
       host:
@@ -19,21 +19,23 @@ interactions:
       - parts:
         - text: Give me a short description of this image
         - fileData:
-            fileUri: https://generativelanguage.googleapis.com/v1beta/files/6myu0b1v3mxl
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/9b7dfki4eo1b
             mimeType: application/pdf
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '881'
+      - '757'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=5652
+      - gfet4t7; dur=3602
       transfer-encoding:
       - chunked
       vary:
@@ -44,24 +46,23 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The image displays a classic smiley face. It features a bright yellow circular face with two simple black
-              dot eyes and an upward-curved black line forming a smile. The yellow circle has a subtle darker yellow outline
-              and is set against a plain white background.
+          - text: The image displays a plain white page with the bold black text "Dummy PDF file" centered at the top-left.
+              The rest of the page is blank.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: T7OkaOv-JOemmtkP5IXU2QI
+      responseId: SzQnae6DDISI_uMPsrGLsQg
       usageMetadata:
-        candidatesTokenCount: 51
-        promptTokenCount: 268
+        candidatesTokenCount: 32
+        promptTokenCount: 267
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 10
+          tokenCount: 9
         - modality: DOCUMENT
           tokenCount: 258
-        thoughtsTokenCount: 678
-        totalTokenCount: 997
+        thoughtsTokenCount: 459
+        totalTokenCount: 758
     status:
       code: 200
       message: OK

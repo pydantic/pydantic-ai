@@ -3124,10 +3124,20 @@ def test_openai_uploaded_file_accepts_object_with_id(openai_api_key: str):
 async def test_uploaded_file_input(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIChatModel('gpt-4o', provider=provider)
+    # VCR recording breaks when dealing with openai file upload request due to
+    # binary contents. For that reason, we have manually run once the upload
+    # and rebuild the FileObject manually (from the print command output).
+    # with open('tests/assets/dummy.pdf', 'rb') as f:
+    #     file_bytes = f.read()
+    # openai_file = await provider.client.files.create(
+    #     file=('image.pdf', file_bytes, 'application/pdf'),
+    #     purpose='user_data',
+    # )
+    # print(openai_file)
     openai_file = FileObject(
-        id='file-7yEHnJNSSBeUYfkLq6G8KG',
-        bytes=5930,
-        created_at=1755612061,
+        id='file-2bkCwDLR2p8cDXfT9he8tV',
+        bytes=13264,
+        created_at=1764177089,
         filename='image.pdf',  # OpenAI file upload API only accepts pdf
         object='file',
         purpose='user_data',
@@ -3139,7 +3149,7 @@ async def test_uploaded_file_input(allow_model_requests: None, openai_api_key: s
 
     result = await agent.run(['Give me a short description of this image', UploadedFile(file=openai_file)])
     assert result.output == snapshot(
-        'The image is a simple design of a classic yellow smiley face. It features a bright yellow circle with two black dots for eyes and a curved black line for a smiling mouth.'
+        'The file you uploaded is a "Dummy PDF file." There are no further descriptions or details available within its content. The file likely contains filler or placeholder text for testing purposes. If you need a specific type of content or have another file, please let me know!'
     )
 
 

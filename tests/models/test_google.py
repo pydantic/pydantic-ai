@@ -2782,16 +2782,28 @@ def test_google_uploaded_file_accepts_uri_string():
 
 async def test_uploaded_file_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    # VCR recording breaks when dealing with openai file upload request due to
+    # binary contents. For that reason, we have manually run once the upload
+    # and rebuild the FileObject manually (from the print command output).
+    # client = google_provider.client
+    # with open('tests/assets/dummy.pdf', 'rb') as f:
+    #     google_file = client.files.upload(
+    #         file=f,
+    #         config={
+    #             'mime_type': 'application/pdf',
+    #         },
+    #     )
+    # print(google_file)
     google_file = File(
-        name='files/6myu0b1v3mxl',
+        name='files/9b7dfki4eo1b',
         mime_type='application/pdf',
-        uri='https://generativelanguage.googleapis.com/v1beta/files/6myu0b1v3mxl',
+        uri='https://generativelanguage.googleapis.com/v1beta/files/9b7dfki4eo1b',
     )
     agent = Agent(m)
 
     result = await agent.run(['Give me a short description of this image', UploadedFile(file=google_file)])
     assert result.output == snapshot(
-        'The image displays a classic smiley face. It features a bright yellow circular face with two simple black dot eyes and an upward-curved black line forming a smile. The yellow circle has a subtle darker yellow outline and is set against a plain white background.'
+        'The image displays a plain white page with the bold black text "Dummy PDF file" centered at the top-left. The rest of the page is blank.'
     )
 
 

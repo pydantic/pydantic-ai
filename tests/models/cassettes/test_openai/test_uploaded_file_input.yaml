@@ -20,7 +20,7 @@ interactions:
         - text: Give me a short description of this image
           type: text
         - file:
-            file_id: file-7yEHnJNSSBeUYfkLq6G8KG
+            file_id: file-2bkCwDLR2p8cDXfT9he8tV
           type: file
         role: user
       model: gpt-4o
@@ -35,13 +35,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '974'
+      - '1080'
       content-type:
       - application/json
       openai-organization:
       - coplane
       openai-processing-ms:
-      - '4261'
+      - '1905'
       openai-project:
       - proj_KGkpeAYM2vPXvZOVtXfnuZ9r
       openai-version:
@@ -57,28 +57,29 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: The image is a simple design of a classic yellow smiley face. It features a bright yellow circle with two
-            black dots for eyes and a curved black line for a smiling mouth.
+          content: The file you uploaded is a "Dummy PDF file." There are no further descriptions or details available within
+            its content. The file likely contains filler or placeholder text for testing purposes. If you need a specific
+            type of content or have another file, please let me know!
           refusal: null
           role: assistant
-      created: 1755630898
-      id: chatcmpl-C6M5KUA0T23RWuMTuAopnIc4ygeJb
+      created: 1764177247
+      id: chatcmpl-CgDNf5yzHe6V6DQHxio2IdIAdMyoR
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_80956533cb
+      system_fingerprint: fp_cbf1785567
       usage:
-        completion_tokens: 36
+        completion_tokens: 53
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 312
+        prompt_tokens: 234
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 348
+        total_tokens: 287
     status:
       code: 200
       message: OK
