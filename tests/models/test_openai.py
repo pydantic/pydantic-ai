@@ -3121,6 +3121,32 @@ def test_openai_uploaded_file_accepts_object_with_id(openai_api_key: str):
     assert _map_uploaded_file(UploadedFile(file=FileStub()), provider) == 'file-stub'
 
 
+def test_openai_uploaded_file_requires_id(openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+
+    class FileStub:
+        pass
+
+    with pytest.raises(
+        UserError, match='UploadedFile\\.file must be a file ID string or an object with an `id` attribute'
+    ):
+        _map_uploaded_file(UploadedFile(file=FileStub()), provider)
+
+
+async def test_openai_responses_uploaded_file_mapping(openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    responses_model = OpenAIResponsesModel('gpt-4o-mini', provider=provider)
+
+    msg = await responses_model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=[UploadedFile(file='file-xyz')])
+    )
+
+    assert msg == {
+        'role': 'user',
+        'content': [{'file_id': 'file-xyz', 'type': 'input_file'}],
+    }
+
+
 async def test_uploaded_file_input(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIChatModel('gpt-4o', provider=provider)

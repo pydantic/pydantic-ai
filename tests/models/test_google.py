@@ -2998,6 +2998,31 @@ def test_google_uploaded_file_accepts_uri_string():
     assert GoogleModel._map_uploaded_file(UploadedFile(file=file_uri)) == {'file_uri': file_uri}  # pyright: ignore[reportPrivateUsage]
 
 
+def test_google_uploaded_file_requires_valid_type():
+    with pytest.raises(UserError, match='genai\\.types\\.File or file URI string'):
+        GoogleModel._map_uploaded_file(UploadedFile(file=object()))  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_uploaded_file_requires_uri():
+    with pytest.raises(UserError, match='include a file URI'):
+        GoogleModel._map_uploaded_file(UploadedFile(file=''))  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_uploaded_file_includes_display_name():
+    google_file = File(
+        name='files/123',
+        uri='https://generativelanguage.googleapis.com/v1beta/files/123',
+        mime_type='application/pdf',
+        display_name='resume.pdf',
+    )
+
+    assert GoogleModel._map_uploaded_file(UploadedFile(file=google_file)) == {  # pyright: ignore[reportPrivateUsage]
+        'file_uri': google_file.uri,
+        'mime_type': 'application/pdf',
+        'display_name': 'resume.pdf',
+    }
+
+
 async def test_uploaded_file_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     # VCR recording breaks when dealing with openai file upload request due to
