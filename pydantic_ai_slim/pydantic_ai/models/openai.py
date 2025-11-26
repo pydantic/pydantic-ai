@@ -660,7 +660,7 @@ class OpenAIChatModel(Model):
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
-        model_name = first_chunk.model or self._model_name
+        model_name = first_chunk.model or self.model_name
 
         return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
@@ -681,7 +681,7 @@ class OpenAIChatModel(Model):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
+        return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
