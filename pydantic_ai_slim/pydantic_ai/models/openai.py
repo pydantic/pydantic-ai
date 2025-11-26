@@ -1931,7 +1931,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         return _map_provider_details(chunk.choices[0])
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
