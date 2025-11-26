@@ -35,6 +35,7 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     CodeExecutionTool,
     DocumentUrl,
     ImageUrl,
@@ -64,15 +65,19 @@ from .mock_xai import (
     MockXai,
     MockXaiResponse,
     MockXaiResponseChunk,
+    create_code_execution_response,
     create_mcp_server_response,
+    create_mixed_tools_response,
     create_response,
+    create_server_tool_call,
     create_tool_call,
+    create_web_search_response,
     get_mock_chat_create_kwargs,
 )
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
-    from xai_sdk.proto.v6 import usage_pb2
+    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
 
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
@@ -632,13 +637,6 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
 
 
-# Skip OpenAI-specific tests that don't apply to Grok
-# test_system_prompt_role - OpenAI specific
-# test_system_prompt_role_o1_mini - OpenAI specific
-# test_openai_pass_custom_system_prompt_role - OpenAI specific
-# test_openai_o1_mini_system_role - OpenAI specific
-
-
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
 async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
     tool_call = create_tool_call(
@@ -933,9 +931,15 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
 
 async def test_xai_builtin_web_search_tool(allow_model_requests: None):
     """Test xAI's built-in web_search tool."""
-    # For server-side tools, we can't truly mock the tool execution since it happens on xAI's side
-    # Instead, test that the tool is properly wired and the agent can handle responses
-    response = create_response(content='Thursday')
+    # Create a response with web search builtin tool call and result
+    response = create_web_search_response(
+        query='date of Jan 1 in 2026',
+        results=[
+            {'title': 'Calendar 2026', 'url': 'https://example.com/cal', 'snippet': 'January 1, 2026 is Thursday'}
+        ],
+        text_content='Thursday',
+        tool_call_id='ws_001',
+    )
 
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
@@ -944,6 +948,45 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
     result = await agent.run('Return just the day of week for the date of Jan 1 in 2026?')
     assert result.output
     assert 'thursday' in result.output.lower()
+
+    # Verify the builtin tool call and result appear in message history
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Return just the day of week for the date of Jan 1 in 2026?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'date of Jan 1 in 2026'},
+                        tool_call_id='ws_001',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id='ws_001',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='Thursday'),
+                ],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-ws_001',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_xai_builtin_x_search_tool(allow_model_requests: None):
@@ -955,9 +998,13 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None):
 
 async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
     """Test xAI's built-in code_execution tool."""
-    # For server-side tools, we can't truly mock the tool execution since it happens on xAI's side
-    # Instead, test that the tool is properly wired and the agent can handle responses
-    response = create_response(content='The result is -428,050,955.97745')
+    # Create a response with code execution builtin tool call and result
+    response = create_code_execution_response(
+        code='65465 - 6544 * 65464 - 6 + 1.02255',
+        output='-428050955.97745',
+        text_content='The result is -428,050,955.97745',
+        tool_call_id='code_001',
+    )
 
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
@@ -969,12 +1016,66 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
     assert result.output
     assert '-428' in result.output or 'million' in result.output.lower()
 
+    # Verify the builtin tool call and result appear in message history
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 65465 - 6544 * 65464 - 6 + 1.02255? Use code to calculate this.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'code': '65465 - 6544 * 65464 - 6 + 1.02255'},
+                        tool_call_id='code_001',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'status': 'completed'},
+                        tool_call_id='code_001',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='The result is -428,050,955.97745'),
+                ],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-code_001',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
 
 async def test_xai_builtin_multiple_tools(allow_model_requests: None):
     """Test using multiple built-in tools together."""
-    # For server-side tools, we can't truly mock the tool execution since it happens on xAI's side
-    # Instead, test that multiple tools are properly wired and the agent can handle responses
-    response = create_response(content='Bitcoin has increased by 30.0% from last week.')
+    # Create a response that simulates using both web search and code execution
+    web_search_tool = create_server_tool_call(
+        tool_name='web_search',
+        arguments={'query': 'current price of Bitcoin'},
+        tool_call_id='ws_002',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
+    )
+    code_tool = create_server_tool_call(
+        tool_name='code_execution',
+        arguments={'code': '((65000 - 50000) / 50000) * 100'},
+        tool_call_id='code_002',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+    )
+
+    response = create_mixed_tools_response(
+        server_tools=[web_search_tool, code_tool],
+        text_content='Bitcoin has increased by 30.0% from last week.',
+    )
 
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
@@ -991,12 +1092,71 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
     # Verify the response
     assert result.output
 
+    # Verify both builtin tool calls appear in message history
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Search for the current price of Bitcoin and calculate its percentage change if it was $50000 last week.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'current price of Bitcoin'},
+                        tool_call_id='ws_002',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id='ws_002',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'code': '((65000 - 50000) / 50000) * 100'},
+                        tool_call_id='code_002',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'status': 'completed'},
+                        tool_call_id='code_002',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='Bitcoin has increased by 30.0% from last week.'),
+                ],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-multi-tool',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
 
 async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
     """Test mixing xAI's built-in tools with custom (client-side) tools."""
-    # This test verifies that we can register both builtin and custom tools together
-    # The actual interaction would require live API calls since builtin tools are server-side
-    response = create_response(content='The weather in Tokyo is sunny with a temperature of 72°F.')
+    # Create a response with web search builtin tool
+    response = create_web_search_response(
+        query='weather in Tokyo',
+        results=[
+            {'title': 'Weather Tokyo', 'url': 'https://example.com/weather', 'snippet': 'Tokyo is sunny with 72°F'}
+        ],
+        text_content='The weather in Tokyo is sunny with a temperature of 72°F.',
+        tool_call_id='ws_003',
+    )
 
     mock_client = MockXai.create_mock(response)
     m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
@@ -1013,38 +1173,48 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
     assert result.output
     assert '72' in result.output or 'tokyo' in result.output.lower()
 
-
-async def test_xai_builtin_tools_wiring(allow_model_requests: None):
-    """Test that built-in tools are correctly wired to xAI SDK."""
-    response = create_response(content='Built-in tools are registered')
-    mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(
-        m,
-        builtin_tools=[
-            WebSearchTool(),
-            CodeExecutionTool(),
-            MCPServerTool(
-                id='test-mcp',
-                url='https://example.com/mcp',
-                description='Test MCP server',
-                authorization_token='test-token',
+    # Verify the builtin tool call appears in message history
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in Tokyo?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
             ),
-        ],
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'weather in Tokyo'},
+                        tool_call_id='ws_003',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'status': 'completed'},
+                        tool_call_id='ws_003',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='The weather in Tokyo is sunny with a temperature of 72°F.'),
+                ],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-ws_003',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
     )
-
-    # If this runs without error, the built-in tools are correctly wired
-    result = await agent.run('Test built-in tools')
-    assert result.output == 'Built-in tools are registered'
 
 
 async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
-    """Test xAI's MCP server tool with Linear.
-
-    Mock created: 2025-11-22
-    Based on: record_xai_mcp_response.py output
-    Last verified: 2025-11-22
-    """
+    """Test xAI's MCP server tool with Linear."""
     # Create mock response based on recorded output
     # Recording showed: BuiltinToolCallPart + BuiltinToolReturnPart + TextPart
     response = create_mcp_server_response(

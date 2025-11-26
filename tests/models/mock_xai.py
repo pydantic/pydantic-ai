@@ -12,6 +12,7 @@ from .mock_async_stream import MockAsyncStream
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
+    from xai_sdk.proto.v6 import chat_pb2
 
     MockResponse = chat_types.Response | Exception
     # xai_sdk streaming returns tuples of (Response, chunk) where chunk type is not explicitly defined
@@ -251,9 +252,29 @@ class MockXaiServerToolCall:
 
     id: str
     # Mimics the protobuf enum value - needs to be non-zero for server-side tools
-    # From xai_sdk: client_side_tool=0, web_search_tool=1, code_execution_tool=3, mcp_tool=6
-    type: int
+    # From xai_sdk chat_pb2.ToolCallType:
+    #   0=INVALID, 1=CLIENT_SIDE_TOOL, 2=WEB_SEARCH_TOOL, 3=X_SEARCH_TOOL,
+    #   4=CODE_EXECUTION_TOOL, 5=COLLECTIONS_SEARCH_TOOL, 6=MCP_TOOL,
+    #   7=DOCUMENT_SEARCH_TOOL, 9=LOCATIONS_SEARCH_TOOL
+    type: chat_pb2.ToolCallType
     function: Any  # MockXaiFunction with name and arguments
+
+    def WhichOneof(self, field: str) -> str | None:
+        """Mimic protobuf's WhichOneof method for compatibility with get_tool_call_type()."""
+        # The xAI SDK's get_tool_call_type checks which oneof field is set
+        # Return the type name based on the type value
+        type_names = {
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_INVALID: 'invalid',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL: 'client_side_tool',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL: 'web_search_tool',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL: 'x_search_tool',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL: 'code_execution_tool',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL: 'collections_search_tool',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL: 'mcp_tool',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_DOCUMENT_SEARCH_TOOL: 'document_search_tool',
+            chat_pb2.ToolCallType.TOOL_CALL_TYPE_LOCATIONS_SEARCH_TOOL: 'locations_search_tool',
+        }
+        return type_names.get(self.type, 'client_side_tool')
 
 
 def create_server_tool_call(
@@ -261,7 +282,7 @@ def create_server_tool_call(
     arguments: dict[str, Any],
     *,
     tool_call_id: str = 'server_tool_001',
-    tool_type: int = 3,  # Default to code_execution_tool type
+    tool_type: chat_pb2.ToolCallType = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
 ) -> MockXaiServerToolCall:
     """Create a mock server-side tool call.
 
@@ -269,7 +290,10 @@ def create_server_tool_call(
         tool_name: Name of the builtin tool ('code_execution', 'web_search', etc.)
         arguments: Arguments for the tool call
         tool_call_id: Unique ID for this tool call
-        tool_type: Protobuf enum value for tool type (1=web_search, 3=code_execution, 6=mcp)
+        tool_type: Protobuf enum value for tool type. Use chat_pb2.ToolCallType constants:
+            - TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+            - TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+            - TOOL_CALL_TYPE_MCP_TOOL
 
     Returns:
         MockXaiServerToolCall that will be recognized as a server-side tool
@@ -278,7 +302,7 @@ def create_server_tool_call(
         >>> tool_call = create_server_tool_call(
         ...     tool_name='code_execution',
         ...     arguments={'code': 'print(2+2)'},
-        ...     tool_type=3  # code_execution_tool
+        ...     tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
         ... )
     """
     return MockXaiServerToolCall(
@@ -320,12 +344,12 @@ def create_code_execution_response(
         ...     text_content='The answer is 4.',
         ... )
     """
-    # Create server-side tool call (type=3 for code_execution_tool)
+    # Create server-side tool call (type=TOOL_CALL_TYPE_CODE_EXECUTION_TOOL)
     tool_call = create_server_tool_call(
         tool_name='code_execution',
         arguments={'code': code},
         tool_call_id=tool_call_id,
-        tool_type=3,  # TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
     )
 
     return cast(
@@ -333,7 +357,7 @@ def create_code_execution_response(
         MockXaiResponse(
             id=f'grok-{tool_call_id}',
             content=text_content,
-            tool_calls=[tool_call],  # type: ignore
+            tool_calls=[tool_call],
             finish_reason='stop',
         ),
     )
@@ -372,7 +396,7 @@ def create_web_search_response(
         tool_name='web_search',
         arguments={'query': query},
         tool_call_id=tool_call_id,
-        tool_type=1,  # TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
     )
 
     return cast(
@@ -380,7 +404,7 @@ def create_web_search_response(
         MockXaiResponse(
             id=f'grok-{tool_call_id}',
             content=text_content,
-            tool_calls=[tool_call],  # type: ignore
+            tool_calls=[tool_call],
             finish_reason='stop',
         ),
     )
@@ -423,7 +447,7 @@ def create_mcp_server_response(
         tool_name=full_tool_name,
         arguments=tool_input,
         tool_call_id=tool_call_id,
-        tool_type=6,  # TOOL_CALL_TYPE_MCP_TOOL
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL,
     )
 
     return cast(
@@ -431,7 +455,7 @@ def create_mcp_server_response(
         MockXaiResponse(
             id=f'grok-{tool_call_id}',
             content=text_content,
-            tool_calls=[tool_call],  # type: ignore
+            tool_calls=[tool_call],
             finish_reason='stop',
         ),
     )
@@ -454,8 +478,10 @@ def create_mixed_tools_response(
 
     Example:
         >>> tools = [
-        ...     create_server_tool_call('web_search', {'query': 'bitcoin price'}, tool_type=1),
-        ...     create_server_tool_call('code_execution', {'code': 'x=50000; y=65000; (y-x)/x*100'}, tool_type=3),
+        ...     create_server_tool_call('web_search', {'query': 'bitcoin price'},
+        ...                            tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL),
+        ...     create_server_tool_call('code_execution', {'code': 'x=50000; y=65000; (y-x)/x*100'},
+        ...                            tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL),
         ... ]
         >>> response = create_mixed_tools_response(tools, 'Bitcoin increased by 30%')
     """
@@ -464,7 +490,7 @@ def create_mixed_tools_response(
         MockXaiResponse(
             id='grok-multi-tool',
             content=text_content,
-            tool_calls=server_tools,  # type: ignore
+            tool_calls=server_tools,
             finish_reason='stop',
         ),
     )

@@ -12,8 +12,6 @@ from typing_extensions import assert_never
 
 try:
     import xai_sdk.chat as chat_types
-
-    # Import xai_sdk components
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
     from xai_sdk.proto.v6 import chat_pb2, usage_pb2
