@@ -38,20 +38,29 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     CodeExecutionTool,
     DocumentUrl,
+    FinalResultEvent,
     ImageUrl,
     MCPServerTool,
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
     WebSearchTool,
+)
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput
@@ -417,6 +426,33 @@ def grok_reasoning_text_chunk(
         usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,
+    )
+
+    return (cast(chat_types.Response, response), chunk)
+
+
+def grok_builtin_tool_chunk(
+    tool_call: Any,
+    response_id: str = 'grok-builtin',
+    finish_reason: str = '',
+) -> tuple[chat_types.Response, Any]:
+    """Create a streaming chunk for Grok with a builtin (server-side) tool call.
+
+    Args:
+        tool_call: The server-side tool call object (MockXaiServerToolCall)
+        response_id: The response ID
+        finish_reason: The finish reason (usually empty for tool call chunks)
+    """
+    # Create chunk (delta) - the tool call
+    chunk = MockXaiResponseChunk(content='', tool_calls=[tool_call])
+
+    # Create response (accumulated) - same tool call
+    response = MockXaiResponse(
+        id=response_id,
+        content='',
+        tool_calls=[tool_call],
+        finish_reason=finish_reason if finish_reason else '',
+        usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
     )
 
     return (cast(chat_types.Response, response), chunk)
@@ -989,6 +1025,97 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
     )
 
 
+async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None):
+    """Test xAI's built-in web_search tool with streaming."""
+    # Create a mock web search server-side tool call
+    web_search_tool_call = create_server_tool_call(
+        tool_name='web_search',
+        arguments={'query': 'weather San Francisco'},
+        tool_call_id='ws_stream_001',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
+    )
+
+    # For streaming with builtin tools, the tool call appears in the first chunk
+    # and then subsequent chunks contain the text response
+    stream = [
+        # First chunk: builtin tool call
+        grok_builtin_tool_chunk(web_search_tool_call, response_id='grok-ws_stream_001'),
+        # Subsequent chunks: text response
+        grok_text_chunk('The weather '),
+        grok_text_chunk('is sunny.', finish_reason='stop'),
+    ]
+
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='What is the weather in San Francisco?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        # Capture all events for validation
+                        event_parts.append(event)
+
+    # Verify we got the expected builtin tool call events with snapshot
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'weather San Francisco'},
+                    tool_call_id='ws_stream_001',
+                    provider_name='xai',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'weather San Francisco'},
+                    tool_call_id='ws_stream_001',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'status': 'completed'},
+                    tool_call_id='ws_stream_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=2, part=TextPart(content='The weather '), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='is sunny.')),
+            PartEndEvent(index=2, part=TextPart(content='The weather is sunny.')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'weather San Francisco'},
+                    tool_call_id='ws_stream_001',
+                    provider_name='xai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'status': 'completed'},
+                    tool_call_id='ws_stream_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                )
+            ),
+        ]
+    )
+
+
 async def test_xai_builtin_x_search_tool(allow_model_requests: None):
     """Test xAI's built-in x_search tool (X/Twitter search)."""
     # Note: XSearchTool is not yet implemented in pydantic-ai
@@ -1051,6 +1178,95 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                 provider_response_id='grok-code_001',
                 finish_reason='stop',
                 run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None):
+    """Test xAI's built-in code_execution tool with streaming."""
+    # Create a mock code execution server-side tool call
+    code_tool_call = create_server_tool_call(
+        tool_name='code_execution',
+        arguments={'code': '2 + 2'},
+        tool_call_id='code_stream_001',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+    )
+
+    # For streaming with builtin tools, the tool call appears in the first chunk
+    stream = [
+        # First chunk: builtin tool call
+        grok_builtin_tool_chunk(code_tool_call, response_id='grok-code_stream_001'),
+        # Subsequent chunks: text response
+        grok_text_chunk('The result '),
+        grok_text_chunk('is 4', finish_reason='stop'),
+    ]
+
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Calculate 2 + 2 using code') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    # Verify we got the expected builtin tool call events with snapshot
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': '2 + 2'},
+                    tool_call_id='code_stream_001',
+                    provider_name='xai',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': '2 + 2'},
+                    tool_call_id='code_stream_001',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'status': 'completed'},
+                    tool_call_id='code_stream_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=2, part=TextPart(content='The result '), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='is 4')),
+            PartEndEvent(index=2, part=TextPart(content='The result is 4')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={'code': '2 + 2'},
+                    tool_call_id='code_stream_001',
+                    provider_name='xai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'status': 'completed'},
+                    tool_call_id='code_stream_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                )
             ),
         ]
     )
@@ -1279,6 +1495,97 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                 provider_response_id='grok-mcp_linear_001',
                 finish_reason='stop',
                 run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None):
+    """Test xAI's MCP server tool with Linear using streaming."""
+    # Create a mock MCP server tool call
+    mcp_tool_call = create_server_tool_call(
+        tool_name='linear.list_issues',  # xAI format: server_label.tool_name
+        arguments={},
+        tool_call_id='mcp_stream_001',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL,
+    )
+
+    # For streaming with builtin tools, the tool call appears in the first chunk
+    stream = [
+        # First chunk: builtin tool call
+        grok_builtin_tool_chunk(mcp_tool_call, response_id='grok-mcp_stream_001'),
+        # Subsequent chunks: text response
+        grok_text_chunk('No issues '),
+        grok_text_chunk('found.', finish_reason='stop'),
+    ]
+
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                id='linear',
+                url='https://mcp.linear.app/mcp',
+                description='MCP server for Linear the project management tool.',
+                authorization_token='mock-token',
+            ),
+        ],
+    )
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Can you list my Linear issues?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    # Verify we got the expected builtin tool call events with snapshot
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:linear', args={}, tool_call_id='mcp_stream_001', provider_name='xai'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:linear', args={}, tool_call_id='mcp_stream_001', provider_name='xai'
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:linear',
+                    content={'status': 'completed'},
+                    tool_call_id='mcp_stream_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=2, part=TextPart(content='No issues '), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='found.')),
+            PartEndEvent(index=2, part=TextPart(content='No issues found.')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:linear', args={}, tool_call_id='mcp_stream_001', provider_name='xai'
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:linear',
+                    content={'status': 'completed'},
+                    tool_call_id='mcp_stream_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                )
             ),
         ]
     )
