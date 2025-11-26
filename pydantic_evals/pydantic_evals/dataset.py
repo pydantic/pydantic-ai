@@ -511,7 +511,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         fmt = cls._infer_fmt(path, fmt)
 
-        raw = Path(path).read_text()
+        raw = Path(path).read_text(encoding='utf-8')
         try:
             return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types, default_name=path.stem)
         except ValidationError as e:  # pragma: no cover
@@ -671,11 +671,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
-            path.write_text(content)
+            path.write_text(content, encoding='utf-8')
         else:
             context['$schema'] = schema_ref
             json_data = self.model_dump_json(indent=2, by_alias=True, context=context)
-            path.write_text(json_data + '\n')
+            path.write_text(json_data + '\n', encoding='utf-8')
 
     @classmethod
     def model_json_schema_with_evaluators(
@@ -741,13 +741,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             if evaluator_schema_types:  # pragma: no branch
-                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
 
         class Dataset(BaseModel, extra='forbid'):
             name: str | None = None
             cases: list[Case]
             if evaluator_schema_types:  # pragma: no branch
-                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
+                evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa: UP007
 
         json_schema = Dataset.model_json_schema()
         # See `_add_json_schema` below, since `$schema` is added to the JSON, it has to be supported in the JSON
@@ -767,8 +767,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         json_schema = cls.model_json_schema_with_evaluators(custom_evaluator_types)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
-        if not path.exists() or path.read_text() != schema_content:  # pragma: no branch
-            path.write_text(schema_content)
+        if not path.exists() or path.read_text(encoding='utf-8') != schema_content:  # pragma: no branch
+            path.write_text(schema_content, encoding='utf-8')
 
     @classmethod
     @functools.cache
