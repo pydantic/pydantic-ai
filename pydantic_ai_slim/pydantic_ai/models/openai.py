@@ -1272,7 +1272,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(
+    async def _responses_create(  # noqa: C901
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
