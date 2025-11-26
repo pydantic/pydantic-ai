@@ -5583,15 +5583,6 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
-    with pytest.raises(
-        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
-    ):
-        await agent.run(
-            'Hello again',
-            message_history=message_history,
-            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
-        )
-
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
@@ -5626,6 +5617,103 @@ async def test_run_with_deferred_tool_results_errors():
                 calls={'run_me_too': 'Success', 'defer_me': 'Failure'},
             ),
         )
+
+
+async def test_user_prompt_with_deferred_tool_results():
+    """Test that user_prompt can be provided alongside deferred_tool_results."""
+    from pydantic_ai.exceptions import ApprovalRequired
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # First call: model requests tool approval
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='update_file', tool_call_id='update_file_1', args={'path': '.env', 'content': ''}
+                    ),
+                ]
+            )
+        # Second call: model responds to tool results and user prompt
+        else:
+            # Verify we received both tool results and user prompt
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+            has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
+            has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
+            assert has_tool_return, 'Expected tool return part in request'
+            assert has_user_prompt, 'Expected user prompt part in request'
+
+            # Get user prompt content
+            user_prompt_content = next(p.content for p in last_request.parts if isinstance(p, UserPromptPart))
+            return ModelResponse(parts=[TextPart(f'Approved and {user_prompt_content}')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def update_file(ctx: RunContext, path: str, content: str) -> str:
+        if path == '.env' and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return f'File {path!r} updated'
+
+    # First run: get deferred tool requests
+    result = await agent.run('Update .env file')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    messages = result.all_messages()
+    # Snapshot the message history after first run to show the state before deferred tool results
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Update .env file', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='update_file', tool_call_id='update_file_1', args={'path': '.env', 'content': ''}
+                    )
+                ],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second run: provide approvals AND user prompt
+    results = DeferredToolResults(approvals={result.output.approvals[0].tool_call_id: True})
+    result2 = await agent.run('continue with the operation', message_history=messages, deferred_tool_results=results)
+
+    assert isinstance(result2.output, str)
+    assert 'continue with the operation' in result2.output
+
+    # Snapshot the new messages to show how tool results and user prompt are combined
+    new_messages = result2.new_messages()
+    assert new_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='update_file',
+                        content="File '.env' updated",
+                        tool_call_id='update_file_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content='continue with the operation', timestamp=IsDatetime()),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Approved and continue with the operation')],
+                usage=RequestUsage(input_tokens=61, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_tool_requires_approval_error():
