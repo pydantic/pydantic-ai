@@ -1396,6 +1396,59 @@ def test_tool_raises_approval_required():
     assert result.output == snapshot('Done!')
 
 
+def test_approval_required_with_user_prompt():
+    """Test that user_prompt can be provided alongside deferred_tool_results for approval."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            # First call: request approval
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            # Second call: respond to both tool result and user prompt
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+
+            # Verify we received both tool return and user prompt
+            has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
+            has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
+            assert has_tool_return, 'Expected tool return in request'
+            assert has_user_prompt, 'Expected user prompt in request'
+
+            # Get user prompt content
+            user_prompt = next(p.content for p in last_request.parts if isinstance(p, UserPromptPart))
+            return ModelResponse(parts=[TextPart(f'Tool executed and {user_prompt}')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    # Second run: provide approval AND user prompt
+    result = agent.run_sync(
+        user_prompt='continue with extra instructions',
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': True}),
+    )
+
+    # Verify the response includes both tool result and user prompt
+    assert isinstance(result.output, str)
+    assert 'continue with extra instructions' in result.output
+    assert 'Tool executed' in result.output
+
+
 def test_call_deferred_with_metadata():
     """Test that CallDeferred exception can carry metadata."""
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
