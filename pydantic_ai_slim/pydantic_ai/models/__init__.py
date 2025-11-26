@@ -506,7 +506,7 @@ class Model(ABC):
             _profile = _profile(self.model_name)
 
         if _profile is None:
-            _profile = DEFAULT_PROFILE
+            return DEFAULT_PROFILE
 
         return _profile
 

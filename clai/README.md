@@ -56,7 +56,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 Launch a web-based chat interface for your agent:
 
 ```bash
-clai --web --agent module:agent_variable
+clai web --agent module:agent_variable
 ```
 
 For example, if you have an agent defined in `my_agent.py`:
@@ -70,54 +70,54 @@ my_agent = Agent('openai:gpt-5', system_prompt='You are a helpful assistant.')
 Launch the web UI with:
 
 ```bash
-clai --web --agent my_agent:my_agent
+clai web --agent my_agent:my_agent
 ```
 
-This will start a web server (default: http://127.0.0.1:8000) with a chat interface for your agent.
+This will start a web server (default: http://127.0.0.1:7932) with a chat interface for your agent.
 
 ### Web Command Options
 
+- `--agent`, `-a`: Agent to serve in `module:variable` format
+- `--models`, `-m`: Comma-separated models to make available (e.g., `gpt-5,sonnet-4-5`)
+- `--tools`, `-t`: Comma-separated builtin tool IDs to enable (e.g., `web_search,code_execution`)
+- `--instructions`, `-i`: System instructions for generic agent (when `--agent` not specified)
 - `--host`: Host to bind the server to (default: 127.0.0.1)
-- `--port`: Port to bind the server to (default: 8000)
-- `--config`: Path to custom `agent_options.py` config file
-- `--no-auto-config`: Disable auto-discovery of `agent_options.py` in current directory
+- `--port`: Port to bind the server to (default: 7932)
 
-### Configuring Models and Tools
+### Using with Models and Tools
 
-You can customize which AI models and builtin tools are available in the web UI by creating an `agent_options.py` file. For example:
+You can specify which models and builtin tools are available in the UI via CLI flags:
 
-```python
-from pydantic_ai.ui.web import AIModel, BuiltinToolDef
-from pydantic_ai.builtin_tools import WebSearchTool
+```bash
+# Generic agent with specific models and tools
+clai web -m gpt-5,sonnet-4-5 -t web_search,code_execution
 
-models = [
-    AIModel(id='openai:gpt-5', name='GPT 5', builtin_tools=['web_search']),
-]
+# Custom agent with additional models
+clai web --agent my_agent:my_agent -m gpt-5,gemini-2.5-pro
 
-builtin_tool_definitions = [
-    BuiltinToolDef(id='web_search', name='Web Search', tool=WebSearchTool()),
-]
+# Generic agent with system instructions
+clai web -m gpt-5 -i 'You are a helpful coding assistant'
 ```
-
-See the [default configuration](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/ui/web/agent_options.py) for more examples.
-
-If an `agent_options.py` file exists in your current directory, it will be automatically loaded when you run `clai --web`. You can also specify a custom config path with `--config`.
 
 You can also launch the web UI directly from an `Agent` instance using `Agent.to_web()`:
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.builtin_tools import WebSearchTool
 
 agent = Agent('openai:gpt-5')
-app = agent.to_web()  # Returns a FastAPI application
+
+# Use defaults
+app = agent.to_web()
+
+# Or customize models and tools
+app = agent.to_web(builtin_tools=[WebSearchTool()])
 ```
 
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [--web] [--host HOST] [--port PORT] [--config CONFIG]
-            [--no-auto-config]
-            [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt] {web} ...
 
 Pydantic AI CLI v...
 
@@ -129,6 +129,8 @@ Special prompts:
 
 positional arguments:
   prompt                AI Prompt, if omitted fall into interactive mode
+  {web}                 Available commands
+    web                 Launch web chat UI for an agent
 
 options:
   -h, --help            show this help message and exit
@@ -141,9 +143,4 @@ options:
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
   --version             Show version and exit
-  --web                 Launch web chat UI for the agent (requires --agent)
-  --host HOST           Host to bind the server to (default: 127.0.0.1)
-  --port PORT           Port to bind the server to (default: 8000)
-  --config CONFIG       Path to agent_options.py config file (overrides auto-discovery)
-  --no-auto-config      Disable auto-discovery of agent_options.py in current directory
 ```
