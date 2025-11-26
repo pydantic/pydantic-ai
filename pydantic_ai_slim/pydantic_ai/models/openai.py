@@ -2253,7 +2253,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:
