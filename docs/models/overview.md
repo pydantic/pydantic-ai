@@ -5,32 +5,31 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [OpenAI](openai.md)
 * [Anthropic](anthropic.md)
 * [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
-* [Groq](groq.md)
-* [Mistral](mistral.md)
-* [Cohere](cohere.md)
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
+* [Cohere](cohere.md)
+* [Groq](groq.md)
 * [Hugging Face](huggingface.md)
+* [Mistral](mistral.md)
 * [Outlines](outlines.md)
 
 ## OpenAI-compatible Providers
 
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
 
-- [DeepSeek](openai.md#deepseek)
-- [Grok (xAI)](openai.md#grok-xai)
-- [Ollama](openai.md#ollama)
-- [OpenRouter](openai.md#openrouter)
-- [Vercel AI Gateway](openai.md#vercel-ai-gateway)
-- [Perplexity](openai.md#perplexity)
-- [Fireworks AI](openai.md#fireworks-ai)
-- [Together AI](openai.md#together-ai)
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [Heroku](openai.md#heroku-ai)
+- [DeepSeek](openai.md#deepseek)
+- [Fireworks AI](openai.md#fireworks-ai)
 - [GitHub Models](openai.md#github-models)
+- [Grok (xAI)](openai.md#grok-xai)
+- [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
+- [Ollama](openai.md#ollama)
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
+- [Perplexity](openai.md#perplexity)
+- [Together AI](openai.md#together-ai)
+- [Vercel AI Gateway](openai.md#vercel-ai-gateway)
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
@@ -181,7 +180,7 @@ contains all the exceptions encountered during the `run` execution.
 === "Python >=3.11"
 
     ```python {title="fallback_model_failure.py" py="3.11"}
-    from pydantic_ai import Agent, ModelHTTPError
+    from pydantic_ai import Agent, ModelAPIError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -193,7 +192,7 @@ contains all the exceptions encountered during the `run` execution.
     agent = Agent(fallback_model)
     try:
         response = agent.run_sync('What is the capital of France?')
-    except* ModelHTTPError as exc_group:
+    except* ModelAPIError as exc_group:
         for exc in exc_group.exceptions:
             print(exc)
     ```
@@ -207,7 +206,7 @@ contains all the exceptions encountered during the `run` execution.
     ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
     from exceptiongroup import catch
 
-    from pydantic_ai import Agent, ModelHTTPError
+    from pydantic_ai import Agent, ModelAPIError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -223,11 +222,12 @@ contains all the exceptions encountered during the `run` execution.
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)
-    with catch({ModelHTTPError: model_status_error_handler}):
+    with catch({ModelAPIError: model_status_error_handler}):
         response = agent.run_sync('What is the capital of France?')
     ```
 
 By default, the `FallbackModel` only moves on to the next model if the current model raises a
+[`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which includes
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 

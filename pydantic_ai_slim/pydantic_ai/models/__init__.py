@@ -1007,7 +1007,6 @@ def infer_model(  # noqa: C901
         'heroku',
         'moonshotai',
         'ollama',
-        'openrouter',
         'together',
         'vercel',
         'litellm',

@@ -3,15 +3,19 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, cast
+
+from typing_extensions import override
 
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
-from .openai import OpenAIChatModel
+from . import ModelRequestParameters
 
 try:
     from openai import AsyncOpenAI
+
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Cerebras model, '
@@ -20,7 +24,7 @@ except ImportError as _import_error:  # pragma: no cover
 
 __all__ = ('CerebrasModel', 'CerebrasModelName', 'CerebrasModelSettings')
 
-_KnownCerebrasModelName = Literal[
+LatestCerebrasModelNames = Literal[
     'gpt-oss-120b',
     'llama-3.3-70b',
     'llama3.1-8b',
@@ -29,7 +33,7 @@ _KnownCerebrasModelName = Literal[
     'zai-glm-4.6',
 ]
 
-CerebrasModelName = str | _KnownCerebrasModelName
+CerebrasModelName = str | LatestCerebrasModelNames
 """Possible Cerebras model names.
 
 Since Cerebras supports a variety of models and the list changes frequently, we explicitly list known models
@@ -47,6 +51,8 @@ class CerebrasModelSettings(ModelSettings, total=False):
 
     cerebras_disable_reasoning: bool
     """Disable reasoning for the model.
+
+    This setting is only supported on reasoning models: `zai-glm-4.6` and `gpt-oss-120b`.
 
     See [the Cerebras docs](https://inference-docs.cerebras.ai/resources/openai#passing-non-standard-parameters) for more details.
     """
@@ -78,3 +84,33 @@ class CerebrasModel(OpenAIChatModel):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
+
+    @override
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        new_settings = cerebras_settings_to_openai_settings(cast(CerebrasModelSettings, merged_settings or {}))
+        return new_settings, customized_parameters
+
+
+def cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:
+    """Transforms a 'CerebrasModelSettings' object into an 'OpenAIChatModelSettings' object.
+
+    Args:
+        model_settings: The 'CerebrasModelSettings' object to transform.
+
+    Returns:
+        An 'OpenAIChatModelSettings' object with equivalent settings.
+    """
+    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
+
+    if (disable_reasoning := model_settings.pop('cerebras_disable_reasoning', None)) is not None:
+        extra_body['disable_reasoning'] = disable_reasoning
+
+    if extra_body:
+        model_settings['extra_body'] = extra_body
+
+    return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]

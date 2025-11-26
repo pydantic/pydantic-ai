@@ -12,6 +12,7 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -21,15 +22,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Cerebras provider, '
         'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'
     ) from _import_error
-
-
-def zai_model_profile(model_name: str) -> ModelProfile | None:
-    """The model profile for ZAI models on Cerebras."""
-    return ModelProfile(
-        supports_json_object_output=True,
-        supports_json_schema_output=True,
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
-    )
 
 
 class CerebrasProvider(Provider[AsyncOpenAI]):
@@ -114,10 +106,16 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
                 'to use the Cerebras provider.'
             )
 
+        default_headers = {'X-Cerebras-3rd-Party-Integration': 'pydantic-ai'}
+
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+            )
         else:
             http_client = cached_async_http_client(provider='cerebras')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+            )

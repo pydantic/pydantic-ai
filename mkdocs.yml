@@ -33,8 +33,9 @@ nav:
           - models/cerebras.md
           - models/cohere.md
           - models/groq.md
-          - models/mistral.md
           - models/huggingface.md
+          - models/mistral.md
+          - models/openrouter.md
           - models/outlines.md
       - Tools & Toolsets:
           - tools.md
