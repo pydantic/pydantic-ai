@@ -30,11 +30,11 @@ nav:
           - models/anthropic.md
           - models/google.md
           - models/bedrock.md
+          - models/cerebras.md
           - models/cohere.md
           - models/groq.md
-          - models/huggingface.md
           - models/mistral.md
-          - models/openrouter.md
+          - models/huggingface.md
           - models/outlines.md
       - Tools & Toolsets:
           - tools.md
@@ -143,23 +143,23 @@ nav:
           - api/format_prompt.md
           - api/direct.md
           - api/ext.md
-          - api/models/anthropic.md
           - api/models/base.md
+          - api/models/openai.md
+          - api/models/anthropic.md
           - api/models/bedrock.md
+          - api/models/cerebras.md
           - api/models/cohere.md
-          - api/models/fallback.md
-          - api/models/function.md
           - api/models/google.md
           - api/models/groq.md
           - api/models/huggingface.md
           - api/models/instrumented.md
-          - api/models/mcp-sampling.md
           - api/models/mistral.md
-          - api/models/openai.md
-          - api/models/openrouter.md
           - api/models/outlines.md
           - api/models/test.md
+          - api/models/function.md
+          - api/models/fallback.md
           - api/models/wrapper.md
+          - api/models/mcp-sampling.md
           - api/profiles.md
           - api/providers.md
           - api/retries.md
