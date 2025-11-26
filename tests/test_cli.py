@@ -120,12 +120,12 @@ def test_agent_flag_non_agent(
     create_test_module(custom_agent=test_agent)
 
     assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
-    assert 'is not an Agent' in capfd.readouterr().out
+    assert 'Could not load agent from test_module:custom_agent' in capfd.readouterr().out
 
 
 def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
     assert cli(['--agent', 'bad_path', 'hello']) == 1
-    assert 'Agent must be specified in "module:variable" format' in capfd.readouterr().out
+    assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
 def test_list_models(capfd: CaptureFixture[str]):
@@ -352,9 +352,45 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
     )
 
 
-def test_clai_web_without_agent(capfd: CaptureFixture[str]):
-    assert cli(['--web'], prog_name='clai') == 1
-    assert 'Error: --web requires --agent to be specified' in capfd.readouterr().out
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gpt-5', 'GPT 5'),
+        ('gpt-4.1', 'GPT 4.1'),
+        ('o1', 'O1'),
+        ('o3', 'O3'),
+        ('claude-sonnet-4-5', 'Claude Sonnet 4.5'),
+        ('claude-haiku-4-5', 'Claude Haiku 4.5'),
+        ('gemini-2.5-pro', 'Gemini 2.5 Pro'),
+        ('gemini-2.5-flash', 'Gemini 2.5 Flash'),
+        ('sonnet-4-5', 'Sonnet 4.5'),
+        ('custom-model', 'Custom Model'),
+    ],
+)
+def test_format_display_name(model_name: str, expected: str):
+    """Test model display name formatting for UI."""
+    from clai.web.cli import _format_display_name  # pyright: ignore[reportPrivateUsage]
+
+    assert _format_display_name(model_name) == expected
+
+
+def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
+    """Test web command without agent creates generic agent."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_web = mocker.MagicMock(return_value=0)
+    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+
+    assert cli(['web', '-m', 'gpt-5', '-t', 'web_search'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['gpt-5'],
+        tools=['web_search'],
+        instructions=None,
+        mcp=None,
+    )
 
 
 def test_clai_web_import_error(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
@@ -374,25 +410,129 @@ def test_clai_web_import_error(mocker: MockerFixture, create_test_module: Callab
 
     mocker.patch('builtins.__import__', side_effect=mock_import)
 
-    assert cli(['--web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 1
+    assert cli(['web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 1
 
 
 def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
-    test_agent = Agent(TestModel(custom_output_text='test'))
-    create_test_module(custom_agent=test_agent)
 
-    # Mock the run_web_command function
+    # Mock the run_web_command function - must be before create_test_module
+    # to avoid test isolation issues with mocker.patch.dict saving/restoring sys.modules
     mock_run_web = mocker.MagicMock(return_value=0)
     mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
 
-    assert cli(['--web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 0
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert cli(['web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 0
 
     # Verify run_web_command was called with correct args
     mock_run_web.assert_called_once_with(
         agent_path='test_module:custom_agent',
         host='127.0.0.1',
-        port=8000,
-        config_path=None,
-        auto_config=True,
+        port=7932,
+        models=None,
+        tools=None,
+        instructions=None,
+        mcp=None,
+    )
+
+
+def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with multiple -m flags."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.MagicMock(return_value=0)
+    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(['web', '--agent', 'test_module:custom_agent', '-m', 'gpt-5', '-m', 'claude-sonnet-4-5'], prog_name='clai')
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='127.0.0.1',
+        port=7932,
+        models=['gpt-5', 'claude-sonnet-4-5'],
+        tools=None,
+        instructions=None,
+        mcp=None,
+    )
+
+
+def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with multiple -t flags."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.MagicMock(return_value=0)
+    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(
+            ['web', '--agent', 'test_module:custom_agent', '-t', 'web_search', '-t', 'code_execution'], prog_name='clai'
+        )
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='127.0.0.1',
+        port=7932,
+        models=None,
+        tools=['web_search', 'code_execution'],
+        instructions=None,
+        mcp=None,
+    )
+
+
+def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv):
+    """Test generic agent with custom instructions."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.MagicMock(return_value=0)
+    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+
+    assert cli(['web', '-m', 'gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['gpt-5'],
+        tools=None,
+        instructions='You are a helpful coding assistant',
+        mcp=None,
+    )
+
+
+def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with custom host/port."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.MagicMock(return_value=0)
+    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(['web', '--agent', 'test_module:custom_agent', '--host', '0.0.0.0', '--port', '8080'], prog_name='clai')
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='0.0.0.0',
+        port=8080,
+        models=None,
+        tools=None,
+        instructions=None,
+        mcp=None,
     )

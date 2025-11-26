@@ -2,111 +2,160 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
+import logging
 
-from pydantic import BaseModel, ImportString, ValidationError
+from pydantic import ValidationError
 
 from pydantic_ai import Agent
-from pydantic_ai.ui.web import AIModel, BuiltinToolDef, create_web_app
+from pydantic_ai._cli import _load_agent  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.builtin_tools import (
+    BUILTIN_TOOL_CLASSES,
+    BUILTIN_TOOL_ID,
+    AbstractBuiltinTool,
+)
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import infer_model
+from pydantic_ai.ui.web import AIModel, create_web_app, load_mcp_server_tools
 
 
-def load_agent_options(
-    config_path: Path,
-) -> tuple[list[AIModel] | None, list[BuiltinToolDef] | None]:
-    """Load agent options from a config file.
+def _format_display_name(model_name: str) -> str:
+    """Format model name for display in UI.
 
-    Args:
-        config_path: Path to the config file (e.g., agent_options.py)
+    Handles common patterns:
+    - gpt-5 -> GPT 5
+    - claude-sonnet-4-5 -> Claude Sonnet 4.5
+    - gemini-2.5-pro -> Gemini 2.5 Pro
     """
-    if not config_path.exists():
-        return None, None
+    uppercase_prefixes = {'gpt', 'o1', 'o3'}
 
-    try:
-        spec = importlib.util.spec_from_file_location('agent_options_config', config_path)
-        if spec is None or spec.loader is None:
-            print(f'Warning: Could not load config from {config_path}')
-            return None, None
+    parts = model_name.split('-')
+    result: list[str] = []
 
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+    for i, part in enumerate(parts):
+        if i == 0 and part.lower() in uppercase_prefixes:
+            result.append(part.upper())
+        elif part.replace('.', '').isdigit():
+            if result and result[-1].replace('.', '').isdigit():
+                result[-1] = f'{result[-1]}.{part}'
+            else:
+                result.append(part)
+        else:
+            result.append(part.capitalize())
 
-        models = getattr(module, 'models', None)
-        builtin_tool_defs = getattr(module, 'builtin_tool_definitions', None)
-
-        return models, builtin_tool_defs
-
-    except Exception as e:
-        print(f'Warning: Error loading config from {config_path}: {e}')
-        return None, None
+    return ' '.join(result)
 
 
-class _AgentLoader(BaseModel):
-    """Helper model for loading agents using Pydantic's ImportString."""
-
-    agent: ImportString  # type: ignore[valid-type]
-
-
-def load_agent(agent_path: str) -> Agent | None:
-    """Load an agent from module path in uvicorn style.
-
-    Args:
-        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
-
-    Returns:
-        Agent instance or None if loading fails
-    """
-    sys.path.insert(0, str(Path.cwd()))
-
-    try:
-        loader = _AgentLoader(agent=agent_path)
-        agent = loader.agent  # type: ignore[reportUnknownVariableType]
-
-        if not isinstance(agent, Agent):
-            print(f'Error: {agent_path} is not an Agent instance')
-            return None
-
-        return agent  # pyright: ignore[reportUnknownVariableType]
-
-    except ValidationError as e:
-        print(f'Error loading agent from {agent_path}: {e}')
-        return None
-
-
-def run_web_command(
-    agent_path: str,
+def run_web_command(  # noqa: C901
+    agent_path: str | None = None,
     host: str = '127.0.0.1',
-    port: int = 8000,
-    config_path: Path | None = None,
-    auto_config: bool = True,
+    port: int = 7932,
+    models: list[str] | None = None,
+    tools: list[str] | None = None,
+    instructions: str | None = None,
+    mcp: str | None = None,
 ) -> int:
-    """Run the chat command to serve an agent via web UI.
+    """Run the web command to serve an agent via web UI.
 
     Args:
-        agent_path: Agent path in 'module:variable' format, e.g. 'test_agent:my_agent'
+        agent_path: Agent path in 'module:variable' format. If None, creates generic agent.
         host: Host to bind the server to
         port: Port to bind the server to
-        config_path: Path to agent_options.py config file
-        auto_config: Auto-discover agent_options.py in current directory
+        models: List of model strings (e.g., ['openai:gpt-5', 'claude-sonnet-4-5'])
+        tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution'])
+        instructions: System instructions for generic agent
+        mcp: Path to JSON file with MCP server configurations
     """
-    agent = load_agent(agent_path)
-    if agent is None:
+    if agent_path:
+        agent = _load_agent(agent_path)
+        if agent is None:
+            print(f'Error: Could not load agent from {agent_path}')
+            return 1
+    else:
+        agent = Agent()
+
+        if instructions:
+
+            @agent.system_prompt
+            def system_prompt() -> str:  # pyright: ignore[reportUnusedFunction]
+                return instructions
+
+    if agent.model is None and not models:
+        print('Error: At least one model (-m) is required when agent has no model')
         return 1
 
-    models, builtin_tool_defs = None, None
-    if config_path:
-        print(f'Loading config from {config_path}...')
-        models, builtin_tool_defs = load_agent_options(config_path)
-    elif auto_config:
-        default_config = Path.cwd() / 'agent_options.py'
-        if default_config.exists():
-            print(f'Found config file: {default_config}')
-            models, builtin_tool_defs = load_agent_options(default_config)
+    parsed_tools_ids: list[BUILTIN_TOOL_ID] = []
+    if tools:
+        for tool_id in tools:
+            if tool_id not in BUILTIN_TOOL_ID.__args__:
+                logging.warning(
+                    f'Tool "{tool_id}" is not a valid builtin tool ID. Valid IDs are: {BUILTIN_TOOL_ID.__args__}'
+                )
+                continue
+            parsed_tools_ids.append(tool_id)  # pyright: ignore[reportArgumentType]
 
-    app = create_web_app(agent, models=models, builtin_tool_defs=builtin_tool_defs)
+    parsed_models: list[AIModel] = []
 
-    print(f'\nStarting chat UI for {agent_path}...')
+    if models:
+        for model_str in models:
+            if ':' in model_str:
+                model_id = model_str
+                model_name = model_str.split(':', 1)[1]
+            else:
+                try:
+                    inferred = infer_model(model_str)
+                    model_id = f'{inferred.system}:{inferred.model_name}'
+                    model_name = inferred.model_name
+                except UserError:
+                    print(f'Error: Model "{model_str}" requires a provider prefix (e.g., "openai:{model_str}")')
+                    return 1
+
+            display_name = _format_display_name(model_name)
+
+            parsed_models.append(
+                AIModel(
+                    id=model_id,
+                    name=display_name,
+                    builtin_tools=parsed_tools_ids,
+                )
+            )
+
+    parsed_tool_instances: list[AbstractBuiltinTool] = []
+    if tools:
+        for tool_id in tools:
+            if tool_id not in BUILTIN_TOOL_CLASSES:
+                print(f'Warning: Unknown tool "{tool_id}", skipping')
+                continue
+
+            tool_class = BUILTIN_TOOL_CLASSES[tool_id]
+            parsed_tool_instances.append(tool_class())
+
+    if mcp:
+        try:
+            mcp_tools = load_mcp_server_tools(mcp)
+            parsed_tool_instances.extend(mcp_tools)
+            print(f'Loaded {len(mcp_tools)} MCP server(s) from {mcp}')
+        except FileNotFoundError as e:
+            print(f'Error: {e}')
+            return 1
+        except ValidationError as e:
+            print(f'Error parsing MCP config: {e}')
+            return 1
+        except ValueError as e:
+            print(f'Error: {e}')
+            return 1
+
+    if parsed_models:
+        first_model = parsed_models[0]
+        agent.model = infer_model(first_model.id)
+
+    app = create_web_app(
+        agent,
+        models=parsed_models if parsed_models else None,
+        builtin_tools=parsed_tool_instances if parsed_tool_instances else None,
+    )
+
+    agent_desc = agent_path if agent_path else 'generic agent'
+    print(f'\nStarting chat UI for {agent_desc}...')
     print(f'Open your browser at: http://{host}:{port}')
     print('Press Ctrl+C to stop the server\n')
 

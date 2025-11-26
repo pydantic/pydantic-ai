@@ -2,8 +2,6 @@ from __future__ import annotations as _annotations
 
 import argparse
 import asyncio
-import importlib
-import os
 import sys
 from asyncio import CancelledError
 from collections.abc import Sequence
@@ -12,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import BaseModel, ImportString, ValidationError
 from typing_inspection.introspection import get_literal_values
 
 from . import __version__
@@ -45,6 +44,32 @@ except ImportError as _import_error:
 
 
 __all__ = 'cli', 'cli_exit'
+
+
+class _AgentLoader(BaseModel):
+    """Helper model for loading agents using Pydantic ImportString."""
+
+    agent: ImportString  # type: ignore[valid-type]
+
+
+def _load_agent(agent_path: str) -> Agent | None:
+    """Load an agent from module path in uvicorn style.
+
+    Args:
+        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
+
+    Returns:
+        Agent instance or None if loading fails
+    """
+    sys.path.insert(0, str(Path.cwd()))
+    try:
+        loader = _AgentLoader(agent=agent_path)
+        agent = loader.agent  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        if not isinstance(agent, Agent):
+            return None
+        return agent  # pyright: ignore[reportUnknownVariableType]
+    except ValidationError:
+        return None
 
 
 PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
@@ -155,41 +180,69 @@ Special prompts:
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
     if prog_name == 'clai':
-        parser.add_argument(
-            '--web',
-            action='store_true',
-            help='Launch web chat UI for the agent (requires --agent)',
+        subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+        web_parser = subparsers.add_parser(
+            'web',
+            help='Launch web chat UI for an agent',
+            description='Start a web-based chat interface for the specified agent',
         )
-        parser.add_argument('--host', default='127.0.0.1', help='Host to bind the server to (default: 127.0.0.1)')
-        parser.add_argument('--port', type=int, default=8000, help='Port to bind the server to (default: 8000)')
-        parser.add_argument(
-            '--config', type=Path, help='Path to agent_options.py config file (overrides auto-discovery)'
+        web_parser.add_argument(
+            '--agent',
+            '-a',
+            help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+            'If omitted, creates a generic agent with the first specified model as default.',
         )
-        parser.add_argument(
-            '--no-auto-config',
-            action='store_true',
-            help='Disable auto-discovery of agent_options.py in current directory',
+        web_parser.add_argument(
+            '-m',
+            '--model',
+            action='append',
+            dest='models',
+            help='Model to make available (can be repeated, e.g., -m gpt-5 -m claude-sonnet-4-5). '
+            'Format: "provider:model_name" (e.g., "openai:gpt-5"). '
+            'Prefix-less names allowed for: gpt*, o1, o3, claude*, gemini*. '
+            'First model is default, subsequent ones are UI options.',
+        )
+        web_parser.add_argument(
+            '-t',
+            '--tool',
+            action='append',
+            dest='tools',
+            help='Builtin tool to enable (can be repeated, e.g., -t web_search -t code_execution). '
+            'Available: web_search, code_execution, image_generation, web_fetch, memory.',
+        )
+        web_parser.add_argument(
+            '-i',
+            '--instructions',
+            help='System instructions for the agent. Only applies when --agent is not specified (generic agent mode).',
+        )
+        web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
+        web_parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
+        web_parser.add_argument(
+            '--mcp',
+            help='Path to JSON file with MCP server configurations. '
+            'Format: {"mcpServers": {"id": {"url": "...", "authorizationToken": "..."}}}',
         )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
-    if prog_name == 'clai' and args.web:
-        if not args.agent:
-            console = Console()
-            console.print('[red]Error: --web requires --agent to be specified[/red]')
-            return 1
+    if prog_name == 'clai' and getattr(args, 'command', None) == 'web':
         try:
             from clai.web.cli import run_web_command
         except ImportError:
-            print('Error: clai --web command is only available when clai is installed.')
+            console = Console()
+            console.print('[red]Error: clai web command requires clai package[/red]')
             return 1
+
         return run_web_command(
             agent_path=args.agent,
             host=args.host,
             port=args.port,
-            config_path=args.config,
-            auto_config=not args.no_auto_config,
+            models=args.models,
+            tools=args.tools,
+            instructions=args.instructions,
+            mcp=args.mcp,
         )
 
     console = Console()
@@ -205,18 +258,11 @@ Special prompts:
 
     agent: Agent[None, str] = cli_agent
     if args.agent:
-        sys.path.append(os.getcwd())
-        try:
-            module_path, variable_name = args.agent.split(':')
-        except ValueError:
-            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
+        loaded = _load_agent(args.agent)
+        if loaded is None:
+            console.print(f'[red]Error: Could not load agent from {args.agent}[/red]')
             return 1
-
-        module = importlib.import_module(module_path)
-        agent = getattr(module, variable_name)
-        if not isinstance(agent, Agent):
-            console.print(f'[red]Error: {args.agent} is not an Agent instance[/red]')
-            return 1
+        agent = loaded
 
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:

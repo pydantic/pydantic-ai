@@ -18,6 +18,7 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'BUILTIN_TOOL_CLASSES',
 )
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -45,6 +46,14 @@ class AbstractBuiltinTool(ABC):
         If multiple instances of the same builtin tool can be passed to the model, subclasses should override this property to allow them to be distinguished.
         """
         return self.kind
+
+    @property
+    def label(self) -> str:
+        """Human-readable label for UI display.
+
+        Subclasses should override this to provide a meaningful label.
+        """
+        return self.kind.replace('_', ' ').title()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -406,6 +415,10 @@ class MCPServerTool(AbstractBuiltinTool):
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
 
+    @property
+    def label(self) -> str:
+        return f'MCP: {self.id}'
+
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
     if isinstance(tool_data, dict):
@@ -418,7 +431,17 @@ BUILTIN_TOOL_ID = Literal[
     'web_search',
     'code_execution',
     'image_generation',
-    'url_context',
+    'web_fetch',
     'memory',
     'mcp_server',
 ]
+
+ACTIVE_BUILTIN_TOOL_IDS: frozenset[str] = frozenset(BUILTIN_TOOL_ID.__args__)
+
+BUILTIN_TOOL_CLASSES: dict[BUILTIN_TOOL_ID, type[AbstractBuiltinTool]] = {
+    'web_search': WebSearchTool,
+    'code_execution': CodeExecutionTool,
+    'image_generation': ImageGenerationTool,
+    'web_fetch': WebFetchTool,
+    'memory': MemoryTool,
+}
