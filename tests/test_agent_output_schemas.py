@@ -1,18 +1,27 @@
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
     BinaryImage,
-)
-from pydantic_ai._output import (
+    DeferredToolRequests,
     NativeOutput,
     PromptedOutput,
+    StructuredDict,
+    ToolOutput,
 )
-from pydantic_ai.output import StructuredDict, ToolOutput
-from pydantic_ai.tools import DeferredToolRequests
 
 pytestmark = pytest.mark.anyio
+
+
+class Bar(BaseModel):
+    answer: str
+
+
+class Foo(BaseModel):
+    a: list[Bar]
+    b: int
 
 
 async def test_text_output_json_schema():
@@ -24,6 +33,49 @@ async def test_auto_output_json_schema():
     agent = Agent('test', output_type=bool)
     assert agent.output_json_schema() == snapshot(
         {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
+    )
+
+    agent = Agent('test', output_type=bool | int)
+    assert agent.output_json_schema() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'bool'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'bool',
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'int'},
+                                'data': {
+                                    'properties': {'response': {'type': 'integer'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'int',
+                        },
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
     )
 
 
@@ -46,7 +98,7 @@ async def test_tool_output_json_schema():
 
     agent = Agent(
         'test',
-        output_type=[ToolOutput(bool, name='alice', description='Dreaming'), ToolOutput(bool, name='bob')],
+        output_type=[ToolOutput(bool), ToolOutput(Foo)],
     )
     assert agent.output_json_schema() == snapshot(
         {
@@ -57,7 +109,7 @@ async def test_tool_output_json_schema():
                         {
                             'type': 'object',
                             'properties': {
-                                'kind': {'type': 'string', 'const': 'alice'},
+                                'kind': {'type': 'string', 'const': 'final_result_bool'},
                                 'data': {
                                     'properties': {'response': {'type': 'boolean'}},
                                     'required': ['response'],
@@ -70,78 +122,33 @@ async def test_tool_output_json_schema():
                         {
                             'type': 'object',
                             'properties': {
-                                'kind': {'type': 'string', 'const': 'bob'},
+                                'kind': {'type': 'string', 'const': 'final_result_Foo'},
                                 'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
+                                    'properties': {
+                                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'type': 'array'},
+                                        'b': {'type': 'integer'},
+                                    },
+                                    'required': ['a', 'b'],
                                     'type': 'object',
                                 },
                             },
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
+                            'title': 'Foo',
                         },
                     ]
                 }
             },
             'required': ['result'],
             'additionalProperties': False,
-        }
-    )
-
-    agent = Agent(
-        'test',
-        output_type=[ToolOutput(bool, name='alice')] * 3,
-    )
-    assert agent.output_json_schema() == snapshot(
-        {
-            'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'alice'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'alice_2'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'alice_3'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                        },
-                    ]
+            '$defs': {
+                'Bar': {
+                    'properties': {'answer': {'type': 'string'}},
+                    'required': ['answer'],
+                    'title': 'Bar',
+                    'type': 'object',
                 }
             },
-            'required': ['result'],
-            'additionalProperties': False,
         }
     )
 
@@ -372,7 +379,7 @@ distinguish multiple files.\
 async def test_override_output_json_schema():
     agent = Agent('test')
     assert agent.output_json_schema() == snapshot({'type': 'string'})
-    output_type = [ToolOutput(bool, name='alice', description='Dreaming...')]
+    output_type = [ToolOutput(bool)]
     assert agent.output_json_schema(output_type=output_type) == snapshot(
         {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )

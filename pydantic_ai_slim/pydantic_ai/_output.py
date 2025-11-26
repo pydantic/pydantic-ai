@@ -434,7 +434,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         for key in object_keys:
             count = 1
             new_key = key
-            while new_key in unique_object_keys:  # pragma: no cover
+            while new_key in unique_object_keys:
                 count += 1
                 new_key = f'{key}_{count}'
             unique_object_keys.append(new_key)
