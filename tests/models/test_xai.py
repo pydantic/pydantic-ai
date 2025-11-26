@@ -32,6 +32,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
+    AgentRunResultEvent,
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
@@ -107,6 +109,10 @@ pytestmark = [
     ),
 ]
 
+# Test model constants
+XAI_NON_REASONING_MODEL = 'grok-4-1-fast-non-reasoning'
+XAI_REASONING_MODEL = 'grok-4-1-fast-reasoning'
+
 
 def create_usage(
     prompt_tokens: int = 0,
@@ -129,16 +135,16 @@ def test_xai_init():
     from pydantic_ai.providers.xai import XaiProvider
 
     provider = XaiProvider(api_key='foobar')
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=provider)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=provider)
     # Check model properties without accessing private attributes
-    assert m.model_name == 'grok-4-1-fast-non-reasoning'
+    assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
 
 
 async def test_xai_request_simple_success(allow_model_requests: None):
     response = create_response(content='world')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -159,7 +165,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -172,7 +178,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -189,7 +195,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
         usage=create_usage(prompt_tokens=2, completion_tokens=1),
     )
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -207,7 +213,7 @@ async def test_xai_image_input(allow_model_requests: None):
     """Test that xAI model handles image inputs (text is extracted from content)."""
     response = create_response(content='done')
     mock_client = MockXai.create_mock(response)
-    model = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(model)
 
     image_url = ImageUrl('https://example.com/image.png')
@@ -225,7 +231,7 @@ async def test_xai_request_structured_response(allow_model_requests: None):
     )
     response = create_response(tool_calls=[tool_call])
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
@@ -244,7 +250,7 @@ async def test_xai_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -279,7 +285,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
         create_response(content='final response'),
     ]
     mock_client = MockXai.create_mock(responses)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -312,7 +318,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
                     input_tokens=2,
                     output_tokens=1,
                 ),
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -342,7 +348,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
                     input_tokens=3,
                     output_tokens=2,
                 ),
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -362,7 +368,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -461,7 +467,7 @@ def grok_builtin_tool_chunk(
 async def test_xai_stream_text(allow_model_requests: None):
     stream = [grok_text_chunk('hello '), grok_text_chunk('world')]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -479,7 +485,7 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
         grok_text_chunk('.', 'stop'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -494,7 +500,7 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
                     ModelResponse(
                         parts=[TextPart(content='hello world.')],
                         usage=RequestUsage(input_tokens=2, output_tokens=1),
-                        model_name='grok-4-1-fast-non-reasoning',
+                        model_name=XAI_NON_REASONING_MODEL,
                         timestamp=IsDatetime(),
                         provider_name='xai',
                         provider_response_id='grok-123',
@@ -571,7 +577,7 @@ async def test_xai_stream_structured(allow_model_requests: None):
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -592,7 +598,7 @@ async def test_xai_stream_structured_finish_reason(allow_model_requests: None):
         grok_tool_chunk(None, None, finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -610,7 +616,7 @@ async def test_xai_stream_native_output(allow_model_requests: None):
         grok_text_chunk('}'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=NativeOutput(MyTypedDict))
 
     async with agent.run_stream('') as result:
@@ -629,7 +635,7 @@ async def test_xai_stream_tool_call_with_empty_text(allow_model_requests: None):
         grok_tool_chunk(None, '}', finish_reason='stop', accumulated_args='{"first": "One", "second": "Two"}'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=[str, MyTypedDict])
 
     async with agent.run_stream('') as result:
@@ -646,7 +652,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         grok_text_chunk('world'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -663,7 +669,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         grok_text_chunk('world'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -682,7 +688,7 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
     )
     response = create_response(content='', tool_calls=[tool_call], finish_reason='tool_calls')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     await agent.run('Hello')
@@ -692,7 +698,7 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
 async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     response = create_response(content='test response')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
     settings = ModelSettings(
         temperature=0.7,
@@ -717,7 +723,7 @@ async def test_xai_instructions(allow_model_requests: None):
     """Test that instructions are passed through to xAI SDK as a system message."""
     response = create_response(content='The capital of France is Paris.')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run('What is the capital of France?')
@@ -749,7 +755,7 @@ async def test_xai_instructions(allow_model_requests: None):
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
                 usage=RequestUsage(),
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -763,7 +769,7 @@ async def test_xai_instructions(allow_model_requests: None):
 async def test_xai_image_url_input(allow_model_requests: None):
     response = create_response(content='world')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run(
@@ -788,7 +794,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None):
     final_response = create_response(content='The image shows a potato.')
 
     mock_client = MockXai.create_mock([tool_call_response, final_response])
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -811,7 +817,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool_001')],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -840,7 +846,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -862,7 +868,7 @@ async def test_xai_image_as_binary_content_tool_response(allow_model_requests: N
     final_response = create_response(content='The image shows a kiwi fruit.')
 
     mock_client = MockXai.create_mock([tool_call_response, final_response])
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -885,7 +891,7 @@ async def test_xai_image_as_binary_content_tool_response(allow_model_requests: N
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool_001')],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -912,7 +918,7 @@ async def test_xai_image_as_binary_content_tool_response(allow_model_requests: N
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a kiwi fruit.')],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -928,7 +934,7 @@ async def test_xai_image_as_binary_content_input(allow_model_requests: None, ima
     response = create_response(content='The image shows a kiwi fruit.')
 
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
@@ -944,7 +950,7 @@ async def test_xai_document_url_input(allow_model_requests: None):
     response = create_response(content='This document is a dummy PDF file.')
 
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
@@ -960,7 +966,7 @@ async def test_xai_binary_content_document_input(allow_model_requests: None):
     """Test passing a document as BinaryContent to the xAI model."""
     response = create_response(content='The document discusses testing.')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     document_content = BinaryContent(
@@ -978,7 +984,7 @@ async def test_xai_audio_url_not_supported(allow_model_requests: None):
     """Test that AudioUrl raises NotImplementedError."""
     response = create_response(content='This should not be reached')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     audio_url = AudioUrl(url='https://example.com/audio.mp3')
@@ -991,7 +997,7 @@ async def test_xai_video_url_not_supported(allow_model_requests: None):
     """Test that VideoUrl raises NotImplementedError."""
     response = create_response(content='This should not be reached')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     video_url = VideoUrl(url='https://example.com/video.mp4')
@@ -1004,7 +1010,7 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
     """Test that BinaryContent with audio raises NotImplementedError."""
     response = create_response(content='This should not be reached')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     audio_content = BinaryContent(
@@ -1034,7 +1040,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
     )
 
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('Return just the day of week for the date of Jan 1 in 2026?')
@@ -1070,7 +1076,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
                     ),
                     TextPart(content='Thursday'),
                 ],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-ws_001',
@@ -1102,7 +1108,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None):
     ]
 
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     event_parts: list[Any] = []
@@ -1190,7 +1196,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
     )
 
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     result = await agent.run('What is 65465 - 6544 * 65464 - 6 + 1.02255? Use code to calculate this.')
@@ -1228,7 +1234,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                     ),
                     TextPart(content='The result is -428,050,955.97745'),
                 ],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-code_001',
@@ -1259,7 +1265,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
     ]
 
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     event_parts: list[Any] = []
@@ -1350,7 +1356,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
     )
 
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1407,7 +1413,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
                     ),
                     TextPart(content='Bitcoin has increased by 30.0% from last week.'),
                 ],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-multi-tool',
@@ -1431,7 +1437,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
     )
 
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     @agent.tool_plain
@@ -1474,7 +1480,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
                     ),
                     TextPart(content='The weather in Tokyo is sunny with a temperature of 72°F.'),
                 ],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-ws_003',
@@ -1498,7 +1504,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
     )
 
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1545,7 +1551,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                     ),
                     TextPart(content='No issues found.'),
                 ],
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-mcp_linear_001',
@@ -1576,7 +1582,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None):
     ]
 
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1653,7 +1659,7 @@ async def test_xai_model_retries(allow_model_requests: None):
     success_response = create_response(content='Success after retry')
 
     mock_client = MockXai.create_mock(success_response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.output == 'Success after retry'
@@ -1663,7 +1669,7 @@ async def test_xai_model_settings(allow_model_requests: None):
     """Test xAI model with various settings."""
     response = create_response(content='response with settings')
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
         model_settings=ModelSettings(
@@ -1695,7 +1701,7 @@ async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
     ]
 
     mock_client = MockXai.create_mock(responses)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1725,7 +1731,7 @@ async def test_xai_stream_with_tool_calls(allow_model_requests: None):
     ]
 
     mock_client = MockXai.create_mock_stream([stream1, stream2])
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1754,9 +1760,9 @@ async def test_xai_model_invalid_api_key():
 
 async def test_xai_model_properties():
     """Test xAI model properties."""
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(api_key='test-key'))
 
-    assert m.model_name == 'grok-4-1-fast-non-reasoning'
+    assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
 
 
@@ -1771,7 +1777,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
         usage=create_usage(prompt_tokens=10, completion_tokens=20),
     )
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('What is 2+2?')
@@ -1788,7 +1794,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
                     TextPart(content='The answer is 4'),
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=20),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -1807,7 +1813,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
         usage=create_usage(prompt_tokens=10, completion_tokens=5),
     )
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('What is 2+2?')
@@ -1824,7 +1830,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
                     TextPart(content='4'),
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -1842,7 +1848,7 @@ async def test_xai_reasoning_without_summary(allow_model_requests: None):
         encrypted_content='encrypted123',
     )
     mock_client = MockXai.create_mock(response)
-    model = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    model = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
     agent = Agent(model=model)
     result = await agent.run('What is 2+2?')
@@ -1862,7 +1868,7 @@ async def test_xai_reasoning_without_summary(allow_model_requests: None):
                     ThinkingPart(content='', signature='encrypted123', provider_name='xai'),
                     TextPart(content='4'),
                 ],
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -1887,7 +1893,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
         ),
     ]
     mock_client = MockXai.create_mock(responses)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1912,7 +1918,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
                     ),
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=30),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -1933,7 +1939,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
             ModelResponse(
                 parts=[TextPart(content='The calculation shows that 2+2 equals 4')],
                 usage=RequestUsage(input_tokens=15, output_tokens=10),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -1958,7 +1964,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
         ),
     ]
     mock_client = MockXai.create_mock(responses)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1985,7 +1991,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
                     ),
                 ],
                 usage=RequestUsage(input_tokens=20, output_tokens=40),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -2006,7 +2012,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
             ModelResponse(
                 parts=[TextPart(content='The weather in San Francisco is sunny')],
                 usage=RequestUsage(input_tokens=25, output_tokens=12),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -2024,7 +2030,7 @@ async def test_xai_stream_with_reasoning(allow_model_requests: None):
         grok_reasoning_text_chunk(' is 4', reasoning_content='Let me think about this...', finish_reason='stop'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('What is 2+2?') as result:
@@ -2048,7 +2054,7 @@ async def test_xai_stream_with_reasoning(allow_model_requests: None):
             ModelResponse(
                 parts=[ThinkingPart(content='Let me think about this...'), TextPart(content='The answer is 4')],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
@@ -2066,7 +2072,7 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
         grok_reasoning_text_chunk(' is sunny', encrypted_content='encrypted_abc123', finish_reason='stop'),
     ]
     mock_client = MockXai.create_mock_stream(stream)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('What is the weather?') as result:
@@ -2093,13 +2099,69 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
                     TextPart(content='The weather is sunny'),
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
-                model_name='grok-3',
+                model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_xai_stream_events_with_reasoning(allow_model_requests: None):
+    """Test xAI streaming events with reasoning content."""
+    stream = [
+        grok_reasoning_text_chunk('The answer', reasoning_content='Let me think about this...', finish_reason=''),
+        grok_reasoning_text_chunk(' is 4', reasoning_content='Let me think about this...', finish_reason='stop'),
+    ]
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    events = [event async for event in agent.run_stream_events('What is 2+2?')]
+
+    # Verify the events include both ThinkingPart and TextPart events
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='Let me think about this...')),
+            PartEndEvent(index=0, part=ThinkingPart(content='Let me think about this...'), next_part_kind='text'),
+            PartStartEvent(index=1, part=TextPart(content='The answer'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is 4')),
+            PartEndEvent(index=1, part=TextPart(content='The answer is 4')),
+            AgentRunResultEvent(result=AgentRunResult(output='The answer is 4')),
+        ]
+    )
+
+
+async def test_xai_stream_events_with_encrypted_reasoning(allow_model_requests: None):
+    """Test xAI streaming events with encrypted reasoning content."""
+    stream = [
+        grok_reasoning_text_chunk('The weather', encrypted_content='encrypted_abc123', finish_reason=''),
+        grok_reasoning_text_chunk(' is sunny', encrypted_content='encrypted_abc123', finish_reason='stop'),
+    ]
+    mock_client = MockXai.create_mock_stream(stream)
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    events = [event async for event in agent.run_stream_events('What is the weather?')]
+
+    # Verify the events include both ThinkingPart (encrypted) and TextPart events
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='encrypted_abc123', provider_name='xai')),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(content='', signature='encrypted_abc123', provider_name='xai'),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='The weather'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is sunny')),
+            PartEndEvent(index=1, part=TextPart(content='The weather is sunny')),
+            AgentRunResultEvent(result=AgentRunResult(output='The weather is sunny')),
         ]
     )
 
@@ -2119,7 +2181,7 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
         usage=mock_usage,
     )
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('What is the meaning of life?')
@@ -2141,7 +2203,7 @@ async def test_xai_usage_without_details(allow_model_requests: None):
         usage=mock_usage,
     )
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Simple question')
@@ -2170,7 +2232,7 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
         usage=mock_usage,
     )
     mock_client = MockXai.create_mock(response)
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Search for something')
@@ -2205,7 +2267,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
         usage=create_usage(prompt_tokens=90, completion_tokens=15),
     )
     mock_client = MockXai.create_mock([response1, response2])
-    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
     agent = Agent(m, output_type=NativeOutput(CityLocation))
 
@@ -2230,7 +2292,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=70, output_tokens=12),
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id=IsStr(),
@@ -2251,7 +2313,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
                 usage=RequestUsage(input_tokens=90, output_tokens=15),
-                model_name='grok-4-1-fast-non-reasoning',
+                model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id=IsStr(),
@@ -2269,7 +2331,7 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock(response)
-    model = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client), profile=profile)
+    model = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), profile=profile)
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
 
