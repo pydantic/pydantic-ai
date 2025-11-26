@@ -23,12 +23,7 @@ async def test_text_output_json_schema():
 async def test_auto_output_json_schema():
     agent = Agent('test', output_type=bool)
     assert agent.output_json_schema() == snapshot(
-        {
-            'type': 'object',
-            'properties': {'response': {'type': 'boolean'}},
-            'required': ['response'],
-            'title': 'bool',
-        }
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
 
@@ -38,12 +33,7 @@ async def test_tool_output_json_schema():
         output_type=[ToolOutput(bool)],
     )
     assert agent.output_json_schema() == snapshot(
-        {
-            'type': 'object',
-            'properties': {'response': {'type': 'boolean'}},
-            'required': ['response'],
-            'title': 'final_result',
-        }
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
     agent = Agent(
@@ -51,13 +41,7 @@ async def test_tool_output_json_schema():
         output_type=[ToolOutput(bool, name='alice', description='Dreaming...')],
     )
     assert agent.output_json_schema() == snapshot(
-        {
-            'type': 'object',
-            'properties': {'response': {'type': 'boolean'}},
-            'required': ['response'],
-            'title': 'alice',
-            'description': 'Dreaming...',
-        }
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
     agent = Agent(
@@ -82,8 +66,6 @@ async def test_tool_output_json_schema():
                             },
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'alice',
-                            'description': 'Dreaming',
                         },
                         {
                             'type': 'object',
@@ -97,7 +79,6 @@ async def test_tool_output_json_schema():
                             },
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'bob',
                         },
                     ]
                 }
@@ -129,7 +110,6 @@ async def test_tool_output_json_schema():
                             },
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'alice',
                         },
                         {
                             'type': 'object',
@@ -143,7 +123,6 @@ async def test_tool_output_json_schema():
                             },
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'alice_2',
                         },
                         {
                             'type': 'object',
@@ -157,7 +136,6 @@ async def test_tool_output_json_schema():
                             },
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
-                            'title': 'alice_3',
                         },
                     ]
                 }
@@ -174,7 +152,7 @@ async def test_native_output_json_schema():
         output_type=NativeOutput([bool]),
     )
     assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'title': 'bool'}
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
     agent = Agent(
@@ -182,13 +160,7 @@ async def test_native_output_json_schema():
         output_type=NativeOutput([bool], name='native_output_name', description='native_output_description'),
     )
     assert agent.output_json_schema() == snapshot(
-        {
-            'type': 'object',
-            'properties': {'response': {'type': 'boolean'}},
-            'required': ['response'],
-            'title': 'native_output_name',
-            'description': 'native_output_description',
-        }
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
 
@@ -198,7 +170,7 @@ async def test_prompted_output_json_schema():
         output_type=PromptedOutput([bool]),
     )
     assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'title': 'bool'}
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
     agent = Agent(
@@ -206,13 +178,7 @@ async def test_prompted_output_json_schema():
         output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description'),
     )
     assert agent.output_json_schema() == snapshot(
-        {
-            'type': 'object',
-            'properties': {'response': {'type': 'boolean'}},
-            'required': ['response'],
-            'title': 'prompted_output_name',
-            'description': 'prompted_output_description',
-        }
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
 
@@ -233,7 +199,6 @@ async def test_custom_output_json_schema():
             'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
             'title': 'Human',
             'required': ['name', 'age'],
-            'description': 'A human with a name and age',
         }
     )
 
@@ -274,10 +239,27 @@ async def test_image_output_json_schema():
                     'default': None,
                     'title': 'Vendor Metadata',
                 },
-                'identifier': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Identifier'},
+                'identifier': {
+                    'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                    'readOnly': True,
+                    'title': 'Identifier',
+                    'type': 'string',
+                },
                 'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
             },
-            'required': ['data', 'media_type'],
+            'required': ['data', 'media_type', 'identifier'],
             'title': 'BinaryImage',
             'type': 'object',
         }
@@ -346,9 +328,22 @@ async def test_image_output_json_schema():
                                             'title': 'Vendor Metadata',
                                         },
                                         'identifier': {
-                                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                            'default': None,
+                                            'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                                            'readOnly': True,
                                             'title': 'Identifier',
+                                            'type': 'string',
                                         },
                                         'kind': {
                                             'const': 'binary',
@@ -357,7 +352,7 @@ async def test_image_output_json_schema():
                                             'type': 'string',
                                         },
                                     },
-                                    'required': ['data', 'media_type'],
+                                    'required': ['data', 'media_type', 'identifier'],
                                     'type': 'object',
                                 },
                             },
@@ -379,13 +374,7 @@ async def test_override_output_json_schema():
     assert agent.output_json_schema() == snapshot({'type': 'string'})
     output_type = [ToolOutput(bool, name='alice', description='Dreaming...')]
     assert agent.output_json_schema(output_type=output_type) == snapshot(
-        {
-            'type': 'object',
-            'properties': {'response': {'type': 'boolean'}},
-            'required': ['response'],
-            'title': 'alice',
-            'description': 'Dreaming...',
-        }
+        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
     )
 
 
@@ -560,9 +549,22 @@ async def test_deferred_output_json_schema():
                                             'title': 'Vendor Metadata',
                                         },
                                         'identifier': {
-                                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                                            'default': None,
+                                            'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                                            'readOnly': True,
                                             'title': 'Identifier',
+                                            'type': 'string',
                                         },
                                         'kind': {
                                             'const': 'binary',
@@ -571,7 +573,7 @@ async def test_deferred_output_json_schema():
                                             'type': 'string',
                                         },
                                     },
-                                    'required': ['data', 'media_type'],
+                                    'required': ['data', 'media_type', 'identifier'],
                                     'type': 'object',
                                 },
                             },
