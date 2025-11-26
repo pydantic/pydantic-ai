@@ -1216,7 +1216,7 @@ class OpenAIResponsesModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1329,7 +1329,7 @@ class OpenAIResponsesModel(Model):
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
-                model=self._model_name,
+                model=self.model_name,
                 instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
                 tools=tools or OMIT,
