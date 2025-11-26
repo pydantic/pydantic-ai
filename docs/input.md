@@ -104,58 +104,37 @@ print(result.output)
 
 ## User-side download vs. direct file URL
 
-As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI downloads the file content and then sends it as part of the API request.
+When you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will typically send the URL directly to the model API so that the download happens on their side.
 
-The situation is different for certain models:
+Some model APIs do no support file URLs at all or for specific file types. In the following cases, Pydantic AI will download the file content and send it as part of the API request instead:
 
-- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: if you provide a PDF document via `DocumentUrl`, the URL is sent directly in the API request, so no download happens on the user side.
+- [`BedrockModel`][pydantic_ai.models.bedrock.BedrockModel]: All URLs
+- [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]: All URLs
+- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: `DocumentUrl` with media type `text/plain`
+- [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: `AudioUrl` and `DocumentUrl`
+- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] using GLA (Gemini Developer API): All URLs except YouTube video URLs and files uploaded to the [Files API](https://ai.google.dev/gemini-api/docs/files).
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on GLA:
-    - YouTube video URLs are sent directly in the request to the model.
-    - Files uploaded to the [Files API](https://ai.google.dev/gemini-api/docs/files) can be passed by wrapping their url with DocumentUrl.
+If the model API supports file URLs but may not be able to download a file because of crawling or access restrictions, you can instruct Pydantic AI to download the file content and send that instead of the URL by enabling the `force_download` flag on the URL object. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request.
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI: any URL provided using `ImageUrl`, `AudioUrl`, `VideoUrl`, or `DocumentUrl` is sent as-is in the API request and no data is downloaded beforehand.
+## Uploaded Files
 
-  See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
+Some model providers like Google's Gemini API support [uploading files](https://ai.google.dev/gemini-api/docs/files). You can upload a file to the model API using the client you can get from the provider and use the resulting URL as input:
 
-  - Cloud Storage bucket URIs (with protocol `gs://`)
-  - Public HTTP(S) URLs
-  - Public YouTube video URL (maximum one URL per request)
-
-  However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct Pydantic AI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
-
-## Example code for Gemini GLA
-
-Use uploaded files:
-
-```py {title="file_upload.py" test="skip" lint="skip"}
+```py {title="file_upload.py" test="skip"}
 from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-provider = GoogleProvider(api_key=GEMINI_API_KEY)
-file = provider.client.files.upload(file='path/to/document.pdf')
+provider = GoogleProvider()
+file = provider.client.files.upload(file='pydantic-ai-logo.png')
 assert file.uri is not None
 
-agent = Agent(model='google-gla:gemini-2.5-flash')
+agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
 result = agent.run_sync(
     [
-        'What does this document contain?',
+        'What company is this logo from?',
         DocumentUrl(url=file.uri, media_type=file.mime_type),
     ]
 )
-print(result.output)
-```
-
-Inline a file as a text part:
-
-```py {title="file_inline.py" test="skip" lint="skip"}
-from pathlib import Path
-from pydantic_ai import Agent, BinaryContent
-
-file_bytes = Path('path/to/document.pdf').read_bytes()
-mimetype = 'application/pdf'
-
-agent = Agent(model='google-gla:gemini-2.5-flash')
-result = agent.run_sync(['What does this document contain?', BinaryContent(data=file_bytes, media_type=mimetype)])
 print(result.output)
 ```
