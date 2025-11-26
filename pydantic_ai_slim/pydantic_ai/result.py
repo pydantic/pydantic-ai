@@ -198,7 +198,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text = ''
 
             result_data = await text_processor.process(
-                text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                text,
+                run_context=self._run_ctx,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
             )
             for validator in self._output_validators:
                 result_data = await validator.validate(
