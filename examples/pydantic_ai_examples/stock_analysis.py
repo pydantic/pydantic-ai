@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BuiltinToolCallPart,
+    RunContext,
     WebSearchTool,
 )
 from pydantic_ai.models.xai import XaiModel
@@ -29,6 +30,9 @@ class StockAnalysis(BaseModel):
     """Analysis of top performing stock."""
 
     stock_symbol: str = Field(description='Stock ticker symbol')
+    performance_change: float = Field(
+        description="Yesterday's performance change percentage"
+    )
     current_price: float = Field(description='Current stock price')
     buy_analysis: str = Field(description='Brief analysis for whether to buy the stock')
 
@@ -40,10 +44,23 @@ stock_analysis_agent = Agent[None, StockAnalysis](
     builtin_tools=[WebSearchTool()],
     system_prompt=(
         'You are a stock analysis assistant. '
-        'Use web_search to find the hottest performing stock from yesterday on NASDAQ. '
-        'Provide the current price and a brief buy analysis explaining whether this is a good buy.'
+        'First, use web_search to find the hottest performing stock from yesterday on NASDAQ, including its symbol and performance change. '
+        'Then, use the local get_current_price tool to get its current price. '
+        'Finally, provide a brief buy analysis explaining whether this is a good buy.'
     ),
 )
+
+
+@stock_analysis_agent.tool
+def get_current_price(ctx: RunContext, symbol: str) -> float:
+    """Get the current price for a stock symbol from local database."""
+    # Simulate local database lookup
+    price_db = {
+        'ATGL': 20.00,
+        'EXAMPLE': 150.00,
+        # Add more as needed
+    }
+    return price_db.get(symbol, 0.0)  # Return 0 if not found
 
 
 async def main():
@@ -66,8 +83,9 @@ async def main():
     print('\n✅ Analysis complete!\n')
 
     print(f'📊 Top Stock: {output.stock_symbol}')
+    print(f'📈 Performance Change: {output.performance_change}%')
     print(f'💰 Current Price: ${output.current_price:.2f}')
-    print(f'\n📈 Buy Analysis:\n{output.buy_analysis}')
+    print(f'\n📊 Buy Analysis:\n{output.buy_analysis}')
 
     # Show usage statistics
     usage = result.usage()
