@@ -179,6 +179,7 @@ convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
+"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
