@@ -143,7 +143,7 @@ def prepare_service_account_contents(project_id: str) -> dict[str, str]:
 def save_service_account(service_account_path: Path, project_id: str) -> None:
     service_account = prepare_service_account_contents(project_id)
 
-    service_account_path.write_text(json.dumps(service_account, indent=2))
+    service_account_path.write_text(json.dumps(service_account, indent=2), encoding='utf-8')
 
 
 @pytest.fixture(autouse=True)

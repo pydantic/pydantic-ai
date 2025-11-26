@@ -270,7 +270,7 @@ async def main():
     )
     output_file = Path('questions_cases.yaml')
     dataset.to_file(output_file)  # (5)!
-    print(output_file.read_text())
+    print(output_file.read_text(encoding='utf-8'))
     """
     # yaml-language-server: $schema=questions_cases_schema.json
     name: null
@@ -333,7 +333,7 @@ async def main():
     )
     output_file = Path('questions_cases.json')
     dataset.to_file(output_file)  # (2)!
-    print(output_file.read_text())
+    print(output_file.read_text(encoding='utf-8'))
     """
     {
       "$schema": "questions_cases_schema.json",

@@ -149,7 +149,7 @@ def parse_snippet_directive(line: str) -> SnippetDirective | None:
 
 def parse_file_sections(file_path: Path) -> ParsedFile:
     """Parse a file and extract sections marked with ### [section] or /// [section]"""
-    input_lines = file_path.read_text().splitlines()
+    input_lines = file_path.read_text(encoding='utf-8').splitlines()
     output_lines: list[str] = []
     lines_mapping: dict[int, int] = {}
 
@@ -220,7 +220,7 @@ def format_highlight_lines(highlight_ranges: list[LineRange]) -> str:
     return ' '.join(parts)
 
 
-def inject_snippets(markdown: str, relative_path_root: Path) -> str:  # noqa C901
+def inject_snippets(markdown: str, relative_path_root: Path) -> str:  # noqa: C901
     def replace_snippet(match: re.Match[str]) -> str:
         line = match.group(0)
         directive = parse_snippet_directive(line)

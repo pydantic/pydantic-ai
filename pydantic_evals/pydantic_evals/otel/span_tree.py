@@ -241,7 +241,7 @@ class SpanNode:
 
         return self._matches_query(query)
 
-    def _matches_query(self, query: SpanQuery) -> bool:  # noqa C901
+    def _matches_query(self, query: SpanQuery) -> bool:  # noqa: C901
         """Check if the span matches the query conditions."""
         # Logical combinations
         if or_ := query.get('or_'):

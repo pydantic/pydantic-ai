@@ -318,7 +318,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         preferred_parent_fork: Literal['farthest', 'closest'] = 'farthest',
     ) -> Join[StateT, DepsT, InputT, OutputT]:
         if initial_factory is UNSET:
-            initial_factory = lambda: initial  # pyright: ignore[reportAssignmentType]  # noqa E731
+            initial_factory = lambda: initial  # pyright: ignore[reportAssignmentType]  # noqa: E731
 
         return Join[StateT, DepsT, InputT, OutputT](
             id=JoinID(NodeID(node_id or generate_placeholder_node_id(get_callable_name(reducer)))),
@@ -329,7 +329,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         )
 
     # Edge building
-    def add(self, *edges: EdgePath[StateT, DepsT]) -> None:  # noqa C901
+    def add(self, *edges: EdgePath[StateT, DepsT]) -> None:  # noqa: C901
         """Add one or more edge paths to the graph.
 
         This method processes edge paths and automatically creates any necessary
@@ -674,7 +674,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         )
 
 
-def _validate_graph_structure(  # noqa C901
+def _validate_graph_structure(  # noqa: C901
     nodes: dict[NodeID, AnyNode],
     edges_by_source: dict[NodeID, list[Path]],
 ) -> None:

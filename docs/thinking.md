@@ -144,6 +144,20 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+## OpenRouter
+
+To enable thinking, use the [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] [model setting](agents.md#model-run-settings).
+
+```python {title="openrouter_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+
+model = OpenRouterModel('openai/gpt-5')
+settings = OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'})
+agent = Agent(model, model_settings=settings)
+...
+```
+
 ## Mistral
 
 Thinking is supported by the `magistral` family of models. It does not need to be specifically enabled.
