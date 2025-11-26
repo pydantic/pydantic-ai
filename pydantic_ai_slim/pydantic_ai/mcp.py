@@ -1040,15 +1040,16 @@ class _MCPServerHTTP(MCPServer):
             sse_read_timeout=self.read_timeout,
         )
 
-        if self.http_client is not None:  # pragma: no cover
-
-            def httpx_client_factory(
+        if self.http_client is not None:
+            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
+            @asynccontextmanager
+            async def httpx_client_factory(
                 headers: dict[str, str] | None = None,
                 timeout: httpx.Timeout | None = None,
                 auth: httpx.Auth | None = None,
-            ) -> httpx.AsyncClient:
+            ) -> AsyncIterator[httpx.AsyncClient]:
                 assert self.http_client is not None
-                return self.http_client
+                yield self.http_client
 
             async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
                 read_stream,
