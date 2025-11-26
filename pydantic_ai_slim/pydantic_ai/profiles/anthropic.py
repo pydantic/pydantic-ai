@@ -5,15 +5,15 @@ from dataclasses import dataclass
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
 
-ANTHROPIC_MODELS_THAT_SUPPORT_JSON_SCHEMA_OUTPUT = ('claude-sonnet-4-5', 'claude-opus-4-1', 'claude-opus-4-5')
-"""These models support both structured outputs and strict tool calling."""
-# TODO update when new models are released that support structured outputs
-# https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
-
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
-    supports_json_schema_output = model_name.startswith(ANTHROPIC_MODELS_THAT_SUPPORT_JSON_SCHEMA_OUTPUT)
+    models_that_support_json_schema_output = ('claude-sonnet-4-5', 'claude-opus-4-1', 'claude-opus-4-5')
+    """These models support both structured outputs and strict tool calling."""
+    # TODO update when new models are released that support structured outputs
+    # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
+
+    supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
     return ModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
@@ -25,7 +25,22 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms schemas to the subset supported by Anthropic structured outputs.
 
-    The transformer is generally called by [AnthropicModel.prepare_request](../pydantic_ai_slim/pydantic_ai/models/anthropic.py).
+    Transformation is applied when:
+    - `NativeOutput` is used as the `output_type` of the Agent
+    - `strict=True` is set on the `Tool`
+
+    The behavior of this transformer differs from the OpenAI one in that it sets `Tool.strict=False` by default when not explicitly set to True.
+
+    Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('claude-sonnet-4-5')
+
+        @agent.tool_plain  # -> defaults to strict=False
+        def my_tool(x: str) -> dict[str, int]:
+            ...
+        ```
 
     Anthropic's SDK `transform_schema()` automatically:
     - Adds `additionalProperties: false` to all objects (required by API)
@@ -39,13 +54,13 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 
         schema = super().walk()
 
-        # NOTE: The caller (pydantic_ai.models._customize_tool_def or _customize_output_object) will coalesce
-        # - tool_def.strict = self.is_strict_compatible
+        # The caller (pydantic_ai.models._customize_tool_def or _customize_output_object) coalesces
         # - output_object.strict = self.is_strict_compatible
-        # we need to set it to False if we're not transforming, otherwise anthropic's API will reject the request
-        # if you want this behavior to change, please comment in this issue:
+        # - tool_def.strict = self.is_strict_compatible
+        # the reason we don't default to `strict=True` is that the transformation could be lossy
+        # so in order to change the behavior (default to True), we need to come up with logic that will check for lossiness
         # https://github.com/pydantic/pydantic-ai/issues/3541
-        self.is_strict_compatible = self.strict is True  # not compatible is strict is False/None
+        self.is_strict_compatible = self.strict is True  # not compatible when strict is False/None
 
         return transform_schema(schema) if self.strict is True else schema
 

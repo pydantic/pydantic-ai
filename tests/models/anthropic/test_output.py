@@ -643,5 +643,5 @@ def test_unsupported_native_output_raises(
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
 
-    with pytest.raises(UserError, match='Model claude-sonnet-4-0 does not support native output.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         agent.run_sync('Tell me about Berlin')

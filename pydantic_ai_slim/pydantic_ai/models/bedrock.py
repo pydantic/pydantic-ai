@@ -156,7 +156,7 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'tool_use': 'tool_call',
 }
 
-_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', '.global')
+_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.')
 """Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
 
 Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
