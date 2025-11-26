@@ -5,8 +5,8 @@ from typing import overload
 
 from httpx import AsyncClient
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
@@ -95,7 +95,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
                 defaults to "auto", which will select the first available provider for the model, the first of the providers available for the model, sorted by the user's order in https://hf.co/settings/inference-providers.
                 If `base_url` is passed, then `provider_name` is not used.
         """
-        api_key = api_key or os.environ.get('HF_TOKEN')
+        api_key = api_key or os.getenv('HF_TOKEN')
 
         if api_key is None:
             raise UserError(

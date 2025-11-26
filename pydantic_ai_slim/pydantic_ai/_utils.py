@@ -4,34 +4,28 @@ import asyncio
 import functools
 import inspect
 import re
-import sys
 import time
 import uuid
-import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
-    TypeAlias,
-    TypeGuard,
     TypeIs,
-    get_args,
-    get_origin,
     is_typeddict,
 )
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan, get_event_loop
+from pydantic_graph._utils import AbstractSpan
 
 from . import exceptions
 
@@ -76,14 +70,31 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
 
     if schema.get('type') == 'object':
         return schema
-    elif schema.get('$ref') is not None:
-        maybe_result = schema.get('$defs', {}).get(schema['$ref'][8:])  # This removes the initial "#/$defs/".
-
-        if "'$ref': '#/$defs/" in str(maybe_result):
-            return schema  # We can't remove the $defs because the schema contains other references
-        return maybe_result
+    elif ref := schema.get('$ref'):
+        prefix = '#/$defs/'
+        # Return the referenced schema unless it contains additional nested references.
+        if (
+            ref.startswith(prefix)
+            and (resolved := schema.get('$defs', {}).get(ref[len(prefix) :]))
+            and resolved.get('type') == 'object'
+            and not _contains_ref(resolved)
+        ):
+            return resolved
+        return schema
     else:
         raise UserError('Schema must be an object')
+
+
+def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
+    """Recursively check if an object contains any $ref keys."""
+    items: Iterable[JsonSchemaValue]
+    if isinstance(obj, dict):
+        if '$ref' in obj:
+            return True
+        items = obj.values()
+    else:
+        items = obj
+    return any(isinstance(item, dict | list) and _contains_ref(item) for item in items)  # pyright: ignore[reportUnknownArgumentType]
 
 
 T = TypeVar('T')
@@ -96,7 +107,7 @@ class Some(Generic[T]):
     value: T
 
 
-Option: TypeAlias = Union[Some[T], None]
+Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
 
 
@@ -136,7 +147,7 @@ async def group_by_temporal(
         aiterable: The async iterable to group.
         soft_max_interval: Maximum interval over which to group items, this should avoid a trickle of items causing
             a group to never be yielded. It's a soft max in the sense that once we're over this time, we yield items
-            as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
+            as soon as `anext(aiter)` returns. If `None`, no grouping/debouncing is performed
 
     Returns:
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
@@ -160,7 +171,7 @@ async def group_by_temporal(
         buffer: list[T] = []
         group_start_time = time.monotonic()
 
-        aiterator = aiterable.__aiter__()
+        aiterator = aiter(aiterable)
         while True:
             if group_start_time is None:
                 # group hasn't started, we just wait for the maximum interval
@@ -171,9 +182,9 @@ async def group_by_temporal(
 
             # if there's no current task, we get the next one
             if task is None:
-                # aiter.__anext__() returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+                # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
                 # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(aiterator.__anext__())  # pyright: ignore[reportArgumentType]
+                task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType]
 
             # we use asyncio.wait to avoid cancelling the coroutine if it's not done
             done, _ = await asyncio.wait((task,), timeout=wait_time)
@@ -221,6 +232,15 @@ def sync_anext(iterator: Iterator[T]) -> T:
         return next(iterator)
     except StopIteration as e:
         raise StopAsyncIteration() from e
+
+
+def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
+    loop = get_event_loop()
+    while True:
+        try:
+            yield loop.run_until_complete(anext(async_iter))
+        except StopAsyncIteration:
+            break
 
 
 def now_utc() -> datetime:
@@ -273,10 +293,10 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, we need to fetch the next item from the underlying iterator.
         if self._source_iter is None:
-            self._source_iter = self._source.__aiter__()
+            self._source_iter = aiter(self._source)
 
         try:
-            self._buffer = await self._source_iter.__anext__()
+            self._buffer = await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             return UNSET
@@ -307,10 +327,10 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, fetch the next item from the source.
         if self._source_iter is None:
-            self._source_iter = self._source.__aiter__()
+            self._source_iter = aiter(self._source)
 
         try:
-            return await self._source_iter.__anext__()
+            return await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             raise
@@ -447,16 +467,26 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*\})', flags=re.DOTALL)
+
+
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
 
-    regex = r'```(?:\w+)?\n(\{.*\})\n```'
-    match = re.search(regex, text, re.DOTALL)
+    match = re.search(_MARKDOWN_FENCES_PATTERN, text)
     if match:
         return match.group(1)
 
     return text
+
+
+def _unwrap_annotated(tp: Any) -> Any:
+    origin = get_origin(tp)
+    while typing_objects.is_annotated(origin):
+        tp = tp.__origin__
+        origin = get_origin(tp)
+    return tp
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
@@ -464,23 +494,18 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
+    tp = _unwrap_annotated(tp)
     origin = get_origin(tp)
     if is_union_origin(origin):
-        return get_args(tp)
+        return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
     else:
         return ()
 
 
-# The `asyncio.Lock` `loop` argument was deprecated in 3.8 and removed in 3.10,
-# but 3.9 still needs it to have the intended behavior.
-
-if sys.version_info < (3, 10):
-
-    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', DeprecationWarning)
-            return asyncio.Lock(loop=get_event_loop())
-else:
-
-    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
-        return asyncio.Lock()
+def get_event_loop():
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:  # pragma: lax no cover
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    return event_loop

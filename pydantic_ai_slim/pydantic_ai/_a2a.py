@@ -10,7 +10,7 @@ from typing import Any, Generic, TypeVar
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
@@ -272,7 +272,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
                 assert_never(part)
         return model_parts
 
-    def _response_parts_to_a2a(self, parts: list[ModelResponsePart]) -> list[Part]:
+    def _response_parts_to_a2a(self, parts: Sequence[ModelResponsePart]) -> list[Part]:
         """Convert pydantic-ai ModelResponsePart objects to A2A Part objects.
 
         This handles the conversion from pydantic-ai's internal response parts to

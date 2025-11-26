@@ -122,7 +122,7 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
 
 Here's an example of a simple graph:
 
-```py {title="graph_example.py" py="3.10"}
+```py {title="graph_example.py"}
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -163,11 +163,11 @@ print(result.output)
 3. The graph is created with a sequence of nodes.
 4. The graph is run synchronously with [`run_sync`][pydantic_graph.graph.Graph.run_sync]. The initial node is `DivisibleBy5(4)`. Because the graph doesn't use external state or deps, we don't pass `state` or `deps`.
 
-_(This example is complete, it can be run "as is" with Python 3.10+)_
+_(This example is complete, it can be run "as is")_
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
 
-```py {title="graph_example_diagram.py" py="3.10" requires="graph_example.py"}
+```py {title="graph_example_diagram.py" requires="graph_example.py"}
 from graph_example import DivisibleBy5, fives_graph
 
 fives_graph.mermaid_code(start_node=DivisibleBy5)
@@ -201,7 +201,7 @@ The "state" concept in `pydantic-graph` provides an optional way to access and m
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
-```python {title="vending_machine.py" py="3.10"}
+```python {title="vending_machine.py"}
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -304,11 +304,11 @@ async def main():
 17. The return type of `CoinsInserted`'s [`run`][pydantic_graph.nodes.BaseNode.run] method is a union, meaning multiple outgoing edges are possible.
 18. Unlike other nodes, `Purchase` can end the run, so the [`RunEndT`][pydantic_graph.nodes.RunEndT] generic parameter must be set. In this case it's `None` since the graph run return type is `None`.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
 
-```py {title="vending_machine_diagram.py" py="3.10" requires="vending_machine.py"}
+```py {title="vending_machine_diagram.py" requires="vending_machine.py"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin)
@@ -352,15 +352,14 @@ stateDiagram-v2
   Feedback --> [*]
 ```
 
-```python {title="genai_email_feedback.py" py="3.10" test="ci_only"}
+```python {title="genai_email_feedback.py"}
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, EmailStr
 
-from pydantic_ai import Agent, format_as_xml
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, ModelMessage, format_as_xml
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
@@ -384,7 +383,7 @@ class State:
 
 
 email_writer_agent = Agent(
-    'google-vertex:gemini-1.5-pro',
+    'google-gla:gemini-2.5-pro',
     output_type=Email,
     system_prompt='Write a welcome email to our tech blog.',
 )
@@ -424,7 +423,7 @@ class EmailOk(BaseModel):
 
 
 feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=EmailRequiresWrite | EmailOk,  # type: ignore
     system_prompt=(
         'Review the email and provide feedback, email must reference the users specific interests.'
@@ -466,7 +465,7 @@ async def main():
     """
 ```
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Iterating Over a Graph
 
@@ -476,7 +475,7 @@ Sometimes you want direct control or insight into each node as the graph execute
 
 Here's an example:
 
-```python {title="count_down.py" noqa="I001" py="3.10"}
+```python {title="count_down.py" noqa="I001"}
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
@@ -524,7 +523,7 @@ Alternatively, you can drive iteration manually with the [`GraphRun.next`][pydan
 
 Below is a contrived example that stops whenever the counter is at 2, ignoring any node runs beyond that:
 
-```python {title="count_down_next.py" noqa="I001" py="3.10" requires="count_down.py"}
+```python {title="count_down_next.py" noqa="I001" requires="count_down.py"}
 from pydantic_graph import End, FullStatePersistence
 from count_down import CountDown, CountDownState, count_down_graph
 
@@ -593,7 +592,7 @@ We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [
 
 As you can see in this code, `run_node` requires no external application state (apart from state persistence) to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
 
-```python {title="count_down_from_persistence.py" noqa="I001" py="3.10" requires="count_down.py"}
+```python {title="count_down_from_persistence.py" noqa="I001" requires="count_down.py"}
 from pathlib import Path
 
 from pydantic_graph import End
@@ -637,7 +636,7 @@ async def run_node(run_id: str) -> bool:  # (3)!
 5. [`graph.run()`][pydantic_graph.graph.Graph.run] will return either a [node][pydantic_graph.nodes.BaseNode] or an [`End`][pydantic_graph.nodes.End] object.
 6. Check if the node is an [`End`][pydantic_graph.nodes.End] object, if it is, the graph run is complete.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### Example: Human in the loop.
 
@@ -648,7 +647,7 @@ In this example, an AI asks the user a question, the user provides an answer, th
 Instead of running the entire graph in a single process invocation, we run the graph by running the process repeatedly, optionally providing an answer to the question as a command line argument.
 
 ??? example "`ai_q_and_a_graph.py` — `question_graph` definition"
-```python {title="ai_q_and_a_graph.py" noqa="I001" py="3.10"}
+```python {title="ai_q_and_a_graph.py" noqa="I001"}
 from __future__ import annotations as _annotations
 
 from typing import Annotated
@@ -662,9 +661,9 @@ from pydantic_graph import (
     GraphRunContext,
 )
 from pydantic_ai import Agent, format_as_xml
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import ModelMessage
 
-ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5', output_type=str, instrument=True)
 
 
 @dataclass
@@ -676,7 +675,7 @@ class QuestionState:
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
-    """Generate question using GPT-4o."""
+    """Generate question using GPT-5."""
     docstring_notes = True
     async def run(
         self, ctx: GraphRunContext[QuestionState]
@@ -707,7 +706,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=EvaluationResult,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )
@@ -748,15 +747,15 @@ question_graph = Graph(
 )
 ```
 
-_(This example is complete, it can be run "as is" with Python 3.10+)_
+_(This example is complete, it can be run "as is")_
 
-```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10" requires="ai_q_and_a_graph.py"}
+```python {title="ai_q_and_a_run.py" noqa="I001" requires="ai_q_and_a_graph.py"}
 import sys
 from pathlib import Path
 
 from pydantic_graph import End
 from pydantic_graph.persistence.file import FileStatePersistence
-from pydantic_ai.messages import ModelMessage  # noqa: F401
+from pydantic_ai import ModelMessage  # noqa: F401
 
 from ai_q_and_a_graph import Ask, question_graph, Evaluate, QuestionState, Answer
 
@@ -799,7 +798,7 @@ async def main():
 8. To demonstrate the state persistence, we call [`load_all`][pydantic_graph.persistence.BaseStatePersistence.load_all] to get all the snapshots from the persistence instance. This will return a list of [`Snapshot`][pydantic_graph.persistence.Snapshot] objects.
 9. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 For a complete example of this graph, see the [question graph example](examples/question-graph.md).
 
@@ -809,7 +808,7 @@ As with Pydantic AI, `pydantic-graph` supports dependency injection via a generi
 
 As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
 
-```py {title="deps_example.py" py="3.10" test="skip" hl_lines="4 10-12 35-37 48-49"}
+```py {title="deps_example.py" test="skip" hl_lines="4 10-12 35-37 48-49"}
 from __future__ import annotations
 
 import asyncio
@@ -877,7 +876,7 @@ async def main():
     """
 ```
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Mermaid Diagrams
 
@@ -907,7 +906,7 @@ from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
 
-ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5', output_type=str, instrument=True)
 
 
 @dataclass
@@ -919,7 +918,7 @@ class QuestionState:
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
-    """Generate question using GPT-4o."""
+    """Generate question using GPT-5."""
     docstring_notes = True
     async def run(
         self, ctx: GraphRunContext[QuestionState]
@@ -950,7 +949,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=EvaluationResult,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )
@@ -1025,7 +1024,7 @@ You can specify the direction of the state diagram using one of the following va
 
 Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB):
 
-```py {title="vending_machine_diagram.py" py="3.10" requires="vending_machine.py"}
+```py {title="vending_machine_diagram.py" requires="vending_machine.py"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin, direction='LR')

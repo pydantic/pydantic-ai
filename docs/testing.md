@@ -37,7 +37,7 @@ from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
 
 weather_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=WeatherService,
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
@@ -86,9 +86,9 @@ import pytest
 
 from dirty_equals import IsNow, IsStr
 
-from pydantic_ai import models, capture_run_messages
+from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -97,7 +97,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
     ModelRequest,
 )
-from pydantic_ai.usage import RequestUsage
 
 from fake_database import DatabaseConn
 from weather_app import run_weather_forecast, weather_agent
@@ -128,7 +127,8 @@ async def test_forecast():
                     content='What will the weather be like in London on 2024-11-28?',
                     timestamp=IsNow(tz=timezone.utc),  # (7)!
                 ),
-            ]
+            ],
+            run_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -147,6 +147,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
         ModelRequest(
             parts=[
@@ -157,6 +158,7 @@ async def test_forecast():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            run_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -170,6 +172,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
     ]
 ```
@@ -197,7 +200,7 @@ import re
 import pytest
 
 from pydantic_ai import models
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelMessage,
     ModelResponse,
     TextPart,
@@ -252,9 +255,10 @@ Here's an example of a fixture that overrides the model with `TestModel`:
 
 ```python {title="test_agent.py" requires="weather_app.py"}
 import pytest
-from weather_app import weather_agent
 
 from pydantic_ai.models.test import TestModel
+
+from weather_app import weather_agent
 
 
 @pytest.fixture

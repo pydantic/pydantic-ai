@@ -7,7 +7,7 @@ Run with:
 
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 
@@ -42,16 +42,19 @@ class SupportDependencies:
 
 
 class SupportOutput(BaseModel):
-    support_advice: str = Field(description='Advice returned to the customer')
-    block_card: bool = Field(description='Whether to block their card or not')
-    risk: int = Field(description='Risk level of query', ge=0, le=10)
+    support_advice: str
+    """Advice returned to the customer"""
+    block_card: bool
+    """Whether to block their card or not"""
+    risk: int
+    """Risk level of query"""
 
 
 support_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
-    system_prompt=(
+    instructions=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query. '
         "Reply using the customer's name."
@@ -59,7 +62,7 @@ support_agent = Agent(
 )
 
 
-@support_agent.system_prompt
+@support_agent.instructions
 async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
     customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
     return f"The customer's name is {customer_name!r}"

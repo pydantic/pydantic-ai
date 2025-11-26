@@ -5,38 +5,55 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 from unittest.mock import Mock
 
+import aiohttp
 import pytest
-from dirty_equals import IsListOrTuple
+from huggingface_hub import (
+    AsyncInferenceClient,
+    ChatCompletionInputMessage,
+    ChatCompletionOutput,
+    ChatCompletionOutputComplete,
+    ChatCompletionOutputFunctionDefinition,
+    ChatCompletionOutputMessage,
+    ChatCompletionOutputToolCall,
+    ChatCompletionOutputUsage,
+    ChatCompletionStreamOutput,
+    ChatCompletionStreamOutputChoice,
+    ChatCompletionStreamOutputDelta,
+    ChatCompletionStreamOutputDeltaToolCall,
+    ChatCompletionStreamOutputFunction,
+    ChatCompletionStreamOutputUsage,
+)
+from huggingface_hub.errors import HfHubHTTPError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
+    CachePoint,
     DocumentUrl,
-    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
+    ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models.huggingface import HuggingFaceModel
+from pydantic_ai.providers.huggingface import HuggingFaceProvider
 from pydantic_ai.result import RunUsage
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
@@ -45,30 +62,10 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    import aiohttp
-    from huggingface_hub import (
-        AsyncInferenceClient,
-        ChatCompletionInputMessage,
-        ChatCompletionOutput,
-        ChatCompletionOutputComplete,
-        ChatCompletionOutputFunctionDefinition,
-        ChatCompletionOutputMessage,
-        ChatCompletionOutputToolCall,
-        ChatCompletionOutputUsage,
-        ChatCompletionStreamOutput,
-        ChatCompletionStreamOutputChoice,
-        ChatCompletionStreamOutputDelta,
-        ChatCompletionStreamOutputDeltaToolCall,
-        ChatCompletionStreamOutputFunction,
-        ChatCompletionStreamOutputUsage,
-    )
-    from huggingface_hub.errors import HfHubHTTPError
+    pass
 
-    from pydantic_ai.models.huggingface import HuggingFaceModel
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
-
-    MockChatCompletion = Union[ChatCompletionOutput, Exception]
-    MockStreamEvent = Union[ChatCompletionStreamOutput, Exception]
+MockChatCompletion = ChatCompletionOutput | Exception
+MockStreamEvent = ChatCompletionStreamOutput | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),
@@ -171,7 +168,10 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
             usage=RequestUsage(input_tokens=30, output_tokens=29),
             model_name='Qwen/Qwen2.5-72B-Instruct-fast',
             timestamp=datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
-            provider_request_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
+            provider_name='huggingface',
+            provider_details={'finish_reason': 'stop'},
+            provider_response_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
+            run_id=IsStr(),
         )
     )
 
@@ -238,7 +238,10 @@ async def test_request_structured_response(
             ],
             model_name='hf-model',
             timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            provider_request_id='123',
+            provider_name='huggingface',
+            provider_details={'finish_reason': 'stop'},
+            provider_response_id='123',
+            run_id=IsStr(),
         )
     )
 
@@ -357,7 +360,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -370,7 +374,10 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_request_id='123',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -380,7 +387,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -393,7 +401,10 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_request_id='123',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -403,13 +414,17 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_request_id='123',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -550,14 +565,8 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
@@ -579,30 +588,10 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
-
-
-async def test_no_content(allow_model_requests: None):
-    stream = [
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-    ]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream(''):
-            pass
 
 
 async def test_no_delta(allow_model_requests: None):
@@ -644,19 +633,24 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         content=[
                             'hello',
                             ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                                identifier='bd38f5',
                             ),
                         ],
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello! How can I assist you with this image of a potato?')],
                 usage=RequestUsage(input_tokens=269, output_tokens=15),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
-                provider_request_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -716,13 +710,17 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Paris')],
                 usage=RequestUsage(input_tokens=26, output_tokens=2),
                 model_name='Qwen/Qwen2.5-72B-Instruct-fast',
                 timestamp=IsDatetime(),
-                provider_request_id='chatcmpl-b3936940372c481b8d886e596dc75524',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-b3936940372c481b8d886e596dc75524',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -752,14 +750,13 @@ async def test_model_client_response_error(allow_model_requests: None) -> None:
     request_info.headers = {}
     request_info.real_url = 'http://test.com'
     error = aiohttp.ClientResponseError(request_info, history=(), status=400, message='Bad Request')
-    error.response_error_payload = {'error': 'test error'}  # type: ignore
 
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('hello')
-    assert str(exc_info.value) == snapshot("status_code: 400, model_name: not_a_model, body: {'error': 'test error'}")
+    assert str(exc_info.value) == snapshot('status_code: 400, model_name: not_a_model, body: Bad Request')
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
@@ -808,12 +805,18 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     assert result.output == 'final-response'
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_request_id='123',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -823,13 +826,17 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_request_id='123',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -854,9 +861,9 @@ async def test_thinking_part_in_history(allow_model_requests: None):
         ModelRequest(parts=[UserPromptPart(content='request')]),
         ModelResponse(
             parts=[
-                TextPart(content='thought 1'),
-                ThinkingPart(content='this should be ignored'),
-                TextPart(content='thought 2'),
+                TextPart(content='text 1'),
+                ThinkingPart(content='let me do some thinking'),
+                TextPart(content='text 2'),
             ],
             model_name='hf-model',
             timestamp=datetime.now(timezone.utc),
@@ -870,55 +877,21 @@ async def test_thinking_part_in_history(allow_model_requests: None):
     assert [{k: v for k, v in asdict(m).items() if v is not None} for m in sent_messages] == snapshot(
         [
             {'content': 'request', 'role': 'user'},
-            {'content': 'thought 1\n\nthought 2', 'role': 'assistant'},
+            {
+                'content': """\
+text 1
+
+<think>
+let me do some thinking
+</think>
+
+text 2\
+""",
+                'role': 'assistant',
+            },
             {'content': 'another request', 'role': 'user'},
         ]
     )
-
-
-@pytest.mark.parametrize('strict', [True, False, None])
-async def test_tool_strict_mode(allow_model_requests: None, strict: bool | None):
-    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
-        {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
-                {
-                    'name': 'my_tool',
-                    'arguments': '{"x": 42}',
-                }
-            ),
-            'id': '1',
-            'type': 'function',
-        }
-    )
-    responses = [
-        completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
-                {
-                    'content': None,
-                    'role': 'assistant',
-                    'tool_calls': [tool_call],
-                }
-            )
-        ),
-        completion_message(ChatCompletionOutputMessage(content='final response', role='assistant')),  # type: ignore
-    ]
-    mock_client = MockHuggingFace.create_mock(responses)
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(model)
-
-    @agent.tool_plain(strict=strict)
-    def my_tool(x: int) -> int:
-        return x
-
-    result = await agent.run('hello')
-    assert result.output == 'final response'
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    tools = kwargs['tools']
-    if strict is not None:
-        assert tools[0]['function']['strict'] is strict
-    else:
-        assert 'strict' not in tools[0]['function']
 
 
 @pytest.mark.parametrize(
@@ -950,7 +923,10 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     IsInstance(ThinkingPart),
@@ -959,7 +935,10 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=RequestUsage(input_tokens=15, output_tokens=1090),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
-                provider_request_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -971,26 +950,16 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
         ),
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=15, output_tokens=1090),
-                model_name='Qwen/Qwen3-235B-A22B',
-                timestamp=IsDatetime(),
-                provider_request_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1000,7 +969,10 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=RequestUsage(input_tokens=691, output_tokens=1860),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
-                provider_request_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1013,35 +985,44 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
     )
     agent = Agent(m)
 
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
+    result: AgentRunResult | None = None
+    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
 
-    assert event_parts == snapshot(
-        IsListOrTuple(
-            positions={
-                0: PartStartEvent(index=0, part=ThinkingPart(content='')),
-                1: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\n')),
-                2: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
-                3: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
-                4: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-                5: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user')),
-                6: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-                7: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' asking')),
-                413: PartStartEvent(index=1, part=TextPart(content='Cross')),
-                414: FinalResultEvent(tool_name=None, tool_call_id=None),
-                415: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ing')),
-                416: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the')),
-                417: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street')),
-                418: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safely')),
-                419: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' requires')),
-                420: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' attent')),
-                421: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iveness')),
-            },
-            length=1062,
-        )
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr()),
+                    TextPart(content=IsStr()),
+                ],
+                model_name='Qwen/Qwen3-235B-A22B',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-357f347a3f5d4897b36a128fb4e4cf7b',
+                run_id=IsStr(),
+            ),
+        ]
     )
+
+
+async def test_cache_point_filtering():
+    """Test that CachePoint is filtered out in HuggingFace message mapping."""
+    # Test the static method directly
+    msg = await HuggingFaceModel._map_user_prompt(UserPromptPart(content=['text', CachePoint()]))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]

@@ -1,18 +1,27 @@
- import { marked } from 'marked'
+import { instrument } from '@pydantic/logfire-cf-workers'
+import { marked } from 'marked'
 
-export default {
+const handler = {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === '/changelog.html') {
       const changelog = await getChangelog(env.KV, env.GIT_COMMIT_SHA)
       return new Response(changelog, { headers: {'content-type': 'text/html'} })
     }
+    const maybeTextResponse = await maybeGetTextResponse(request, env)
+    if (maybeTextResponse) {
+      return maybeTextResponse
+    }
     const r = await env.ASSETS.fetch(request)
-    if (r.status == 404) {
+    if (r.status === 404) {
       const redirectPath = redirect(url.pathname)
       if (redirectPath) {
-        url.pathname = redirectPath
-        return Response.redirect(url.toString(), 301)
+        if (redirectPath.startsWith('http')) {
+          return Response.redirect(redirectPath, 301)
+        } else {
+          url.pathname = redirectPath
+          return Response.redirect(url.toString(), 301)
+        }
       }
       url.pathname = '/404.html'
       const r = await env.ASSETS.fetch(url)
@@ -22,14 +31,35 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
+export default instrument(handler, {
+	service: {
+		name: 'pai-docs',
+	},
+	baseUrl: 'https://api.logfire.dev',
+})
+
 const redirect_lookup: Record<string, string> = {
   '/common_tools': '/common-tools/',
   '/testing-evals': '/testing/',
   '/result': '/output/',
+  '/mcp/run-python': 'https://github.com/pydantic/mcp-run-python',
+  '/temporal': '/durable_execution/temporal/',
+  '/api': '/api/agent/',
+  '/examples/question-graph': '/graph/',
+  '/api/models/vertexai': '/models/google/',
+  '/models/gemini': '/models/google/',
+  '/api/models/gemini': '/api/models/google/',
+  '/contributing': '/contributing/',
+  '/api/format_as_xml': '/api/format_prompt/',
+  '/api/models/ollama': '/models/openai/#ollama',
+  '/examples': 'examples/setup/',
+  '/mcp': '/mcp/overview/',
+  '/models': '/models/overview/',
+  '/ag-ui': '/ui/ag-ui/'
 }
 
 function redirect(pathname: string): string | null {
-  return redirect_lookup[pathname.replace(/\/+$/, '')] ?? null
+  return redirect_lookup[pathname.replace(/[/:]+$/, '')] ?? null
 }
 
 async function getChangelog(kv: KVNamespace, commitSha: string): Promise<string> {
@@ -44,8 +74,8 @@ async function getChangelog(kv: KVNamespace, commitSha: string): Promise<string>
   }
   let url: string | undefined = 'https://api.github.com/repos/pydantic/pydantic-ai/releases'
   const releases: Release[] = []
-  while (typeof url == 'string') {
-    const response = await fetch(url, { headers })
+  while (typeof url === 'string') {
+    const response: Response = await fetch(url, { headers })
     if (!response.ok) {
       const text = await response.text()
       throw new Error(`Failed to fetch changelog: ${response.status} ${response.statusText} ${text}`)
@@ -77,7 +107,7 @@ function prepRelease(release: Release): string {
   const body = release.body
     .replace(/(#+)/g, (m) => `##${m}`)
     .replace(/https:\/\/github.com\/pydantic\/pydantic-ai\/pull\/(\d+)/g, (url, id) => `[#${id}](${url})`)
-    .replace(/(\s)@([\w\-]+)/g, (_, s, u) => `${s}[@${u}](https://github.com/${u})`)
+    .replace(/(\s)@([\w-]+)/g, (_, s, u) => `${s}[@${u}](https://github.com/${u})`)
     .replace(/\*\*Full Changelog\*\*: (\S+)/, (_, url) => `[${githubIcon} Compare diff](${url}).`)
   return `
 ### ${release.name}
@@ -86,4 +116,39 @@ ${body}
 
 [${githubIcon} View ${release.tag_name} release](${release.html_url}).
 `
+}
+
+/** Logic to return text (the markdown document where available) when the Accept header prefers plain text over html
+ * See https://x.com/threepointone/status/1971988718052651300
+ */
+async function maybeGetTextResponse(request: Request, env: Env): Promise<Response | undefined> {
+  if (!preferText(request)) {
+    return
+  }
+  const url = new URL(request.url)
+  url.pathname = `${url.pathname.replace(/[/:]+$/, '')}/index.md`
+  const r = await env.ASSETS.fetch(url)
+  if (r.status === 200) {
+    return new Response(r.body, {
+      headers: {
+        'content-type': 'text/plain',
+      },
+    })
+  }
+}
+
+function preferText(request: Request): boolean {
+  const accept = request.headers.get('accept')
+  if (!accept || request.method !== 'GET') {
+    return false
+  }
+  for (const option of accept.split(',')) {
+    const lowerOption = option.toLowerCase()
+    if (lowerOption.includes('html')) {
+      return false
+    } else if (lowerOption.includes('text/plain')) {
+      return true
+    }
+  }
+  return false
 }

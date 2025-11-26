@@ -3,8 +3,9 @@ from __future__ import annotations as _annotations
 import json
 
 from httpx import AsyncClient
+from pydantic import BaseModel
 
-from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai import ToolCallPart, ToolReturnPart
 from pydantic_ai_examples.weather_agent import Deps, weather_agent
 
 try:
@@ -48,9 +49,11 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
                             gr_message.get('metadata', {}).get('id', '')
                             == call.tool_call_id
                         ):
-                            gr_message['content'] += (
-                                f'\nOutput: {json.dumps(call.content)}'
-                            )
+                            if isinstance(call.content, BaseModel):
+                                json_content = call.content.model_dump_json()
+                            else:
+                                json_content = json.dumps(call.content)
+                            gr_message['content'] += f'\nOutput: {json_content}'
                 yield gr.skip(), chatbot, gr.skip()
         chatbot.append({'role': 'assistant', 'content': ''})
         async for message in result.stream_text():

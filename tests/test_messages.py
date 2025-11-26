@@ -1,8 +1,34 @@
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
+from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
-from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, ThinkingPartDelta, VideoUrl
+from pydantic_ai import (
+    AudioUrl,
+    BinaryContent,
+    BinaryImage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    DocumentUrl,
+    FilePart,
+    ImageUrl,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    RequestUsage,
+    TextPart,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    UserPromptPart,
+    VideoUrl,
+)
+
+from .conftest import IsDatetime, IsNow, IsStr
 
 
 def test_image_url():
@@ -122,6 +148,7 @@ def test_binary_content_video(media_type: str, format: str):
         ('application/pdf', 'pdf'),
         ('text/plain', 'txt'),
         ('text/csv', 'csv'),
+        ('application/msword', 'doc'),
         ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx'),
         ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xlsx'),
         ('text/html', 'html'),
@@ -184,6 +211,7 @@ _url_formats = [
     pytest.param(DocumentUrl('foobar.pdf'), 'application/pdf', 'pdf', id='pdf'),
     pytest.param(DocumentUrl('foobar.txt'), 'text/plain', 'txt', id='txt'),
     pytest.param(DocumentUrl('foobar.csv'), 'text/csv', 'csv', id='csv'),
+    pytest.param(DocumentUrl('foobar.doc'), 'application/msword', 'doc', id='doc'),
     pytest.param(
         DocumentUrl('foobar.docx'),
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -307,12 +335,23 @@ def test_video_url_invalid():
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
-    original_delta = ThinkingPartDelta(content_delta='original', signature_delta='sig1')
+    original_delta = ThinkingPartDelta(
+        content_delta='original',
+        signature_delta='sig1',
+        provider_name='original_provider',
+        provider_details={'foo': 'bar', 'baz': 'qux'},
+    )
 
     # Test applying delta with no content or signature - should raise error
     empty_delta = ThinkingPartDelta()
     with pytest.raises(ValueError, match='Cannot apply ThinkingPartDelta with no content or signature'):
         empty_delta.apply(original_delta)
+
+    # Test applying delta with content_delta
+    content_delta = ThinkingPartDelta(content_delta=' new_content')
+    result = content_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.content_delta == 'original new_content'
 
     # Test applying delta with signature_delta
     sig_delta = ThinkingPartDelta(signature_delta='new_sig')
@@ -320,8 +359,303 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert isinstance(result, ThinkingPartDelta)
     assert result.signature_delta == 'new_sig'
 
-    # Test applying delta with content_delta
-    content_delta = ThinkingPartDelta(content_delta='new_content')
+    # Test applying delta with provider_name
+    content_delta = ThinkingPartDelta(content_delta='', provider_name='new_provider')
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
-    assert result.content_delta == 'new_content'
+    assert result.provider_name == 'new_provider'
+
+    # Test applying delta with provider_details
+    provider_details_delta = ThinkingPartDelta(
+        content_delta='', provider_details={'finish_reason': 'STOP', 'foo': 'qux'}
+    )
+    result = provider_details_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.provider_details == {'foo': 'qux', 'baz': 'qux', 'finish_reason': 'STOP'}
+
+
+def test_pre_usage_refactor_messages_deserializable():
+    # https://github.com/pydantic/pydantic-ai/pull/2378 changed the `ModelResponse` fields,
+    # but we as tell people to store those in the DB we want to be very careful not to break deserialization.
+    data = [
+        {
+            'parts': [
+                {
+                    'content': 'What is the capital of Mexico?',
+                    'timestamp': datetime.now(tz=timezone.utc),
+                    'part_kind': 'user-prompt',
+                }
+            ],
+            'instructions': None,
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Mexico City.', 'part_kind': 'text'}],
+            'usage': {
+                'requests': 1,
+                'request_tokens': 13,
+                'response_tokens': 76,
+                'total_tokens': 89,
+                'details': None,
+            },
+            'model_name': 'gpt-5-2025-08-07',
+            'timestamp': datetime.now(tz=timezone.utc),
+            'kind': 'response',
+            'vendor_details': {
+                'finish_reason': 'STOP',
+            },
+            'vendor_id': 'chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
+        },
+    ]
+    messages = ModelMessagesTypeAdapter.validate_python(data)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Mexico City.')],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=76,
+                    details={},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
+            ),
+        ]
+    )
+
+
+def test_file_part_has_content():
+    filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
+    assert not filepart.has_content()
+
+    filepart.content.data = b'not empty'
+    assert filepart.has_content()
+
+
+def test_file_part_serialization_roundtrip():
+    # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg'))])
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert serialized == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': {
+                            'data': 'ZmFrZQ==',
+                            'media_type': 'image/jpeg',
+                            'identifier': 'c053ec',
+                            'vendor_metadata': None,
+                            'kind': 'binary',
+                        },
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'file',
+                        'provider_details': None,
+                    }
+                ],
+                'usage': {
+                    'input_tokens': 0,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
+                },
+                'model_name': None,
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': None,
+                'provider_details': None,
+                'provider_response_id': None,
+                'finish_reason': None,
+                'run_id': None,
+                'metadata': None,
+            }
+        ]
+    )
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
+def test_model_messages_type_adapter_preserves_run_id():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            run_id='run-123',
+            metadata={'key': 'value'},
+        ),
+        ModelResponse(parts=[TextPart(content='Hello!')], run_id='run-123', metadata={'key': 'value'}),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
+
+
+def test_model_response_convenience_methods():
+    response = ModelResponse(parts=[])
+    assert response.text == snapshot(None)
+    assert response.thinking == snapshot(None)
+    assert response.files == snapshot([])
+    assert response.images == snapshot([])
+    assert response.tool_calls == snapshot([])
+    assert response.builtin_tool_calls == snapshot([])
+
+    response = ModelResponse(
+        parts=[
+            ThinkingPart(content="Let's generate an image"),
+            ThinkingPart(content="And then, call the 'hello_world' tool"),
+            TextPart(content="I'm going to"),
+            TextPart(content=' generate an image'),
+            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg')),
+            BuiltinToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
+            TextPart(content="I'm going to call"),
+            TextPart(content=" the 'hello_world' tool"),
+            ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123'),
+        ]
+    )
+    assert response.text == snapshot("""\
+I'm going to generate an image
+
+I'm going to call the 'hello_world' tool\
+""")
+    assert response.thinking == snapshot("""\
+Let's generate an image
+
+And then, call the 'hello_world' tool\
+""")
+    assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
+    assert response.builtin_tool_calls == snapshot(
+        [
+            (
+                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+                BuiltinToolReturnPart(
+                    tool_name='image_generation',
+                    content={},
+                    tool_call_id='123',
+                    timestamp=IsDatetime(),
+                ),
+            )
+        ]
+    )
+
+
+def test_image_url_validation_with_optional_identifier():
+    image_url_ta = TypeAdapter(ImageUrl)
+    image = image_url_ta.validate_python({'url': 'https://example.com/image.jpg'})
+    assert image.url == snapshot('https://example.com/image.jpg')
+    assert image.identifier == snapshot('39cfc4')
+    assert image.media_type == snapshot('image/jpeg')
+    assert image_url_ta.dump_python(image) == snapshot(
+        {
+            'url': 'https://example.com/image.jpg',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/jpeg',
+            'identifier': '39cfc4',
+        }
+    )
+
+    image = image_url_ta.validate_python(
+        {'url': 'https://example.com/image.jpg', 'identifier': 'foo', 'media_type': 'image/png'}
+    )
+    assert image.url == snapshot('https://example.com/image.jpg')
+    assert image.identifier == snapshot('foo')
+    assert image.media_type == snapshot('image/png')
+    assert image_url_ta.dump_python(image) == snapshot(
+        {
+            'url': 'https://example.com/image.jpg',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/png',
+            'identifier': 'foo',
+        }
+    )
+
+
+def test_binary_content_validation_with_optional_identifier():
+    binary_content_ta = TypeAdapter(BinaryContent)
+    binary_content = binary_content_ta.validate_python({'data': b'fake', 'media_type': 'image/jpeg'})
+    assert binary_content.data == b'fake'
+    assert binary_content.identifier == snapshot('c053ec')
+    assert binary_content.media_type == snapshot('image/jpeg')
+    assert binary_content_ta.dump_python(binary_content) == snapshot(
+        {
+            'data': b'fake',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'media_type': 'image/jpeg',
+            'identifier': 'c053ec',
+        }
+    )
+
+    binary_content = binary_content_ta.validate_python(
+        {'data': b'fake', 'identifier': 'foo', 'media_type': 'image/png'}
+    )
+    assert binary_content.data == b'fake'
+    assert binary_content.identifier == snapshot('foo')
+    assert binary_content.media_type == snapshot('image/png')
+    assert binary_content_ta.dump_python(binary_content) == snapshot(
+        {
+            'data': b'fake',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'media_type': 'image/png',
+            'identifier': 'foo',
+        }
+    )
+
+
+def test_binary_content_from_path(tmp_path: Path):
+    # test normal file
+    test_xml_file = tmp_path / 'test.xml'
+    test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_xml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
+
+    # test non-existent file
+    non_existent_file = tmp_path / 'non-existent.txt'
+    with pytest.raises(FileNotFoundError, match='File not found:'):
+        BinaryContent.from_path(non_existent_file)
+
+    # test file with unknown media type
+    test_unknown_file = tmp_path / 'test.unknownext'
+    test_unknown_file.write_text('some content', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_unknown_file)
+    assert binary_content == snapshot(BinaryContent(data=b'some content', media_type='application/octet-stream'))
+
+    # test string path
+    test_txt_file = tmp_path / 'test.txt'
+    test_txt_file.write_text('just some text', encoding='utf-8')
+    string_path = test_txt_file.as_posix()
+    binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
+    assert binary_content == snapshot(BinaryContent(data=b'just some text', media_type='text/plain'))
+
+    # test image file
+    test_jpg_file = tmp_path / 'test.jpg'
+    test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
+    binary_content = BinaryContent.from_path(test_jpg_file)
+    assert binary_content == snapshot(
+        BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
+    )

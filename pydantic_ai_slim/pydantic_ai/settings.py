@@ -24,6 +24,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * MCP Sampling
+    * Outlines (all providers)
     """
 
     temperature: float
@@ -43,6 +44,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     """
 
     top_p: float
@@ -61,6 +63,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     """
 
     timeout: float | Timeout
@@ -94,6 +97,8 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Mistral
+    * Gemini
+    * Outlines (LlamaCpp, VLLMOffline)
     """
 
     presence_penalty: float
@@ -106,6 +111,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
+    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     """
 
     frequency_penalty: float
@@ -118,6 +124,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
+    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     """
 
     logit_bias: dict[str, int]
@@ -127,6 +134,7 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Groq
+    * Outlines (Transformers, LlamaCpp, VLLMOffline)
     """
 
     stop_sequences: list[str]
@@ -161,6 +169,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
+    * Outlines (all providers)
     """
 
 

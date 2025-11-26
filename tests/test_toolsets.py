@@ -10,20 +10,23 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import Self
 
+from pydantic_ai import (
+    AbstractToolset,
+    CombinedToolset,
+    FilteredToolset,
+    FunctionToolset,
+    PrefixedToolset,
+    PreparedToolset,
+    ToolCallPart,
+    ToolsetTool,
+    WrapperToolset,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.filtered import FilteredToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
-from pydantic_ai.toolsets.prepared import PreparedToolset
-from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -128,6 +131,29 @@ async def test_function_toolset():
         ]
     )
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
+
+
+async def test_function_toolset_with_defaults():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Missing parameter descriptions for'),
+    ):
+
+        @defaults_toolset.tool
+        def add(a: int, b: int) -> int:
+            """Add two numbers"""
+            return a + b  # pragma: no cover
+
+
+async def test_function_toolset_with_defaults_overridden():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    @defaults_toolset.tool(require_parameter_descriptions=False)
+    def subtract(a: int, b: int) -> int:
+        """Subtract two numbers"""
+        return a - b  # pragma: no cover
 
 
 async def test_prepared_toolset_user_error_add_new_tools():
@@ -651,6 +677,30 @@ async def test_tool_manager_multiple_failed_tools():
     assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
+
+
+async def test_tool_manager_sequential_tool_call():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool(sequential=True)
+    def tool_a(x: int) -> int: ...  # pragma: no cover
+
+    @toolset.tool(sequential=False)
+    def tool_b(x: int) -> int: ...  # pragma: no cover
+
+    tool_manager = ToolManager[None](toolset)
+
+    prepared_tool_manager = await tool_manager.for_run_step(build_run_context(None))
+
+    assert prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_a', args={'x': 1})])
+    assert not prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_b', args={'x': 1})])
+
+    assert prepared_tool_manager.should_call_sequentially(
+        [ToolCallPart(tool_name='tool_a', args={'x': 1}), ToolCallPart(tool_name='tool_b', args={'x': 1})]
+    )
+    assert prepared_tool_manager.should_call_sequentially(
+        [ToolCallPart(tool_name='tool_b', args={'x': 1}), ToolCallPart(tool_name='tool_a', args={'x': 1})]
+    )
 
 
 async def test_visit_and_replace():

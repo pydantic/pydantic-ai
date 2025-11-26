@@ -11,7 +11,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -63,7 +63,7 @@ def test_moonshotai_provider_with_cached_http_client() -> None:
 
 def test_moonshotai_model_profile():
     provider = MoonshotAIProvider(api_key='api-key')
-    model = OpenAIModel('kimi-k2-0711-preview', provider=provider)
+    model = OpenAIChatModel('kimi-k2-0711-preview', provider=provider)
     assert isinstance(model.profile, OpenAIModelProfile)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
     assert model.profile.openai_supports_tool_choice_required is False

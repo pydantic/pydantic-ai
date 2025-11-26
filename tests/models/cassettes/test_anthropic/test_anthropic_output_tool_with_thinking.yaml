@@ -1,0 +1,79 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '475'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is 3 + 3?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      system: |2
+
+        Always respond with a JSON object that's compatible with this schema:
+
+        {"properties": {"response": {"type": "integer"}}, "required": ["response"], "type": "object", "title": "int"}
+
+        Don't include any text or Markdown fencing before or after.
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1150'
+      content-type:
+      - application/json
+      retry-after:
+      - '54'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EuYCCkYICRgCKkBKb+DTJGUMVOQahj61RknYW0QUDawJfq0T0GPDVPY12LCBbS7YPklMKo29mW3gdTAfPBWgYGmOj51p1jkFst2/Egw0xpDI3vnsrcqx484aDB8G93CLqlAq112quyIwq1/wOAOxPiIRklQ/i2iN/UzmWwPrGHmSS+TAq7qh2VQdi32TUk2zVXlOmTJdOSquKs0BbVTmLPWPc7szqedimy5uTbErLKLALr6DH1RRXuvGeRNElsnJofVsDu48aqeZg36g3Pi9Hboj1oE/TpyclCbv9/CWrixeQ/L/GSggr3FxLJvDgpdtppZfRxWajS6DjTH0AOU2aEu1gvxGtrcIa8htRmo5ZwAxISkaiOAm1lY5pSMl31gRFwby3n/2Y32b3UbM4SSlidDCgOTrDtbJSuwygduhfu7OdPg/I737G+sLcB0RUq4rqnPQQ+T+NYuDHPOz5xyGooXi7UNygIrO2BgB
+        thinking: |-
+          The user is asking me to calculate 3 + 3, which equals 6. They want me to respond with a JSON object that has a "response" field with an integer value. So I need to return:
+
+          {"response": 6}
+        type: thinking
+      - text: '{"response": 6}'
+        type: text
+      id: msg_013vH3ViFyo8f85fA4HJuF8A
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 106
+        output_tokens: 71
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

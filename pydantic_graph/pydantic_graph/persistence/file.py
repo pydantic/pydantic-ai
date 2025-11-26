@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -9,6 +8,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import anyio
 import pydantic
 
 from .. import _utils as _graph_utils, exceptions
@@ -155,24 +155,23 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         """
         lock_file = self.json_file.parent / f'{self.json_file.name}.pydantic-graph-persistence-lock'
         lock_id = secrets.token_urlsafe().encode()
-        await asyncio.wait_for(_get_lock(lock_file, lock_id), timeout=timeout)
+
+        with anyio.fail_after(timeout):
+            while not await _file_append_check(lock_file, lock_id):
+                await anyio.sleep(0.01)
+
         try:
             yield
         finally:
             await _graph_utils.run_in_executor(lock_file.unlink, missing_ok=True)
 
 
-async def _get_lock(lock_file: Path, lock_id: bytes):
-    # TODO replace with inline code and `asyncio.timeout` when we drop 3.9
-    while not await _graph_utils.run_in_executor(_file_append_check, lock_file, lock_id):
-        await asyncio.sleep(0.01)
-
-
-def _file_append_check(file: Path, content: bytes) -> bool:
-    if file.exists():
+async def _file_append_check(file: Path, content: bytes) -> bool:
+    path = anyio.Path(file)
+    if await path.exists():
         return False
 
-    with file.open(mode='ab') as f:
-        f.write(content + b'\n')
+    async with await anyio.open_file(path, mode='ab') as f:
+        await f.write(content + b'\n')
 
-    return file.read_bytes().startswith(content)
+    return (await path.read_bytes()).startswith(content)

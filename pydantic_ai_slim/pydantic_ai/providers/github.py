@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -65,7 +65,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
             model_name, *_ = model_name.split(':', 1)  # drop tags
             profile = provider_to_profile[provider](model_name)
 
-        # As GitHubProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As GitHubProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
@@ -76,7 +76,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -86,7 +86,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new GitHub Models provider.
 

@@ -8,18 +8,13 @@
 .pre-commit: ## Check that pre-commit is installed
 	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
 
-.PHONY: .deno
-.deno: ## Check that deno is installed
-	@deno --version > /dev/null 2>&1 || (printf "\033[0;31m✖ Error: deno is not installed, but is needed for mcp-run-python\033[0m\n    Please install deno: https://docs.deno.com/runtime/getting_started/installation/\n" && exit 1)
-
 .PHONY: install
-install: .uv .pre-commit .deno ## Install the package, dependencies, and pre-commit for local development
+install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --all-packages --group lint --group docs
 	pre-commit install --install-hooks
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv39 uv sync --python 3.9 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
@@ -39,18 +34,16 @@ lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
-.PHONY: lint-js
-lint-js: ## Lint JS and TS code
-	cd mcp-run-python && deno task lint-format
-
 .PHONY: typecheck-pyright
 typecheck-pyright:
+	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
 	uv run mypy
+	uv run mypy typings/ --strict
 
 .PHONY: typecheck
 typecheck: typecheck-pyright ## Run static type checking
@@ -60,17 +53,17 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests and collect coverage data
-	uv run coverage run -m pytest -n auto --dist=loadgroup
+	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
 	@uv run coverage report
 
 .PHONY: test-all-python
-test-all-python: ## Run tests on Python 3.9 to 3.13
-	UV_PROJECT_ENVIRONMENT=.venv39 uv run --python 3.9 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+test-all-python: ## Run tests on Python 3.10 to 3.13
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -78,11 +71,6 @@ test-all-python: ## Run tests on Python 3.9 to 3.13
 testcov: test ## Run tests and generate an HTML coverage report
 	@echo "building coverage html"
 	@uv run coverage html
-
-.PHONY: test-mrp
-test-mrp: ## Build and tests of mcp-run-python
-	cd mcp-run-python && deno task build
-	uv run --package mcp-run-python pytest mcp-run-python -v
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples

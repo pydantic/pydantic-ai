@@ -7,8 +7,8 @@ from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -86,12 +86,11 @@ async def test_a2a_pydantic_model_output():
             task_id = result['id']
 
             # Wait for completion
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
-
-            assert 'result' in task
-            result = task['result']
-            assert result['status']['state'] == 'completed'
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
 
             # Check artifacts
             assert 'artifacts' in result
@@ -198,6 +197,7 @@ async def test_a2a_simple():
                 if 'result' in task and task['result']['status']['state'] == 'completed':
                     break
                 await anyio.sleep(0.1)
+
             assert task == snapshot(
                 {
                     'jsonrpc': '2.0',
@@ -515,8 +515,14 @@ async def test_a2a_error_handling():
             task_id = result['id']
 
             # Wait for task to fail
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            max_attempts = 50  # 5 seconds total
+            for _ in range(max_attempts):
+                task = await a2a_client.get_task(task_id)
+                if 'result' in task and task['result']['status']['state'] == 'failed':
+                    break
+                await anyio.sleep(0.1)
+            else:  # pragma: no cover
+                raise AssertionError(f'Task did not fail within {max_attempts * 0.1} seconds')
 
             assert 'result' in task
             assert task['result']['status']['state'] == 'failed'
@@ -560,17 +566,22 @@ async def test_a2a_multiple_tasks_same_context():
             task1_id = result1['id']
             context_id = result1['context_id']
 
-            # Wait for first task to complete
-            await anyio.sleep(0.1)
-            task1 = await a2a_client.get_task(task1_id)
-            assert 'result' in task1
-            assert task1['result']['status']['state'] == 'completed'
+            while task1 := await a2a_client.get_task(task1_id):  # pragma: no branch
+                if 'result' in task1 and task1['result']['status']['state'] == 'completed':
+                    result1 = task1['result']
+                    break
+                await anyio.sleep(0.1)
 
             # Verify the model received at least one message
             assert len(messages_received) == 1
             first_run_history = messages_received[0]
             assert first_run_history == snapshot(
-                [ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())])]
+                [
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        run_id=IsStr(),
+                    )
+                ]
             )
 
             # Second message - reuse the same context_id
@@ -605,7 +616,10 @@ async def test_a2a_multiple_tasks_same_context():
 
             assert second_run_history == snapshot(
                 [
-                    ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        run_id=IsStr(),
+                    ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
@@ -615,6 +629,7 @@ async def test_a2a_multiple_tasks_same_context():
                         usage=RequestUsage(input_tokens=52, output_tokens=7),
                         model_name='function:track_messages:',
                         timestamp=IsDatetime(),
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -623,10 +638,11 @@ async def test_a2a_multiple_tasks_same_context():
                                 content='Final result processed.',
                                 tool_call_id=IsStr(),
                                 timestamp=IsDatetime(),
-                            )
-                        ]
+                            ),
+                            UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                        ],
+                        run_id=IsStr(),
                     ),
-                    ModelRequest(parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())]),
                 ]
             )
 
@@ -668,11 +684,13 @@ async def test_a2a_thinking_response():
             task_id = result['id']
 
             # Wait for completion
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
 
-            assert 'result' in task
-            assert task['result'] == snapshot(
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
@@ -893,9 +911,13 @@ async def test_a2a_multiple_send_task_messages():
             task_id = result['id']
             context_id = result['context_id']
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
@@ -958,9 +980,13 @@ async def test_a2a_multiple_send_task_messages():
                 }
             )
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)  # pragma: lax no cover
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),

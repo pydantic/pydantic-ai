@@ -1,17 +1,18 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from functools import cached_property
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import get_current_span
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
-from ..exceptions import FallbackExceptionGroup, ModelHTTPError
-from ..settings import merge_model_settings
+from ..exceptions import FallbackExceptionGroup, ModelAPIError
+from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -35,7 +36,7 @@ class FallbackModel(Model):
         self,
         default_model: Model | KnownModelName | str,
         *fallback_models: Model | KnownModelName | str,
-        fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelHTTPError,),
+        fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelAPIError,),
     ):
         """Initialize a fallback model instance.
 
@@ -78,17 +79,16 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         for model in self.models:
-            customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
-            merged_settings = merge_model_settings(model.settings, model_settings)
             try:
-                response = await model.request(messages, merged_settings, customized_model_request_parameters)
+                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                response = await model.request(messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
                     continue
                 raise exc
 
-            self._set_span_attributes(model)
+            self._set_span_attributes(model, prepared_parameters)
             return response
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
@@ -105,14 +105,11 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         for model in self.models:
-            customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
-            merged_settings = merge_model_settings(model.settings, model_settings)
             async with AsyncExitStack() as stack:
                 try:
+                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     response = await stack.enter_async_context(
-                        model.request_stream(
-                            messages, merged_settings, customized_model_request_parameters, run_context
-                        )
+                        model.request_stream(messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
                     if self._fallback_on(exc):
@@ -120,19 +117,36 @@ class FallbackModel(Model):
                         continue
                     raise exc  # pragma: no cover
 
-                self._set_span_attributes(model)
+                self._set_span_attributes(model, prepared_parameters)
                 yield response
                 return
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
 
-    def _set_span_attributes(self, model: Model):
+    @cached_property
+    def profile(self) -> ModelProfile:
+        raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return model_request_parameters  # pragma: no cover
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        return model_settings, model_request_parameters
+
+    def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters):
         with suppress(Exception):
             span = get_current_span()
             if span.is_recording():
                 attributes = getattr(span, 'attributes', {})
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
-                    span.set_attributes(InstrumentedModel.model_attributes(model))
+                    span.set_attributes(
+                        {
+                            **InstrumentedModel.model_attributes(model),
+                            **InstrumentedModel.model_request_parameters_attributes(model_request_parameters),
+                        }
+                    )
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:

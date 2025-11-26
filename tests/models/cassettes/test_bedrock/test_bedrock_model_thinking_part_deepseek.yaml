@@ -1,0 +1,165 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "How do I cross the street?"}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OGRhODNkNDYtMzgxOS00YzllLWE3NzgtYWFkYzk4YjRhY2Q4
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '122'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.deepseek.r1-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '3321'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 5517
+      output:
+        message:
+          content:
+          - text: "\n\nCrossing the street safely involves careful observation and following basic guidelines. Here's a step-by-step
+              guide:\n\n1. **Find a Safe Spot**:  \n   - Use a **crosswalk** or pedestrian crossing if available. Look for
+              traffic lights, zebra stripes, or \"Walk\" signals.  \n   - If no crosswalk is nearby, choose a spot with clear
+              visibility in both directions. Avoid curves, hills, or obstructions.\n\n2. **Stop and Look**:  \n   - **Pause
+              at the curb** and check **left, right, and left again** (or right-left-right in countries where traffic drives
+              on the left).  \n   - Look for cars, bikes, scooters, or other vehicles. Don’t rely solely on traffic signals—drivers
+              might not stop.\n\n3. **Listen**:  \n   - Turn off headphones or lower music volume to hear approaching traffic.\n\n4.
+              **Wait for a Safe Gap**:  \n   - Ensure all lanes are clear or that vehicles have fully stopped before stepping
+              into the road.  \n   - At signals, wait for the \"Walk\" symbol or green light. Never start crossing if the
+              signal is flashing \"Don’t Walk\" or is red.\n\n5. **Make Eye Contact**:  \n   - If a driver is approaching,
+              try to catch their eye to confirm they see you.\n\n6. **Cross Carefully**:  \n   - Walk **straight across**,
+              not diagonally. Stay alert—keep looking and listening as you go.  \n   - Avoid distractions like phones or texting.
+              \ \n\n7. **Children and Vulnerable Pedestrians**:  \n   - Hold hands with young children. Those with mobility
+              aids (e.g., wheelchairs, canes) should ensure drivers yield before crossing.\n\n8. **Uncontrolled Crossings**:
+              \ \n   - If there’s no signal or crosswalk, cross only when traffic is fully clear. Be extra cautious at night
+              or in poor weather.\n\n**Remember**: Jaywalking (crossing illegally) can be dangerous and may result in fines.
+              Prioritize safety over convenience! \U0001F6B8"
+          - reasoningContent:
+              reasoningText:
+                text: |
+                  Okay, the user is asking how to cross the street. Let me think about the best way to explain this. First, I should start by mentioning the importance of safety. Maybe start with finding a safe place to cross, like a crosswalk or pedestrian crossing. I should remind them to look for traffic signals if available. Then, checking both ways for traffic is crucial, even if there's a signal. Wait, but in some countries, traffic drives on the left, so the direction to look first might vary. Should I mention that? Maybe keep it general but note that they should check all directions.
+
+                  Also, making eye contact with drivers if possible, to ensure they're seen. Then, when it's safe, walk straight across, not diagonally, and stay alert while crossing. Oh, and maybe mention not to use phones or distractions while crossing. What about children or people with disabilities? Maybe add a note about holding hands with children or using assistive devices. Also, if there's no crosswalk, explain to find the safest spot with good visibility. Avoid jaywalking if possible. Maybe list the steps in order: find a safe spot, look both ways, listen, wait for signals, cross when safe, stay alert. Keep it simple and clear. Let me structure that step by step.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 12
+        outputTokens: 693
+        totalTokens: 705
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "How do I cross the street?"}]}, {"role": "assistant", "content":
+      [{"text": "\n\nCrossing the street safely involves careful observation and following basic guidelines. Here''s a step-by-step
+      guide:\n\n1. **Find a Safe Spot**:  \n   - Use a **crosswalk** or pedestrian crossing if available. Look for traffic
+      lights, zebra stripes, or \"Walk\" signals.  \n   - If no crosswalk is nearby, choose a spot with clear visibility in
+      both directions. Avoid curves, hills, or obstructions.\n\n2. **Stop and Look**:  \n   - **Pause at the curb** and check
+      **left, right, and left again** (or right-left-right in countries where traffic drives on the left).  \n   - Look for
+      cars, bikes, scooters, or other vehicles. Don\u2019t rely solely on traffic signals\u2014drivers might not stop.\n\n3.
+      **Listen**:  \n   - Turn off headphones or lower music volume to hear approaching traffic.\n\n4. **Wait for a Safe Gap**:  \n   -
+      Ensure all lanes are clear or that vehicles have fully stopped before stepping into the road.  \n   - At signals, wait
+      for the \"Walk\" symbol or green light. Never start crossing if the signal is flashing \"Don\u2019t Walk\" or is red.\n\n5.
+      **Make Eye Contact**:  \n   - If a driver is approaching, try to catch their eye to confirm they see you.\n\n6. **Cross
+      Carefully**:  \n   - Walk **straight across**, not diagonally. Stay alert\u2014keep looking and listening as you go.  \n   -
+      Avoid distractions like phones or texting.  \n\n7. **Children and Vulnerable Pedestrians**:  \n   - Hold hands with
+      young children. Those with mobility aids (e.g., wheelchairs, canes) should ensure drivers yield before crossing.\n\n8.
+      **Uncontrolled Crossings**:  \n   - If there\u2019s no signal or crosswalk, cross only when traffic is fully clear.
+      Be extra cautious at night or in poor weather.\n\n**Remember**: Jaywalking (crossing illegally) can be dangerous and
+      may result in fines. Prioritize safety over convenience! \ud83d\udeb8"}, {"text": "<think>\nOkay, the user is asking
+      how to cross the street. Let me think about the best way to explain this. First, I should start by mentioning the importance
+      of safety. Maybe start with finding a safe place to cross, like a crosswalk or pedestrian crossing. I should remind
+      them to look for traffic signals if available. Then, checking both ways for traffic is crucial, even if there''s a signal.
+      Wait, but in some countries, traffic drives on the left, so the direction to look first might vary. Should I mention
+      that? Maybe keep it general but note that they should check all directions.\n\nAlso, making eye contact with drivers
+      if possible, to ensure they''re seen. Then, when it''s safe, walk straight across, not diagonally, and stay alert while
+      crossing. Oh, and maybe mention not to use phones or distractions while crossing. What about children or people with
+      disabilities? Maybe add a note about holding hands with children or using assistive devices. Also, if there''s no crosswalk,
+      explain to find the safest spot with good visibility. Avoid jaywalking if possible. Maybe list the steps in order: find
+      a safe spot, look both ways, listen, wait for signals, cross when safe, stay alert. Keep it simple and clear. Let me
+      structure that step by step.\n\n</think>"}]}, {"role": "user", "content": [{"text": "Considering the way to cross the
+      street, analogously, how do I cross the river?"}]}], "system": [], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzE0MTFjMjEtOWIxOS00NDAxLTg5NjAtYWVlZTEzZjY1ODBj
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '3438'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.deepseek.r1-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '4518'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 7363
+      output:
+        message:
+          content:
+          - text: "\n\nCrossing a river, like crossing a street, requires careful assessment and planning, but the risks and
+              methods differ significantly. Here's a structured analogy:\n\n### **1. \"Look Both Ways\" → Assess the River**
+              \ \n   - **Street:** Check for traffic, signals, and safe gaps.  \n   - **River:** Evaluate depth, current speed,
+              obstacles (rocks, debris), and water clarity.  \n     - **Shallow water:** If safe, wade across slowly, using
+              a sturdy stick for balance.  \n     - **Deep/strong current:** Avoid crossing—seek alternatives like bridges
+              or boats.  \n\n---\n\n### **2. \"Use a Crosswalk\" → Find a Safe Crossing Point**  \n   - **Street:** Use marked
+              crosswalks or pedestrian bridges.  \n   - **River:** Look for natural or human-made aids:  \n     - **Bridges/ferries:**
+              The safest options.  \n     - **Shallow riffles or sandbars:** Calmer, shallower areas.  \n     - **Rocks/stepping
+              stones:** Only if stable and close enough to hop between.  \n\n---\n\n### **3. \"Wait for the Signal\" → Time
+              It Right**  \n   - **Street:** Follow traffic lights or pedestrian signals.  \n   - **River:** Consider environmental
+              factors:  \n     - **Weather:** Avoid crossing during/after heavy rain (flash floods).  \n     - **Time of day:**
+              Daylight improves visibility; cold temperatures increase hypothermia risk.  \n\n---\n\n### **4. \"Stay Alert\"
+              → Navigate Carefully**  \n   - **Street:** Watch for sudden traffic changes.  \n   - **River:**  \n     - Face
+              upstream to brace against the current.  \n     - Move diagonally downstream to reduce resistance.  \n     -
+              Never cross alone—use a group or rope system for safety.  \n\n---\n\n### **5. \"Alternate Routes\" → Know When
+              to Turn Back**  \n   - **Street:** Detour if the path is blocked.  \n   - **River:** If conditions feel unsafe,
+              retreat and find another way (e.g., a bridge farther downstream).  \n\n---\n\n### **Metaphorical \"River Crossing\"**
+              \ \nIf this is a metaphor for overcoming challenges:  \n   - **Assess risks** (research, plan).  \n   - **Use
+              tools/resources** (ask for help, build skills).  \n   - **Adapt** if obstacles arise.  \n\nAlways prioritize
+              safety—rivers are unpredictable, and even shallow water can be dangerous. When in doubt, seek local knowledge
+              or professional guidance! \U0001F30A\U0001F6B6♂️"
+          - reasoningContent:
+              reasoningText:
+                text: |
+                  Okay, the user is asking how to cross a river, using crossing a street as an analogy. Let me start by breaking down the original question. When you cross a street, you look both ways, wait for traffic signals, use crosswalks, etc. So the user wants a similar step-by-step approach but for a river.
+
+                  First, I need to consider the differences between a street and a river. Rivers have currents, varying depths, possible wildlife, and no traffic signals. So the approach can't be exactly the same. The user might be thinking metaphorically, but I should cover both literal and metaphorical interpretations.
+
+                  For a literal river crossing: Safety is key. Check depth, current strength, obstacles. Maybe suggest finding a bridge or shallow area. If swimming, use proper techniques. If metaphorical, like overcoming obstacles, then planning, resources, help from others.
+
+                  Wait, the user mentioned "analogously," so they might want a comparison. Let me structure it like the street steps but adapted for rivers. For each step in crossing a street, find the river equivalent. For example, looking both ways becomes assessing the river's conditions. Crosswalks could be safe crossing points like bridges.
+
+                  I should also mention tools or methods: bridges, boats, stepping stones, ropes. Safety precautions like not going alone, checking weather. Maybe include both natural and metaphorical solutions. Need to make sure the answer is clear and covers possible scenarios without being too technical. Avoid assuming the user's exact situation but provide general advice. Also, highlight the importance of preparation and caution, more so than with streets because rivers are inherently more dangerous. Make sure to differentiate between shallow streams and large rivers. Maybe add a note about seeking local knowledge if possible. Alright, structure the answer with numbered steps, similar to street crossing steps but tailored for rivers, then explain the metaphorical angle if applicable.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 33
+        outputTokens: 907
+        totalTokens: 940
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '277'
+      - '317'
       content-type:
       - application/json
       host:
@@ -20,10 +20,11 @@ interactions:
         - text: I want to know my chinese zodiac. I am 20 years old.
         role: user
       tools:
-        function_declarations:
+        functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               age:
                 type: integer
@@ -36,11 +37,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '734'
+      - '777'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=477
+      - gfet4t7; dur=613
       transfer-encoding:
       - chunked
       vary:
@@ -49,7 +50,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 3.357185050845146e-06
+      - avgLogprobs: 4.6268978621810675e-06
         content:
           parts:
           - functionCall:
@@ -59,16 +60,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: HvcgaemfJcmfz7IPtIOW-Qg
       usageMetadata:
-        candidatesTokenCount: 7
+        candidatesTokenCount: 8
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 7
-        promptTokenCount: 24
+          tokenCount: 8
+        promptTokenCount: 22
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 24
-        totalTokenCount: 31
+          tokenCount: 22
+        totalTokenCount: 30
     status:
       code: 200
       message: OK
@@ -81,7 +83,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '483'
+      - '581'
       content-type:
       - application/json
       host:
@@ -97,6 +99,7 @@ interactions:
             args:
               age: 20
             name: get_chinese_zodiac
+          thoughtSignature: context_engineering_is_the_way_to_go
         role: model
       - parts:
         - functionResponse:
@@ -105,10 +108,11 @@ interactions:
               return_value: Dragon
         role: user
       tools:
-        function_declarations:
+        functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               age:
                 type: integer
@@ -121,11 +125,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '636'
+      - '679'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=461
+      - gfet4t7; dur=339
       transfer-encoding:
       - chunked
       vary:
@@ -134,7 +138,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -2.039197300161634e-06
+      - avgLogprobs: -1.7258870814527783e-05
         content:
           parts:
           - text: |
@@ -142,16 +146,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: H_cgaYSjBuaEz7IPu7HpoAc
       usageMetadata:
         candidatesTokenCount: 7
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 7
-        promptTokenCount: 41
+        promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 41
-        totalTokenCount: 48
+          tokenCount: 40
+        totalTokenCount: 47
     status:
       code: 200
       message: OK
@@ -164,7 +169,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '277'
+      - '317'
       content-type:
       - application/json
       host:
@@ -176,10 +181,11 @@ interactions:
         - text: I want to know my chinese zodiac. I am 17 years old.
         role: user
       tools:
-        function_declarations:
+        functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               age:
                 type: integer
@@ -192,11 +198,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '734'
+      - '775'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=440
+      - gfet4t7; dur=540
       transfer-encoding:
       - chunked
       vary:
@@ -205,7 +211,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 2.7694373524614742e-06
+      - avgLogprobs: 2.42325768340379e-06
         content:
           parts:
           - functionCall:
@@ -215,16 +221,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: H_cgabuRMOvjz7IPgrfWgAw
       usageMetadata:
-        candidatesTokenCount: 7
+        candidatesTokenCount: 8
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 7
-        promptTokenCount: 24
+          tokenCount: 8
+        promptTokenCount: 22
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 24
-        totalTokenCount: 31
+          tokenCount: 22
+        totalTokenCount: 30
     status:
       code: 200
       message: OK
@@ -237,7 +244,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '685'
+      - '797'
       content-type:
       - application/json
       host:
@@ -253,13 +260,16 @@ interactions:
             args:
               age: 17
             name: get_chinese_zodiac
+          thoughtSignature: context_engineering_is_the_way_to_go
         role: model
       - parts:
         - functionResponse:
             name: get_chinese_zodiac
             response:
               call_error: |-
-                1 validation errors: [
+                1 validation error:
+                ```json
+                [
                   {
                     "type": "greater_than",
                     "loc": [
@@ -269,14 +279,16 @@ interactions:
                     "input": 17
                   }
                 ]
+                ```
 
                 Fix the errors and try again.
         role: user
       tools:
-        function_declarations:
+        functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               age:
                 type: integer
@@ -289,11 +301,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '688'
+      - '778'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=442
+      - gfet4t7; dur=662
       transfer-encoding:
       - chunked
       vary:
@@ -302,24 +314,25 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.09825141863389449
+      - avgLogprobs: -0.11466393163127284
         content:
           parts:
-          - text: |
-              I am sorry, I cannot fulfill this request. The age needs to be greater than 18.
+          - text: I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must
+              be at least 18 years old.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: IPcgab7GFJXQz7IP-uPC-Ac
       usageMetadata:
-        candidatesTokenCount: 22
+        candidatesTokenCount: 31
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 22
-        promptTokenCount: 108
+          tokenCount: 31
+        promptTokenCount: 113
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 108
-        totalTokenCount: 130
+          tokenCount: 113
+        totalTokenCount: 144
     status:
       code: 200
       message: OK

@@ -4,21 +4,36 @@ import json
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
-from typing import Any
+from typing import Any, Literal, cast
 
 import pytest
+from _pytest.python_api import RaisesContext
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelMessage,
+    ModelProfile,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolDefinition,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -61,13 +76,15 @@ def test_first_successful() -> None:
             ModelRequest(
                 parts=[
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -86,13 +103,15 @@ def test_first_failed() -> None:
                         content='hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -112,17 +131,19 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         content='hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat function:success_response:',
@@ -132,16 +153,35 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'prompted_output_template': None,
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                    },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:success_response:',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
+                    'gen_ai.output.messages': [
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success'}]}
+                    ],
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 1,
                     'gen_ai.response.model': 'function:success_response:',
-                    'events': '[{"content": "hello", "role": "user", "gen_ai.system": "function", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"index": 0, "message": {"role": "assistant", "content": "success"}, "gen_ai.system": "function", "event.name": "gen_ai.choice"}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
                 },
             },
             {
@@ -153,13 +193,23 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
-                    'all_messages_events': '[{"content": "hello", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"role": "assistant", "content": "success", "gen_ai.message.index": 1, "event.name": "gen_ai.assistant.message"}]',
                     'gen_ai.usage.output_tokens': 1,
+                    'pydantic_ai.all_messages': [
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success'}]},
+                    ],
                     'final_result': 'success',
-                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'pydantic_ai.all_messages': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    },
                 },
             },
         ]
@@ -171,7 +221,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model, instrument=True)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
@@ -191,11 +241,18 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
             ]
         )
         assert result.is_complete
 
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat function::success_response_stream',
@@ -205,16 +262,35 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'prompted_output_template': None,
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                    },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function::success_response_stream',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]}],
+                    'gen_ai.output.messages': [
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]}
+                    ],
                     'gen_ai.usage.input_tokens': 50,
                     'gen_ai.usage.output_tokens': 2,
                     'gen_ai.response.model': 'function::success_response_stream',
-                    'events': '[{"content": "input", "role": "user", "gen_ai.system": "function", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"index": 0, "message": {"role": "assistant", "content": "hello world"}, "gen_ai.system": "function", "event.name": "gen_ai.choice"}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
                 },
             },
             {
@@ -226,12 +302,23 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'attributes': {
                     'model_name': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
+                    'final_result': 'hello world',
                     'gen_ai.usage.input_tokens': 50,
                     'gen_ai.usage.output_tokens': 2,
-                    'all_messages_events': '[{"content": "input", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"role": "assistant", "content": "hello world", "gen_ai.message.index": 1, "event.name": "gen_ai.assistant.message"}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
+                    'pydantic_ai.all_messages': [
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]},
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]},
+                    ],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'pydantic_ai.all_messages': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    },
                 },
             },
         ]
@@ -241,7 +328,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
 def test_all_failed() -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model)
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
@@ -264,7 +351,7 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model, instrument=True)
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
@@ -273,7 +360,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
-    assert add_missing_response_model(capfire.exporter.exported_spans_as_dict()) == snapshot(
+    assert add_missing_response_model(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat fallback:function:failure_response:,function:failure_response:',
@@ -285,8 +372,20 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'fallback:function,function',
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
-                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'prompted_output_template': None,
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                    },
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'model_request_parameters': {'type': 'object'}},
+                    },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'logfire.level_num': 17,
@@ -314,10 +413,17 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:failure_response:',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
-                    'all_messages_events': '[{"content": "hello", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
+                    'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'pydantic_ai.all_messages': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    },
                     'logfire.level_num': 17,
                 },
                 'events': [
@@ -356,7 +462,7 @@ async def test_first_success_streaming() -> None:
     fallback_model = FallbackModel(success_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
@@ -375,6 +481,13 @@ async def test_first_success_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -385,7 +498,7 @@ async def test_first_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
@@ -405,6 +518,13 @@ async def test_first_failed_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
             ]
         )
         assert result.is_complete
@@ -413,9 +533,9 @@ async def test_first_failed_streaming() -> None:
 async def test_all_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         async with agent.run_stream('hello') as result:
-            [c async for c, _is_last in result.stream_structured(debounce_by=None)]  # pragma: lax no cover
+            [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2
@@ -445,6 +565,18 @@ def potato_exception_response(_model_messages: list[ModelMessage], _agent_info: 
 async def test_fallback_condition_tuple() -> None:
     potato_model = FunctionModel(potato_exception_response)
     fallback_model = FallbackModel(potato_model, success_model, fallback_on=(PotatoException, ModelHTTPError))
+    agent = Agent(model=fallback_model)
+
+    response = await agent.run('hello')
+    assert response.output == 'success'
+
+
+async def test_fallback_connection_error() -> None:
+    def connection_error_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='test-connection-model', message='Connection timed out')
+
+    connection_error_model = FunctionModel(connection_error_response)
+    fallback_model = FallbackModel(connection_error_model, success_model)
     agent = Agent(model=fallback_model)
 
     response = await agent.run('hello')
@@ -513,3 +645,277 @@ async def test_fallback_model_settings_merge_streaming():
 
     expected = {'extra_headers': {'anthropic-beta': 'context-1m-2025-08-07'}, 'temperature': 0.5}
     assert json.loads(output) == expected
+
+
+async def test_fallback_model_structured_output():
+    class Foo(BaseModel):
+        bar: str
+
+    def tool_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal enabled_model
+        if enabled_model != 'tool':
+            raise ModelHTTPError(status_code=500, model_name='tool-model', body=None)
+
+        assert info.model_request_parameters == snapshot(
+            ModelRequestParameters(
+                output_mode='tool',
+                output_tools=[
+                    ToolDefinition(
+                        name='final_result',
+                        parameters_json_schema={
+                            'properties': {'bar': {'type': 'string'}},
+                            'required': ['bar'],
+                            'title': 'Foo',
+                            'type': 'object',
+                        },
+                        description='The final response which ends this conversation',
+                        kind='output',
+                    )
+                ],
+                allow_text_output=False,
+            )
+        )
+
+        args = Foo(bar='baz').model_dump()
+        assert info.output_tools
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    def native_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal enabled_model
+        if enabled_model != 'native':
+            raise ModelHTTPError(status_code=500, model_name='native-model', body=None)
+
+        assert info.model_request_parameters == snapshot(
+            ModelRequestParameters(
+                output_mode='native',
+                output_object=OutputObjectDefinition(
+                    json_schema={
+                        'properties': {'bar': {'type': 'string'}},
+                        'required': ['bar'],
+                        'title': 'Foo',
+                        'type': 'object',
+                    },
+                    name='Foo',
+                ),
+            )
+        )
+
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    def prompted_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal enabled_model
+        if enabled_model != 'prompted':
+            raise ModelHTTPError(status_code=500, model_name='prompted-model', body=None)  # pragma: no cover
+
+        assert info.model_request_parameters == snapshot(
+            ModelRequestParameters(
+                output_mode='prompted',
+                output_object=OutputObjectDefinition(
+                    json_schema={
+                        'properties': {'bar': {'type': 'string'}},
+                        'required': ['bar'],
+                        'title': 'Foo',
+                        'type': 'object',
+                    },
+                    name='Foo',
+                ),
+                prompted_output_template="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{schema}
+
+Don't include any text or Markdown fencing before or after.
+""",
+            )
+        )
+
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    tool_model = FunctionModel(
+        tool_output_func, profile=ModelProfile(default_structured_output_mode='tool', supports_tools=True)
+    )
+    native_model = FunctionModel(
+        native_output_func,
+        profile=ModelProfile(default_structured_output_mode='native', supports_json_schema_output=True),
+    )
+    prompted_model = FunctionModel(
+        prompted_output_func, profile=ModelProfile(default_structured_output_mode='prompted')
+    )
+
+    fallback_model = FallbackModel(tool_model, native_model, prompted_model)
+    agent = Agent(fallback_model, output_type=Foo)
+
+    enabled_model: Literal['tool', 'native', 'prompted'] = 'tool'
+    tool_result = await agent.run('hello')
+    assert tool_result.output == snapshot(Foo(bar='baz'))
+
+    enabled_model = 'native'
+    tool_result = await agent.run('hello')
+    assert tool_result.output == snapshot(Foo(bar='baz'))
+
+    enabled_model = 'prompted'
+    tool_result = await agent.run('hello')
+    assert tool_result.output == snapshot(Foo(bar='baz'))
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_fallback_model_structured_output_instrumented(capfire: CaptureLogfire) -> None:
+    class Foo(BaseModel):
+        bar: str
+
+    def tool_output_func(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=500, model_name='tool-model', body=None)
+
+    def prompted_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters == snapshot(
+            ModelRequestParameters(
+                output_mode='prompted',
+                output_object=OutputObjectDefinition(
+                    json_schema={
+                        'properties': {'bar': {'type': 'string'}},
+                        'required': ['bar'],
+                        'title': 'Foo',
+                        'type': 'object',
+                    },
+                    name='Foo',
+                ),
+                prompted_output_template="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{schema}
+
+Don't include any text or Markdown fencing before or after.
+""",
+            )
+        )
+
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    tool_model = FunctionModel(
+        tool_output_func, profile=ModelProfile(default_structured_output_mode='tool', supports_tools=True)
+    )
+    prompted_model = FunctionModel(
+        prompted_output_func, profile=ModelProfile(default_structured_output_mode='prompted')
+    )
+    fallback_model = FallbackModel(tool_model, prompted_model)
+    agent = Agent(model=fallback_model, instrument=True, output_type=Foo, instructions='Be kind')
+    result = await agent.run('hello')
+    assert result.output == snapshot(Foo(bar='baz'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='hello',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                instructions='Be kind',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"bar":"baz"}')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='function:prompted_output_func:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+        [
+            {
+                'name': 'chat function:prompted_output_func:',
+                'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 3000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'prompted',
+                        'output_object': {
+                            'json_schema': {
+                                'properties': {'bar': {'type': 'string'}},
+                                'required': ['bar'],
+                                'title': 'Foo',
+                                'type': 'object',
+                            },
+                            'name': 'Foo',
+                            'description': None,
+                            'strict': None,
+                        },
+                        'output_tools': [],
+                        'prompted_output_template': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{schema}
+
+Don't include any text or Markdown fencing before or after.
+""",
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
+                    'gen_ai.system': 'function',
+                    'gen_ai.request.model': 'function:prompted_output_func:',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
+                    'gen_ai.output.messages': [
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': '{"bar":"baz"}'}]}
+                    ],
+                    'gen_ai.system_instructions': [{'type': 'text', 'content': 'Be kind'}],
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 4,
+                    'gen_ai.response.model': 'function:prompted_output_func:',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'gen_ai.system_instructions': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
+                },
+            },
+            {
+                'name': 'agent run',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 4000000000,
+                'attributes': {
+                    'model_name': 'fallback:function:tool_output_func:,function:prompted_output_func:',
+                    'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
+                    'logfire.msg': 'agent run',
+                    'logfire.span_type': 'span',
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 4,
+                    'pydantic_ai.all_messages': [
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]},
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': '{"bar":"baz"}'}]},
+                    ],
+                    'final_result': {'bar': 'baz'},
+                    'gen_ai.system_instructions': [{'type': 'text', 'content': 'Be kind'}],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'pydantic_ai.all_messages': {'type': 'array'},
+                            'gen_ai.system_instructions': {'type': 'array'},
+                            'final_result': {'type': 'object'},
+                        },
+                    },
+                },
+            },
+        ]
+    )

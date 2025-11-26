@@ -2,17 +2,17 @@
 # pyright: reportUnnecessaryTypeIgnoreComment=false
 
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable, TypeAlias, Union
+from typing import Any, TypeAlias
 
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.output import DeferredToolCalls, StructuredDict, TextOutput, ToolOutput
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
 MYPY = False
@@ -84,7 +84,7 @@ def ok_tool_plain(x: str) -> dict[str, str]:
 
 
 @typed_agent.tool_plain
-async def ok_json_list(x: str) -> list[Union[str, int]]:
+async def ok_json_list(x: str) -> list[str | int]:
     return [x, 1]
 
 
@@ -134,7 +134,7 @@ def run_sync() -> None:
 
 async def run_stream() -> None:
     async with typed_agent.run_stream('testing', deps=MyDeps(foo=1, bar=2)) as streamed_result:
-        result_items = [chunk async for chunk in streamed_result.stream()]
+        result_items = [chunk async for chunk in streamed_result.stream_output()]
         assert_type(result_items, list[str])
 
 
@@ -157,14 +157,14 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[call-overload]
-assert_type(union_agent, Agent[None, Union[Foo, Bar]])
+union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[call-overload]
+assert_type(union_agent, Agent[None, Foo | Bar])
 
 
 def run_sync3() -> None:
     result = union_agent.run_sync('testing')
-    assert_type(result, AgentRunResult[Union[Foo, Bar]])
-    assert_type(result.output, Union[Foo, Bar])
+    assert_type(result, AgentRunResult[Foo | Bar])
+    assert_type(result.output, Foo | Bar)
 
 
 MyUnion: TypeAlias = 'Foo | Bar'
@@ -225,11 +225,11 @@ if MYPY:
     )
 
     complex_deferred_output_agent = Agent[
-        None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls
-    ](output_type=[complex_output_agent.output_type, DeferredToolCalls])
+        None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests
+    ](output_type=[complex_output_agent.output_type, DeferredToolRequests])
     assert_type(
         complex_deferred_output_agent,
-        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls],
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
     )
 else:
     # pyright is able to correctly infer the type here
@@ -250,17 +250,17 @@ else:
         complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
     )
 
-    complex_deferred_output_agent = Agent(output_type=[complex_output_agent.output_type, DeferredToolCalls])
+    complex_deferred_output_agent = Agent(output_type=[complex_output_agent.output_type, DeferredToolRequests])
     assert_type(
         complex_deferred_output_agent,
-        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls],
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
     )
 
 
 Tool(foobar_ctx, takes_ctx=True)
 Tool(foobar_ctx)
 Tool(foobar_plain, takes_ctx=False)
-assert_type(Tool(foobar_plain), Tool[None])
+assert_type(Tool(foobar_plain), Tool[object])
 assert_type(Tool(foobar_plain), Tool)
 
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool

@@ -1,18 +1,23 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
 import types
+import warnings
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
-from logfire_api import LogfireSpan
-from typing_extensions import ParamSpec, TypeAlias, TypeIs, get_args, get_origin
+from logfire_api import Logfire, LogfireSpan
+from typing_extensions import ParamSpec, TypeIs
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
+_logfire = Logfire(otel_scope='pydantic-graph')
 
 AbstractSpan: TypeAlias = 'LogfireSpan | Span'
 
@@ -135,3 +140,65 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
     else:
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
+
+
+try:
+    from logfire._internal.config import (
+        LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
+    )
+except ImportError:  # pragma: lax no cover
+
+    class LogfireNotConfiguredWarning(UserWarning):
+        pass
+
+
+if TYPE_CHECKING:
+    logfire_span = _logfire.span
+else:
+
+    @contextmanager
+    def logfire_span(*args: Any, **kwargs: Any) -> Generator[LogfireSpan, None, None]:
+        """Create a Logfire span without warning if logfire is not configured."""
+        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
+            with _logfire.span(*args, **kwargs) as span:
+                yield span
+
+
+def infer_obj_name(obj: Any, *, depth: int) -> str | None:
+    """Infer the variable name of an object from the calling frame's scope.
+
+    This function examines the call stack to find what variable name was used
+    for the given object in the calling scope. This is useful for automatic
+    naming of objects based on their variable names.
+
+    Args:
+        obj: The object whose variable name to infer.
+        depth: Number of stack frames to traverse upward from the current frame.
+
+    Returns:
+        The inferred variable name if found, None otherwise.
+
+    Example:
+        Usage should generally look like `infer_name(self, depth=2)` or similar.
+    """
+    target_frame = inspect.currentframe()
+    if target_frame is None:
+        return None  # pragma: no cover
+    for _ in range(depth):
+        target_frame = target_frame.f_back
+        if target_frame is None:
+            return None
+
+    for name, item in target_frame.f_locals.items():
+        if item is obj:
+            return name
+
+    if target_frame.f_locals != target_frame.f_globals:  # pragma: no branch
+        # if we couldn't find the agent in locals and globals are a different dict, try globals
+        for name, item in target_frame.f_globals.items():
+            if item is obj:
+                return name
+
+    return None

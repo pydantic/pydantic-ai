@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
 
@@ -47,7 +47,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -58,21 +58,21 @@ class HerokuProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
         else:
-            api_key = api_key or os.environ.get('HEROKU_INFERENCE_KEY')
+            api_key = api_key or os.getenv('HEROKU_INFERENCE_KEY')
             if not api_key:
                 raise UserError(
                     'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)`'
                     'to use the Heroku provider.'
                 )
 
-            base_url = base_url or os.environ.get('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')
+            base_url = base_url or os.getenv('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')
             base_url = base_url.rstrip('/') + '/v1'
 
             if http_client is not None:

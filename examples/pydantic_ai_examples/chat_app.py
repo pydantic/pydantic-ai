@@ -10,14 +10,14 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Callable, Literal, TypeVar
+from typing import Annotated, Any, Literal, TypeVar
 
 import fastapi
 import logfire
@@ -25,14 +25,14 @@ from fastapi import Depends, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from typing_extensions import LiteralString, ParamSpec, TypedDict
 
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
+    UnexpectedModelBehavior,
     UserPromptPart,
 )
 
@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 THIS_DIR = Path(__file__).parent
 
 
@@ -127,7 +127,7 @@ async def post_chat(
         messages = await database.get_messages()
         # run the agent with the user prompt and the chat history
         async with agent.run_stream(prompt, message_history=messages) as result:
-            async for text in result.stream(debounce_by=0.01):
+            async for text in result.stream_output(debounce_by=0.01):
                 # text here is a `str` and the frontend wants
                 # JSON encoded ModelResponse, so we create one
                 m = ModelResponse(parts=[TextPart(text)], timestamp=result.timestamp())

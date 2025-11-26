@@ -3,7 +3,7 @@ from typing import cast
 import pytest
 from pytest_mock import MockerFixture
 
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -58,12 +58,12 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_profile = provider.model_profile('us.anthropic.claude-3-5-sonnet-20240620-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet-20240620')
     assert isinstance(anthropic_profile, BedrockModelProfile)
-    assert not anthropic_profile.bedrock_supports_tool_choice
+    assert anthropic_profile.bedrock_supports_tool_choice is True
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
     anthropic_model_profile_mock.assert_called_with('claude-instant')
     assert isinstance(anthropic_profile, BedrockModelProfile)
-    assert not anthropic_profile.bedrock_supports_tool_choice
+    assert anthropic_profile.bedrock_supports_tool_choice is True
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
@@ -84,7 +84,13 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert deepseek_profile is not None
     assert deepseek_profile.ignore_streamed_leading_whitespace is True
 
-    amazon_profile = provider.model_profile('amazon.titan-text-express-v1')
+    amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
+    amazon_model_profile_mock.assert_called_with('nova-pro')
+    assert isinstance(amazon_profile, BedrockModelProfile)
+    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert amazon_profile.bedrock_supports_tool_choice is True
+
+    amazon_profile = provider.model_profile('us.amazon.titan-text-express-v1:0')
     amazon_model_profile_mock.assert_called_with('titan-text-express')
     assert amazon_profile is not None
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer

@@ -1,7 +1,8 @@
 import sys
 import types
+from collections.abc import Callable
 from io import StringIO
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from dirty_equals import IsInstance, IsStr
@@ -10,8 +11,7 @@ from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.test import TestModel
 
 from .conftest import TestEnv, try_import
@@ -23,7 +23,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -106,11 +106,11 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'gpt-4o', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
-    assert isinstance(custom_agent.model, OpenAIModel)
+    assert isinstance(custom_agent.model, OpenAIChatModel)
 
 
 def test_agent_flag_non_agent(
@@ -137,6 +137,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'openai',
         'anthropic',
         'bedrock',
+        'cerebras',
         'google-vertex',
         'google-gla',
         'groq',
@@ -291,6 +292,7 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         code_theme='monokai',
         prog_name='pydantic-ai',
         deps=None,
+        message_history=None,
     )
 
 
@@ -306,4 +308,44 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         code_theme='monokai',
         prog_name='pydantic-ai',
         deps=None,
+        message_history=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    # Create some test message history - cast to the proper base type
+    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+
+    await cli_agent.to_cli(message_history=test_messages)
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=test_messages,
+    )
+
+
+def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    # Create some test message history - cast to the proper base type
+    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+
+    cli_agent.to_cli_sync(message_history=test_messages)
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=test_messages,
     )

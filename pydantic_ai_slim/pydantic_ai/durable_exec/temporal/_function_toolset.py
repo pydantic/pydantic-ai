@@ -1,27 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import Any, Literal
 
-from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
+from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext
-from ._toolset import TemporalWrapperToolset
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _CallToolParams:
-    name: str
-    tool_args: dict[str, Any]
-    serialized_run_context: Any
+from ._toolset import (
+    CallToolParams,
+    CallToolResult,
+    TemporalWrapperToolset,
+)
 
 
 class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -40,7 +35,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> Any:
+        async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             name = params.name
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             try:
@@ -51,7 +46,10 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e
 
-            return await self.wrapped.call_tool(name, params.tool_args, ctx, tool)
+            # The tool args will already have been validated into their proper types in the `ToolManager`,
+            # but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
+            args_dict = tool.args_validator.validate_python(params.tool_args)
+            return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
@@ -82,11 +80,18 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
 
         tool_activity_config = self.activity_config | tool_activity_config
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        return await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
-            activity=self.call_tool_activity,
-            args=[
-                _CallToolParams(name=name, tool_args=tool_args, serialized_run_context=serialized_run_context),
-                ctx.deps,
-            ],
-            **tool_activity_config,
+        return self._unwrap_call_tool_result(
+            await workflow.execute_activity(
+                activity=self.call_tool_activity,
+                args=[
+                    CallToolParams(
+                        name=name,
+                        tool_args=tool_args,
+                        serialized_run_context=serialized_run_context,
+                        tool_def=None,
+                    ),
+                    ctx.deps,
+                ],
+                **tool_activity_config,
+            )
         )

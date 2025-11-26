@@ -4,8 +4,8 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -79,14 +79,14 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test anthropic provider
-    profile = provider.model_profile('anthropic/claude-3-sonnet')
-    anthropic_mock.assert_called_with('claude-3-sonnet')
+    profile = provider.model_profile('anthropic/claude-sonnet-4-5')
+    anthropic_mock.assert_called_with('claude-sonnet-4-5')
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
-    profile = provider.model_profile('bedrock/anthropic.claude-3-sonnet')
-    amazon_mock.assert_called_with('anthropic.claude-3-sonnet')
+    profile = provider.model_profile('bedrock/anthropic.claude-sonnet-4-5')
+    amazon_mock.assert_called_with('anthropic.claude-sonnet-4-5')
     assert profile is not None
     assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 

@@ -1,15 +1,13 @@
 # pyright: reportDeprecated=false
 import os
 from dataclasses import dataclass
-from typing import Union
 
 import pytest
 from inline_snapshot import Is, snapshot
 from pytest_mock import MockerFixture
 
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AudioUrl,
     DocumentUrl,
     ImageUrl,
@@ -19,6 +17,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -125,7 +124,7 @@ async def test_labels(allow_model_requests: None) -> None:  # pragma: lax no cov
 )
 @pytest.mark.vcr()
 async def test_url_input(
-    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl], expected_output: str, allow_model_requests: None
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl, expected_output: str, allow_model_requests: None
 ) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
     m = GeminiModel('gemini-2.0-flash', provider=provider)
@@ -141,7 +140,8 @@ async def test_url_input(
                         content=['What is the main content of this URL?', Is(url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -149,7 +149,8 @@ async def test_url_input(
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -178,7 +179,8 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                         content=['What is the main content of this URL?', Is(video_url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -186,7 +188,8 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
+                run_id=IsStr(),
             ),
         ]
     )

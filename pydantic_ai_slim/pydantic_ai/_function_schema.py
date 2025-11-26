@@ -5,10 +5,10 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Callable, Union, cast
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -17,7 +17,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeIs, TypeVar, get_origin
+from typing_extensions import ParamSpec, TypeIs, TypeVar
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 __all__ = ('function_schema',)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionSchema:
     """Internal information about a function schema."""
 
@@ -231,31 +231,39 @@ R = TypeVar('R')
 
 WithCtx = Callable[Concatenate[RunContext[Any], P], R]
 WithoutCtx = Callable[P, R]
-TargetFunc = Union[WithCtx[P, R], WithoutCtx[P, R]]
+TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
 
 
-def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
-    """Check if a function takes a `RunContext` first argument.
+def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
+    """Check if a callable takes a `RunContext` first argument.
 
     Args:
-        function: The function to check.
+        callable_obj: The callable to check.
 
     Returns:
-        `True` if the function takes a `RunContext` as first argument, `False` otherwise.
+        `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
     try:
-        sig = signature(function)
-    except ValueError:  # pragma: no cover
-        return False  # pragma: no cover
+        sig = signature(callable_obj)
+    except ValueError:
+        return False
     try:
         first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
         return False
     else:
-        type_hints = _typing_extra.get_function_type_hints(function)
+        # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
+        if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
+            call_func = getattr(type(callable_obj), '__call__', None)
+            if call_func is not None:
+                callable_obj = call_func
+            else:
+                return False  # pragma: no cover
+
+        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
         annotation = type_hints.get(first_param_name)
         if annotation is None:
-            return False  # pragma: no cover
+            return False
         return True is not sig.empty and _is_call_ctx(annotation)
 
 

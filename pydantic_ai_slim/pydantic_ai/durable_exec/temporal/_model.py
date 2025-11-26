@@ -1,22 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelMessage,
     ModelResponse,
     ModelResponseStreamEvent,
 )
+from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -30,7 +30,8 @@ from ._run_context import TemporalRunContext
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _RequestParams:
     messages: list[ModelMessage]
-    model_settings: ModelSettings | None
+    # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
+    model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
 
@@ -56,6 +57,10 @@ class TemporalStreamedResponse(StreamedResponse):
         return self.response.model_name or ''  # pragma: no cover
 
     @property
+    def provider_name(self) -> str:
+        return self.response.provider_name or ''  # pragma: no cover
+
+    @property
     def timestamp(self) -> datetime:
         return self.response.timestamp  # pragma: no cover
 
@@ -78,7 +83,11 @@ class TemporalModel(WrapperModel):
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams) -> ModelResponse:
-            return await self.wrapped.request(params.messages, params.model_settings, params.model_request_parameters)
+            return await self.wrapped.request(
+                params.messages,
+                cast(ModelSettings | None, params.model_settings),
+                params.model_request_parameters,
+            )
 
         self.request_activity = request_activity
 
@@ -88,7 +97,10 @@ class TemporalModel(WrapperModel):
 
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             async with self.wrapped.request_stream(
-                params.messages, params.model_settings, params.model_request_parameters, run_context
+                params.messages,
+                cast(ModelSettings | None, params.model_settings),
+                params.model_request_parameters,
+                run_context,
             ) as streamed_response:
                 await self.event_stream_handler(run_context, streamed_response)
 
@@ -116,11 +128,13 @@ class TemporalModel(WrapperModel):
         if not workflow.in_workflow():
             return await super().request(messages, model_settings, model_request_parameters)
 
-        return await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+        self._validate_model_request_parameters(model_request_parameters)
+
+        return await workflow.execute_activity(
             activity=self.request_activity,
             arg=_RequestParams(
                 messages=messages,
-                model_settings=model_settings,
+                model_settings=cast(dict[str, Any] | None, model_settings),
                 model_request_parameters=model_request_parameters,
                 serialized_run_context=None,
             ),
@@ -151,13 +165,15 @@ class TemporalModel(WrapperModel):
         # and that only calls `request_stream` if `event_stream_handler` is set.
         assert self.event_stream_handler is not None
 
+        self._validate_model_request_parameters(model_request_parameters)
+
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
-        response = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+        response = await workflow.execute_activity(
             activity=self.request_stream_activity,
             args=[
                 _RequestParams(
                     messages=messages,
-                    model_settings=model_settings,
+                    model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
                 ),
@@ -166,3 +182,7 @@ class TemporalModel(WrapperModel):
             **self.activity_config,
         )
         yield TemporalStreamedResponse(model_request_parameters, response)
+
+    def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
+        if model_request_parameters.allow_image_output:
+            raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')

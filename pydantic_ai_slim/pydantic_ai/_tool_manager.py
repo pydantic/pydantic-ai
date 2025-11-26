@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic
 
@@ -10,12 +12,15 @@ from pydantic import ValidationError
 from typing_extensions import assert_never
 
 from . import messages as _messages
+from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
-from .output import DeferredToolCalls
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .usage import RunUsage
+
+_sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
 
 
 @dataclass
@@ -30,6 +35,16 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
+
+    @classmethod
+    @contextmanager
+    def sequential_tool_calls(cls) -> Iterator[None]:
+        """Run tool calls sequentially during the context."""
+        token = _sequential_tool_calls_ctx_var.set(True)
+        try:
+            yield
+        finally:
+            _sequential_tool_calls_ctx_var.reset(token)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -57,6 +72,12 @@ class ToolManager(Generic[AgentDepsT]):
 
         return [tool.tool_def for tool in self.tools.values()]
 
+    def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
+        """Whether to require sequential tool calls for a list of tool calls."""
+        return _sequential_tool_calls_ctx_var.get() or any(
+            tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))
+        )
+
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
         if self.tools is None:
@@ -68,7 +89,12 @@ class ToolManager(Generic[AgentDepsT]):
             return None
 
     async def handle_call(
-        self, call: ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
+        self,
+        call: ToolCallPart,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+        *,
+        approved: bool = False,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -76,23 +102,39 @@ class ToolManager(Generic[AgentDepsT]):
             call: The tool call part to handle.
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
+            approved: Whether the tool call has been approved.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
-            # Output tool calls are not traced
-            return await self._call_tool(call, allow_partial, wrap_validation_errors)
-        else:
-            return await self._call_tool_traced(
+            # Output tool calls are not traced and not counted
+            return await self._call_tool(
                 call,
-                allow_partial,
-                wrap_validation_errors,
-                self.ctx.tracer,
-                self.ctx.trace_include_content,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                approved=approved,
+            )
+        else:
+            return await self._call_function_tool(
+                call,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                approved=approved,
+                tracer=self.ctx.tracer,
+                include_content=self.ctx.trace_include_content,
+                instrumentation_version=self.ctx.instrumentation_version,
+                usage=self.ctx.usage,
             )
 
-    async def _call_tool(self, call: ToolCallPart, allow_partial: bool, wrap_validation_errors: bool) -> Any:
+    async def _call_tool(
+        self,
+        call: ToolCallPart,
+        *,
+        allow_partial: bool,
+        wrap_validation_errors: bool,
+        approved: bool,
+    ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
@@ -106,11 +148,17 @@ class ToolManager(Generic[AgentDepsT]):
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
+            if tool.tool_def.kind == 'external':
+                raise RuntimeError('External tools cannot be called')
+
             ctx = replace(
                 self.ctx,
                 tool_name=name,
                 tool_call_id=call.tool_call_id,
                 retry=self.ctx.retries.get(name, 0),
+                max_retries=tool.max_retries,
+                tool_call_approved=approved,
+                partial_output=allow_partial,
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
@@ -120,7 +168,9 @@ class ToolManager(Generic[AgentDepsT]):
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
 
-            return await self.toolset.call_tool(name, args_dict, ctx, tool)
+            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+
+            return result
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
             current_retry = self.ctx.retries.get(name, 0)
@@ -152,20 +202,26 @@ class ToolManager(Generic[AgentDepsT]):
 
                 raise e
 
-    async def _call_tool_traced(
+    async def _call_function_tool(
         self,
         call: ToolCallPart,
+        *,
         allow_partial: bool,
         wrap_validation_errors: bool,
+        approved: bool,
         tracer: Tracer,
-        include_content: bool = False,
+        include_content: bool,
+        instrumentation_version: int,
+        usage: RunUsage,
     ) -> Any:
         """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
+        instrumentation_names = InstrumentationNames.for_version(instrumentation_version)
+
         span_attributes = {
             'gen_ai.tool.name': call.tool_name,
             # NOTE: this means `gen_ai.tool.call.id` will be included even if it was generated by pydantic-ai
             'gen_ai.tool.call.id': call.tool_call_id,
-            **({'tool_arguments': call.args_as_json_str()} if include_content else {}),
+            **({instrumentation_names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),
             'logfire.msg': f'running tool: {call.tool_name}',
             # add the JSON schema so these attributes are formatted nicely in Logfire
             'logfire.json_schema': json.dumps(
@@ -174,8 +230,8 @@ class ToolManager(Generic[AgentDepsT]):
                     'properties': {
                         **(
                             {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
+                                instrumentation_names.tool_arguments_attr: {'type': 'object'},
+                                instrumentation_names.tool_result_attr: {'type': 'object'},
                             }
                             if include_content
                             else {}
@@ -186,41 +242,31 @@ class ToolManager(Generic[AgentDepsT]):
                 }
             ),
         }
-        with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
+        with tracer.start_as_current_span(
+            instrumentation_names.get_tool_span_name(call.tool_name),
+            attributes=span_attributes,
+        ) as span:
             try:
-                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
+                tool_result = await self._call_tool(
+                    call,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=wrap_validation_errors,
+                    approved=approved,
+                )
+                usage.tool_calls += 1
+
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
-                    span.set_attribute('tool_response', part.model_response())
+                    span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
                 raise e
 
             if include_content and span.is_recording():
                 span.set_attribute(
-                    'tool_response',
+                    instrumentation_names.tool_result_attr,
                     tool_result
                     if isinstance(tool_result, str)
                     else _messages.tool_return_ta.dump_json(tool_result).decode(),
                 )
 
         return tool_result
-
-    def get_deferred_tool_calls(self, parts: Iterable[_messages.ModelResponsePart]) -> DeferredToolCalls | None:
-        """Get the deferred tool calls from the model response parts."""
-        deferred_calls_and_defs = [
-            (part, tool_def)
-            for part in parts
-            if isinstance(part, _messages.ToolCallPart)
-            and (tool_def := self.get_tool_def(part.tool_name))
-            and tool_def.kind == 'deferred'
-        ]
-        if not deferred_calls_and_defs:
-            return None
-
-        deferred_calls: list[_messages.ToolCallPart] = []
-        deferred_tool_defs: dict[str, ToolDefinition] = {}
-        for part, tool_def in deferred_calls_and_defs:
-            deferred_calls.append(part)
-            deferred_tool_defs[part.tool_name] = tool_def
-
-        return DeferredToolCalls(deferred_calls, deferred_tool_defs)

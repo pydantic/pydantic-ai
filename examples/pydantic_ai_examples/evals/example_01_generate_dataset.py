@@ -2,10 +2,9 @@ import asyncio
 from pathlib import Path
 from types import NoneType
 
+from pydantic_ai_examples.evals.models import TimeRangeInputs, TimeRangeResponse
 from pydantic_evals import Dataset
 from pydantic_evals.generation import generate_dataset
-
-from pydantic_ai_examples.evals.models import TimeRangeInputs, TimeRangeResponse
 
 
 async def main():

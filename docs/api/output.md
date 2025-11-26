@@ -10,4 +10,4 @@
             - PromptedOutput
             - TextOutput
             - StructuredDict
-            - DeferredToolCalls
+            - DeferredToolRequests

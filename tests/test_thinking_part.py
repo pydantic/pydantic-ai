@@ -3,8 +3,8 @@ from __future__ import annotations as _annotations
 import pytest
 from inline_snapshot import snapshot
 
+from pydantic_ai import ModelResponsePart, TextPart, ThinkingPart, ThinkingPartDelta
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-from pydantic_ai.messages import ModelResponsePart, TextPart, ThinkingPart, ThinkingPartDelta
 
 
 @pytest.mark.parametrize(

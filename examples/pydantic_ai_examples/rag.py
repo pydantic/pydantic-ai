@@ -30,12 +30,12 @@ import asyncpg
 import httpx
 import logfire
 import pydantic_core
+from anyio import create_task_group
 from openai import AsyncOpenAI
 from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
 
-from pydantic_ai import RunContext
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent, RunContext
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -49,7 +49,7 @@ class Deps:
     pool: asyncpg.Pool
 
 
-agent = Agent('openai:gpt-4o', deps_type=Deps)
+agent = Agent('openai:gpt-5', deps_type=Deps)
 
 
 @agent.tool
@@ -115,7 +115,7 @@ async def build_search_db():
     async with httpx.AsyncClient() as client:
         response = await client.get(DOCS_JSON)
         response.raise_for_status()
-    sections = sessions_ta.validate_json(response.content)
+    sections = sections_ta.validate_json(response.content)
 
     openai = AsyncOpenAI()
     logfire.instrument_openai(openai)
@@ -127,9 +127,9 @@ async def build_search_db():
                     await conn.execute(DB_SCHEMA)
 
         sem = asyncio.Semaphore(10)
-        async with asyncio.TaskGroup() as tg:
+        async with create_task_group() as tg:
             for section in sections:
-                tg.create_task(insert_doc_section(sem, openai, pool, section))
+                tg.start_soon(insert_doc_section, sem, openai, pool, section)
 
 
 async def insert_doc_section(
@@ -183,7 +183,7 @@ class DocsSection:
         return '\n\n'.join((f'path: {self.path}', f'title: {self.title}', self.content))
 
 
-sessions_ta = TypeAdapter(list[DocsSection])
+sections_ta = TypeAdapter(list[DocsSection])
 
 
 # pyright: reportUnknownMemberType=false

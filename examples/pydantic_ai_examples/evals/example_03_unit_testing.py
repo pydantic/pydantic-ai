@@ -2,7 +2,6 @@ from pathlib import Path
 from types import NoneType
 
 import logfire
-from pydantic_evals import Dataset
 
 from pydantic_ai_examples.evals import infer_time_range
 from pydantic_ai_examples.evals.custom_evaluators import (
@@ -12,6 +11,7 @@ from pydantic_ai_examples.evals.models import (
     TimeRangeInputs,
     TimeRangeResponse,
 )
+from pydantic_evals import Dataset
 
 logfire.configure(
     send_to_logfire='if-token-present',
@@ -29,7 +29,9 @@ def evaluate_dataset():
     report = dataset.evaluate_sync(infer_time_range)
     print(report)
 
-    assertion_pass_rate = report.averages().assertions
+    averages = report.averages()
+    assert averages is not None
+    assertion_pass_rate = averages.assertions
     assert assertion_pass_rate is not None, 'There should be at least one assertion'
     assert assertion_pass_rate > 0.9, (
         f'The assertion pass rate was {assertion_pass_rate:.1%}; it should be above 90%.'

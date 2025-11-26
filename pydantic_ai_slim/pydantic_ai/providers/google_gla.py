@@ -5,9 +5,9 @@ import os
 import httpx
 from typing_extensions import deprecated
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
@@ -39,7 +39,7 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
                 will be used if available.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        api_key = api_key or os.environ.get('GEMINI_API_KEY')
+        api_key = api_key or os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise UserError(
                 'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'

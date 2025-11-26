@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -64,7 +64,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
         if provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
 
-        # As VercelProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As VercelProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
@@ -77,7 +77,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -87,7 +87,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         # Support Vercel AI Gateway's standard environment variables
         api_key = api_key or os.getenv('VERCEL_AI_GATEWAY_API_KEY') or os.getenv('VERCEL_OIDC_TOKEN')

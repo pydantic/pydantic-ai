@@ -26,8 +26,8 @@ agent = Agent()
 
 # models to try, and the appropriate env var
 models: list[tuple[KnownModelName, str]] = [
-    ('google-gla:gemini-2.0-flash', 'GEMINI_API_KEY'),
-    ('openai:gpt-4o-mini', 'OPENAI_API_KEY'),
+    ('google-gla:gemini-2.5-flash', 'GEMINI_API_KEY'),
+    ('openai:gpt-5-mini', 'OPENAI_API_KEY'),
     ('groq:llama-3.3-70b-versatile', 'GROQ_API_KEY'),
 ]
 
@@ -42,7 +42,7 @@ async def main():
             console.log(f'Using model: {model}')
             with Live('', console=console, vertical_overflow='visible') as live:
                 async with agent.run_stream(prompt, model=model) as result:
-                    async for message in result.stream():
+                    async for message in result.stream_output():
                         live.update(Markdown(message))
             console.log(result.usage())
         else:
