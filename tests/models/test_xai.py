@@ -1242,25 +1242,45 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
 
     result = await agent.run('Can you list my Linear issues? Keep your answer brief.')
 
-    # Verify the response
-    assert result.output
-    messages = result.all_messages()
-    assert len(messages) >= 2
-
-    # Check that we have builtin tool call parts for MCP (server-side tool with server_label prefix)
-    response_message = messages[-1]
-    assert isinstance(response_message, ModelResponse)
-
-    # Should have at least one BuiltinToolCallPart for MCP tools (prefixed with server_label, e.g. "linear.list_issues")
-    mcp_tool_calls = [
-        part
-        for msg in messages
-        if isinstance(msg, ModelResponse)
-        for part in msg.parts
-        if isinstance(part, BuiltinToolCallPart) and part.tool_name.startswith('linear.')
-    ]
-    assert len(mcp_tool_calls) > 0, (
-        f'Expected MCP tool calls with "linear." prefix, got parts: {[part for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts]}'
+    # Verify the response and check builtin tool parts appear in message history
+    assert result.output == 'No issues found.'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Can you list my Linear issues? Keep your answer brief.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:linear',
+                        args={},
+                        tool_call_id='mcp_linear_001',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:linear',
+                        content={'status': 'completed'},
+                        tool_call_id='mcp_linear_001',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='No issues found.'),
+                ],
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id='grok-mcp_linear_001',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
     )
 
 

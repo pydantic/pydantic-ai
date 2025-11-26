@@ -663,8 +663,16 @@ class XaiModel(Model):
         elif tool_type == 'code_execution_tool':
             return CodeExecutionTool.kind
         elif tool_type == 'mcp_tool':
-            # For MCP tools, use the function name which includes the server label/tool name
-            return tool_call.function.name
+            # For MCP tools, prepend 'mcp_server:' and use server label
+            # The function name is in format "server_label.tool_name" from xAI
+            # We want to return "mcp_server:server_label" to match other providers
+            # Extract just the server label (everything before the first dot)
+            function_name = tool_call.function.name
+            if '.' in function_name:
+                server_label = function_name.split('.', 1)[0]
+            else:
+                server_label = function_name
+            return f'{MCPServerTool.kind}:{server_label}'
         elif tool_type == 'x_search_tool':
             # X search not currently supported in PydanticAI, use function name as fallback
             return tool_call.function.name
