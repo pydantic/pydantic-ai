@@ -43,7 +43,6 @@ async def test_tool_output_json_schema():
             'properties': {'response': {'type': 'boolean'}},
             'required': ['response'],
             'title': 'final_result',
-            'description': 'The final response which ends this conversation',
         }
     )
 
@@ -63,11 +62,7 @@ async def test_tool_output_json_schema():
 
     agent = Agent(
         'test',
-        output_type=[
-            ToolOutput(bool, name='alice', description='Dreaming'),
-            ToolOutput(bool, name='bob'),
-            ToolOutput(bool),
-        ],
+        output_type=[ToolOutput(bool, name='alice', description='Dreaming'), ToolOutput(bool, name='bob')],
     )
     assert agent.output_json_schema() == snapshot(
         {
@@ -103,22 +98,6 @@ async def test_tool_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'bob',
-                            'description': 'bool: The final response which ends this conversation',
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'final_result_bool'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'final_result_bool',
-                            'description': 'bool: The final response which ends this conversation',
                         },
                     ]
                 }
@@ -151,7 +130,6 @@ async def test_tool_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'alice',
-                            'description': 'bool: The final response which ends this conversation',
                         },
                         {
                             'type': 'object',
@@ -166,7 +144,6 @@ async def test_tool_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'alice_2',
-                            'description': 'bool: The final response which ends this conversation',
                         },
                         {
                             'type': 'object',
@@ -181,7 +158,6 @@ async def test_tool_output_json_schema():
                             'required': ['kind', 'data'],
                             'additionalProperties': False,
                             'title': 'alice_3',
-                            'description': 'bool: The final response which ends this conversation',
                         },
                     ]
                 }
