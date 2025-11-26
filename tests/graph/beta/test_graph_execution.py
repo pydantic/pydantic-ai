@@ -380,3 +380,20 @@ async def test_multiple_sequential_joins():
     graph = g.build()
     result = await graph.run()
     assert sorted(result) == [11, 12, 13]
+
+
+async def test_early_termination_from_nested_generator():
+    """Test that a generator wrapping an iteration can be terminated early."""
+    g = GraphBuilder()
+    g.add_edge(g.start_node, g.end_node)
+    graph = g.build()
+
+    async def stream_graph():
+        async with graph.iter() as run:
+            async for node in run:  # pragma: no branch
+                yield node
+
+    gen = stream_graph()
+    async for _ in gen:  # pragma: no branch
+        break
+    await gen.aclose()
