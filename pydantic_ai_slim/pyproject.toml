@@ -89,8 +89,8 @@ tavily = ["tavily-python>=0.5.0"]
 cli = [
     "rich>=13",
     "prompt-toolkit>=3",
-    "argcomplete>=3.5.0",
     "pyperclip>=1.9.0",
+    "click>=8.1.0",
 ]
 # MCP
 mcp = ["mcp>=1.18.0"]
