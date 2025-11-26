@@ -179,6 +179,11 @@ class GroqModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[str]:
+        """Return the set of builtin tool IDs this model class can handle."""
+        return frozenset({'web_search'})
+
     async def request(
         self,
         messages: list[ModelMessage],

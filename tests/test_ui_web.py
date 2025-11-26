@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 
 from .conftest import try_import
 
-with try_import() as fastapi_import_successful:
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+with try_import() as starlette_import_successful:
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
 
-    from pydantic_ai.ui.web import builtin_tool_definitions, create_web_app, models
+    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.ui.web import AIModel, create_web_app
+
 
 pytestmark = [
-    pytest.mark.skipif(not fastapi_import_successful(), reason='fastapi not installed'),
+    pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
 ]
 
 
@@ -25,7 +26,7 @@ def test_create_chat_app_basic():
     agent = Agent('test')
     app = create_web_app(agent)
 
-    assert isinstance(app, FastAPI)
+    assert isinstance(app, Starlette)
     assert app.state.agent is agent
 
 
@@ -34,7 +35,7 @@ def test_agent_to_web():
     agent = Agent('test')
     app = agent.to_web()
 
-    assert isinstance(app, FastAPI)
+    assert isinstance(app, Starlette)
     assert app.state.agent is agent
 
 
@@ -50,7 +51,34 @@ def test_chat_app_health_endpoint():
 
 
 def test_chat_app_configure_endpoint():
-    """Test the /api/configure endpoint."""
+    """Test the /api/configure endpoint with explicit models and tools."""
+    agent = Agent('test')
+    app = create_web_app(
+        agent,
+        models=[AIModel(id='openai:gpt-4o', name='GPT-4o', builtin_tools=['web_search'])],
+        builtin_tools=[WebSearchTool()],
+    )
+
+    with TestClient(app) as client:
+        response = client.get('/api/configure')
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {
+            'models': [
+                {
+                    'id': 'openai:gpt-4o',
+                    'name': 'GPT-4o',
+                    'builtinTools': ['web_search'],
+                },
+            ],
+            'builtinTools': [
+                {'id': 'web_search', 'name': 'Web Search'},
+            ],
+        }
+
+
+def test_chat_app_configure_endpoint_empty():
+    """Test the /api/configure endpoint with no models or tools."""
     agent = Agent('test')
     app = create_web_app(agent)
 
@@ -58,32 +86,7 @@ def test_chat_app_configure_endpoint():
         response = client.get('/api/configure')
         assert response.status_code == 200
         data = response.json()
-        assert data == snapshot(
-            {
-                'models': [
-                    {
-                        'id': 'anthropic:claude-sonnet-4-5',
-                        'name': 'Claude Sonnet 4.5',
-                        'builtinTools': ['web_search', 'code_execution'],
-                    },
-                    {
-                        'id': 'openai-responses:gpt-5',
-                        'name': 'GPT 5',
-                        'builtinTools': ['web_search', 'code_execution', 'image_generation'],
-                    },
-                    {
-                        'id': 'google-gla:gemini-2.5-pro',
-                        'name': 'Gemini 2.5 Pro',
-                        'builtinTools': ['web_search', 'code_execution'],
-                    },
-                ],
-                'builtinToolDefs': [
-                    {'id': 'web_search', 'name': 'Web Search'},
-                    {'id': 'code_execution', 'name': 'Code Execution'},
-                    {'id': 'image_generation', 'name': 'Image Generation'},
-                ],
-            }
-        )
+        assert data == {'models': [], 'builtinTools': []}
 
 
 def test_chat_app_index_endpoint():
@@ -114,47 +117,20 @@ def test_chat_app_index_caching():
         assert response2.status_code == 200
 
 
-def test_ai_models_configuration():
-    """Test that AI models are configured correctly."""
-    assert len(models) == 3
-
-    model_ids = {model.id for model in models}
-    assert 'anthropic:claude-sonnet-4-5' in model_ids
-    assert 'openai-responses:gpt-5' in model_ids
-    assert 'google-gla:gemini-2.5-pro' in model_ids
-
-
-def test_builtin_tools_configuration():
-    """Test that builtin tool definitions are configured correctly."""
-    assert len(builtin_tool_definitions) == 3
-
-    tool_ids = {tool_def.id for tool_def in builtin_tool_definitions}
-    assert 'web_search' in tool_ids
-    assert 'code_execution' in tool_ids
-    assert 'image_generation' in tool_ids
-
-    from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool
-
-    tools_by_id = {tool_def.id: tool_def.tool for tool_def in builtin_tool_definitions}
-    assert isinstance(tools_by_id['web_search'], WebSearchTool)
-    assert isinstance(tools_by_id['code_execution'], CodeExecutionTool)
-    assert isinstance(tools_by_id['image_generation'], ImageGenerationTool)
-
-
 def test_get_agent_missing():
-    """Test that get_agent raises RuntimeError when agent is not configured."""
-    from pydantic_ai.ui.web.api import get_agent
+    """Test that _get_agent raises RuntimeError when agent is not configured."""
+    from pydantic_ai.ui.web.api import _get_agent  # pyright: ignore[reportPrivateUsage]
 
-    app = FastAPI()
+    app = Starlette()
 
     class FakeRequest:
-        def __init__(self, app: FastAPI):
+        def __init__(self, app: Starlette):
             self.app = app
 
     request = FakeRequest(app)
 
     with pytest.raises(RuntimeError, match='No agent configured'):
-        get_agent(request)  # type: ignore[arg-type]
+        _get_agent(request)  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.anyio

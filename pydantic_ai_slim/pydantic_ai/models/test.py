@@ -156,6 +156,13 @@ class TestModel(Model):
         """The model provider."""
         return self._system
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[str]:
+        """TestModel supports all builtin tools for testing flexibility."""
+        from ..builtin_tools import ACTIVE_BUILTIN_TOOL_IDS
+
+        return ACTIVE_BUILTIN_TOOL_IDS
+
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 

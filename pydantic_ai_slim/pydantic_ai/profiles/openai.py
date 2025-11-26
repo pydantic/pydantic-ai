@@ -117,6 +117,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
     openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else None
 
+    # For OpenAI Chat API, only web_search is supported and only for specific models
+    supported_builtin_tools: frozenset[str] = frozenset({'web_search'}) if supports_web_search else frozenset()
+
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
@@ -126,6 +129,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=is_reasoning_model,
+        supported_builtin_tools=supported_builtin_tools,
     )
 
 

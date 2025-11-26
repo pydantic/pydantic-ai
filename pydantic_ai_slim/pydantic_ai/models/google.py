@@ -230,6 +230,11 @@ class GoogleModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[str]:
+        """Return the set of builtin tool IDs this model class can handle."""
+        return frozenset({'web_search', 'code_execution', 'web_fetch', 'image_generation'})
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:

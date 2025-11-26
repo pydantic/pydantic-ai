@@ -200,6 +200,13 @@ class FunctionModel(Model):
         """The system / model provider."""
         return self._system
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[str]:
+        """FunctionModel supports all builtin tools for testing flexibility."""
+        from ..builtin_tools import ACTIVE_BUILTIN_TOOL_IDS
+
+        return ACTIVE_BUILTIN_TOOL_IDS
+
 
 @dataclass(frozen=True, kw_only=True)
 class AgentInfo:

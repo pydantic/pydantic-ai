@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
 
 from typing_extensions import Self
@@ -63,6 +63,13 @@ class ModelProfile:
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    """
+
+    supported_builtin_tools: frozenset[str] = field(default_factory=lambda: frozenset[str]())
+    """The set of builtin tool IDs that this model/profile supports.
+
+    Defaults to empty (no builtin tools). Profile functions should explicitly
+    set this based on model capabilities.
     """
 
     @classmethod

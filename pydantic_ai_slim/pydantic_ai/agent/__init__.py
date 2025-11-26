@@ -68,10 +68,11 @@ from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutput
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI
+    from starlette.applications import Starlette
 
+    from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
-    from ..ui.web.agent_options import AIModel, BuiltinToolDef
+    from ..ui.web.api import AIModel
 
 __all__ = (
     'Agent',
@@ -1514,30 +1515,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         *,
         models: list[AIModel] | None = None,
-        builtin_tool_defs: list[BuiltinToolDef] | None = None,
-    ) -> FastAPI:
-        """Create a FastAPI app that serves a web chat UI for this agent.
+        builtin_tools: list[AbstractBuiltinTool] | None = None,
+    ) -> Starlette:
+        """Create a Starlette app that serves a web chat UI for this agent.
 
-        This method returns a pre-configured FastAPI application that provides a web-based
+        This method returns a pre-configured Starlette application that provides a web-based
         chat interface for interacting with the agent. The UI is downloaded and cached on
         first use, and includes support for model selection and builtin tool configuration.
 
         Args:
             models: List of AI models to make available in the UI. If not provided,
-                defaults to a predefined set of models. You'll need to ensure you have valid API keys
-                configured for any models you wish to use.
-            builtin_tool_defs: List of builtin tool definitions for the UI. Each
-                definition includes the tool ID, display name, and tool instance. If not
-                provided, defaults to a predefined set of tool definitions.
+                the UI will have no model options.
+            builtin_tools: List of builtin tools for the UI. Tool labels are derived from
+                the tool's `label` property. If not provided, no tools will be available.
 
         Returns:
-            A configured FastAPI application ready to be served (e.g., with uvicorn)
+            A configured Starlette application ready to be served (e.g., with uvicorn)
 
         Example:
             ```python
             from pydantic_ai import Agent
             from pydantic_ai.builtin_tools import WebSearchTool
-            from pydantic_ai.ui.web import AIModel, BuiltinToolDef
+            from pydantic_ai.ui.web import AIModel
 
             agent = Agent('openai:gpt-5')
 
@@ -1545,21 +1544,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def get_weather(city: str) -> str:
                 return f'The weather in {city} is sunny'
 
-            # Use defaults
-            app = agent.to_web()
-
-            # Or customize models and tools
+            # Customize models and tools
             app = agent.to_web(
                 models=[
                     AIModel(id='openai:gpt-5', name='GPT 5', builtin_tools=['web_search']),
                 ],
-                builtin_tool_defs=[
-                    BuiltinToolDef(
-                        id='web_search',
-                        name='Web Search',
-                        tool=WebSearchTool(),
-                    )
-                ],
+                builtin_tools=[WebSearchTool()],
             )
 
             # Then run with: uvicorn app:app --reload
@@ -1567,7 +1557,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         from ..ui.web import create_web_app
 
-        return create_web_app(self, models=models, builtin_tool_defs=builtin_tool_defs)
+        return create_web_app(self, models=models, builtin_tools=builtin_tools)
 
     @asynccontextmanager
     @deprecated(

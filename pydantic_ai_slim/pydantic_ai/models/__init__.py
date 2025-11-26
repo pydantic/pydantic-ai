@@ -702,6 +702,15 @@ class Model(ABC):
         """The model name."""
         raise NotImplementedError()
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[str]:
+        """Return the set of builtin tool IDs this model class can handle.
+
+        Subclasses should override this to reflect their actual capabilities.
+        Default is empty set - subclasses must explicitly declare support.
+        """
+        return frozenset()
+
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile."""
@@ -710,7 +719,7 @@ class Model(ABC):
             _profile = _profile(self.model_name)
 
         if _profile is None:
-            return DEFAULT_PROFILE
+            _profile = DEFAULT_PROFILE
 
         return _profile
 

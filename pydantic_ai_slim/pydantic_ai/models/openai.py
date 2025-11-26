@@ -455,6 +455,11 @@ class OpenAIChatModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[str]:
+        """Return the set of builtin tool IDs this model class can handle."""
+        return frozenset({'web_search'})
+
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
@@ -1143,6 +1148,11 @@ class OpenAIResponsesModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[str]:
+        """Return the set of builtin tool IDs this model class can handle."""
+        return frozenset({'web_search', 'code_execution', 'mcp_server', 'image_generation'})
 
     async def request(
         self,
