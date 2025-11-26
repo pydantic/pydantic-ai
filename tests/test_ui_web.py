@@ -352,3 +352,69 @@ def test_load_mcp_server_tools_multiple_servers(tmp_path: Path):
     assert len(tools) == 2
     ids = {t.id for t in tools}
     assert ids == {'server-a', 'server-b'}
+
+
+def test_mcp_server_tool_label():
+    """Test MCPServerTool.label property."""
+    from pydantic_ai.builtin_tools import MCPServerTool
+
+    tool = MCPServerTool(id='test-server', url='https://example.com')
+    assert tool.label == 'MCP: test-server'
+
+
+def test_model_profile():
+    """Test Model.profile cached property."""
+    from pydantic_ai.models.test import TestModel
+
+    model = TestModel()
+    assert model.profile is not None
+
+
+@pytest.mark.parametrize(
+    'model_cls',
+    [
+        pytest.param('anthropic', id='anthropic'),
+        pytest.param('google', id='google'),
+        pytest.param('groq', id='groq'),
+        pytest.param('openai', id='openai'),
+        pytest.param('openai_responses', id='openai-responses'),
+        pytest.param('function', id='function'),
+        pytest.param('test', id='test'),
+    ],
+)
+def test_supported_builtin_tools(model_cls: str):
+    """Test supported_builtin_tools() classmethod on all model classes."""
+    if model_cls == 'anthropic':
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        cls = AnthropicModel
+    elif model_cls == 'google':
+        from pydantic_ai.models.google import GoogleModel
+
+        cls = GoogleModel
+    elif model_cls == 'groq':
+        from pydantic_ai.models.groq import GroqModel
+
+        cls = GroqModel
+    elif model_cls == 'openai':
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+        cls = OpenAIChatModel
+    elif model_cls == 'openai_responses':
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        cls = OpenAIResponsesModel
+    elif model_cls == 'function':
+        from pydantic_ai.models.function import FunctionModel
+
+        cls = FunctionModel
+    elif model_cls == 'test':
+        from pydantic_ai.models.test import TestModel
+
+        cls = TestModel
+    else:
+        raise ValueError(f'Unknown model class: {model_cls}')  # pragma: no cover
+
+    result = cls.supported_builtin_tools()
+    assert isinstance(result, frozenset)
+    assert all(isinstance(t, str) for t in result)
