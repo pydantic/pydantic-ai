@@ -518,7 +518,7 @@ class OpenAIChatModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
-                model=self._model_name,
+                model=self.model_name,
                 messages=openai_messages,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
                 tools=tools or OMIT,

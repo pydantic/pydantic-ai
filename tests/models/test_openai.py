@@ -1215,6 +1215,57 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
     assert result.output == snapshot('The capital of England is London.')
 
 
+async def test_message_history_can_start_with_model_response(allow_model_requests: None, openai_api_key: str):
+    """Test that an agent run with message_history starting with ModelResponse is executed correctly."""
+
+    openai_model = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    message_history = [ModelResponse(parts=[TextPart('Where do you want to go today?')])]
+
+    agent = Agent(model=openai_model)
+
+    result = await agent.run('Answer in 5 words only. Who is Tux?', message_history=message_history)
+
+    assert result.output == snapshot('Linux mascot, a penguin character.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Where do you want to go today?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Answer in 5 words only. Who is Tux?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Linux mascot, a penguin character.')],
+                usage=RequestUsage(
+                    input_tokens=31,
+                    output_tokens=8,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))

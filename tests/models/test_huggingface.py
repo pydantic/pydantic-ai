@@ -750,14 +750,13 @@ async def test_model_client_response_error(allow_model_requests: None) -> None:
     request_info.headers = {}
     request_info.real_url = 'http://test.com'
     error = aiohttp.ClientResponseError(request_info, history=(), status=400, message='Bad Request')
-    error.response_error_payload = {'error': 'test error'}  # type: ignore
 
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('hello')
-    assert str(exc_info.value) == snapshot("status_code: 400, model_name: not_a_model, body: {'error': 'test error'}")
+    assert str(exc_info.value) == snapshot('status_code: 400, model_name: not_a_model, body: Bad Request')
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):

@@ -43,9 +43,9 @@ from pydantic_graph.beta.util import unpack_type_expression
 from pydantic_graph.nodes import BaseNode, End
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 if TYPE_CHECKING:
     from pydantic_graph.beta.mermaid import StateDiagramDirection
@@ -970,7 +970,7 @@ def _unwrap_exception_groups():
     else:
         try:
             yield
-        except ExceptionGroup as e:
+        except BaseExceptionGroup as e:
             exception = e.exceptions[0]
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire

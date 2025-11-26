@@ -947,6 +947,8 @@ async def _run_task(
         #   That way users can customize this logic. We'd default to a function that does the current thing but also
         #   allow `None` to disable it entirely.
         for node in span_tree:
+            if 'gen_ai.request.model' not in node.attributes:
+                continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
             for k, v in node.attributes.items():
                 if k == 'gen_ai.operation.name' and v == 'chat':
                     task_run.increment_metric('requests', 1)

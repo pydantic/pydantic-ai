@@ -125,14 +125,14 @@ allow any name in the type hints.
 See [the OpenRouter API](https://openrouter.ai/docs/api-reference/list-available-providers) for a full list.
 """
 
-_Transforms = Literal['middle-out']
+OpenRouterTransforms = Literal['middle-out']
 """Available messages transforms for OpenRouter models with limited token windows.
 
 Currently only supports 'middle-out', but is expected to grow in the future.
 """
 
 
-class _OpenRouterProviderConfig(TypedDict, total=False):
+class OpenRouterProviderConfig(TypedDict, total=False):
     """Represents the 'Provider' object from the OpenRouter API."""
 
     order: list[OpenRouterProviderName]
@@ -166,7 +166,7 @@ class _OpenRouterProviderConfig(TypedDict, total=False):
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
 
 
-class _OpenRouterReasoning(TypedDict, total=False):
+class OpenRouterReasoning(TypedDict, total=False):
     """Configuration for reasoning tokens in OpenRouter requests.
 
     Reasoning tokens allow models to show their step-by-step thinking process.
@@ -187,7 +187,7 @@ class _OpenRouterReasoning(TypedDict, total=False):
     """Whether to enable reasoning with default parameters. Default is inferred from effort or max_tokens."""
 
 
-class _OpenRouterUsageConfig(TypedDict, total=False):
+class OpenRouterUsageConfig(TypedDict, total=False):
     """Configuration for OpenRouter usage."""
 
     include: bool
@@ -204,7 +204,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     These models will be tried, in order, if the main model returns an error. [See details](https://openrouter.ai/docs/features/model-routing#the-models-parameter)
     """
 
-    openrouter_provider: _OpenRouterProviderConfig
+    openrouter_provider: OpenRouterProviderConfig
     """OpenRouter routes requests to the best available providers for your model. By default, requests are load balanced across the top providers to maximize uptime.
 
     You can customize how your requests are routed using the provider object. [See more](https://openrouter.ai/docs/features/provider-routing)"""
@@ -214,19 +214,19 @@ class OpenRouterModelSettings(ModelSettings, total=False):
 
     Create and manage presets through the OpenRouter web application to control provider routing, model selection, system prompts, and other parameters, then reference them in OpenRouter API requests. [See more](https://openrouter.ai/docs/features/presets)"""
 
-    openrouter_transforms: list[_Transforms]
+    openrouter_transforms: list[OpenRouterTransforms]
     """To help with prompts that exceed the maximum context size of a model.
 
     Transforms work by removing or truncating messages from the middle of the prompt, until the prompt fits within the model's context window. [See more](https://openrouter.ai/docs/features/message-transforms)
     """
 
-    openrouter_reasoning: _OpenRouterReasoning
+    openrouter_reasoning: OpenRouterReasoning
     """To control the reasoning tokens in the request.
 
     The reasoning config object consolidates settings for controlling reasoning strength across different models. [See more](https://openrouter.ai/docs/use-cases/reasoning-tokens)
     """
 
-    openrouter_usage: _OpenRouterUsageConfig
+    openrouter_usage: OpenRouterUsageConfig
     """To control the usage of the model.
 
     The usage config object consolidates settings for enabling detailed usage information. [See more](https://openrouter.ai/docs/use-cases/usage-accounting)
@@ -244,7 +244,11 @@ class _BaseReasoningDetail(BaseModel, frozen=True):
     """Common fields shared across all reasoning detail types."""
 
     id: str | None = None
-    format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1'] | None
+    format: (
+        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
+        | str
+        | None
+    )
     index: int | None
     type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
 
@@ -452,6 +456,8 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
         extra_body['preset'] = preset
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
+    if reasoning := model_settings.pop('openrouter_reasoning', None):
+        extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
@@ -608,13 +614,21 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         assert isinstance(choice, _OpenRouterChunkChoice)
 
         if reasoning_details := choice.delta.reasoning_details:
-            for detail in reasoning_details:
+            for i, detail in enumerate(reasoning_details):
                 thinking_part = _from_reasoning_detail(detail)
+                # Use unique vendor_part_id for each reasoning detail type to prevent
+                # different detail types (e.g., reasoning.text, reasoning.encrypted)
+                # from being incorrectly merged into a single ThinkingPart.
+                # This is required for Gemini 3 Pro which returns multiple reasoning
+                # detail types that must be preserved separately for thought_signature handling.
+                vendor_id = f'reasoning_detail_{detail.type}_{i}'
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning_detail',
+                    vendor_part_id=vendor_id,
                     id=thinking_part.id,
                     content=thinking_part.content,
+                    signature=thinking_part.signature,
                     provider_name=self._provider_name,
+                    provider_details=thinking_part.provider_details,
                 )
         else:
             return super()._map_thinking_delta(choice)
