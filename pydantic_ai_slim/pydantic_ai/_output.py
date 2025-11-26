@@ -630,7 +630,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             data = _utils.strip_markdown_fences(data)
 
         try:
-            output = self.validate(data, allow_partial, run_context.validation_context)
+            output = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -647,6 +647,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     def validate(
         self,
         data: str | dict[str, Any] | None,
+        *,
         allow_partial: bool = False,
         validation_context: Any | None = None,
     ) -> dict[str, Any]:
