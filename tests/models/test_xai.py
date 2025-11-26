@@ -52,7 +52,9 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput
+from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
@@ -1595,6 +1597,106 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     assert usage.output_tokens == 30
     assert usage.total_tokens == 80
     assert usage.details == snapshot({'server_side_tools_web_search': 2})
+
+
+async def test_xai_native_output_with_tools(allow_model_requests: None):
+    """Test that native output works with tools - tools should be called first, then native output."""
+    from pydantic import BaseModel
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    # First response: tool call
+    response1 = create_response(
+        tool_calls=[create_tool_call('call_get_country', 'get_user_country', {})],
+        usage=create_usage(prompt_tokens=70, completion_tokens=12),
+    )
+    # Second response: native output (JSON)
+    response2 = create_response(
+        content='{"city":"Mexico City","country":"Mexico"}',
+        usage=create_usage(prompt_tokens=90, completion_tokens=15),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=70, output_tokens=12),
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
+                usage=RequestUsage(input_tokens=90, output_tokens=15),
+                model_name='grok-4-1-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_tool_choice_fallback(allow_model_requests: None) -> None:
+    """Test that tool_choice falls back to 'auto' when 'required' is not supported."""
+    # Create a profile that doesn't support tool_choice='required'
+    profile = GrokModelProfile(grok_supports_tool_choice_required=False)
+
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock(response)
+    model = XaiModel('grok-3', provider=XaiProvider(xai_client=mock_client), profile=profile)
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    # Verify tool_choice was set to 'auto' (not 'required')
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == 'auto'
 
 
 # End of tests
