@@ -64,12 +64,9 @@ from ..models import (
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
-from ..providers.grok import GrokModelName
+from ..providers.xai import XaiModelName
 from ..settings import ModelSettings
 from ..usage import RequestUsage
-
-# Type alias for consistency
-XaiModelName = GrokModelName
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     'stop': 'stop',

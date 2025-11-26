@@ -5,6 +5,7 @@ from typing import Literal, overload
 
 import httpx
 from openai import AsyncOpenAI
+from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -39,8 +40,17 @@ GrokModelName = Literal[
 ]
 
 
+@deprecated(
+    '`GrokProvider` is deprecated, use `XaiProvider` with `XaiModel` instead for the native xAI SDK. '
+    'See <https://ai.pydantic.dev/models/xai/> for more details.'
+)
 class GrokProvider(Provider[AsyncOpenAI]):
-    """Provider for Grok API (OpenAI-compatible interface)."""
+    """Provider for Grok API (OpenAI-compatible interface).
+
+    .. deprecated::
+        Use [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] with [`XaiModel`][pydantic_ai.models.xai.XaiModel]
+        instead for the native xAI SDK.
+    """
 
     @property
     def name(self) -> str:

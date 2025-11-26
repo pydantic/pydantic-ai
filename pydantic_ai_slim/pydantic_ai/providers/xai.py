@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -15,6 +15,24 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `xai-sdk` package to use the xAI provider, '
         'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
     ) from _import_error
+
+
+# https://docs.x.ai/docs/models
+XaiModelName = Literal[
+    'grok-4',
+    'grok-4-0709',
+    'grok-4-1-fast-reasoning',
+    'grok-4-1-fast-non-reasoning',
+    'grok-4-fast-reasoning',
+    'grok-4-fast-non-reasoning',
+    'grok-code-fast-1',
+    'grok-3',
+    'grok-3-mini',
+    'grok-3-fast',
+    'grok-3-mini-fast',
+    'grok-2-vision-1212',
+    'grok-2-image-1212',
+]
 
 
 class XaiProvider(Provider[AsyncClient]):
