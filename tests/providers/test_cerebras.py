@@ -89,13 +89,11 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     assert isinstance(harmony_profile, OpenAIModelProfile)
     assert harmony_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-    # Test zai model
+    # Test zai model - uses default OpenAI profile (zai_model_profile returns None)
     zai_profile = provider.model_profile('zai-glm-4.6')
     zai_model_profile_mock.assert_called_with('zai-glm-4.6')
     assert zai_profile is not None
     assert isinstance(zai_profile, OpenAIModelProfile)
-    assert zai_profile.supports_json_object_output is True
-    assert zai_profile.supports_json_schema_output is True
     assert zai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test unknown model - should still return a profile with OpenAIJsonSchemaTransformer
