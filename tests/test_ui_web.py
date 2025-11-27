@@ -17,7 +17,7 @@ with try_import() as starlette_import_successful:
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
 
-    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.builtin_tools import MCPServerTool, WebSearchTool
     from pydantic_ai.ui.web import create_web_app
 
 
@@ -287,7 +287,6 @@ def test_expand_env_vars_passthrough():
 
 def test_load_mcp_server_tools_basic(tmp_path: Path):
     """Test loading MCP server tools from a config file."""
-    from pydantic_ai.builtin_tools import MCPServerTool
     from pydantic_ai.ui.web._mcp import load_mcp_server_tools
 
     config = {
@@ -301,10 +300,7 @@ def test_load_mcp_server_tools_basic(tmp_path: Path):
     config_file.write_text(json.dumps(config), encoding='utf-8')
 
     tools = load_mcp_server_tools(str(config_file))
-    assert len(tools) == 1
-    assert isinstance(tools[0], MCPServerTool)
-    assert tools[0].id == 'test-server'
-    assert tools[0].url == 'https://example.com/mcp'
+    assert tools == snapshot([MCPServerTool(id='test-server', url='https://example.com/mcp')])
 
 
 def test_load_mcp_server_tools_with_all_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -328,13 +324,18 @@ def test_load_mcp_server_tools_with_all_fields(tmp_path: Path, monkeypatch: pyte
     config_file.write_text(json.dumps(config), encoding='utf-8')
 
     tools = load_mcp_server_tools(str(config_file))
-    assert len(tools) == 1
-    assert tools[0].id == 'full-server'
-    assert tools[0].url == 'https://example.com/mcp'
-    assert tools[0].authorization_token == 'my-secret-token'
-    assert tools[0].description == 'A test MCP server'
-    assert tools[0].allowed_tools == ['tool1', 'tool2']
-    assert tools[0].headers == {'X-Custom': 'header-value'}
+    assert tools == snapshot(
+        [
+            MCPServerTool(
+                id='full-server',
+                url='https://example.com/mcp',
+                authorization_token='my-secret-token',
+                description='A test MCP server',
+                allowed_tools=['tool1', 'tool2'],
+                headers={'X-Custom': 'header-value'},
+            )
+        ]
+    )
 
 
 def test_load_mcp_server_tools_file_not_found():
@@ -359,9 +360,12 @@ def test_load_mcp_server_tools_multiple_servers(tmp_path: Path):
     config_file.write_text(json.dumps(config), encoding='utf-8')
 
     tools = load_mcp_server_tools(str(config_file))
-    assert len(tools) == 2
-    ids = {t.id for t in tools}
-    assert ids == {'server-a', 'server-b'}
+    assert tools == snapshot(
+        [
+            MCPServerTool(id='server-a', url='https://a.example.com/mcp'),
+            MCPServerTool(id='server-b', url='https://b.example.com/mcp'),
+        ]
+    )
 
 
 def test_mcp_server_tool_label():

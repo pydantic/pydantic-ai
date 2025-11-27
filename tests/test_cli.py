@@ -233,20 +233,19 @@ def test_handle_slash_command_copy(mocker: MockerFixture):
     mocker.patch('pyperclip.copy', append_to_clipboard)
     assert handle_slash_command('/cp', [], False, Console(file=io), 'default') == (None, False)
     assert io.getvalue() == snapshot('No output available to copy.\n')
-    assert len(mock_clipboard) == 0
+    assert mock_clipboard == snapshot([])
 
     messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(''), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot('No text content to copy.\n')
-    assert len(mock_clipboard) == 0
+    assert mock_clipboard == snapshot([])
 
     messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('hello'), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot('Copied last output to clipboard.\n')
-    assert len(mock_clipboard) == 1
-    assert mock_clipboard[0] == snapshot('hello')
+    assert mock_clipboard == snapshot(['hello'])
 
 
 def test_handle_slash_command_exit():
