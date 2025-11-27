@@ -3678,7 +3678,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
         agent = Agent(
             m,
             system_prompt='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
+            builtin_tools=[FileSearchTool(file_store_ids={store.name})],
         )
 
         result = await agent.run('What is the capital of France?')
@@ -3860,7 +3860,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         agent = Agent(
             m,
             system_prompt='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
+            builtin_tools=[FileSearchTool(file_store_ids={store.name})],
         )
 
         event_parts: list[Any] = []

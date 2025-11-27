@@ -613,7 +613,7 @@ async def main():
 
     agent = Agent(
         model,
-        builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])]
+        builtin_tools=[FileSearchTool(file_store_ids={vector_store.id})]
     )
 
     result = await agent.run('What information is in my documents about pydantic?')
@@ -649,7 +649,7 @@ async def main():
 
     agent = Agent(
         model,
-        builtin_tools=[FileSearchTool(file_store_ids=[store.name])]
+        builtin_tools=[FileSearchTool(file_store_ids={store.name})]
     )
 
     result = await agent.run('Summarize the key points from my uploaded documents.')

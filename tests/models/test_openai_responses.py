@@ -7485,7 +7485,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            builtin_tools=[FileSearchTool(file_store_ids={vector_store.id})],
         )
 
         result = await agent.run('What is the capital of France?')
@@ -7623,7 +7623,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            builtin_tools=[FileSearchTool(file_store_ids={vector_store.id})],
         )
 
         event_parts: list[Any] = []
@@ -7840,7 +7840,7 @@ async def test_openai_include_file_search_results_setting(allow_model_requests: 
     )
     agent = Agent(
         model=model,
-        builtin_tools=[FileSearchTool(file_store_ids=[])],
+        builtin_tools=[FileSearchTool(file_store_ids=set())],
     )
 
     await agent.run('test')
@@ -7879,7 +7879,7 @@ async def test_openai_file_search_with_message_history(allow_model_requests: Non
     )
     agent = Agent(
         model=model,
-        builtin_tools=[FileSearchTool(file_store_ids=[])],
+        builtin_tools=[FileSearchTool(file_store_ids=set())],
     )
 
     messages = [
@@ -7934,7 +7934,7 @@ async def test_openai_file_search_status_update(allow_model_requests: None):
     )
     agent = Agent(
         model=model,
-        builtin_tools=[FileSearchTool(file_store_ids=[])],
+        builtin_tools=[FileSearchTool(file_store_ids=set())],
     )
 
     messages = [

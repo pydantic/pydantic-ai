@@ -1403,7 +1403,7 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, FileSearchTool):
                 file_search_tool = cast(
                     responses.FileSearchToolParam,
-                    {'type': 'file_search', 'file_store_ids': tool.file_store_ids},
+                    {'type': 'file_search', 'file_store_ids': list(tool.file_store_ids)},
                 )
                 tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):

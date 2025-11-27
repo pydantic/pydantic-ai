@@ -353,7 +353,7 @@ class GoogleModel(Model):
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
                 elif isinstance(tool, FileSearchTool):
-                    file_search_config = FileSearchDict(file_search_store_names=tool.file_store_ids)
+                    file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
