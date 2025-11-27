@@ -697,12 +697,15 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         if isinstance(part, mcp_types.TextContent):
             text = part.text
-            if text.startswith(('[', '{')):
-                try:
-                    return pydantic_core.from_json(text)
-                except ValueError:
-                    pass
-            return text if not part.meta else messages.TextPart(content=text, metadata=part.meta)
+            if part.meta:
+                return messages.TextPart(content=text, metadata=part.meta)
+            else:
+                if text.startswith(('[', '{')):
+                    try:
+                        return pydantic_core.from_json(text)
+                    except ValueError:
+                        pass
+                return text
         elif isinstance(part, mcp_types.ImageContent):
             return messages.BinaryContent(
                 data=base64.b64decode(part.data), media_type=part.mimeType, metadata=part.meta

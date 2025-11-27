@@ -47,6 +47,36 @@ async def get_weather_forecast(location: str) -> str:
     return f'The weather in {location} is sunny and 26 degrees Celsius.'
 
 
+@mcp.tool(structured_output=False, annotations=ToolAnnotations(title='Collatz Conjecture sequence generator'))
+async def get_collatz_conjecture(n: int) -> TextContent:
+    """Generate the Collatz conjecture sequence for a given number.
+    This tool attaches response metadata.
+
+    Args:
+        n: The starting number for the Collatz sequence.
+    Returns:
+        A list representing the Collatz sequence with attached metadata.
+    """
+    if n <= 0:
+        raise ValueError('Starting number for the Collatz conjecture must be a positive integer.')
+
+    input_param_n = n  # store the original input value
+
+    sequence = [n]
+    while n != 1:
+        if n % 2 == 0:
+            n = n // 2
+        else:
+            n = 3 * n + 1
+        sequence.append(n)
+
+    return TextContent(
+        type='text',
+        text=str(sequence),
+        _meta={'pydantic_ai': {'tool': 'collatz_conjecture', 'n': input_param_n, 'length': len(sequence)}},
+    )
+
+
 @mcp.tool()
 async def get_image_resource() -> EmbeddedResource:
     data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
