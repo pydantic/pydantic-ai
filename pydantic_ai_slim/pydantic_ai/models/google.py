@@ -106,6 +106,7 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-pro-preview',
+    'gemini-3-pro-image-preview',
 ]
 """Latest Gemini models."""
 
@@ -420,7 +421,7 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools = self._get_tools(model_request_parameters)
-        if tools and not self.profile.supports_tools:
+        if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
         response_mime_type = None
@@ -741,6 +742,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif part.inline_data is not None:
+                    if part.thought:  # pragma: no cover
+                        # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
+                        # > The model generates up to two interim images to test composition and logic. The last image within Thinking is also the final rendered image.
+                        # We currently don't expose these image thoughts as they can't be represented with `ThinkingPart`
+                        continue
                     data = part.inline_data.data
                     mime_type = part.inline_data.mime_type
                     assert data and mime_type, 'Inline data must have data and mime type'
