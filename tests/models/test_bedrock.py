@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
 import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
+    CachePoint,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -32,26 +35,76 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.profiles import DEFAULT_PROFILE
+from pydantic_ai.providers import Provider
+from pydantic_ai.providers.bedrock import BedrockProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.openai import OpenAIProvider
+    pass
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+class _StubBedrockClient:
+    """Minimal Bedrock client that always raises the provided error."""
+
+    def __init__(self, error: ClientError):
+        self._error = error
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+
+    def converse(self, **_: Any) -> None:
+        raise self._error
+
+    def converse_stream(self, **_: Any) -> None:
+        raise self._error
+
+    def count_tokens(self, **_: Any) -> None:
+        raise self._error
+
+
+class _StubBedrockProvider(Provider[Any]):
+    """Provider implementation backed by the stub client."""
+
+    def __init__(self, client: _StubBedrockClient):
+        self._client = client
+
+    @property
+    def name(self) -> str:
+        return 'bedrock-stub'
+
+    @property
+    def base_url(self) -> str:
+        return 'https://bedrock.stub'
+
+    @property
+    def client(self) -> _StubBedrockClient:
+        return self._client
+
+    def model_profile(self, model_name: str):
+        return DEFAULT_PROFILE
+
+
+def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
+    """Instantiate a BedrockConverseModel wired to always raise the given error."""
+    return BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0',
+        provider=_StubBedrockProvider(_StubBedrockClient(error)),
+    )
 
 
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -76,7 +129,8 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content='Hello!',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -90,9 +144,126 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_bedrock_model_usage_limit_exceeded(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=19\\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
+        )
+
+
+async def test_bedrock_model_usage_limit_not_exceeded(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+
+    assert result.output == snapshot(
+        'I notice there\'s a small typo in your message - it should be "lazy dog" (two words) rather than '
+        '"lazydog."\n\nThe corrected version is: "The quick brown fox jumps over the lazy dog."\n\n'
+        'This is a famous pangram - a sentence that contains every letter of the English alphabet at least once. '
+        "It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to "
+        "display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you "
+        'perhaps testing something?'
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+async def test_bedrock_request_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.request([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot(
+        'An error occurred (TestException) when calling the converse operation: broken connection'
+    )
+
+
+async def test_bedrock_count_tokens_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot(
+        'An error occurred (TestException) when calling the count_tokens operation: broken connection'
+    )
+
+
+async def test_bedrock_stream_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
+            async for _ in stream:
+                pass
+
+    assert 'broken connection' in exc_info.value.message
+
+
+async def test_stub_provider_properties():
+    # tests the test utility itself...
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'test'}}, 'converse')
+    model = _bedrock_model_with_client_error(error)
+    provider = model._provider  # pyright: ignore[reportPrivateUsage]
+
+    assert provider.name == 'bedrock-stub'
+    assert provider.base_url == 'https://bedrock.stub'
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('us.anthropic.claude-sonnet-4-20250514-v1:0', 'anthropic.claude-sonnet-4-20250514-v1:0'),
+        ('eu.amazon.nova-micro-v1:0', 'amazon.nova-micro-v1:0'),
+        ('apac.meta.llama3-8b-instruct-v1:0', 'meta.llama3-8b-instruct-v1:0'),
+        ('anthropic.claude-3-7-sonnet-20250219-v1:0', 'anthropic.claude-3-7-sonnet-20250219-v1:0'),
+    ],
+)
+def test_remove_inference_geo_prefix(model_name: str, expected: str):
+    assert BedrockConverseModel._remove_inference_geo_prefix(model_name) == expected  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -132,7 +303,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -151,6 +323,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -160,7 +333,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -179,6 +353,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -188,7 +363,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -263,7 +439,8 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         content='What is the capital of France?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -282,6 +459,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -291,7 +469,8 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -309,6 +488,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -584,6 +764,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -597,6 +778,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -641,7 +823,10 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
                 usage=RequestUsage(input_tokens=12, output_tokens=693),
@@ -650,6 +835,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -666,7 +852,8 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
@@ -676,6 +863,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -696,7 +884,10 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -712,6 +903,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -728,7 +920,8 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -745,6 +938,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -773,7 +967,8 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -791,6 +986,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -807,7 +1003,8 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                         content='What was that?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -825,6 +1022,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -863,7 +1061,8 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -887,6 +1086,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -995,7 +1195,8 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1030,6 +1231,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1053,7 +1255,8 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1070,6 +1273,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1120,7 +1324,7 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     ]
 
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1204,7 +1408,8 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                         content='Hello',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1221,6 +1426,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1239,7 +1445,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Models other than Mistral support toolResult.content with text, not json
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1255,7 +1461,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Mistral requires toolResult.content to hold json, not text
     model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1376,3 +1582,45 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
             PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+@pytest.mark.vcr()
+async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors during streaming convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+async def test_cache_point_filtering():
+    """Test that CachePoint is filtered out in Bedrock message mapping."""
+    from itertools import count
+
+    # Test the static method directly
+    messages = await BedrockConverseModel._map_user_prompt(UserPromptPart(content=['text', CachePoint()]), count())  # pyright: ignore[reportPrivateUsage]
+    # CachePoint should be filtered out, message should still be valid
+    assert len(messages) == 1
+    assert messages[0]['role'] == 'user'

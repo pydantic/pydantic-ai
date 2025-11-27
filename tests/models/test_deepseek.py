@@ -34,7 +34,10 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='deepseek'),
@@ -55,6 +58,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -78,7 +82,8 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -100,6 +105,7 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='33be18fc-3842-486c-8c29-dd8e578f7f20',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

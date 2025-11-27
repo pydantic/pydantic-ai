@@ -214,7 +214,7 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 settings = GoogleModelSettings(
     temperature=0.2,
     max_tokens=1024,
-    google_thinking_config={'thinking_budget': 2048},
+    google_thinking_config={'thinking_level': 'low'},
     google_safety_settings=[
         {
             'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
@@ -222,14 +222,14 @@ settings = GoogleModelSettings(
         }
     ]
 )
-model = GoogleModel('gemini-2.5-flash')
+model = GoogleModel('gemini-2.5-pro')
 agent = Agent(model, model_settings=settings)
 ...
 ```
 
 ### Disable thinking
 
-You can disable thinking by setting the `thinking_budget` to `0` on the `google_thinking_config`:
+On models older than Gemini 2.5 Pro, you can disable thinking by setting the `thinking_budget` to `0` on the `google_thinking_config`:
 
 ```python
 from pydantic_ai import Agent

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import field
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
@@ -16,15 +16,19 @@ if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
 
+# TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
+RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=None, covariant=True)
+"""Type variable for the agent dependencies in `RunContext`."""
+
 
 @dataclasses.dataclass(repr=False, kw_only=True)
-class RunContext(Generic[AgentDepsT]):
+class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
 
-    deps: AgentDepsT
+    deps: RunContextAgentDepsT
     """Dependencies for the agent."""
     model: Model
     """The model used in this run."""
@@ -34,6 +38,8 @@ class RunContext(Generic[AgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    validation_context: Any = None
+    """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""
     tracer: Tracer = field(default_factory=NoOpTracer)
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False
@@ -54,6 +60,10 @@ class RunContext(Generic[AgentDepsT]):
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+    partial_output: bool = False
+    """Whether the output passed to an output validator is partial."""
+    run_id: str | None = None
+    """"Unique identifier for the agent run."""
 
     @property
     def last_attempt(self) -> bool:

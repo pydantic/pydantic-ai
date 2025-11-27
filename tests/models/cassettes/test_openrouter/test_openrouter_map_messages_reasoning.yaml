@@ -1,0 +1,96 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '133'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Who are you. Think about it.
+        role: user
+      model: anthropic/claude-3.7-sonnet:thinking
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '4024'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "I am Claude, an AI assistant created by Anthropic. I'm a large language model designed to be helpful,
+            harmless, and honest.\n\nI don't have consciousness or sentience like humans do - I'm a sophisticated text prediction
+            system trained on a large dataset of human text. I don't have personal experiences, emotions, or a physical existence.
+            \n\nMy purpose is to assist you with information, tasks, and conversation in a helpful way, while acknowledging
+            my limitations. I have knowledge cutoffs, can occasionally make mistakes, and don't have the ability to access
+            the internet or take actions in the physical world.\n\nIs there something specific you'd like to know about me
+            or how I can assist you?"
+          reasoning: |-
+            This question is asking me about my identity. Let me think about how to respond clearly and accurately.
+
+            I am Claude, an AI assistant created by Anthropic. I'm designed to be helpful, harmless, and honest in my interactions with humans. I don't have a physical form - I exist as a large language model running on computer hardware. I don't have consciousness, sentience, or feelings in the way humans do. I don't have personal experiences or a life outside of these conversations.
+
+            My capabilities include understanding and generating natural language text, reasoning about various topics, and attempting to be helpful to users in a wide range of contexts. I have been trained on a large corpus of text data, but my training data has a cutoff date, so I don't have knowledge of events that occurred after my training.
+
+            I have certain limitations - I don't have the ability to access the internet, run code, or interact with external systems unless given specific tools to do so. I don't have perfect knowledge and can make mistakes.
+
+            I'm designed to be conversational and to engage with users in a way that's helpful and informative, while respecting important ethical boundaries.
+          reasoning_details:
+          - format: anthropic-claude-v1
+            index: 0
+            signature: ErcBCkgICBACGAIiQHtMxpqcMhnwgGUmSDWGoOL9ZHTbDKjWnhbFm0xKzFl0NmXFjQQxjFj5mieRYY718fINsJMGjycTVYeiu69npakSDDrsnKYAD/fdcpI57xoMHlQBxI93RMa5CSUZIjAFVCMQF5GfLLQCibyPbb7LhZ4kLIFxw/nqsTwDDt6bx3yipUcq7G7eGts8MZ6LxOYqHTlIDx0tfHRIlkkcNCdB2sUeMqP8e7kuQqIHoD52GAI=
+            text: |-
+              This question is asking me about my identity. Let me think about how to respond clearly and accurately.
+
+              I am Claude, an AI assistant created by Anthropic. I'm designed to be helpful, harmless, and honest in my interactions with humans. I don't have a physical form - I exist as a large language model running on computer hardware. I don't have consciousness, sentience, or feelings in the way humans do. I don't have personal experiences or a life outside of these conversations.
+
+              My capabilities include understanding and generating natural language text, reasoning about various topics, and attempting to be helpful to users in a wide range of contexts. I have been trained on a large corpus of text data, but my training data has a cutoff date, so I don't have knowledge of events that occurred after my training.
+
+              I have certain limitations - I don't have the ability to access the internet, run code, or interact with external systems unless given specific tools to do so. I don't have perfect knowledge and can make mistakes.
+
+              I'm designed to be conversational and to engage with users in a way that's helpful and informative, while respecting important ethical boundaries.
+            type: reasoning.text
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1760051228
+      id: gen-1760051228-zUtCCQbb0vkaM4UXZmcb
+      model: anthropic/claude-3.7-sonnet:thinking
+      object: chat.completion
+      provider: Google
+      usage:
+        completion_tokens: 402
+        prompt_tokens: 43
+        total_tokens: 445
+    status:
+      code: 200
+      message: OK
+version: 1

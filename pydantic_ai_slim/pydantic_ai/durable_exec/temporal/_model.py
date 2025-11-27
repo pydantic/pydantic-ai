@@ -130,7 +130,7 @@ class TemporalModel(WrapperModel):
 
         self._validate_model_request_parameters(model_request_parameters)
 
-        return await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+        return await workflow.execute_activity(
             activity=self.request_activity,
             arg=_RequestParams(
                 messages=messages,
@@ -168,7 +168,7 @@ class TemporalModel(WrapperModel):
         self._validate_model_request_parameters(model_request_parameters)
 
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
-        response = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+        response = await workflow.execute_activity(
             activity=self.request_stream_activity,
             args=[
                 _RequestParams(

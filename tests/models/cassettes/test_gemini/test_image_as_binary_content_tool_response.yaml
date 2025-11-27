@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '188'
+      - '276'
       content-type:
       - application/json
       host:
@@ -23,17 +23,21 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_image
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '704'
+      - '1120'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4898
+      - gfet4t7; dur=2075
       transfer-encoding:
       - chunked
       vary:
@@ -44,24 +48,24 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |+
-              I need to use the `get_image` tool to see the image first.
-
           - functionCall:
               args: {}
               name: get_image
+            thoughtSignature: EqYCCqMCAdHtim9aUnw2A4IteHWJkuPWLyAFJgbLHEss65dc6oyraCTfTStphadgKwV2KJ8o4HosjP6xY+5/ibmc4JNOVXWbV2Vs635hYfNRZcinTmrKvSD87JoGRM3ZI6xRamHcuo8fRsykW9vMX80U+QmLWKjlqBTWvbVwa1jiomJFlC4lVIQqXktvprNYV5QyoZuTWg2fscOwoU6HwlNvc9Zozb6aTkigH2ba9PJ0ebH69ui9aE46XwzI/x6dQ2rjaLP+I5r9ArpFTf/U0O6MW0Rn5yV2267IG5/i0jgPnf/IrHGOcF11c5MhQfBTiDHyjYWbpWqr7IEzZnQU1C+ktpAV7Xsoqy5XsW0GeHlS1i9Th0/gAIiVRqu9HziDz9431sRrbJr0
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-pro-preview-03-25
+      modelVersion: gemini-3-pro-preview
+      responseId: JfYgaYXrHZmFz7IPxuf_kAg
       usageMetadata:
-        candidatesTokenCount: 28
-        promptTokenCount: 38
+        candidatesTokenCount: 10
+        promptTokenCount: 33
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 38
-        thoughtsTokenCount: 361
-        totalTokenCount: 427
+          tokenCount: 33
+        thoughtsTokenCount: 64
+        totalTokenCount: 107
     status:
       code: 200
       message: OK
@@ -74,7 +78,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780013'
+      - '2780085'
       content-type:
       - application/json
       host:
@@ -86,12 +90,10 @@ interactions:
         - text: What fruit is in the image you can get from the get_image tool?
         role: user
       - parts:
-        - text: |+
-            I need to use the `get_image` tool to see the image first.
-
         - functionCall:
             args: {}
             name: get_image
+          thoughtSignature: context_engineering_is_the_way_to_go
         role: model
       - parts:
         - functionResponse:
@@ -107,17 +109,21 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_image
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '632'
+      - '3380'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4262
+      - gfet4t7; dur=7801
       transfer-encoding:
       - chunked
       vary:
@@ -128,23 +134,43 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The image shows a kiwi fruit, sliced in half.
+          - text: '6'
+          - text: |2-
+               1c8566
+              The image shows a **kiwi** fruit that has been sliced in half.
+
+              You can see:
+              *   The **bright green flesh**.
+              *   The ring of tiny **black seeds**.
+              *   The **white core** in the center.
+              *   The fuzzy **brown skin** around the outside.
+
+              It's positioned against a plain white background.
+          - text: |-
+              The fruit in the image is a **kiwi** (specifically, a sliced green kiwifruit).
+
+              You can clearly identify it by its signature features:
+              *   **Green flesh** with a radial pattern.
+              *   A ring of small **black seeds**.
+              *   A cream-colored **white core** in the center.
+              *   Fuzzy **brown skin** visible on the exterior edge.
+            thoughtSignature: EtYLCtMLAdHtim8079uOvyk87+/eb8V56BuY9KjNm9tCWtz8I12z5gDoFjc2p6ENjheushV2ZncdwVBLaYkISPouXqmS00Mfbb7ZxpN7VWEg6T/gEFyT/RViSevwuyR1asZVqLmO6KHUWDi8W+T5ylplZ+ymos6NW77EuK8SkW9EVz6Q9ux2YE2AqvzIK7IQnA6G0QvTdPlfJVdZhnSFPdC09gxn2Hn5SDpWN80ymen70VKm6tivKzVz6SXruGJObFm5JT0UUezOA0NGR6SpPt7vMYFdlhDPacGz6+T3/Sjb+D0ytqp9bKe5iZini8KpsZzsIf+M5gvQTwYvD8UinjzzAu5FH2dpZYcnMz5ACA1maWE6TG9oxh8TOaTdybEYHqqjRrioI97Vq3waohszxodFvuXNFKVsxbxSVYjXOeY9s5b0ky5i/Y/AxPqJYIVRYaekJCY0X0K+FzOEs44rDb4N2mSY03aicpwFgZDnVHDuv/2GzqagXqaZyNcBezDcVdXbctPXyS1PpAtqpZF1Do4goc29gkpZ7L1aXBaQQX8CgtOxWtE7Vx6ABVesP983j1hBkIB0/5keHOX+uHdjYvwfcFoehthQHCuZJaLfwqebdB2hM2mss3eCLKNGqZRspKFEXdMXJKNQSK5P01nWr9SOX2JJ4si/yMYqopvu9aKy5woG0IAJibmrHYa/CFBn+6qqmV7MLGlyM/w/pKl+bmJ+SfaN4sQf/TAYBJqOIoInEXJg6RFsogjG+PQ2ZUBgSq3kL1bNpj5IOxLiBPhjztbLCwZZVJAw0JNLwIfty11Ux9p1WFsS9oZ+n4j+X1rQzlUzJh32w/1jwpN2Z2nrM0R48Hho5vK2q//WO/j6vIdGv/yYubgMqo1z9PmzuwLccEzG/rMDgNV4zfXUZM+Y0QHgoRQCR2RB3mtaBBrOF6fpJjVRZCRiE9W7A84m6W9uyG2Q3PNdfWOjROCghwgZ3UfwB7tHdJe6Pqyta+mpKK6tAjDmLvbcqg9utbJveF3SG78KmyTYcLNGuFsUXsBztVj5dxSzxOgfok0UpVz/6lqEKZ0wIrOWXvaua/pzi2L1eaYoP0L5I9aUpS+eYj1Nvz6SkZEbN9/gLgtXeetpqPOJIVX1t9RDfD/nCBwi0F1/oO8zeNg4rgR7+dCrHlJy7nmdAPnq1m0lLwm/JW7LQXzj4ZZQlIk7SToqPK9OyGCOh931xcC1rQmmPEldAllyMp3AiHu4oG/OFhQ7zt3y0txVn0ZiJQZG5crrXLgf8AzNk9iypdqE+5pBRg8bgiq+8mr6P73U7Yi9+oSObIJC+366mBSBc4YH7l/i8jLALCGhozW89vqDbSKraVDAX8V9rmiyPf/SbsfxxkIVBoWi6RZ/5JI9mqQvCJ2jr6+D9pmhz2WKYNV8Nn5wfei8kE623Zv2J6ynp1PnEI2VONllIYZZG47wQuU25vtwXUPoccEMz1sVaIddP0AnnMe2FgVeJbL8z+X5udsUIzGM3YFlLatXTehGqLGE+AjDvH3p2fP0YclA5gauIGEBn3gkWeOezBjyB7MNp2BkHyKoSGBzFHczzKeAzeyzo2fuytInNYvNAdP9qwZxOMDwsGTSNuhArybU+Dp4yIMfjiVCQJ9MCKzXSusqskAYOW1GXt6VGhUCK71VHfDKTObVEnLy603WIvejgLWO4OxpwIysjTgEeX/s2/IMGVtpL1lFs2weinRmnkdVbYfUKrR/9CHkqosoeII7V/xHY6YwIGD4ZO0qNiXIzsfWGj1QG7NZbFCWb0tStQ/cx7yqVX34Bw+JFlHnuorYiWJ5k0aCtfN+u0ZsYd2MaLV6l3VS7p/LO7LM3LN8Dj3uKeF/oEPBZOspUFZu/wK0r1/JSQJx8ANH2IO5RoiUgk9uQrgdHuKVGjBLcCRbPKlVSfJhKImZ/BzUHTKtdeKcBHkBklpi/lzm+NhlFwvy8XGbWhnewvZYKMorVo2IdaxvNtxD1Te2
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-pro-preview-03-25
+      modelVersion: gemini-3-pro-preview
+      responseId: LfYgad6vHMjjz7IP6smh-Qo
       usageMetadata:
-        candidatesTokenCount: 11
-        promptTokenCount: 360
+        candidatesTokenCount: 171
+        promptTokenCount: 1185
         promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 102
         - modality: IMAGE
-          tokenCount: 258
-        thoughtsTokenCount: 201
-        totalTokenCount: 572
+          tokenCount: 1107
+        - modality: TEXT
+          tokenCount: 78
+        thoughtsTokenCount: 381
+        totalTokenCount: 1737
     status:
       code: 200
       message: OK
 version: 1
-...

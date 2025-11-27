@@ -47,7 +47,7 @@ PROTECTED_FILES = {'.env'}
 @agent.tool
 def update_file(ctx: RunContext, path: str, content: str) -> str:
     if path in PROTECTED_FILES and not ctx.tool_call_approved:
-        raise ApprovalRequired
+        raise ApprovalRequired(metadata={'reason': 'protected'})  # (1)!
     return f'File {path!r} updated: {content!r}'
 
 
@@ -77,6 +77,7 @@ DeferredToolRequests(
             tool_call_id='delete_file',
         ),
     ],
+    metadata={'update_file_dotenv': {'reason': 'protected'}},
 )
 """
 
@@ -92,10 +93,20 @@ for call in requests.approvals:
 
     results.approvals[call.tool_call_id] = result
 
-result = agent.run_sync(message_history=messages, deferred_tool_results=results)
+result = agent.run_sync(
+    'Now create a backup of README.md',  # (2)!
+    message_history=messages,
+    deferred_tool_results=results,
+)
 print(result.output)
 """
-I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.
+Here's what I've done:
+- Attempted to delete __init__.py, but deletion is not allowed.
+- Updated README.md with: Hello, world!
+- Cleared .env (set to empty).
+- Created a backup at README.md.bak containing: Hello, world!
+
+If you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know.
 """
 print(result.all_messages())
 """
@@ -106,7 +117,8 @@ print(result.all_messages())
                 content='Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -129,6 +141,7 @@ print(result.all_messages())
         usage=RequestUsage(input_tokens=63, output_tokens=21),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -138,37 +151,71 @@ print(result.all_messages())
                 tool_call_id='update_file_readme',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelRequest(
         parts=[
-            ToolReturnPart(
-                tool_name='delete_file',
-                content='Deleting files is not allowed',
-                tool_call_id='delete_file',
-                timestamp=datetime.datetime(...),
-            ),
             ToolReturnPart(
                 tool_name='update_file',
                 content="File '.env' updated: ''",
                 tool_call_id='update_file_dotenv',
                 timestamp=datetime.datetime(...),
             ),
-        ]
+            ToolReturnPart(
+                tool_name='delete_file',
+                content='Deleting files is not allowed',
+                tool_call_id='delete_file',
+                timestamp=datetime.datetime(...),
+            ),
+            UserPromptPart(
+                content='Now create a backup of README.md',
+                timestamp=datetime.datetime(...),
+            ),
+        ],
+        run_id='...',
+    ),
+    ModelResponse(
+        parts=[
+            ToolCallPart(
+                tool_name='update_file',
+                args={'path': 'README.md.bak', 'content': 'Hello, world!'},
+                tool_call_id='update_file_backup',
+            )
+        ],
+        usage=RequestUsage(input_tokens=86, output_tokens=31),
+        model_name='gpt-5',
+        timestamp=datetime.datetime(...),
+        run_id='...',
+    ),
+    ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='update_file',
+                content="File 'README.md.bak' updated: 'Hello, world!'",
+                tool_call_id='update_file_backup',
+                timestamp=datetime.datetime(...),
+            )
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.'
+                content="Here's what I've done:\n- Attempted to delete __init__.py, but deletion is not allowed.\n- Updated README.md with: Hello, world!\n- Cleared .env (set to empty).\n- Created a backup at README.md.bak containing: Hello, world!\n\nIf you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know."
             )
         ],
-        usage=RequestUsage(input_tokens=79, output_tokens=39),
+        usage=RequestUsage(input_tokens=93, output_tokens=89),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
 ]
 """
 ```
+
+1. The optional `metadata` parameter can attach arbitrary context to deferred tool calls, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+2. This second agent run continues from where the first run left off, providing the tool approval results and optionally a new `user_prompt` to give the model additional instructions alongside the deferred results.
 
 _(This example is complete, it can be run "as is")_
 
@@ -204,13 +251,13 @@ from pydantic_ai import (
 
 @dataclass
 class TaskResult:
-    tool_call_id: str
+    task_id: str
     result: Any
 
 
-async def calculate_answer_task(tool_call_id: str, question: str) -> TaskResult:
+async def calculate_answer_task(task_id: str, question: str) -> TaskResult:
     await asyncio.sleep(1)
-    return TaskResult(tool_call_id=tool_call_id, result=42)
+    return TaskResult(task_id=task_id, result=42)
 
 
 agent = Agent('openai:gpt-5', output_type=[str, DeferredToolRequests])
@@ -220,12 +267,11 @@ tasks: list[asyncio.Task[TaskResult]] = []
 
 @agent.tool
 async def calculate_answer(ctx: RunContext, question: str) -> str:
-    assert ctx.tool_call_id is not None
-
-    task = asyncio.create_task(calculate_answer_task(ctx.tool_call_id, question))  # (1)!
+    task_id = f'task_{len(tasks)}'  # (1)!
+    task = asyncio.create_task(calculate_answer_task(task_id, question))
     tasks.append(task)
 
-    raise CallDeferred
+    raise CallDeferred(metadata={'task_id': task_id})  # (2)!
 
 
 async def main():
@@ -247,17 +293,19 @@ async def main():
             )
         ],
         approvals=[],
+        metadata={'pyd_ai_tool_call_id': {'task_id': 'task_0'}},
     )
     """
 
-    done, _ = await asyncio.wait(tasks)  # (2)!
+    done, _ = await asyncio.wait(tasks)  # (3)!
     task_results = [task.result() for task in done]
-    task_results_by_tool_call_id = {result.tool_call_id: result.result for result in task_results}
+    task_results_by_task_id = {result.task_id: result.result for result in task_results}
 
     results = DeferredToolResults()
     for call in requests.calls:
         try:
-            result = task_results_by_tool_call_id[call.tool_call_id]
+            task_id = requests.metadata[call.tool_call_id]['task_id']
+            result = task_results_by_task_id[task_id]
         except KeyError:
             result = ModelRetry('No result for this tool call was found.')
 
@@ -275,7 +323,8 @@ async def main():
                     content='Calculate the answer to the ultimate question of life, the universe, and everything',
                     timestamp=datetime.datetime(...),
                 )
-            ]
+            ],
+            run_id='...',
         ),
         ModelResponse(
             parts=[
@@ -290,6 +339,7 @@ async def main():
             usage=RequestUsage(input_tokens=63, output_tokens=13),
             model_name='gpt-5',
             timestamp=datetime.datetime(...),
+            run_id='...',
         ),
         ModelRequest(
             parts=[
@@ -299,7 +349,8 @@ async def main():
                     tool_call_id='pyd_ai_tool_call_id',
                     timestamp=datetime.datetime(...),
                 )
-            ]
+            ],
+            run_id='...',
         ),
         ModelResponse(
             parts=[
@@ -310,13 +361,15 @@ async def main():
             usage=RequestUsage(input_tokens=64, output_tokens=28),
             model_name='gpt-5',
             timestamp=datetime.datetime(...),
+            run_id='...',
         ),
     ]
     """
 ```
 
-1. In reality, you'd likely use Celery or a similar task queue to run the task in the background.
-2. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
+1. Generate a task ID that can be tracked independently of the tool call ID.
+2. The optional `metadata` parameter passes the `task_id` so it can be matched with results later, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+3. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 

@@ -50,7 +50,8 @@ print(result.all_messages())
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
             ),
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -61,6 +62,7 @@ print(result.all_messages())
         usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
 ]
 """
@@ -92,7 +94,8 @@ async def main():
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
                     ),
-                ]
+                ],
+                run_id='...',
             )
         ]
         """
@@ -118,7 +121,8 @@ async def main():
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
                     ),
-                ]
+                ],
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -129,6 +133,7 @@ async def main():
                 usage=RequestUsage(input_tokens=50, output_tokens=12),
                 model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             ),
         ]
         """
@@ -172,7 +177,8 @@ print(result2.all_messages())
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
             ),
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -183,6 +189,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -190,7 +197,8 @@ print(result2.all_messages())
                 content='Explain?',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -201,6 +209,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
 ]
 """
@@ -293,7 +302,8 @@ print(result2.all_messages())
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
             ),
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -304,6 +314,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -311,7 +322,8 @@ print(result2.all_messages())
                 content='Explain?',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -322,6 +334,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gemini-2.5-pro',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
 ]
 """

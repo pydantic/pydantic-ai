@@ -68,7 +68,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                 if isinstance(body, dict):
                     # Responses will have the body under a field called 'string'
                     body = body.get('string')
-                if body is not None:
+                if body:
                     # NOTE(Marcelo): This doesn't handle gzip compression.
                     data['parsed_body'] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     if 'access_token' in data['parsed_body']:
@@ -76,7 +76,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     del data['body']
             if content_type == ['application/x-www-form-urlencoded']:
                 query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['client_secret', 'refresh_token']:  # pragma: no cover
+                for key in ['client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
                     if key in query_params:
                         query_params[key] = ['scrubbed']
                         data['body'] = urllib.parse.urlencode(query_params)
