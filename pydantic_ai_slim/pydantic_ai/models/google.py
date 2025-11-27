@@ -776,14 +776,7 @@ class GeminiStreamedResponse(StreamedResponse):
             return
 
         grounding_chunks = grounding_metadata.grounding_chunks
-        if not grounding_chunks:
-            return
-
-        retrieved_contexts = [
-            chunk.retrieved_context.model_dump(mode='json')
-            for chunk in grounding_chunks
-            if chunk.retrieved_context
-        ]
+        retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
         if retrieved_contexts:
             yield self._parts_manager.handle_part(
                 vendor_part_id=uuid4(),
@@ -1092,15 +1085,29 @@ def _map_grounding_metadata(
         return None, None
 
 
+def _extract_file_search_retrieved_contexts(
+    grounding_chunks: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Extract retrieved contexts from grounding chunks for file search.
+
+    Returns an empty list if no retrieved contexts are found.
+    """
+    if not grounding_chunks:
+        return []
+    return [
+        chunk.retrieved_context.model_dump(mode='json')
+        for chunk in grounding_chunks
+        if chunk.retrieved_context
+    ]
+
+
 def _map_file_search_grounding_metadata(
     grounding_metadata: GroundingMetadata | None, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
     if not grounding_metadata or not (grounding_chunks := grounding_metadata.grounding_chunks):
         return None, None
 
-    retrieved_contexts = [
-        chunk.retrieved_context.model_dump(mode='json') for chunk in grounding_chunks if chunk.retrieved_context
-    ]
+    retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
 
     if not retrieved_contexts:
         return None, None
