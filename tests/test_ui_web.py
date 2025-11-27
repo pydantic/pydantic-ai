@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 
@@ -17,7 +18,7 @@ with try_import() as starlette_import_successful:
     from starlette.testclient import TestClient
 
     from pydantic_ai.builtin_tools import WebSearchTool
-    from pydantic_ai.ui.web import AIModel, create_web_app
+    from pydantic_ai.ui.web import create_web_app
 
 
 pytestmark = [
@@ -56,29 +57,23 @@ def test_chat_app_health_endpoint():
 
 def test_chat_app_configure_endpoint():
     """Test the /api/configure endpoint with explicit models and tools."""
+
     agent = Agent('test')
     app = create_web_app(
         agent,
-        models=[AIModel(id='openai:gpt-4o', name='GPT-4o', builtin_tools=['web_search'])],
+        models=['test'],
         builtin_tools=[WebSearchTool()],
     )
 
     with TestClient(app) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
-        data = response.json()
-        assert data == {
-            'models': [
-                {
-                    'id': 'openai:gpt-4o',
-                    'name': 'GPT-4o',
-                    'builtinTools': ['web_search'],
-                },
-            ],
-            'builtinTools': [
-                {'id': 'web_search', 'name': 'Web Search'},
-            ],
-        }
+        assert response.json() == snapshot(
+            {
+                'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': ['web_search']}],
+                'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
+            }
+        )
 
 
 def test_chat_app_configure_endpoint_empty():
@@ -89,8 +84,7 @@ def test_chat_app_configure_endpoint_empty():
     with TestClient(app) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
-        data = response.json()
-        assert data == {'models': [], 'builtinTools': []}
+        assert response.json() == snapshot({'models': [], 'builtinTools': []})
 
 
 def test_chat_app_index_endpoint():
@@ -418,3 +412,12 @@ def test_supported_builtin_tools(model_cls: str):
     result = cls.supported_builtin_tools()
     assert isinstance(result, frozenset)
     assert all(isinstance(t, str) for t in result)
+
+
+def test_builtin_tool_id_sync():
+    """Test that BUILTIN_TOOL_ID Literal stays in sync with BUILTIN_TOOL_CLASSES registry."""
+    from pydantic_ai.builtin_tools import ACTIVE_BUILTIN_TOOL_IDS, BUILTIN_TOOL_CLASSES
+
+    # BUILTIN_TOOL_CLASSES should have all IDs except 'mcp_server' (which is handled separately)
+    expected_in_classes = ACTIVE_BUILTIN_TOOL_IDS - {'mcp_server'}
+    assert set(BUILTIN_TOOL_CLASSES.keys()) == expected_in_classes

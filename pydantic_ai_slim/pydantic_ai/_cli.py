@@ -228,12 +228,7 @@ Special prompts:
     args = parser.parse_args(args_list)
 
     if prog_name == 'clai' and getattr(args, 'command', None) == 'web':
-        try:
-            from clai.web.cli import run_web_command
-        except ImportError:
-            console = Console()
-            console.print('[red]Error: clai web command requires clai package[/red]')
-            return 1
+        from clai.web.cli import run_web_command
 
         return run_web_command(
             agent_path=args.agent,

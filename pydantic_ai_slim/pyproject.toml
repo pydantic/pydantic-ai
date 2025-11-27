@@ -105,7 +105,7 @@ a2a = ["fasta2a>=0.4.1"]
 # AG-UI
 ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Web
-web = ["fastapi>=0.115.0", "httpx>=0.27.0"]
+web = ["starlette>=0.45.3", "httpx>=0.27.0"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal

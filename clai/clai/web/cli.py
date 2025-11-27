@@ -15,7 +15,7 @@ from pydantic_ai.builtin_tools import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import infer_model
-from pydantic_ai.ui.web import AIModel, create_web_app, format_model_display_name, load_mcp_server_tools
+from pydantic_ai.ui.web import create_web_app, load_mcp_server_tools
 
 
 def run_web_command(  # noqa: C901
@@ -66,31 +66,19 @@ def run_web_command(  # noqa: C901
                 continue
             parsed_tools_ids.append(tool_id)  # pyright: ignore[reportArgumentType]
 
-    parsed_models: list[AIModel] = []
+    parsed_model_ids: list[str] = []
 
     if models:
         for model_str in models:
             if ':' in model_str:
-                model_id = model_str
-                model_name = model_str.split(':', 1)[1]
+                parsed_model_ids.append(model_str)
             else:
                 try:
                     inferred = infer_model(model_str)
-                    model_id = f'{inferred.system}:{inferred.model_name}'
-                    model_name = inferred.model_name
+                    parsed_model_ids.append(f'{inferred.system}:{inferred.model_name}')
                 except UserError:
                     print(f'Error: Model "{model_str}" requires a provider prefix (e.g., "openai:{model_str}")')
                     return 1
-
-            display_name = format_model_display_name(model_name)
-
-            parsed_models.append(
-                AIModel(
-                    id=model_id,
-                    name=display_name,
-                    builtin_tools=parsed_tools_ids,
-                )
-            )
 
     parsed_tool_instances: list[AbstractBuiltinTool] = []
     if tools:
@@ -117,13 +105,12 @@ def run_web_command(  # noqa: C901
             print(f'Error: {e}')
             return 1
 
-    if parsed_models:
-        first_model = parsed_models[0]
-        agent.model = infer_model(first_model.id)
+    if parsed_model_ids:
+        agent.model = infer_model(parsed_model_ids[0])
 
     app = create_web_app(
         agent,
-        models=parsed_models if parsed_models else None,
+        models=parsed_model_ids if parsed_model_ids else None,
         builtin_tools=parsed_tool_instances if parsed_tool_instances else None,
     )
 
