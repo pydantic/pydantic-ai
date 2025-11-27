@@ -567,13 +567,12 @@ class GoogleModel(Model):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
                     if BinaryContent.is_text_like_media_type(item.media_type):
-                        content.append(
-                            BinaryContent.inline_text_file_part(
-                                item.data.decode('utf-8'),
-                                media_type=item.media_type,
-                                identifier=item.identifier,
-                            )
+                        part_dict = BinaryContent.inline_text_file_part(
+                          item.data.decode('utf-8'),
+                          media_type=item.media_type,
+                          identifier=item.identifier,
                         )
+                        content.append({'text': part_dict['text']})
                     else:
                         inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
                         part_dict: PartDict = {'inline_data': inline_data_dict}
@@ -584,13 +583,12 @@ class GoogleModel(Model):
                 elif isinstance(item, DocumentUrl):
                     if DocumentUrl.is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
-                        content.append(
-                            DocumentUrl.inline_text_file_part(
-                                downloaded_text['data'],
-                                media_type=item.media_type,
-                                identifier=item.identifier,
-                            )
+                        part_dict = DocumentUrl.inline_text_file_part(
+                          downloaded_text['data'],
+                          media_type=item.media_type,
+                          identifier=item.identifier,
                         )
+                        content.append({'text': part_dict['text']})
                     else:
                         downloaded_item = await download_item(item, data_format='bytes')
                         inline_data_dict: BlobDict = {

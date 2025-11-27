@@ -797,10 +797,9 @@ class OpenAIChatModel(Model):
                         image_url['url'] = image_content['data']
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    if self._is_text_like_media_type(item.media_type):
-                        # Inline text-like binary content as a text block
+                    if BinaryContent.is_text_like_media_type(item.media_type):
                         content.append(
-                            self._inline_text_file_part(
+                            BinaryContent.inline_text_file_part(
                                 item.data.decode('utf-8'),
                                 media_type=item.media_type,
                                 identifier=item.identifier,
@@ -839,7 +838,7 @@ class OpenAIChatModel(Model):
                     if self._is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
-                            self._inline_text_file_part(
+                            DocumentUrl.inline_text_file_part(
                                 downloaded_text['data'],
                                 media_type=item.media_type,
                                 identifier=item.identifier,

@@ -395,7 +395,7 @@ def _is_text_like_media_type(media_type: str) -> bool:
         or media_type in ('application/x-yaml', 'application/yaml')
     )
 
-def _inline_text_file_part(text: str, *, media_type: str, identifier: str):
+def _inline_text_file(text: str, *, media_type: str, identifier: str):
     text = '\n'.join(
         [
             f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
@@ -403,7 +403,7 @@ def _inline_text_file_part(text: str, *, media_type: str, identifier: str):
             f'-----END FILE id="{identifier}"-----',
         ]
     )
-    return text
+    return {"type": "text", "text":text}
 
 @dataclass(init=False, repr=False)
 class DocumentUrl(FileUrl):
@@ -478,12 +478,12 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
     
     @staticmethod
-    def is_text_like_media_type(self) -> bool:
-        return _is_text_like_media_type(self)
+    def is_text_like_media_type(media_type: str) -> bool:
+        return _is_text_like_media_type(media_type)
 
     @staticmethod
-    def inline_text_file_part(text: str, *, media_type: str, identifier: str) -> str:
-        return _inline_text_file_part(text, media_type=media_type, identifier=identifier)
+    def inline_text_file_part(text: str, *, media_type: str, identifier: str) -> dict[str, str]:
+        return _inline_text_file(text, media_type=media_type, identifier=identifier)
 
 
 @dataclass(init=False, repr=False)
@@ -541,15 +541,15 @@ class BinaryContent:
                 vendor_metadata=bc.vendor_metadata,
             )
         else:          
-            return bc  # pragma: no cover
+            return bc
 
     @staticmethod  
-    def is_text_like_media_type(self) -> bool:
-        return _is_text_like_media_type(self)
+    def is_text_like_media_type(media_type: str) -> bool:
+        return _is_text_like_media_type(media_type)
 
     @staticmethod
-    def inline_text_file_part(text: str, *, media_type: str, identifier: str) -> str:
-        return _inline_text_file_part(text, media_type=media_type, identifier=identifier)
+    def inline_text_file_part(text: str, *, media_type: str, identifier: str) -> dict[str, str]:
+        return _inline_text_file(text, media_type=media_type, identifier=identifier)
         
     @classmethod
     def from_data_uri(cls, data_uri: str) -> BinaryContent:
