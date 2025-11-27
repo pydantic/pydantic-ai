@@ -57,9 +57,6 @@ KnownModelName = TypeAliasType(
     Literal[
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-5-sonnet-20240620',
-        'anthropic:claude-3-5-sonnet-20241022',
-        'anthropic:claude-3-5-sonnet-latest',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
@@ -72,6 +69,8 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-0',
         'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
+        'anthropic:claude-opus-4-5',
+        'anthropic:claude-opus-4-5-20251101',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5',
@@ -100,6 +99,7 @@ KnownModelName = TypeAliasType(
         'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
         'bedrock:meta.llama3-1-405b-instruct-v1:0',
         'bedrock:meta.llama3-1-70b-instruct-v1:0',
         'bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -145,24 +145,28 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
+        'google-gla:gemini-flash-latest',
+        'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
+        'google-gla:gemini-2.5-flash-preview-09-2025',
+        'google-gla:gemini-2.5-flash-image',
         'google-gla:gemini-2.5-flash-lite',
         'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
         'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
+        'google-gla:gemini-3-pro-preview',
+        'google-vertex:gemini-flash-latest',
+        'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
+        'google-vertex:gemini-2.5-flash-preview-09-2025',
+        'google-vertex:gemini-2.5-flash-image',
         'google-vertex:gemini-2.5-flash-lite',
         'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
         'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
+        'google-vertex:gemini-3-pro-preview',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
         'grok:grok-3',
@@ -376,7 +380,10 @@ class Model(ABC):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Make a request to the model."""
+        """Make a request to the model.
+
+        This is ultimately called by `pydantic_ai._agent_graph.ModelRequestNode._make_request(...)`.
+        """
         raise NotImplementedError()
 
     async def count_tokens(
@@ -803,7 +810,6 @@ def infer_model(  # noqa: C901
         'heroku',
         'moonshotai',
         'ollama',
-        'openrouter',
         'together',
         'vercel',
         'litellm',
@@ -834,6 +840,10 @@ def infer_model(  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'mistral':
         from .mistral import MistralModel
 
@@ -980,23 +990,27 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
-    schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
+    """Customize the tool definition using the given transformer.
+
+    If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
+    """
+    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     parameters_json_schema = schema_transformer.walk()
     return replace(
-        t,
+        tool_def,
         parameters_json_schema=parameters_json_schema,
-        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+        strict=schema_transformer.is_strict_compatible if tool_def.strict is None else tool_def.strict,
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=o.strict)
+def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+    schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
-        o,
+        output_object,
         json_schema=json_schema,
-        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+        strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
 
 

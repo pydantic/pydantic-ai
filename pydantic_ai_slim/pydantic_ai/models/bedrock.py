@@ -9,7 +9,6 @@ from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
-import anyio
 import anyio.to_thread
 from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
@@ -41,7 +40,7 @@ from pydantic_ai import (
     usage,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
@@ -104,6 +103,7 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
     'anthropic.claude-opus-4-20250514-v1:0',
     'us.anthropic.claude-opus-4-20250514-v1:0',
+    'global.anthropic.claude-opus-4-5-20251101-v1:0',
     'anthropic.claude-sonnet-4-20250514-v1:0',
     'us.anthropic.claude-sonnet-4-20250514-v1:0',
     'eu.anthropic.claude-sonnet-4-20250514-v1:0',
@@ -155,7 +155,7 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'tool_use': 'tool_call',
 }
 
-_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.')
+_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.')
 """Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
 
 Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
@@ -312,8 +312,10 @@ class BedrockConverseModel(Model):
         try:
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
-            raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            if isinstance(status_code, int):
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -459,8 +461,10 @@ class BedrockConverseModel(Model):
             else:
                 model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
-            raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            if isinstance(status_code, int):
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return model_response
 
     @staticmethod

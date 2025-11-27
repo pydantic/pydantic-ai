@@ -1,0 +1,154 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '392'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in Mexico?
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - urlContext: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1644'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3110
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: "{\n  \"city\": \"Mexico City\",\n  \"country\": \"Mexico\"\n} "
+            thoughtSignature: EukFCuYFAdHtim8YAgcmaXkJk0welBnul+NQG8lripeLswuCLyJgUQ9sZempxMF8X9qvMMXAO5yITYZteum84MSW7H7jeRhQY4iy5SOnGAar2wgjakknIs2RFGz+FZ0dqBA2nMMAUvGHQeYWhZepzathEi1RVIXV3ZRnzJT0s+9PGSnmWcmyvRT7c+vJSXwcFWBHTIEsahJJCttCuNWWpoXw+wHtPiTSoD/6/ySCmwxYFV6DjwS3NO/4FHB5PEJ61Q1Q6n65UK4CcAFxxHtTi8c/dsoE9maa8KMuWA+l4183JFzPLR+cHl0VlpaY1YRj04oX2/jcTVGnC8o3EIPuA0Du7/7iI6as2qZkBlBK4e7fFfKi/jDPnV6ym/lQNZJy7G9yo3Fjy+Ldd8TKgsmQsYewBp2qwLU7m7FLVAoVjc3kmkJFdVLo2jGCpQNjPqtNmI0KoxNk4kfbueWAlU2laLthohDNH9RbQ1v+fuOpo8qjz33MyICOYnjtsV0gA5kEecwzjWP/+MjISKgkydmveHybSmGes2+2Pkt8yRBnjyyM77uInZMbUJTF/Fq9gEDIPE78e44QFml2sgNnGbtKN2pbUm/tRhBS2/Gs2BBG/kUp5k6iPM9metgdbbUYcP8+TLvgNBIIVSZ3sZU0dvttz5fPqvJPUbbdaICjANnUliUOOmj/ls+J4coknZ38dnGN/yT2q3NTnHQZv1+MnQoGkKdD43D8rsRWXTC9iaY4sAUNp6FTuINZtYwOJh2UJzZwqyGg0FEpvuKFwY2kj/zXbG3oT5kuq91SEoKaDh8trlzNopA0kwk/gQuuIu6t/OITZChumVGkoJrQowBbYssMSbAgetul83uDNxBMmnYtz/GQuH/I22wg31Ib+S5kWLUsYEyCypZOnH/UPjfPUuLxs+xaCYH7vP/Xn4G4kS+l9czBl8LKSX2AzomZvS9LajZ7O8cTOJhT7xzhcVuX3AObc99+4Asm8L0aDDk/mg==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-pro-preview
+      responseId: y_4cae6RH57hz7IP4uqFmQU
+      usageMetadata:
+        candidatesTokenCount: 21
+        promptTokenCount: 9
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 9
+        thoughtsTokenCount: 182
+        totalTokenCount: 212
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '392'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in Mexico?
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - urlContext: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2572'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4541
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: "{\n  \"city\": \"Mexico City\",\n  \"country\": \"Mexico\"\n} "
+            thoughtSignature: EqMLCqALAdHtim+jI7fQjPStrf7/y3pfC+CS4lMq2aVW/oMJlMqJqf7n/sMV4tCD/k92nc3A6togSEQGJAK21UDL6NJbaYlAttskSz7YwV3XCezelUlUvL8vHfVDdoctiL/iVdDnO+ZTS4wTWJgVfJIwh4s7OG0+fXXY5LerPfTnOxL3F3HXafsg4lfb744T+LatOBSBn2SVTQvjDcvN8sf+h7dj7RnHYilunbLvC/8PwyCrmY5isqmUEv7S5wYY/YWY30VKf3ooT1dC1X4MhbEwsuQZs3/F7lOgQmIe4N13JwZYYGwlqdSkwIWJpFOK7Yuh3XqfcDVxp6RsiQZyrc2HZEtcUmfYwJ7/MHUkZu3NoQCzyrSTno0TUOP8jMW9Y3be17pJE/DyW+N/O6dz8dplsm4XvQRaswfe/dE/mKo6GnftAcgegNrfBsiR6jIk3E8D7z3NGKeWMs2/etWEmywOZ3ui3AXAIS80VYDKduE2HFXq9SJzuwYT1o7Ey5GUyU/j38Fhr/SIcEsavklfFLUKI+N9YH3+WNrnEkvPhgyqssD0W5wQJsoMf6F1EqgSwSnnB3CoVifgN4GC6Ss4/um0XA0QwtFSkKQHOdUQI5W97qAWpwU3V1o6v7FV8BR3Tzf1ozqQQyafK7DR4mjYTOCnLkDvg35jXJJqE8jgA6UYcahXo8U0cHyMaIUYajWX7hmLsaATQH1kzOihqZfYTMs7V86Jr7gIfXh0pcq7gVabwweYxA7egtNjdJAGs7UUM6PYK30M3iT8Pj6bYfsoKZyMkliQ9/bhigAIwXABp9T4avdx6xt/wNFTN59J+8W9+xyOfpnVioPaeCE/65DxqvEF05TcdfwddqLQ/4ILEH78p44XzUcUSs4AUDiKi36I5xH6FDms9YrwrhH9+iescS1XdIJG15VDqTLtmUiOFolLgzndO7V52KhAFhbj4LezV3kshytaVHdYfuzBhrSianaaH9iKhR7GMjoLC2H5jcEGYpqP1LR7fXstpuIu0YdZH+hhv0KkA64VG6Jag5qHhFKAhKruUbtLKuyrY3+PLmL5PCRZoZjHHbWaaGxQxbft2r7JF27HL1WU8zblWnuqtxPWhJ9nKGAkTGenTwI57r2Uv+o9WMCyBIj0yQR0iF3evYMlMQf8D+AV+xeoWuzljNYX2w5BQGjszeztwO2vQBr/si2EmPwG97evKQ6KRX+FfVCEqmoB8b6XSXW1MZDkAxJp3CHih6i/9ZSFVXlO3C5WO7egeVlngYJ/gd4vBIgMWxM1ojj2ny+hdJdTzSk/52IA7YiCd2ZMhTeb1Zg0TCI6fUY1IkRxCwuMst/RrssPZ9UxcaSFUQPH3/B1YfYnF09H8ou/cmfXoO18fh1aiQ8wC4be0O4UijDvdfRmjUdAUNw77IuGdl0xgUB756aiSSXD83uwM++MMU4zMwp3wrBNKrE2OJJ2l1ARLzQXYhNJ3SM6E9b2EU5iENRahRvyYeA0pNbJO4VPr4odzIuTGDRQxiknwAw6vkfv7dwQyxGLmBT8kAQ1B2bDzZCz2SEmWPgPH2M8Rmir7AzlZNMj+Y2CuGLgTTOQfjAhr/MdLhC9wpaJCqiwwXYZMaPtr0+nZWmGuBKU6k8K8hfQj1WoKIrVjzrr02AJovugnSa5SGeU8Kc5JgrmENqeYjevs+E9seQRJwW+FBkJSFYAjWUUzSyjjGcCXWg+FeKTdvFKoxyNsuX84K3sPoW1J6LrgH0+bk6jhLqztQbWqLgwyRbfyW/gT1bzvfFX6rxfhyi3b/ckl7bYYUWOS9/jTGR2sqMcmE6BjCommVDMtUW1/Wxc2Wx9QAttL5X/kNS3brGT6ohWjbMqPWA/sIA2h01SgKZOPjxA5vSx6Axr5IVShVNaZDoYGZMBiNQILO9lgti4UbCetEJ5a8UK
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-pro-preview
+      responseId: 0P4caYX6HI-Ez7IPopWIyQc
+      usageMetadata:
+        candidatesTokenCount: 21
+        promptTokenCount: 9
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 9
+        thoughtsTokenCount: 342
+        totalTokenCount: 372
+    status:
+      code: 200
+      message: OK
+version: 1

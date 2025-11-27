@@ -147,6 +147,8 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
 
 @dataclass(kw_only=True)
@@ -478,7 +480,7 @@ class ToolDefinition:
     When `False`, the model may be free to generate other properties or types (depending on the vendor).
     When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
 
-    Note: this is currently only supported by OpenAI models.
+    Note: this is currently supported by OpenAI and Anthropic models.
     """
 
     sequential: bool = False
