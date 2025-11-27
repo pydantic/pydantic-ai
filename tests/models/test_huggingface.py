@@ -51,6 +51,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.huggingface import HuggingFaceModel
+from pydantic_ai.output import NativeOutput
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.huggingface import HuggingFaceProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -1026,3 +1028,46 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out
     assert msg['role'] == 'user'
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_native_output_structured_response(allow_model_requests: None):
+    completion = completion_message(
+        ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
+            {
+                'content': '{"first": "One", "second": "Two"}',
+                'role': 'assistant',
+            }
+        )
+    )
+    mock_client = MockHuggingFace.create_mock(completion)
+    model = HuggingFaceModel(
+        'hf-model',
+        provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'),
+        profile=ModelProfile(
+            supports_json_schema_output=True,
+            supports_json_object_output=True,
+        ),
+    )
+    agent = Agent(
+        model,
+        output_type=NativeOutput(
+            MyTypedDict,
+            name='final_result',
+            description='Return the first and second values.',
+        ),
+    )
+
+    result = await agent.run('Hello')
+    assert result.output == snapshot({'first': 'One', 'second': 'Two'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    response_format = kwargs['response_format']
+    assert response_format is not None
+    assert response_format['type'] == 'json_schema'
+    json_schema = response_format['json_schema']
+    assert json_schema['name'] == 'final_result'
+    assert json_schema['description'] == 'Return the first and second values.'
+    schema = json_schema['schema']
+    assert schema['type'] == 'object'
+    assert schema['properties']['first']['type'] == 'string'
+    assert schema['properties']['second']['type'] == 'string'
