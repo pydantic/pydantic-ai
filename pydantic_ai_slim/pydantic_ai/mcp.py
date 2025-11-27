@@ -575,16 +575,18 @@ class MCPServer(AbstractToolset[Any], ABC):
         return [ResourceTemplate.from_mcp_sdk(t) for t in result.resourceTemplates]
 
     @overload
-    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+    async def read_resource(
+        self, uri: str
+    ) -> str | messages.TextPart | messages.BinaryContent | list[str | messages.TextPart | messages.BinaryContent]: ...
 
     @overload
     async def read_resource(
         self, uri: Resource
-    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+    ) -> str | messages.TextPart | messages.BinaryContent | list[str | messages.TextPart | messages.BinaryContent]: ...
 
     async def read_resource(
         self, uri: str | Resource
-    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
+    ) -> str | messages.TextPart | messages.BinaryContent | list[str | messages.TextPart | messages.BinaryContent]:
         """Read the contents of a specific resource by URI.
 
         Args:
@@ -683,7 +685,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
-    ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
+    ) -> str | messages.TextPart | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
         if isinstance(part, mcp_types.TextContent):
@@ -693,14 +695,16 @@ class MCPServer(AbstractToolset[Any], ABC):
                     return pydantic_core.from_json(text)
                 except ValueError:
                     pass
-            return text
+            return text if not part.meta else messages.TextPart(content=text, metadata=part.meta)
         elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+            return messages.BinaryContent(
+                data=base64.b64decode(part.data), media_type=part.mimeType, metadata=part.meta
+            )
         elif isinstance(part, mcp_types.AudioContent):
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
             return messages.BinaryContent(
-                data=base64.b64decode(part.data), media_type=part.mimeType
+                data=base64.b64decode(part.data), media_type=part.mimeType, metadata=part.meta
             )  # pragma: no cover
         elif isinstance(part, mcp_types.EmbeddedResource):
             resource = part.resource
@@ -712,12 +716,16 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     def _get_content(
         self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
-    ) -> str | messages.BinaryContent:
+    ) -> str | messages.TextPart | messages.BinaryContent:
         if isinstance(resource, mcp_types.TextResourceContents):
-            return resource.text
+            return (
+                resource.text if not resource.meta else messages.TextPart(content=resource.text, metadata=resource.meta)
+            )
         elif isinstance(resource, mcp_types.BlobResourceContents):
             return messages.BinaryContent(
-                data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+                data=base64.b64decode(resource.blob),
+                media_type=resource.mimeType or 'application/octet-stream',
+                metadata=resource.meta,
             )
         else:
             assert_never(resource)
@@ -1179,11 +1187,12 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
 ToolResult = (
     str
+    | messages.TextPart
     | messages.BinaryContent
     | messages.ToolReturn
     | dict[str, Any]
     | list[Any]
-    | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
+    | Sequence[str | messages.TextPart | messages.BinaryContent | dict[str, Any] | list[Any]]
 )
 """The result type of an MCP tool call."""
 

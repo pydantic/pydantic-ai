@@ -486,6 +486,9 @@ class BinaryContent:
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -500,6 +503,7 @@ class BinaryContent:
         media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: Any = None,
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
@@ -508,6 +512,7 @@ class BinaryContent:
         self.media_type = media_type
         self._identifier = identifier or _identifier
         self.vendor_metadata = vendor_metadata
+        self.metadata = metadata
         self.kind = kind
 
     @staticmethod
@@ -519,6 +524,7 @@ class BinaryContent:
                 media_type=bc.media_type,
                 identifier=bc.identifier,
                 vendor_metadata=bc.vendor_metadata,
+                metadata=bc.metadata,
             )
         else:
             return bc
@@ -622,11 +628,17 @@ class BinaryImage(BinaryContent):
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        metadata: Any = None,
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,
     ):
         super().__init__(
-            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
+            data=data,
+            media_type=media_type,
+            identifier=identifier or _identifier,
+            vendor_metadata=vendor_metadata,
+            metadata=metadata,
+            kind=kind,
         )
 
         if not self.is_image:
@@ -1030,6 +1042,9 @@ class TextPart:
     """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
