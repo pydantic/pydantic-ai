@@ -291,6 +291,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata to store with each run.
                 Provide a dictionary of primitives, or a callable returning one
                 computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
+                Callables are invoked after the run finishes (whether it succeeded or raised) so they can
+                inspect the final run state.
                 Resolved metadata is exposed on [`RunContext.metadata`][pydantic_ai.tools.RunContext],
                 [`AgentRun.metadata`][pydantic_ai.agent.AgentRun], and
                 [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult],
@@ -682,12 +684,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ) as graph_run:
                 async with toolset:
                     agent_run = AgentRun(graph_run)
-                    yield agent_run
+
+                    def resolve_run_metadata() -> None:
+                        nonlocal run_metadata
+                        run_context = build_run_context(agent_run.ctx)
+                        run_metadata = self._compute_agent_metadata(run_context)
+                        run_context.metadata = run_metadata
+                        graph_run.state.metadata = run_metadata
+
+                    try:
+                        yield agent_run
+                    finally:
+                        resolve_run_metadata()
+
                     final_result = agent_run.result
-                    run_context = build_run_context(agent_run.ctx)
-                    run_metadata = self._compute_agent_metadata(run_context)
-                    run_context.metadata = run_metadata
-                    graph_run.state.metadata = run_metadata
                     if instrumentation_settings and run_span.is_recording():
                         if instrumentation_settings.include_content and final_result is not None:
                             run_span.set_attribute(

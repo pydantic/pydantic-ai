@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from inline_snapshot import snapshot
@@ -39,13 +40,17 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     capture_run_messages,
+    models,
 )
+from pydantic_ai._agent_graph import GraphAgentState
+from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
+from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.result import AgentStream, FinalResult, RunUsage
+from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
@@ -1440,6 +1445,73 @@ async def test_agent_stream_metadata_available() -> None:
 
     assert captured_stream is not None
     assert captured_stream.metadata == {'prompt': 'agent stream prompt'}
+
+
+def test_agent_stream_metadata_falls_back_to_run_context() -> None:
+    response_message = ModelResponse(parts=[TextPart('fallback metadata')], model_name='test')
+    stream_response = ModelTestStreamedResponse(
+        model_request_parameters=models.ModelRequestParameters(),
+        _model_name='test',
+        _structured_response=response_message,
+        _messages=[],
+        _provider_name='test',
+    )
+    run_ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        metadata={'source': 'run-context'},
+    )
+    output_schema = TextOutputSchema[str](
+        text_processor=TextOutputProcessor(),
+        allows_deferred_tools=False,
+        allows_image=False,
+    )
+    stream = AgentStream(
+        _raw_stream_response=stream_response,
+        _output_schema=output_schema,
+        _model_request_parameters=models.ModelRequestParameters(),
+        _output_validators=[],
+        _run_ctx=run_ctx,
+        _usage_limits=None,
+        _tool_manager=ToolManager(toolset=MagicMock()),
+    )
+
+    assert stream.metadata == {'source': 'run-context'}
+
+
+def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[str]:
+    state = GraphAgentState(metadata=metadata)
+    response_message = ModelResponse(parts=[TextPart('final')], model_name='test')
+    state.message_history.append(response_message)
+    return AgentRunResult('final', _state=state)
+
+
+def test_streamed_run_result_metadata_prefers_run_result_state() -> None:
+    run_result = _make_run_result(metadata={'from': 'run-result'})
+    streamed = StreamedRunResult(
+        all_messages=run_result.all_messages(),
+        new_message_index=0,
+        run_result=run_result,
+    )
+    assert streamed.metadata == {'from': 'run-result'}
+
+
+def test_streamed_run_result_metadata_none_without_sources() -> None:
+    run_result = _make_run_result(metadata=None)
+    streamed = StreamedRunResult(all_messages=[], new_message_index=0, run_result=run_result)
+    assert streamed.metadata is None
+
+
+def test_streamed_run_result_sync_exposes_metadata() -> None:
+    run_result = _make_run_result(metadata={'sync': 'metadata'})
+    streamed = StreamedRunResult(
+        all_messages=run_result.all_messages(),
+        new_message_index=0,
+        run_result=run_result,
+    )
+    sync_result = StreamedRunResultSync(streamed)
+    assert sync_result.metadata == {'sync': 'metadata'}
 
 
 async def test_iter_stream_responses():

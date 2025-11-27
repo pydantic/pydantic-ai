@@ -2691,6 +2691,48 @@ async def test_agent_iter_metadata_surfaces_on_result() -> None:
     assert agent_run.result.metadata == {'env': 'tests'}
 
 
+async def test_agent_metadata_persisted_when_run_fails() -> None:
+    agent = Agent(
+        TestModel(),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    @agent.tool
+    def explode(_: RunContext) -> str:
+        raise RuntimeError('explode')
+
+    failing_prompt = 'metadata failure prompt'
+    captured_run = None
+
+    with pytest.raises(RuntimeError, match='explode'):
+        async with agent.iter(failing_prompt) as agent_run:
+            captured_run = agent_run
+            async for _ in agent_run:
+                pass
+
+    assert captured_run is not None
+    assert captured_run.metadata == {'prompt': failing_prompt}
+    assert captured_run.result is None
+
+
+async def test_agent_metadata_override_with_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='override dict base'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override'}):
+        result = await agent.run('override dict prompt')
+
+    assert result.metadata == {'env': 'override'}
+
+
+async def test_agent_metadata_override_with_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='override callable base'), metadata={'env': 'base'})
+
+    with agent.override(metadata=lambda ctx: {'computed': ctx.prompt}):
+        result = await agent.run('callable override prompt')
+
+    assert result.metadata == {'computed': 'callable override prompt'}
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
