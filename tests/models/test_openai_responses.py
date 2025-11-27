@@ -5,7 +5,6 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-from openai.types import responses
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -42,7 +41,6 @@ from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-    ModelMessage,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -200,6 +198,30 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
             'Enjoy your homemade Uruguayan alfajores!',
         ]
     )
+
+
+async def test_openai_responses_reasoning_generate_summary(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('computer-use-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_summary='concise',
+            openai_truncation='auto',
+        ),
+    )
+    result = await agent.run('What should I do to cross the street?')
+    assert result.output == snapshot("""\
+To cross the street safely, follow these steps:
+
+1. **Use a Crosswalk**: Always use a designated crosswalk or pedestrian crossing whenever available.
+2. **Press the Button**: If there is a pedestrian signal button, press it and wait for the signal.
+3. **Look Both Ways**: Look left, right, and left again before stepping off the curb.
+4. **Wait for the Signal**: Cross only when the pedestrian signal indicates it is safe to do so or when there is a clear gap in traffic.
+5. **Stay Alert**: Be mindful of turning vehicles and stay attentive while crossing.
+6. **Walk, Don't Run**: Walk across the street; running can increase the risk of falling or not noticing an oncoming vehicle.
+
+Always follow local traffic rules and be cautious, even when crossing at a crosswalk. Safety is the priority.\
+""")
 
 
 async def test_openai_responses_system_prompt(allow_model_requests: None, openai_api_key: str):
@@ -2511,249 +2533,6 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
             },
         ]
     )
-
-
-async def test_openai_responses_thinking_with_raw_cot(allow_model_requests: None):
-    """Test handling of raw CoT content from gpt-oss models (LM Studio, vLLM)."""
-    c = response_message(
-        [
-            ResponseReasoningItem(
-                id='rs_123',
-                summary=[],
-                type='reasoning',
-                content=[
-                    ReasoningContent(type='reasoning_text', text='Let me think about this...'),
-                    ReasoningContent(type='reasoning_text', text='The answer is 4.'),
-                ],
-            ),
-            ResponseOutputMessage(
-                id='msg_123',
-                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-oss-20b', provider=OpenAIProvider(openai_client=mock_client))
-
-    agent = Agent(model=model)
-    result = await agent.run('What is 2+2?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is 2+2?',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content='Let me think about this...', id='rs_123-content-0'),
-                    ThinkingPart(content='The answer is 4.', id='rs_123-content-1'),
-                    TextPart(content='4', id='msg_123'),
-                ],
-                model_name='gpt-4o-123',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_response_id='123',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_openai_responses_thinking_with_summary_and_raw_cot(allow_model_requests: None):
-    """Test handling of both summary and raw CoT content from gpt-oss models."""
-    c = response_message(
-        [
-            ResponseReasoningItem(
-                id='rs_123',
-                summary=[Summary(text='Summary of thinking', type='summary_text')],
-                type='reasoning',
-                encrypted_content='encrypted_sig',
-                content=[
-                    ReasoningContent(type='reasoning_text', text='Raw thinking step 1'),
-                    ReasoningContent(type='reasoning_text', text='Raw thinking step 2'),
-                ],
-            ),
-            ResponseOutputMessage(
-                id='msg_123',
-                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-oss-20b', provider=OpenAIProvider(openai_client=mock_client))
-
-    agent = Agent(model=model)
-    result = await agent.run('What is 2+2?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is 2+2?',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content='Summary of thinking', id='rs_123', signature='encrypted_sig', provider_name='openai'
-                    ),
-                    ThinkingPart(content='Raw thinking step 1', id='rs_123-content-0'),
-                    ThinkingPart(content='Raw thinking step 2', id='rs_123-content-1'),
-                    TextPart(content='4', id='msg_123'),
-                ],
-                model_name='gpt-4o-123',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_response_id='123',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_openai_responses_raw_cot_filtered_in_multiturn(allow_model_requests: None):
-    """Test that raw CoT from gpt-oss is NOT sent back in multi-turn conversations."""
-    # Turn 1: Create initial response with raw CoT
-    c1 = response_message(
-        [
-            ResponseReasoningItem(
-                id='rs_123',
-                summary=[],
-                type='reasoning',
-                content=[
-                    ReasoningContent(type='reasoning_text', text='Raw CoT step 1'),
-                    ReasoningContent(type='reasoning_text', text='Raw CoT step 2'),
-                ],
-            ),
-            ResponseOutputMessage(
-                id='msg_123',
-                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-
-    # Turn 2: Second response
-    c2 = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg_456',
-                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-
-    mock_client = MockOpenAIResponses.create_mock([c1, c2])
-    model = OpenAIResponsesModel('gpt-oss-20b', provider=OpenAIProvider(openai_client=mock_client))
-
-    # we're patching _map_messages to track what gets sent to the API
-    sent_openai_messages: list[list[responses.ResponseInputItemParam]] = []
-    original_map = model._map_messages  # pyright: ignore[reportPrivateUsage]
-
-    async def tracking_map(
-        messages: list[ModelMessage],
-        model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ):
-        instructions, openai_messages = await original_map(messages, model_settings, model_request_parameters)
-        sent_openai_messages.append(openai_messages)
-        return instructions, openai_messages
-
-    model._map_messages = tracking_map  # pyright: ignore[reportPrivateUsage]
-
-    agent = Agent(model=model)
-
-    # Turn 1
-    result1 = await agent.run('What is 2+2?')
-
-    # Verify Turn 1 captured raw CoT
-    assert len(result1.all_messages()) == 2
-    response1 = result1.all_messages()[1]
-    assert isinstance(response1, ModelResponse)
-    assert len(response1.parts) == 3  # 2 ThinkingParts (raw CoT) + 1 TextPart
-    assert response1.parts[0].part_kind == 'thinking'
-    assert response1.parts[1].part_kind == 'thinking'
-    assert response1.parts[2].part_kind == 'text'
-
-    # Turn 2 with message history
-    await agent.run('Add 5 to that', message_history=result1.all_messages())
-
-    # Verify Turn 2 API call did NOT include raw CoT
-    assert len(sent_openai_messages) == 2  # Two API calls made
-    turn2_messages = sent_openai_messages[1]
-
-    # Turn 2 should have: user message from Turn 1, assistant text from Turn 1, user message from Turn 2
-    # Raw CoT should be filtered out
-    assert len(turn2_messages) == 3
-
-    # verify no reasoning items are in Turn 2 request
-    reasoning_items = [msg for msg in turn2_messages if msg.get('type') == 'reasoning']
-    assert len(reasoning_items) == 0, 'Raw CoT should be filtered out in multi-turn'
-
-
-@pytest.mark.vcr
-@pytest.mark.anyio
-async def test_openai_responses_raw_cot_stream_openrouter(
-    allow_model_requests: None,
-    openrouter_api_key: str,
-) -> None:
-    """Test streaming raw CoT from gpt-oss models via OpenRouter.
-
-    This test covers ResponseReasoningTextDeltaEvent and ResponseReasoningTextDoneEvent
-    handling which are emitted by gpt-oss but not by official OpenAI API.
-
-    NOTE: test can be flakey on coverage if cassette is re-recorded.
-    """
-    from pydantic_ai.models.openai import _RAW_COT_ID_SUFFIX  # pyright: ignore[reportPrivateUsage]
-    from pydantic_ai.models.openrouter import OpenRouterProvider
-
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenAIResponsesModel('openai/gpt-oss-20b', provider=provider)
-    agent = Agent(model=model)
-
-    async with agent.run_stream('What is 2+2?') as result:
-        async for _ in result.stream_text():
-            pass
-
-    messages = result.all_messages()
-    assert len(messages) == 2  # request + response
-    response_parts = messages[1].parts
-
-    # Should have ThinkingParts with raw CoT
-    thinking_parts = [p for p in response_parts if isinstance(p, ThinkingPart)]
-    assert len(thinking_parts) > 0, 'Should have at least one ThinkingPart from raw CoT'
-
-    # Verify raw CoT characteristics
-    for thinking_part in thinking_parts:
-        # Raw CoT has no signature (not encrypted)
-        assert thinking_part.signature is None
-        # Raw CoT has no provider_name (not official thinking)
-        assert thinking_part.provider_name is None
-        # Raw CoT has -content- suffix in ID
-        assert _RAW_COT_ID_SUFFIX in (thinking_part.id or '')
-
-    # Verify we got text output as well
-    text_parts = [p for p in response_parts if isinstance(p, TextPart)]
-    assert len(text_parts) > 0, 'Should have TextPart with final answer'
 
 
 async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):
@@ -7666,4 +7445,294 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
                 'status': 'completed',
             },
         ]
+    )
+
+
+async def test_openai_responses_raw_cot_only(allow_model_requests: None):
+    """Test raw CoT content from gpt-oss models (no summary, only raw content)."""
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[],
+                type='reasoning',
+                content=[
+                    ReasoningContent(text='Let me think about this...', type='reasoning_text'),
+                    ReasoningContent(text='The answer is 4.', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_123',
+                        provider_details={'raw_content': ['Let me think about this...', 'The answer is 4.']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None):
+    """Test raw CoT content with summary from gpt-oss models.
+
+    When both summary and raw content exist, raw content is stored in provider_details
+    while summary goes in content.
+    """
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[Summary(text='Summary of thinking', type='summary_text')],
+                type='reasoning',
+                encrypted_content='encrypted_sig',
+                content=[
+                    ReasoningContent(text='Raw thinking step 1', type='reasoning_text'),
+                    ReasoningContent(text='Raw thinking step 2', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Summary of thinking',
+                        id='rs_123',
+                        signature='encrypted_sig',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Raw thinking step 1', 'Raw thinking step 2']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: None, openrouter_api_key: str):
+    """Test streaming raw CoT content from gpt-oss via OpenRouter.
+
+    This is a live test (with cassette) that verifies the streaming raw CoT implementation
+    works end-to-end with a real gpt-oss model response.
+    """
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    model = OpenAIResponsesModel('openai/gpt-oss-20b', provider=OpenRouterProvider(api_key=openrouter_api_key))
+    agent = Agent(model=model)
+    async with agent.run_stream('What is 2+2?') as result:
+        output = await result.get_output()
+    assert output == snapshot('4')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_tmp_2kbe7x16sax',
+                        provider_details={
+                            'raw_content': [
+                                'The user asks: "What is 2+2?" They expect a straightforward answer: 4. Just answer 4.'
+                            ]
+                        },
+                    ),
+                    TextPart(content='4', id='msg_tmp_8cjof4f6zpw'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=78,
+                    output_tokens=37,
+                    details={'is_byok': 0, 'reasoning_tokens': 22},
+                ),
+                model_name='openai/gpt-oss-20b',
+                timestamp=IsDatetime(),
+                provider_name='openrouter',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='gen-1764265411-Fu1iEX7h5MRWiL79lb94',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: None):
+    """Test that raw CoT from gpt-oss IS sent back in multi-turn conversations.
+
+    Raw CoT should be sent back via the 'content' field in ResponseReasoningItemParam
+    for better model performance, as recommended by OpenAI.
+    """
+    # Track messages sent to OpenAI
+    sent_openai_messages: list[Any] = []
+
+    # Turn 1: Create initial response with raw CoT
+    c1 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[],
+                type='reasoning',
+                content=[
+                    ReasoningContent(text='Raw CoT step 1', type='reasoning_text'),
+                    ReasoningContent(text='Raw CoT step 2', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+
+    # Turn 2: Simple text response
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Hook into model to capture sent messages
+    original_map_messages = model._map_messages  # pyright: ignore[reportPrivateUsage]
+
+    async def capture_messages(*args: Any, **kwargs: Any) -> Any:
+        result = await original_map_messages(*args, **kwargs)
+        sent_openai_messages.append(result[1])  # result is (instructions, messages)
+        return result
+
+    model._map_messages = capture_messages  # type: ignore[method-assign]
+
+    agent = Agent(model=model)
+
+    # Turn 1
+    result1 = await agent.run('What is 2+2?')
+
+    # Verify Turn 1 captured raw CoT in provider_details
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_123',
+                        provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Turn 2 with message history
+    await agent.run('Add 5 to that', message_history=result1.all_messages())
+
+    # Verify Turn 2 API call includes raw CoT in the sent messages
+    assert len(sent_openai_messages) == 2
+    turn2_messages = sent_openai_messages[1]
+    reasoning_items = [msg for msg in turn2_messages if msg.get('type') == 'reasoning']
+    assert len(reasoning_items) == 1
+    assert reasoning_items[0] == snapshot(
+        {
+            'type': 'reasoning',
+            'summary': [],
+            'encrypted_content': None,
+            'id': 'rs_123',
+            'content': [
+                {'type': 'reasoning_text', 'text': 'Raw CoT step 1'},
+                {'type': 'reasoning_text', 'text': 'Raw CoT step 2'},
+            ],
+        }
     )

@@ -82,7 +82,7 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
-    from openai.types.responses.response_reasoning_item_param import Summary
+    from openai.types.responses.response_reasoning_item_param import Content as ReasoningContent, Summary
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
@@ -135,12 +135,6 @@ MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-
 """
 Prefix for OpenAI connector IDs. OpenAI supports either a URL or a connector ID when passing MCP configuration to a model,
 by using that prefix like `x-openai-connector:<connector-id>` in a URL, you can pass a connector ID to a model.
-"""
-
-_RAW_COT_ID_SUFFIX = '-content-'
-"""
-Suffix used in ThinkingPart IDs to identify raw Chain of Thought from gpt-oss models.
-Raw CoT IDs follow the pattern 'rs_123-content-0', 'rs_123-content-1', etc.
 """
 
 _CHAT_FINISH_REASON_MAP: dict[
@@ -1136,6 +1130,10 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
+                # Handle raw CoT content from gpt-oss models
+                raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
+                provider_details: dict[str, Any] | None = {'raw_content': raw_content} if raw_content else None
+
                 if item.summary:
                     for summary in item.summary:
                         # We use the same id for all summaries so that we can merge them on the round trip.
@@ -1145,28 +1143,22 @@ class OpenAIResponsesModel(Model):
                                 id=item.id,
                                 signature=signature,
                                 provider_name=self.system if signature else None,
+                                provider_details=provider_details,
                             )
                         )
-                        # We only need to store the signature once.
+                        # We only need to store the signature and raw_content once.
                         signature = None
-                elif signature:
+                        provider_details = None
+                elif signature or raw_content:
                     items.append(
                         ThinkingPart(
                             content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system,
+                            provider_name=self.system if signature else None,
+                            provider_details=provider_details,
                         )
                     )
-                # Handle raw CoT content from gpt-oss models (via LM Studio, vLLM, etc.)
-                if item.content:
-                    for idx, content_item in enumerate(item.content):
-                        items.append(
-                            ThinkingPart(
-                                content=content_item.text,
-                                id=f'{item.id}{_RAW_COT_ID_SUFFIX}{idx}',
-                            )
-                        )
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
@@ -1197,7 +1189,7 @@ class OpenAIResponsesModel(Model):
                     items.append(file_part)
                 items.append(return_part)
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
-                # OpenAI's `computer-use` model is no longer available
+                # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
@@ -1496,7 +1488,16 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
-        """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
+        """Map pydantic_ai messages to OpenAI Responses API input format.
+
+        For ThinkingParts, this method:
+        - Sends `signature` back as `encrypted_content` (for official OpenAI reasoning)
+        - Sends `content` back as `summary` text
+        - Sends `provider_details['raw_content']` back as `content` items (for gpt-oss raw CoT)
+
+        Raw CoT is sent back to improve model performance in multi-turn conversations,
+        as recommended by the OpenAI Cookbook for gpt-oss models.
+        """
         profile = OpenAIModelProfile.from_profile(self.profile)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
@@ -1681,12 +1682,10 @@ class OpenAIResponsesModel(Model):
                         # If `send_item_ids` is false, we won't send the `BuiltinToolReturnPart`, but OpenAI does not have a type for files from the assistant.
                         pass
                     elif isinstance(item, ThinkingPart):
-                        # we don't send back raw CoT
-                        # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
-                        if _RAW_COT_ID_SUFFIX in (item.id or ''):
-                            continue
+                        # Get raw CoT content from provider_details if present
+                        raw_content: list[str] | None = (item.provider_details or {}).get('raw_content')
 
-                        if item.id and send_item_ids:
+                        if item.id and (send_item_ids or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
@@ -1696,7 +1695,7 @@ class OpenAIResponsesModel(Model):
                                 signature = item.signature
 
                             if (reasoning_item is None or reasoning_item['id'] != item.id) and (
-                                signature or item.content
+                                signature or item.content or raw_content
                             ):  # pragma: no branch
                                 reasoning_item = responses.ResponseReasoningItemParam(
                                     id=item.id,
@@ -1712,6 +1711,13 @@ class OpenAIResponsesModel(Model):
                                 reasoning_item['summary'] = [
                                     *reasoning_item['summary'],
                                     Summary(text=item.content, type='summary_text'),
+                                ]
+
+                            if raw_content:
+                                # Send raw CoT back
+                                assert reasoning_item is not None
+                                reasoning_item['content'] = [
+                                    ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
                             start_tag, end_tag = profile.thinking_tags
@@ -1888,7 +1894,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
-            yield self._parts_manager.handle_thinking_delta(
+            yield from self._parts_manager.handle_thinking_delta(
                 vendor_part_id='reasoning_content',
                 id='reasoning_content',
                 content=reasoning_content,
@@ -1899,7 +1905,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
         if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
-            yield self._parts_manager.handle_thinking_delta(
+            yield from self._parts_manager.handle_thinking_delta(
                 vendor_part_id='reasoning',
                 id='reasoning',
                 content=reasoning,
@@ -1914,17 +1920,16 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response
         content = choice.delta.content
         if content:
-            maybe_event = self._parts_manager.handle_text_delta(
+            for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=content,
                 thinking_tags=self._model_profile.thinking_tags,
                 ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-            )
-            if maybe_event is not None:  # pragma: no branch
-                if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                    maybe_event.part.id = 'content'
-                    maybe_event.part.provider_name = self.provider_name
-                yield maybe_event
+            ):
+                if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+                    event.part.id = 'content'
+                    event.part.provider_name = self.provider_name
+                yield event
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
@@ -2099,12 +2104,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 if isinstance(chunk.item, responses.ResponseReasoningItem):
                     if signature := chunk.item.encrypted_content:  # pragma: no branch
                         # Add the signature to the part corresponding to the first summary item
-                        yield self._parts_manager.handle_thinking_delta(
+                        for event in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=f'{chunk.item.id}-0',
                             id=chunk.item.id,
                             signature=signature,
                             provider_name=self.provider_name,
-                        )
+                        ):
+                            yield event
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                     _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
                     for i, file_part in enumerate(file_parts):
@@ -2137,11 +2143,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                yield self._parts_manager.handle_thinking_delta(
+                for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.part.text,
                     id=chunk.item_id,
-                )
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
                 pass  # there's nothing we need to do here
@@ -2150,19 +2157,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
-                yield self._parts_manager.handle_thinking_delta(
+                for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.delta,
                     id=chunk.item_id,
-                )
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
-                raw_cot_id = f'{chunk.item_id}{_RAW_COT_ID_SUFFIX}{chunk.content_index}'
-                yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=raw_cot_id,
-                    content=chunk.delta,
-                    id=raw_cot_id,
-                )
+                for event in self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=chunk.item_id,
+                    raw_content_delta=chunk.delta,
+                    raw_content_index=chunk.content_index,
+                    id=chunk.item_id,
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseReasoningTextDoneEvent):
                 pass  # content already accumulated via delta events
@@ -2172,11 +2181,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(
+                for event in self._parts_manager.handle_text_delta(
                     vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here

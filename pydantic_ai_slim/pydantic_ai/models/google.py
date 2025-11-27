@@ -710,15 +710,15 @@ class GeminiStreamedResponse(StreamedResponse):
                     if len(part.text) == 0 and not provider_details:
                         continue
                     if part.thought:
-                        yield self._parts_manager.handle_thinking_delta(
+                        for event in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=None, content=part.text, provider_details=provider_details
-                        )
+                        ):
+                            yield event
                     else:
-                        maybe_event = self._parts_manager.handle_text_delta(
+                        for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=None, content=part.text, provider_details=provider_details
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),

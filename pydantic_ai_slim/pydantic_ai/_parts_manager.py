@@ -13,7 +13,7 @@ event-emitting logic.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -76,7 +76,7 @@ class ModelResponsePartsManager:
         provider_details: dict[str, Any] | None = None,
         thinking_tags: tuple[str, str] | None = None,
         ignore_leading_whitespace: bool = False,
-    ) -> ModelResponseStreamEvent | None:
+    ) -> Iterator[ModelResponseStreamEvent]:
         """Handle incoming text content, creating or updating a TextPart in the manager as appropriate.
 
         When `vendor_part_id` is None, the latest part is updated if it exists and is a TextPart;
@@ -93,10 +93,9 @@ class ModelResponsePartsManager:
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
             ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
 
-        Returns:
-            - A `PartStartEvent` if a new part was created.
-            - A `PartDeltaEvent` if an existing part was updated.
-            - `None` if no new event is emitted (e.g., the first text part was all whitespace).
+        Yields:
+            A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
+            Yields nothing if no event should be emitted (e.g., the first text part was all whitespace).
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
@@ -121,11 +120,12 @@ class ModelResponsePartsManager:
                     if content == thinking_tags[1]:
                         # When we see the thinking end tag, we're done with the thinking part and the next text delta will need a new part
                         self._vendor_id_to_part_index.pop(vendor_part_id)
-                        return None
+                        return
                     else:
-                        return self.handle_thinking_delta(
+                        yield from self.handle_thinking_delta(
                             vendor_part_id=vendor_part_id, content=content, provider_details=provider_details
                         )
+                        return
                 elif isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
@@ -134,15 +134,16 @@ class ModelResponsePartsManager:
         if thinking_tags and content == thinking_tags[0]:
             # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
-            return self.handle_thinking_delta(
+            yield from self.handle_thinking_delta(
                 vendor_part_id=vendor_part_id, content='', provider_details=provider_details
             )
+            return
 
         if existing_text_part_and_index is None:
             # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
             # which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
             if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
-                return None
+                return
 
             # There is no existing text part that should be updated, so create a new one
             new_part_index = len(self._parts)
@@ -150,13 +151,37 @@ class ModelResponsePartsManager:
             if vendor_part_id is not None:
                 self._vendor_id_to_part_index[vendor_part_id] = new_part_index
             self._parts.append(part)
-            return PartStartEvent(index=new_part_index, part=part)
+            yield PartStartEvent(index=new_part_index, part=part)
         else:
             # Update the existing TextPart with the new content delta
             existing_text_part, part_index = existing_text_part_and_index
             part_delta = TextPartDelta(content_delta=content, provider_details=provider_details)
             self._parts[part_index] = part_delta.apply(existing_text_part)
-            return PartDeltaEvent(index=part_index, delta=part_delta)
+            yield PartDeltaEvent(index=part_index, delta=part_delta)
+
+    def _update_raw_content(
+        self,
+        part: ThinkingPart,
+        part_index: int,
+        raw_content_delta: str,
+        raw_content_index: int,
+    ) -> ThinkingPart:
+        """Update raw_content in provider_details and return updated part."""
+        existing_details = dict(part.provider_details or {})
+        raw_content_list = list(existing_details.get('raw_content', []))
+        while len(raw_content_list) <= raw_content_index:
+            raw_content_list.append('')
+        raw_content_list[raw_content_index] += raw_content_delta
+        existing_details['raw_content'] = raw_content_list
+        updated = ThinkingPart(
+            content=part.content,
+            id=part.id,
+            signature=part.signature,
+            provider_name=part.provider_name,
+            provider_details=existing_details,
+        )
+        self._parts[part_index] = updated
+        return updated
 
     def handle_thinking_delta(
         self,
@@ -167,7 +192,9 @@ class ModelResponsePartsManager:
         signature: str | None = None,
         provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
-    ) -> ModelResponseStreamEvent:
+        raw_content_delta: str | None = None,
+        raw_content_index: int = 0,
+    ) -> Iterator[ModelResponseStreamEvent]:
         """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
 
         When `vendor_part_id` is None, the latest part is updated if it exists and is a ThinkingPart;
@@ -183,9 +210,13 @@ class ModelResponsePartsManager:
             signature: An optional signature for the thinking content.
             provider_name: An optional provider name for the thinking part.
             provider_details: An optional dictionary of provider-specific details for the thinking part.
+            raw_content_delta: Raw chain-of-thought content delta (stored in provider_details['raw_content'],
+                not shown to users).
+            raw_content_index: Index into the raw_content list for the current delta (default 0).
 
-        Returns:
+        Yields:
             A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
+            Yields nothing if only raw_content was updated (raw content updates don't emit visible events).
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply a thinking delta to a part that is not a ThinkingPart.
@@ -209,26 +240,38 @@ class ModelResponsePartsManager:
                 existing_thinking_part_and_index = existing_part, part_index
 
         if existing_thinking_part_and_index is None:
-            if content is not None or signature is not None:
+            if content is not None or signature is not None or raw_content_delta is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
+                new_provider_details = dict(provider_details) if provider_details else {}
+                if raw_content_delta is not None:
+                    raw_content_list: list[str] = [''] * (raw_content_index + 1)
+                    raw_content_list[raw_content_index] = raw_content_delta
+                    new_provider_details['raw_content'] = raw_content_list
                 part = ThinkingPart(
                     content=content or '',
                     id=id,
                     signature=signature,
                     provider_name=provider_name,
-                    provider_details=provider_details,
+                    provider_details=new_provider_details or None,
                 )
                 if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)
-                return PartStartEvent(index=new_part_index, part=part)
+                yield PartStartEvent(index=new_part_index, part=part)
             else:
-                raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content or signature')
+                raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content, signature, or raw_content')
         else:
+            existing_thinking_part, part_index = existing_thinking_part_and_index
+
+            if raw_content_delta is not None:
+                existing_thinking_part = self._update_raw_content(
+                    existing_thinking_part, part_index, raw_content_delta, raw_content_index
+                )
+                if content is None and signature is None:
+                    return
+
             if content is not None or signature is not None:
-                # Update the existing ThinkingPart with the new content and/or signature delta
-                existing_thinking_part, part_index = existing_thinking_part_and_index
                 part_delta = ThinkingPartDelta(
                     content_delta=content,
                     signature_delta=signature,
@@ -236,8 +279,8 @@ class ModelResponsePartsManager:
                     provider_details=provider_details,
                 )
                 self._parts[part_index] = part_delta.apply(existing_thinking_part)
-                return PartDeltaEvent(index=part_index, delta=part_delta)
-            else:
+                yield PartDeltaEvent(index=part_index, delta=part_delta)
+            elif raw_content_delta is None:  # pragma: no branch
                 raise UnexpectedModelBehavior('Cannot update a ThinkingPart with no content or signature')
 
     def handle_tool_call_delta(

@@ -1,0 +1,105 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '218'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What should I do to cross the street?
+        role: user
+      instructions: ''
+      model: computer-use-preview
+      reasoning:
+        effort: null
+        generate_summary: concise
+      stream: false
+      truncation: auto
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1976'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2793'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1743514924
+      error: null
+      id: resp_67ebed2c92cc81919d2fe37992a6a78b0e0766e7260ad9b9
+      incomplete_details: null
+      instructions: ''
+      max_output_tokens: null
+      metadata: {}
+      model: computer-use-preview-2025-03-11
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: |-
+            To cross the street safely, follow these steps:
+
+            1. **Use a Crosswalk**: Always use a designated crosswalk or pedestrian crossing whenever available.
+            2. **Press the Button**: If there is a pedestrian signal button, press it and wait for the signal.
+            3. **Look Both Ways**: Look left, right, and left again before stepping off the curb.
+            4. **Wait for the Signal**: Cross only when the pedestrian signal indicates it is safe to do so or when there is a clear gap in traffic.
+            5. **Stay Alert**: Be mindful of turning vehicles and stay attentive while crossing.
+            6. **Walk, Don't Run**: Walk across the street; running can increase the risk of falling or not noticing an oncoming vehicle.
+
+            Always follow local traffic rules and be cautious, even when crossing at a crosswalk. Safety is the priority.
+          type: output_text
+        id: msg_67ebed2db814819195e77f3dd1f057640e0766e7260ad9b9
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: medium
+        generate_summary: concise
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: auto
+      usage:
+        input_tokens: 15
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 180
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 195
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
