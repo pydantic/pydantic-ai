@@ -7736,3 +7736,20 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
             ],
         }
     )
+
+
+@pytest.mark.vcr()
+async def test_openai_responses_runs_with_instructions_only(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='Generate a short article about artificial intelligence in 3 sentences.')
+
+    # Run with only instructions, no explicit input messages
+    result = await agent.run()
+
+    # Verify we got a valid response
+    assert result.output
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0

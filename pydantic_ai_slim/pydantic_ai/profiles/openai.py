@@ -161,7 +161,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
 
         return result
 
-    def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
+    def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa: C901
         # Remove unnecessary keys
         schema.pop('title', None)
         schema.pop('$schema', None)
