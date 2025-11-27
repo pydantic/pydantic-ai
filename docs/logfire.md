@@ -353,4 +353,4 @@ agent = Agent(
 )
 ```
 
-When instrumentation is enabled, the resolved metadata is recorded on the agent span under the `logfire.agent.metadata` attribute.
+When instrumentation is enabled, the resolved metadata is recorded on the agent span under the `agent.metadata` attribute.

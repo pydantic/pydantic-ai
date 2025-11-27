@@ -757,7 +757,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['logfire.agent.metadata'] = json.dumps(metadata)
+            attrs['agent.metadata'] = json.dumps(metadata)
 
         return {
             **usage.opentelemetry_attributes(),
