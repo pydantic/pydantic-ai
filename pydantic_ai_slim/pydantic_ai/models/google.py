@@ -96,8 +96,6 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-# Compiled regex for extracting file_search queries from executable code
-# Handles escaped quotes: matches file_search.query(query="text") or file_search.query(query='text')
 _FILE_SEARCH_QUERY_PATTERN = re.compile(
     r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)'
 )
@@ -1148,7 +1146,6 @@ def _extract_file_search_query(code: str) -> str | None:
     match = _FILE_SEARCH_QUERY_PATTERN.search(code)
     if match:
         query = match.group(2)
-        # Unescape the query string (handle \\ first, then \", \')
         query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
         return query
     return None
