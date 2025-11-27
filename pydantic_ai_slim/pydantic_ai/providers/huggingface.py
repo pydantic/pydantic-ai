@@ -127,10 +127,6 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         if '/' not in model_name:
             return None
 
-        provider_override = None
-        if ':' in model_name:
-            model_name, provider_override = model_name.rsplit(':', 1)
-
         model_name = model_name.lower()
         model_prefix, _ = model_name.split('/', 1)
 
@@ -144,13 +140,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         selected_provider_info: HfRouterProvider | None = None
         if router_info:
             providers = router_info['providers']
-            if provider_override:
-                # Find specific provider from model suffix
-                for p in providers:
-                    if p['provider'] == provider_override:
-                        selected_provider_info = p
-                        break
-            elif self._provider:
+            if self._provider:
                 for p in providers:
                     if p['provider'] == self._provider:
                         selected_provider_info = p
