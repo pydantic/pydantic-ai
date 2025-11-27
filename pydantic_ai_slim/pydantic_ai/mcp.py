@@ -496,7 +496,14 @@ class MCPServer(AbstractToolset[Any], ABC):
             return messages.ToolReturn(return_value=return_value, metadata=result.meta) if result.meta else return_value
 
         mapped = [await self._map_tool_result_part(part) for part in result.content]
-        return mapped[0] if len(mapped) == 1 else mapped
+        if result.meta:
+            return (
+                messages.ToolReturn(return_value=mapped[0], metadata=result.meta)
+                if len(mapped) == 1
+                else messages.ToolReturn(return_value=mapped, metadata=result.meta)
+            )
+        else:
+            return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
         self,
