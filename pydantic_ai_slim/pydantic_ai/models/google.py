@@ -560,7 +560,7 @@ class GoogleModel(Model):
                         )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            message_parts.append({'text': part.model_response()})  # pragma: no cover
+                            message_parts.append({'text': part.model_response()})
                         else:
                             message_parts.append(
                                 {
