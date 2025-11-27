@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import logging
 import os
 from dataclasses import replace
 from functools import lru_cache
@@ -29,6 +30,7 @@ except ImportError as _import_error:  # pragma: no cover
         "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"
     ) from _import_error
 
+_logger = logging.getLogger(__name__)
 
 HF_ROUTER_MODELS_URL = 'https://router.huggingface.co/v1/models'
 
@@ -160,6 +162,14 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
                 token=self.api_key,
                 provider=selected_provider_info['provider'],  # type: ignore
             )
+
+            provider_name = selected_provider_info['provider']
+            if not selected_provider_info['supports_structured_output']:
+                _logger.warning(
+                    f'Provider {provider_name} does not support structured output (NativeOutput).',
+                )
+            if not selected_provider_info['supports_tools']:
+                _logger.warning(f"Provider '{provider_name}' does not support tools.")
 
             return replace(
                 base_profile,
