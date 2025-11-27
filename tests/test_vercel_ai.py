@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, MutableMapping
-from itertools import count
 from typing import Any, cast
 
 import pytest
@@ -81,12 +80,6 @@ pytestmark = [
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
-
-
-def predictable_id_generator(prefix: str = 'test-id-'):
-    """Create a predictable ID generator for testing."""
-    c = count(1)
-    return lambda: f'{prefix}{next(c)}'
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
@@ -2648,9 +2641,75 @@ async def test_adapter_dump_messages_thinking_with_metadata():
     # Test roundtrip - verify metadata is preserved when loading back
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
 
-    # Sync timestamps for comparison
+    # Sync timestamps for comparison (ModelResponse always has timestamp)
     for orig_msg, new_msg in zip(original_messages, reloaded_messages):
-        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-            new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+        new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
     assert reloaded_messages == original_messages
+
+
+async def test_adapter_load_messages_json_list_args():
+    """Test that JSON list args are kept as strings (not parsed)."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputAvailablePart(
+                    tool_name='my_tool',
+                    tool_call_id='tc1',
+                    input='[1, 2, 3]',  # JSON list - should stay as string
+                    output='result',
+                    state='output-available',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+
+    assert len(messages) == 2  # ToolCall in response + ToolReturn in request
+    response = messages[0]
+    assert isinstance(response, ModelResponse)
+    assert len(response.parts) == 1
+    tool_call = response.parts[0]
+    assert isinstance(tool_call, ToolCallPart)
+    # Args should remain as string since it parses to a list, not a dict
+    assert tool_call.args == '[1, 2, 3]'
+
+
+async def test_adapter_dump_messages_with_cache_point():
+    """Test that CachePoint in user content is skipped during conversion."""
+    from pydantic_ai.messages import CachePoint
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Hello',
+                        CachePoint(),  # Should be skipped
+                        'World',
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    # CachePoint should be omitted, only text parts remain
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Hello', 'state': 'done', 'provider_metadata': None},
+                    {'type': 'text', 'text': 'World', 'state': 'done', 'provider_metadata': None},
+                ],
+            }
+        ]
+    )

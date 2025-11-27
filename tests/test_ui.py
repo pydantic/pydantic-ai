@@ -680,3 +680,12 @@ async def test_adapter_dispatch_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+
+
+def test_dummy_adapter_dump_messages():
+    """Test that DummyUIAdapter.dump_messages returns messages as-is."""
+    from pydantic_ai.messages import UserPromptPart
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
+    result = DummyUIAdapter.dump_messages(messages)
+    assert result == messages

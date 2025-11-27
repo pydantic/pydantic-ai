@@ -172,8 +172,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     args = cast(dict[str, Any], parsed)
                             except json.JSONDecodeError:
                                 pass
-                        elif args is not None and not isinstance(args, dict):
-                            raise ValueError(f'Unsupported tool call args type: {type(args)}')
+                        elif isinstance(args, dict) or args is None:
+                            pass
+                        else:
+                            assert_never(args)
 
                         if builtin_tool:
                             call_part = BuiltinToolCallPart(tool_name=tool_name, tool_call_id=tool_call_id, args=args)
