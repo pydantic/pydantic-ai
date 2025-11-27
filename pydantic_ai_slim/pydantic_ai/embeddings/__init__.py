@@ -260,6 +260,13 @@ class Embedder:
             self.embed(documents, input_type=input_type, settings=settings)
         )
 
+    async def max_input_tokens(self) -> int | None:
+        model = self._get_model()
+        return await model.max_input_tokens()
+
+    def max_input_tokens_sync(self) -> int | None:
+        return _utils.get_event_loop().run_until_complete(self.max_input_tokens())
+
     async def count_tokens(self, text: str) -> int:
         model = self._get_model()
         return await model.count_tokens(text)

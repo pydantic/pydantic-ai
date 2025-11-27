@@ -45,7 +45,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
     """
 
     _model_name: str = field(repr=False)
-    _model: SentenceTransformer = field(repr=False)
+    _model: SentenceTransformer | None = field(repr=False, default=None)
 
     def __init__(self, model_name: str, *, settings: EmbeddingSettings | None = None) -> None:
         """Initialize a Sentence-Transformers embedding model.
@@ -55,8 +55,6 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
-        # Defer device selection to encode() where we can override via settings
-        self._model = SentenceTransformer(model_name)
 
         super().__init__(settings=settings)
 
@@ -99,8 +97,9 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         normalize = settings.get('sentence_transformers_normalize_embeddings', False)
         batch_size = settings.get('sentence_transformers_batch_size', None)
 
-        # TODO: Update /typings so we can remove the type ignores
-        encode_func = self._model.encode_query if input_type == 'query' else self._model.encode_document  # type: ignore[reportUnknownReturnType]
+        # TODO (DouweM): Update /typings so we can remove the type ignores
+        model = await self._get_model()
+        encode_func = model.encode_query if input_type == 'query' else model.encode_document  # type: ignore[reportUnknownReturnType]
 
         np_embeddings: np.ndarray[Any, float] = await _utils.run_in_executor(  # type: ignore[reportAssignmentType]
             encode_func,  # type: ignore[reportArgumentType]
@@ -112,14 +111,16 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             normalize_embeddings=normalize,
             **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
         )
-        return np_embeddings.tolist()
+        return np_embeddings.tolist()  # type: ignore[reportUnknownReturnType]
 
     async def max_input_tokens(self) -> int | None:
-        return self._model.get_max_seq_length()
+        model = await self._get_model()
+        return model.get_max_seq_length()
 
     async def count_tokens(self, text: str) -> int:
+        model = await self._get_model()
         result: dict[str, torch.Tensor] = await _utils.run_in_executor(
-            self._model.tokenize,  # type: ignore[reportArgumentType]
+            model.tokenize,  # type: ignore[reportArgumentType]
             [text],
         )
         if 'input_ids' not in result or not isinstance(result['input_ids'], torch.Tensor):
@@ -128,3 +129,9 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
                 str(result),
             )
         return len(result['input_ids'][0])
+
+    async def _get_model(self) -> SentenceTransformer:
+        if self._model is None:
+            # This may download the model from Hugging Face, so we do it in a thread
+            self._model = await _utils.run_in_executor(SentenceTransformer, self.model_name)
+        return self._model

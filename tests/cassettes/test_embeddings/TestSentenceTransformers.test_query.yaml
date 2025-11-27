@@ -37,7 +37,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
       ratelimit:
-      - '"resolvers";r=4989;t=288'
+      - '"resolvers";r=4979;t=84'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -71,7 +71,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '161'
+      - '1372336'
       connection:
       - keep-alive
       content-disposition:
@@ -87,7 +87,7 @@ interactions:
       etag:
       - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
       ratelimit:
-      - '"resolvers";r=4998;t=149'
+      - '"resolvers";r=4998;t=220'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -135,7 +135,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
       ratelimit:
-      - '"resolvers";r=4988;t=288'
+      - '"resolvers";r=4978;t=84'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -169,7 +169,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '161'
+      - '1372335'
       connection:
       - keep-alive
       content-disposition:
@@ -185,7 +185,7 @@ interactions:
       etag:
       - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
       ratelimit:
-      - '"resolvers";r=4996;t=149'
+      - '"resolvers";r=4996;t=219'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -233,7 +233,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
       ratelimit:
-      - '"resolvers";r=4987;t=288'
+      - '"resolvers";r=4977;t=84'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -267,7 +267,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '162'
+      - '1372336'
       connection:
       - keep-alive
       content-disposition:
@@ -283,7 +283,7 @@ interactions:
       etag:
       - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
       ratelimit:
-      - '"resolvers";r=4996;t=149'
+      - '"resolvers";r=4996;t=219'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -331,7 +331,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2FREADME.md=&etag=%2258d4a9a45664eb9e12de9549c548c09b6134c17f%22
       ratelimit:
-      - '"resolvers";r=4986;t=287'
+      - '"resolvers";r=4976;t=83'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -365,7 +365,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '162'
+      - '1372336'
       connection:
       - keep-alive
       content-disposition:
@@ -381,7 +381,7 @@ interactions:
       etag:
       - '"58d4a9a45664eb9e12de9549c548c09b6134c17f"'
       ratelimit:
-      - '"resolvers";r=4993;t=149'
+      - '"resolvers";r=4993;t=219'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -429,7 +429,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
       ratelimit:
-      - '"resolvers";r=4985;t=287'
+      - '"resolvers";r=4975;t=83'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -463,7 +463,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '162'
+      - '1372337'
       connection:
       - keep-alive
       content-disposition:
@@ -479,7 +479,7 @@ interactions:
       etag:
       - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
       ratelimit:
-      - '"resolvers";r=4998;t=149'
+      - '"resolvers";r=4998;t=220'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -527,7 +527,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fsentence_bert_config.json=&etag=%2259d594003bf59880a884c574bf88ef7555bb0202%22
       ratelimit:
-      - '"resolvers";r=4984;t=287'
+      - '"resolvers";r=4974;t=83'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -561,7 +561,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '161'
+      - '1372335'
       connection:
       - keep-alive
       content-disposition:
@@ -577,7 +577,7 @@ interactions:
       etag:
       - '"59d594003bf59880a884c574bf88ef7555bb0202"'
       ratelimit:
-      - '"resolvers";r=4990;t=148'
+      - '"resolvers";r=4990;t=218'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -621,7 +621,7 @@ interactions:
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=4983;t=287'
+      - '"resolvers";r=4973;t=83'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -669,7 +669,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig.json=&etag=%2272b987fd805cfa2b58c4c8c952b274a11bfd5a00%22
       ratelimit:
-      - '"resolvers";r=4982;t=287'
+      - '"resolvers";r=4972;t=83'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -703,7 +703,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '161'
+      - '1372335'
       connection:
       - keep-alive
       content-disposition:
@@ -719,7 +719,7 @@ interactions:
       etag:
       - '"72b987fd805cfa2b58c4c8c952b274a11bfd5a00"'
       ratelimit:
-      - '"resolvers";r=4987;t=148'
+      - '"resolvers";r=4987;t=218'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -767,7 +767,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/tokenizer_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Ftokenizer_config.json=&etag=%22c79f2b6a0cea6f4b564fed1938984bace9d30ff0%22
       ratelimit:
-      - '"resolvers";r=4981;t=287'
+      - '"resolvers";r=4971;t=82'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -801,7 +801,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '157'
+      - '1372336'
       connection:
       - keep-alive
       content-disposition:
@@ -817,7 +817,7 @@ interactions:
       etag:
       - '"c79f2b6a0cea6f4b564fed1938984bace9d30ff0"'
       ratelimit:
-      - '"resolvers";r=4985;t=144'
+      - '"resolvers";r=4985;t=218'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -857,7 +857,7 @@ interactions:
       etag:
       - W/"40-09f9IAqP13xarAhQxFS2W8rvRkM"
       ratelimit:
-      - '"api";r=997;t=287'
+      - '"api";r=995;t=82'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -907,7 +907,7 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/1_Pooling%2Fconfig.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2F1_Pooling%2Fconfig.json=&etag=%22d1514c3162bbe87b343f565fadc62e6c06f04f03%22
       ratelimit:
-      - '"resolvers";r=4980;t=286'
+      - '"resolvers";r=4970;t=81'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -941,7 +941,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '157'
+      - '1372336'
       connection:
       - keep-alive
       content-disposition:
@@ -957,7 +957,7 @@ interactions:
       etag:
       - '"d1514c3162bbe87b343f565fadc62e6c06f04f03"'
       ratelimit:
-      - '"resolvers";r=4983;t=143'
+      - '"resolvers";r=4983;t=217'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -989,15 +989,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '6920'
+      - '6975'
       content-type:
       - application/json; charset=utf-8
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"1b08-yXGJ8Y7WAkHIxSYNRy3mc+JOVPw"
+      - W/"1b3f-OuAtfidf0ZZH73+fS3AD9wSoeHs"
       ratelimit:
-      - '"api";r=996;t=286'
+      - '"api";r=994;t=81'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -1051,13 +1051,13 @@ interactions:
           unk_token: '[UNK]'
       createdAt: '2022-03-02T23:29:05.000Z'
       disabled: false
-      downloads: 146026841
+      downloads: 148188690
       gated: false
       id: sentence-transformers/all-MiniLM-L6-v2
       inference: warm
       lastModified: '2025-03-06T13:37:44.000Z'
       library_name: sentence-transformers
-      likes: 4148
+      likes: 4160
       mask_token: '[MASK]'
       model-index: null
       modelId: sentence-transformers/all-MiniLM-L6-v2
@@ -1101,35 +1101,33 @@ interactions:
       - rfilename: train_script.py
       - rfilename: vocab.txt
       spaces:
+      - MCP-1st-Birthday/Jobly
       - onkar-waghmode/neural-humanizer
-      - Tarka-AIR/Tarka-Embedding
-      - BaoNhan/MinerU_2.5_plus_Intelligent_Reasoning_and_Knowledge_Explorer
       - MCP-1st-Birthday/ragmint-mcp-agent
+      - noorfatima71/RAG_Pharma_Chatbot
       - MCP-1st-Birthday/ragmint-mcp-server
-      - MCP-1st-Birthday/NeatNote
       - Nawabwaqar/FastMed_RAG_Chatbot
       - Mr-TD/RAG-PDF-QnA-ChatBot
       - merterbak/RAG-Llama
       - himanshukumar378/Mutliple_chat_pdf
+      - BaoNhan/MinerU_2.5_plus_Intelligent_Reasoning_and_Knowledge_Explorer
       - kiwinov/strint
-      - noorfatima71/RAG_Pharma_Chatbot
-      - cynstl/ml-sanity-studio
+      - MCP-1st-Birthday/NeatNote
       - Lesterchia174/FPOC2_AI-Tutor_Chatbot
       - LuciferMrng/Voice_to_Notes
-      - Sai16216/PDF_Assist
-      - Khalsa-12/ClinIQ-AI
+      - VishalVikas003/ai-innovation-studio
       - muniparash79/chat-with-your-pdf
       - MCP-1st-Birthday/cx_ai_agent
-      - Altiuss/aigars-first-agent
-      - Mnkhoma/Yaza
-      - sandhya932/karanam_sandhya_rani
-      - Ayesha-Zafar-03/chatbot
       - guanqiantong/edu_ai
       - paivalucass/ai-restaurant-recommend
       - abhismanc/career_conversation
       - Benaah/amaniquery
       - Deeksha11-alt/1_foundations
       - GopalJee2745/PDF_QA_Chat_Lang_GROQ
+      - duartevn/ailo-lite-rag-ifood
+      - dhpjames71/career_conversations
+      - sotcsa/career_conversation
+      - nigampriyanshi-ai/My_AI_Chatbot
       - cvachet/pdf-chatbot
       - marcosv/InstructIR
       - JournalistsonHF/ai-scraper
@@ -1201,6 +1199,8 @@ interactions:
       - Thanos51/ai-recruitment-system
       - rivapereira123/career-buddy
       - MarjG/anime-recommendation-engine
+      - Agents-MCP-Hackathon/Merlin-AI-Coach
+      - stevenbucaille/ScouterAI
       tags:
       - sentence-transformers
       - pytorch

@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, overload
 
+from pydantic_ai import _utils
 from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
 from pydantic_ai.embeddings.settings import EmbeddingSettings
 from pydantic_ai.providers import Provider, infer_provider
@@ -9,6 +10,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from . import OpenAIEmbeddingsCompatibleProvider
 
 try:
+    import tiktoken
     from openai import AsyncOpenAI
     from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
 
@@ -107,9 +109,14 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         return [item.embedding for item in response.data]
 
     async def max_input_tokens(self) -> int | None:
-        # TODO (DouweM): Implement with tiktoken when https://github.com/pydantic/pydantic-ai/pull/3447 lands.
-        raise NotImplementedError('Max input tokens is not currently supported for OpenAI embeddings models.')
+        # Per https://platform.openai.com/docs/api-reference/embeddings/create#embeddings_create-input:
+        # > The input must not exceed the max input tokens for the model (8192 tokens for all embedding models)
+        return 8192
 
     async def count_tokens(self, text: str) -> int:
-        # TODO (DouweM): Implement with tiktoken when https://github.com/pydantic/pydantic-ai/pull/3447 lands.
-        raise NotImplementedError('Counting tokens is not currently supported for OpenAI embeddings models.')
+        encoding = await self._get_encoding()
+        return len(encoding.encode(text))
+
+    async def _get_encoding(self) -> tiktoken.Encoding:
+        # TODO: Handle KeyError
+        return await _utils.run_in_executor(tiktoken.encoding_for_model, self.model_name)

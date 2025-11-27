@@ -56,29 +56,44 @@ class TestOpenAI:
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model)
         embeddings = await embedder.embed_query('Hello, world!')
-        assert embeddings == IsList(-0.019143931567668915, -0.025292053818702698, -0.0017211713129654527, length=1536)
+        assert embeddings == IsList(
+            snapshot(-0.019193023443222046),
+            snapshot(-0.025299284607172012),
+            snapshot(-0.0016930076526477933),
+            length=1536,
+        )
 
     async def test_documents(self, openai_api_key: str):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model)
         embeddings = await embedder.embed_documents(['hello', 'world'])
         assert embeddings == IsList(
-            IsList(0.016751619055867195, -0.055799614638090134, 0.005647437181323767, length=1536),
-            IsList(-0.010633519850671291, -0.03604777529835701, 0.03019288368523121, length=1536),
+            IsList(
+                snapshot(0.01681816205382347),
+                snapshot(-0.05579638481140137),
+                snapshot(0.005661087576299906),
+                length=1536,
+            ),
+            IsList(
+                snapshot(-0.010592407546937466),
+                snapshot(-0.03599696233868599),
+                snapshot(0.030227113515138626),
+                length=1536,
+            ),
             length=2,
         )
 
     async def test_max_input_tokens(self, openai_api_key: str):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model)
-        with pytest.raises(NotImplementedError):
-            await embedder.model.max_input_tokens()
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(8192)
 
     async def test_count_tokens(self, openai_api_key: str):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model)
-        with pytest.raises(NotImplementedError):
-            await embedder.count_tokens('Hello, world!')
+        count = await embedder.count_tokens('Hello, world!')
+        assert count == snapshot(4)
 
 
 @pytest.mark.skipif(not cohere_imports_successful, reason='Cohere not installed')
@@ -96,22 +111,22 @@ class TestCohere:
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
         embedder = Embedder(model)
         embeddings = await embedder.embed_query('Hello, world!')
-        assert embeddings == IsList(-0.016547563, 0.026550192, 0.0044764862, length=1536)
+        assert embeddings == IsList(snapshot(-0.018445116), snapshot(0.008921167), snapshot(-0.0011377502), length=1536)
 
     async def test_documents(self, co_api_key: str):
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
         embedder = Embedder(model)
         embeddings = await embedder.embed_documents(['hello', 'world'])
         assert embeddings == IsList(
-            IsList(0.015943069, 0.013248466, 0.0024139155, length=1536),
-            IsList(-0.0060736495, -0.015005487, 0.00033246286, length=1536),
+            IsList(snapshot(0.015943069), snapshot(0.013248466), snapshot(0.0024139155), length=1536),
+            IsList(snapshot(-0.0060736495), snapshot(-0.015005487), snapshot(0.00033246286), length=1536),
             length=2,
         )
 
     async def test_max_input_tokens(self, co_api_key: str):
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
         embedder = Embedder(model)
-        max_input_tokens = await embedder.model.max_input_tokens()
+        max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(128000)
 
     async def test_count_tokens(self, co_api_key: str):
@@ -164,8 +179,8 @@ class TestSentenceTransformers:
     async def test_max_input_tokens(self):
         model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
         embedder = Embedder(model)
-        max_input_tokens = await embedder.model.max_input_tokens()
-        assert max_input_tokens == snapshot(512)
+        max_input_tokens = await embedder.max_input_tokens()
+        assert max_input_tokens == snapshot(256)
 
     async def test_count_tokens(self):
         model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')

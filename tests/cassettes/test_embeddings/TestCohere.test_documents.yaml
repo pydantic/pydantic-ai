@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '103'
+      - '139'
       content-type:
       - application/json
       host:
@@ -16,11 +16,13 @@ interactions:
     method: POST
     parsed_body:
       input_type: search_document
+      max_tokens: null
       model: embed-v4.0
       output_dimension: null
       texts:
       - hello
       - world
+      truncate: NONE
     uri: https://api.cohere.com/v2/embed
   response:
     headers:
@@ -3121,7 +3123,7 @@ interactions:
           - 0.005636982
           - -0.030804917
           - 0.020483682
-      id: d936be3a-db51-4339-9e6a-4f8cd5f25736
+      id: 199299d7-f43d-45af-903c-347fff81bbe4
       meta:
         api_version:
           version: '2'

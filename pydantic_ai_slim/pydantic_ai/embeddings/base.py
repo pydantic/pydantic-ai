@@ -79,7 +79,10 @@ class EmbeddingModel(ABC):
         return documents, is_single_document, settings
 
     async def max_input_tokens(self) -> int | None:
-        """Get the maximum number of tokens that can be input to the model."""
+        """Get the maximum number of tokens that can be input to the model.
+
+        `None` means unknown.
+        """
         return None
 
     async def count_tokens(self, text: str) -> int:

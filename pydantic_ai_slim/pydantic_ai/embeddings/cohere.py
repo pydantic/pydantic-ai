@@ -20,7 +20,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestCohereEmbeddingModelNames = Literal[
-    'cohere:embed-v4.0',
+    'embed-v4.0',
     'embed-english-v3.0',
     'embed-english-light-v3.0',
     'embed-multilingual-v3.0',
@@ -31,7 +31,8 @@ LatestCohereEmbeddingModelNames = Literal[
 CohereEmbeddingModelName = str | LatestCohereEmbeddingModelNames
 """Possible Cohere embeddings model names."""
 
-_MAX_INPUT_TOKENS = {
+# Taken from https://docs.cohere.com/docs/cohere-embed
+_MAX_INPUT_TOKENS: dict[CohereEmbeddingModelName, int] = {
     'embed-v4.0': 128000,
     'embed-english-v3.0': 512,
     'embed-english-light-v3.0': 512,
