@@ -645,7 +645,6 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
         assert isinstance(message, _OpenRouterCompletionMessage)
-        message = cast(_OpenRouterCompletionMessage, message)
 
         if reasoning_details := message.reasoning_details:
             return [_from_reasoning_detail(detail) for detail in reasoning_details]
