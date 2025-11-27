@@ -578,24 +578,18 @@ def _test_logfire_metadata_values_callable_dict(ctx: RunContext[Any]) -> dict[st
     return {'model_name': ctx.model.model_name}
 
 
-def _test_logfire_metadata_values_callable_string(_ctx: RunContext[Any]) -> str:
-    return 'callable-str'
-
-
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     ('metadata', 'expected'),
     [
         pytest.param({'env': 'test'}, '{"env": "test"}', id='dict'),
-        pytest.param('staging', 'staging', id='literal-string'),
         pytest.param(_test_logfire_metadata_values_callable_dict, '{"model_name": "test"}', id='callable-dict'),
-        pytest.param(_test_logfire_metadata_values_callable_string, 'callable-str', id='callable-string'),
     ],
 )
 def test_logfire_metadata_values(
     get_logfire_summary: Callable[[], LogfireSummary],
-    metadata: str | dict[str, str] | Callable[[RunContext[Any]], str | dict[str, str]],
-    expected: str | dict[str, str],
+    metadata: dict[str, Any] | Callable[[RunContext[Any]], dict[str, Any]],
+    expected: dict[str, Any],
 ) -> None:
     agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata=metadata)
     agent.run_sync('Hello')
@@ -606,7 +600,7 @@ def test_logfire_metadata_values(
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
-    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata='base')
+    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata={'env': 'base'})
     with agent.override(metadata={'env': 'override'}):
         agent.run_sync('Hello')
 

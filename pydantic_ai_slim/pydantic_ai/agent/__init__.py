@@ -90,7 +90,7 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 
-AgentMetadataValue = str | dict[str, str] | Callable[[RunContext[AgentDepsT]], str | dict[str, str]]
+AgentMetadataValue = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
 
 @dataclasses.dataclass(init=False)
@@ -289,7 +289,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
             metadata: Optional metadata to attach to telemetry for this agent.
-                Provide a string literal, a dict of string keys and values, or a callable returning one of those values
+                Provide a dictionary of primitives, or a callable returning one
                 computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
                 Metadata is only recorded when instrumentation is enabled.
             history_processors: Optional list of callables to process the message history before sending it to the model.
@@ -668,7 +668,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             },
         )
 
-        run_metadata: str | dict[str, str] | None = None
+        run_metadata: dict[str, Any] | None = None
         try:
             async with graph.iter(
                 inputs=user_prompt_node,
@@ -707,7 +707,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             finally:
                 run_span.end()
 
-    def _compute_agent_metadata(self, ctx: RunContext[AgentDepsT]) -> str | dict[str, str] | None:
+    def _compute_agent_metadata(self, ctx: RunContext[AgentDepsT]) -> dict[str, Any] | None:
         metadata_override = self._override_metadata.get()
         metadata_config = metadata_override.value if metadata_override is not None else self._metadata
         if metadata_config is None:
@@ -722,7 +722,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage,
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
-        metadata: str | dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         if settings.version == 1:
             attrs = {
@@ -757,10 +757,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            if isinstance(metadata, dict):
-                attrs['logfire.agent.metadata'] = json.dumps(metadata)
-            else:
-                attrs['logfire.agent.metadata'] = metadata
+            attrs['logfire.agent.metadata'] = json.dumps(metadata)
 
         return {
             **usage.opentelemetry_attributes(),

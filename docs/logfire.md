@@ -341,7 +341,7 @@ This setting is particularly useful in production environments where compliance 
 ### Adding Custom Metadata
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.
-Metadata can be provided as a string, a dictionary, or a callable that reads the [`RunContext`][pydantic_ai.tools.RunContext] to compute values on each run.
+Metadata can be provided as a dictionary, or a callable that reads the [`RunContext`][pydantic_ai.tools.RunContext] to compute values on each run, returning a dictionary.
 
 ```python {hl_lines="4-5"}
 from pydantic_ai import Agent
