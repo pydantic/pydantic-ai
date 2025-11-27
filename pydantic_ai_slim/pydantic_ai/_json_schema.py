@@ -33,8 +33,8 @@ class JsonSchemaTransformer(ABC):
     ):
         self.schema = schema
 
-        self.strict = strict  # Can be set to False by subclasses to set `strict` on `ToolDefinition `when not set explicitly by the user.
-        self.is_strict_compatible = True
+        self.strict = strict
+        self.is_strict_compatible = True  # Can be set to False by subclasses to set `strict` on `ToolDefinition `when not set explicitly by the user.
 
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
