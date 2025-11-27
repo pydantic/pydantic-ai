@@ -425,3 +425,32 @@ def test_huggingface_provider_api_key_from_hf_client(monkeypatch: pytest.MonkeyP
 
     provider = HuggingFaceProvider(hf_client=mock_client)
     assert provider.api_key == 'client-token'
+
+
+def test_model_profile_with_router_info_and_known_prefix(mocker: MockerFixture):
+    """Test model_profile when base_profile exists (known prefix) AND router info is found.
+
+    This covers the branch where base_profile is NOT None but we still update capabilities from router.
+    """
+    _get_router_info.cache_clear()
+
+    ns = 'pydantic_ai.providers.huggingface'
+    router_info = {
+        'id': 'qwen/qwen-model',
+        'providers': [
+            {'provider': 'test-provider', 'status': 'live', 'supports_tools': True, 'supports_structured_output': True},
+        ],
+    }
+    mocker.patch(f'{ns}._get_router_info', return_value=router_info)
+    mock_client_class = mocker.patch(f'{ns}.AsyncInferenceClient')
+
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+
+    profile = provider.model_profile('Qwen/qwen-model')
+
+    assert profile is not None
+    assert profile.supports_tools is True
+    assert profile.supports_json_schema_output is True
+    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    mock_client_class.assert_called_with(token='test-api-key', provider='test-provider')
