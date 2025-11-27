@@ -130,11 +130,11 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             return None
 
         model_name = model_name.lower()
-        model_prefix, _ = model_name.split('/', 1)
+        model_prefix, model_suffix = model_name.split('/', 1)
 
         base_profile: ModelProfile | None = None
         if model_prefix in provider_to_profile:
-            base_profile = provider_to_profile[model_prefix](model_name)
+            base_profile = provider_to_profile[model_prefix](model_suffix)
 
         # fetch model capabilities
         router_info = _get_router_info(model_name)

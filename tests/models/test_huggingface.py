@@ -51,7 +51,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.huggingface import HuggingFaceModel
-from pydantic_ai.output import NativeOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.huggingface import HuggingFaceProvider
 from pydantic_ai.result import RunUsage
@@ -1071,3 +1071,34 @@ async def test_native_output_structured_response(allow_model_requests: None):
     assert schema['type'] == 'object'
     assert schema['properties']['first']['type'] == 'string'
     assert schema['properties']['second']['type'] == 'string'
+
+
+async def test_prompted_output_json_object_response(allow_model_requests: None):
+    """Test that prompted output uses json_object response format when supported."""
+    completion = completion_message(
+        ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
+            {
+                'content': '{"first": "One", "second": "Two"}',
+                'role': 'assistant',
+            }
+        )
+    )
+    mock_client = MockHuggingFace.create_mock(completion)
+    model = HuggingFaceModel(
+        'hf-model',
+        provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'),
+        profile=ModelProfile(
+            supports_json_schema_output=False,
+            supports_json_object_output=True,
+        ),
+    )
+    # Using PromptedOutput triggers 'prompted' mode
+    agent = Agent(model, output_type=PromptedOutput(MyTypedDict))
+
+    result = await agent.run('Hello')
+    assert result.output == snapshot({'first': 'One', 'second': 'Two'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    response_format = kwargs['response_format']
+    assert response_format is not None
+    assert response_format['type'] == 'json_object'
