@@ -54,6 +54,7 @@ with try_import() as imports_successful:
         ElicitRequestParams,
         ElicitResult,
         ImageContent,
+        PromptListChangedNotification,
         ResourceListChangedNotification,
         TextContent,
         ToolListChangedNotification,
@@ -2145,6 +2146,21 @@ async def test_resources_cache_invalidation_on_notification(mcp_server: MCPServe
 
         # Cache should be invalidated
         assert mcp_server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_prompts_cache_invalidation_on_notification(mcp_server: MCPServerStdio) -> None:
+    """Test that prompts cache is invalidated when PromptListChangedNotification is received."""
+    async with mcp_server:
+        # Manually set a cached value (no list_prompts() method exists yet)
+        mcp_server._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
+        assert mcp_server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+
+        # Simulate receiving a "prompt list changed" notification
+        notification = PromptListChangedNotification()
+        await mcp_server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
+
+        # Cache should be invalidated
+        assert mcp_server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_cache_cleared_on_connection_close() -> None:

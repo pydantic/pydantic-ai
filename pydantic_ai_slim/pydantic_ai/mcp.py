@@ -232,14 +232,14 @@ class ServerCapabilities:
     resources: bool = False
     """Whether the server offers any resources to read."""
 
+    resources_list_changed: bool = False
+    """Whether the server will emit notifications when the list of resources changes."""
+
     tools: bool = False
     """Whether the server offers any tools to call."""
 
     tools_list_changed: bool = False
     """Whether the server will emit notifications when the list of tools changes."""
-
-    resources_list_changed: bool = False
-    """Whether the server will emit notifications when the list of resources changes."""
 
     completions: bool = False
     """Whether the server offers autocompletion suggestions for prompts and resources."""
@@ -369,6 +369,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
+    _cached_prompts: list[mcp_types.Prompt] | None
 
     def __init__(
         self,
@@ -410,6 +411,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._exit_stack = None
         self._cached_tools = None
         self._cached_resources = None
+        self._cached_prompts = None
 
     @abstractmethod
     @asynccontextmanager
@@ -717,6 +719,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 self._exit_stack = None
                 self._cached_tools = None
                 self._cached_resources = None
+                self._cached_prompts = None
 
     @property
     def is_running(self) -> bool:
@@ -752,6 +755,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             self._cached_tools = None
         elif isinstance(message, mcp_types.ResourceListChangedNotification):
             self._cached_resources = None
+        elif isinstance(message, mcp_types.PromptListChangedNotification):
+            self._cached_prompts = None
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
