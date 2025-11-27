@@ -202,7 +202,7 @@ The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enabl
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. |
-| Google | ✅ | No parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-2.5-flash-image`. These models do not support [structured output](output.md) or [function tools](tools.md). These models will always generate images, even if this built-in tool is not explicitly specified. |
+| Google | ✅ | Limited parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-2.5-flash-image`. These models do not support [structured output](output.md) or [function tools](tools.md) and will always generate images, even if this built-in tool is not explicitly specified. |
 | Anthropic | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
@@ -291,6 +291,27 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
+OpenAI Responses models also respect the `aspect_ratio` parameter. Because the OpenAI API only exposes discrete image sizes,
+PydanticAI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> `1536x1024`. Providing any other aspect ratio
+results in an error, and if you also set `size` it must match the computed value.
+
+To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
+
+```py {title="image_generation_google_aspect_ratio.py"}
+from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
+
+agent = Agent(
+    'google-gla:gemini-2.5-flash-image',
+    builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')],
+    output_type=BinaryImage,
+)
+
+result = agent.run_sync('Generate a wide illustration of an axolotl city skyline.')
+assert isinstance(result.output, BinaryImage)
+```
+
+_(This example is complete, it can be run "as is")_
+
 For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageGenerationTool].
 
 #### Provider Support
@@ -305,6 +326,7 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `partial_images` | ✅ | ❌ |
 | `quality` | ✅ | ❌ |
 | `size` | ✅ | ❌ |
+| `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ |
 
 ## Web Fetch Tool
 
