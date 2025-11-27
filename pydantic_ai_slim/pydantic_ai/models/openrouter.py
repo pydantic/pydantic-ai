@@ -543,7 +543,7 @@ class OpenRouterModel(OpenAIChatModel):
         if reasoning_details := message.reasoning_details:
             return [_from_reasoning_detail(detail) for detail in reasoning_details]
         else:
-            return super()._process_thinking(cast(chat.ChatCompletionMessage, message))
+            return super()._process_thinking(message)
 
     @override
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
