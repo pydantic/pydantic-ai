@@ -566,7 +566,7 @@ class GoogleModel(Model):
                                 {
                                     'function_response': {
                                         'name': part.tool_name,
-                                        'response': {'call_error': part.model_response()},
+                                        'response': {'error': part.model_response()},
                                         'id': part.tool_call_id,
                                     }
                                 }
