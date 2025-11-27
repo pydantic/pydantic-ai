@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -93,6 +94,13 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+
+# Compiled regex for extracting file_search queries from executable code
+# Handles escaped quotes: matches file_search.query(query="text") or file_search.query(query='text')
+_FILE_SEARCH_QUERY_PATTERN = re.compile(
+    r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)'
+)
 
 
 LatestGoogleModelNames = Literal[
@@ -1132,12 +1140,15 @@ def _map_file_search_grounding_metadata(
 def _extract_file_search_query(code: str) -> str | None:
     """Extract the query from file_search.query() executable code.
 
+    Handles escaped quotes in the query string.
+
     Example: 'print(file_search.query(query="what is the capital of France?"))'
     Returns: 'what is the capital of France?'
     """
-    import re
-
-    match = re.search(r'file_search\.query\(query=(["\'])(.+?)\1\)', code)
+    match = _FILE_SEARCH_QUERY_PATTERN.search(code)
     if match:
-        return match.group(2)
+        query = match.group(2)
+        # Unescape the query string (handle \\ first, then \", \')
+        query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
+        return query
     return None
