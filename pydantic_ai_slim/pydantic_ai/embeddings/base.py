@@ -1,11 +1,8 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Literal, overload
 
-from pydantic_ai.embeddings.settings import EmbeddingSettings, merge_embedding_settings
-
-EmbedInputType = Literal['query', 'document']
-"""The type of input to the embedding model."""
+from .result import EmbeddingResult, EmbedInputType
+from .settings import EmbeddingSettings, merge_embedding_settings
 
 
 class EmbeddingModel(ABC):
@@ -48,35 +45,22 @@ class EmbeddingModel(ABC):
         """The embedding model provider."""
         raise NotImplementedError()
 
-    @overload
-    async def embed(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]:
-        pass
-
-    @overload
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
-
     @abstractmethod
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         raise NotImplementedError
 
     def prepare_embed(
         self, documents: str | Sequence[str], settings: EmbeddingSettings | None = None
-    ) -> tuple[Sequence[str], bool, EmbeddingSettings]:
+    ) -> tuple[Sequence[str], EmbeddingSettings]:
         """Prepare the documents and settings for the embedding."""
-        is_single_document = isinstance(documents, str)
-        if is_single_document:
+        if isinstance(documents, str):
             documents = [documents]
 
         settings = merge_embedding_settings(self._settings, settings) or {}
 
-        return documents, is_single_document, settings
+        return documents, settings
 
     async def max_input_tokens(self) -> int | None:
         """Get the maximum number of tokens that can be input to the model.

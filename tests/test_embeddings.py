@@ -1,5 +1,6 @@
 import os
 from collections.abc import Iterator
+from decimal import Decimal
 from typing import Any, get_args
 from unittest.mock import patch
 
@@ -8,9 +9,10 @@ from dirty_equals import IsList
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
-from pydantic_ai.embeddings import Embedder, KnownEmbeddingModelName, infer_model
+from pydantic_ai.embeddings import Embedder, EmbeddingResult, KnownEmbeddingModelName, infer_model
+from pydantic_ai.usage import RequestUsage
 
-from .conftest import try_import
+from .conftest import IsDatetime, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -57,33 +59,58 @@ class TestOpenAI:
     async def test_query(self, openai_api_key: str):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model)
-        embeddings = await embedder.embed_query('Hello, world!')
-        assert embeddings == IsList(
-            snapshot(-0.019193023443222046),
-            snapshot(-0.025299284607172012),
-            snapshot(-0.0016930076526477933),
-            length=1536,
+        result = await embedder.embed_query('Hello, world!')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(
+                    IsList(
+                        snapshot(-0.019193023443222046),
+                        snapshot(-0.025299284607172012),
+                        snapshot(-0.0016930076526477933),
+                        length=1536,
+                    ),
+                    length=1,
+                ),
+                inputs=['Hello, world!'],
+                input_type='query',
+                usage=RequestUsage(input_tokens=4),
+                model_name='text-embedding-3-small',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+            )
         )
+        assert result.cost().total_price == snapshot(Decimal('8E-8'))
 
     async def test_documents(self, openai_api_key: str):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model)
-        embeddings = await embedder.embed_documents(['hello', 'world'])
-        assert embeddings == IsList(
-            IsList(
-                snapshot(0.01681816205382347),
-                snapshot(-0.05579638481140137),
-                snapshot(0.005661087576299906),
-                length=1536,
-            ),
-            IsList(
-                snapshot(-0.010592407546937466),
-                snapshot(-0.03599696233868599),
-                snapshot(0.030227113515138626),
-                length=1536,
-            ),
-            length=2,
+        result = await embedder.embed_documents(['hello', 'world'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(
+                    IsList(
+                        snapshot(0.01681816205382347),
+                        snapshot(-0.05579638481140137),
+                        snapshot(0.005661087576299906),
+                        length=1536,
+                    ),
+                    IsList(
+                        snapshot(-0.010592407546937466),
+                        snapshot(-0.03599696233868599),
+                        snapshot(0.030227113515138626),
+                        length=1536,
+                    ),
+                    length=2,
+                ),
+                inputs=['hello', 'world'],
+                input_type='document',
+                usage=RequestUsage(input_tokens=2),
+                model_name='text-embedding-3-small',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+            )
         )
+        assert result.cost().total_price == snapshot(Decimal('4E-8'))
 
     async def test_max_input_tokens(self, openai_api_key: str):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))

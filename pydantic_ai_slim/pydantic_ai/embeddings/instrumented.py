@@ -135,6 +135,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     }
                     span.set_attributes(attributes_to_set)
 
+                    # TODO (DouweM): Include cost as metric etc, just like on InstrumentedModel
+
                 yield finish
         finally:
             pass

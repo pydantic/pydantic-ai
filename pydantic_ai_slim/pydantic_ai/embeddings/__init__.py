@@ -2,26 +2,27 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, get_args, overload
+from typing import Any, ClassVar, Literal, get_args
 
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import _utils
-from pydantic_ai.embeddings.base import EmbeddingModel
-from pydantic_ai.embeddings.settings import EmbeddingSettings, merge_embedding_settings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import OpenAIChatCompatibleProvider, OpenAIResponsesCompatibleProvider
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.providers import Provider, infer_provider
 
-from .base import EmbedInputType
+from .base import EmbeddingModel
 from .instrumented import InstrumentedEmbeddingModel, instrument_embedding_model
+from .result import EmbeddingResult, EmbedInputType
+from .settings import EmbeddingSettings, merge_embedding_settings
 from .wrapper import WrapperEmbeddingModel
 
 __all__ = [
     'Embedder',
     'EmbeddingModel',
     'EmbeddingSettings',
+    'EmbeddingResult',
     'merge_embedding_settings',
     'KnownEmbeddingModelName',
     'infer_model',
@@ -169,98 +170,36 @@ class Embedder:
             if model_token is not None:
                 self._override_model.reset(model_token)
 
-    @overload
-    async def embed_query(self, query: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
-        pass
-
-    @overload
-    async def embed_query(
-        self, query: Sequence[str], *, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
-
     async def embed_query(
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         return await self.embed(query, input_type='query', settings=settings)
-
-    @overload
-    async def embed_documents(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
-        pass
-
-    @overload
-    async def embed_documents(
-        self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
 
     async def embed_documents(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         return await self.embed(documents, input_type='document', settings=settings)
-
-    @overload
-    async def embed(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]:
-        pass
-
-    @overload
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
 
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         model = self._get_model()
         settings = merge_embedding_settings(self._settings, settings)
         return await model.embed(documents, input_type=input_type, settings=settings)
 
-    @overload
-    def embed_query_sync(self, query: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
-        pass
-
-    @overload
-    def embed_query_sync(self, query: Sequence[str], *, settings: EmbeddingSettings | None = None) -> list[list[float]]:
-        pass
-
     def embed_query_sync(
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         return _utils.get_event_loop().run_until_complete(self.embed_query(query, settings=settings))
-
-    @overload
-    def embed_documents_sync(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
-        pass
-
-    @overload
-    def embed_documents_sync(
-        self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
 
     def embed_documents_sync(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         return _utils.get_event_loop().run_until_complete(self.embed_documents(documents, settings=settings))
-
-    @overload
-    def embed_sync(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]:
-        pass
-
-    @overload
-    def embed_sync(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
 
     def embed_sync(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         return _utils.get_event_loop().run_until_complete(
             self.embed(documents, input_type=input_type, settings=settings)
         )

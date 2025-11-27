@@ -1,18 +1,22 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, overload
+from typing import Literal
 
 from pydantic_ai import _utils
-from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
-from pydantic_ai.embeddings.settings import EmbeddingSettings
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.usage import RequestUsage
 
 from . import OpenAIEmbeddingsCompatibleProvider
+from .base import EmbeddingModel, EmbedInputType
+from .result import EmbeddingResult
+from .settings import EmbeddingSettings
 
 try:
     import tiktoken
     from openai import AsyncOpenAI
     from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
+    from openai.types.create_embedding_response import Usage
 
     from pydantic_ai.models.openai import OMIT
 except ImportError as _import_error:
@@ -78,27 +82,15 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         """The embedding model provider."""
         return self._provider.name
 
-    @overload
-    async def embed(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]:
-        pass
-
-    @overload
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
-
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
-        documents, is_single_document, settings = self.prepare_embed(documents, settings)
-        # API doesn't currently distinguish between query and document input types
-        embeddings = await self._embed(documents, settings)
-        return embeddings[0] if is_single_document else embeddings
+    ) -> EmbeddingResult:
+        documents, settings = self.prepare_embed(documents, settings)
+        return await self._embed(documents, input_type, settings)
 
-    async def _embed(self, documents: Sequence[str], settings: OpenAIEmbeddingSettings) -> list[list[float]]:
+    async def _embed(
+        self, documents: str | Sequence[str], input_type: EmbedInputType, settings: OpenAIEmbeddingSettings
+    ) -> EmbeddingResult:
         response = await self._client.embeddings.create(
             input=documents,  # pyright: ignore[reportArgumentType]  # Sequence[str] not compatible with SequenceNotStr[str] :/
             model=self.model_name,
@@ -106,17 +98,53 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             extra_headers=settings.get('extra_headers'),
             extra_body=settings.get('extra_body'),
         )
-        return [item.embedding for item in response.data]
+        embeddings = [item.embedding for item in response.data]
+
+        return EmbeddingResult(
+            embeddings=embeddings,
+            inputs=documents,
+            input_type=input_type,
+            usage=_map_usage(response.usage, self.system, self.base_url, response.model),
+            model_name=response.model,
+            provider_name=self.system,
+        )
 
     async def max_input_tokens(self) -> int | None:
-        # Per https://platform.openai.com/docs/api-reference/embeddings/create#embeddings_create-input:
-        # > The input must not exceed the max input tokens for the model (8192 tokens for all embedding models)
+        if self.system != 'openai':
+            return None
+
+        # https://platform.openai.com/docs/guides/embeddings#embedding-models
         return 8192
 
     async def count_tokens(self, text: str) -> int:
-        encoding = await self._get_encoding()
+        if self.system != 'openai':
+            raise UserError(
+                'Counting tokens is not supported for non-OpenAI embedding models',
+            )
+        try:
+            encoding = await _utils.run_in_executor(tiktoken.encoding_for_model, self.model_name)
+        except KeyError as e:
+            raise ValueError(
+                f'The embedding model {self.model_name!r} is not supported by tiktoken',
+            ) from e
         return len(encoding.encode(text))
 
-    async def _get_encoding(self) -> tiktoken.Encoding:
-        # TODO: Handle KeyError
-        return await _utils.run_in_executor(tiktoken.encoding_for_model, self.model_name)
+
+def _map_usage(
+    usage: Usage,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> RequestUsage:
+    usage_data = usage.model_dump(exclude_none=True)
+    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'total_tokens'} if isinstance(v, int)}
+    response_data = dict(model=model, usage=usage_data)
+
+    return RequestUsage.extract(
+        response_data,
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='openai',
+        api_flavor='embeddings',
+        details=details,
+    )
