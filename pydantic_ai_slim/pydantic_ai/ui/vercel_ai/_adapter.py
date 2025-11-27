@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -18,6 +18,7 @@ from ...messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -133,7 +134,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     if isinstance(part, TextUIPart):
                         builder.add(TextPart(content=part.text))
                     elif isinstance(part, ReasoningUIPart):
-                        builder.add(ThinkingPart(content=part.text))
+                        pydantic_ai_meta = (part.provider_metadata or {}).get('pydantic_ai', {})
+                        builder.add(
+                            ThinkingPart(
+                                content=part.text,
+                                id=pydantic_ai_meta.get('id'),
+                                signature=pydantic_ai_meta.get('signature'),
+                                provider_name=pydantic_ai_meta.get('provider_name'),
+                                provider_details=pydantic_ai_meta.get('provider_details'),
+                            )
+                        )
                     elif isinstance(part, FileUIPart):
                         try:
                             file = BinaryContent.from_data_uri(part.url)
@@ -153,13 +163,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                         tool_call_id = part.tool_call_id
 
-                        args = part.input
+                        args: str | dict[str, Any] | None = part.input
 
                         if isinstance(args, str):
                             try:
-                                args = json.loads(args)
+                                parsed = json.loads(args)
+                                if isinstance(parsed, dict):
+                                    args = cast(dict[str, Any], parsed)
                             except json.JSONDecodeError:
                                 pass
+                        elif args is not None and not isinstance(args, dict):
+                            raise ValueError(f'Unsupported tool call args type: {type(args)}')
 
                         if builtin_tool:
                             call_part = BuiltinToolCallPart(tool_name=tool_name, tool_call_id=tool_call_id, args=args)
@@ -295,7 +309,20 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         else:
                             ui_parts.append(TextUIPart(text=part.content, state='done'))
                     elif isinstance(part, ThinkingPart):
-                        ui_parts.append(ReasoningUIPart(text=part.content, state='done'))
+                        thinking_metadata: dict[str, Any] = {}
+                        if part.id is not None:
+                            thinking_metadata['id'] = part.id
+                        if part.signature is not None:
+                            thinking_metadata['signature'] = part.signature
+                        if part.provider_name is not None:
+                            thinking_metadata['provider_name'] = part.provider_name
+                        if part.provider_details is not None:
+                            thinking_metadata['provider_details'] = part.provider_details
+
+                        provider_metadata = {'pydantic_ai': thinking_metadata} if thinking_metadata else None
+                        ui_parts.append(
+                            ReasoningUIPart(text=part.content, state='done', provider_metadata=provider_metadata)
+                        )
                     elif isinstance(part, FilePart):
                         ui_parts.append(
                             FileUIPart(
@@ -305,7 +332,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
                     elif isinstance(part, BaseToolCallPart):
                         if isinstance(part, BuiltinToolCallPart):
-                            prefixed_id = _make_builtin_tool_call_id(part.provider_name, part.tool_call_id)
+                            prefixed_id = (
+                                f'{BUILTIN_TOOL_CALL_ID_PREFIX}|{part.provider_name or ""}|{part.tool_call_id}'
+                            )
                             builtin_return = local_builtin_returns.get(part.tool_call_id)
 
                             if builtin_return:
@@ -382,11 +411,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         return result
 
 
-def _make_builtin_tool_call_id(provider_name: str | None, tool_call_id: str) -> str:
-    """Create a prefixed tool call ID for builtin tools."""
-    return f'{BUILTIN_TOOL_CALL_ID_PREFIX}|{provider_name or ""}|{tool_call_id}'
-
-
 def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
     """Convert a UserPromptPart to a list of UI message parts."""
     ui_parts: list[UIMessagePart] = []
@@ -401,6 +425,9 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
+            elif isinstance(item, CachePoint):
+                # CachePoint is metadata for prompt caching, skip for UI conversion
+                pass
             else:
                 assert_never(item)
 

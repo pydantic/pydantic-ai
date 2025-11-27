@@ -2597,3 +2597,60 @@ async def test_convert_user_prompt_part_only_urls():
             FileUIPart(media_type='video/mp4', url='https://example.com/vid.mp4'),
         ]
     )
+
+
+async def test_adapter_dump_messages_thinking_with_metadata():
+    """Test dumping and loading messages with ThinkingPart metadata preservation."""
+    original_messages = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='Let me think about this...',
+                    id='thinking_123',
+                    signature='sig_abc',
+                    provider_name='anthropic',
+                    provider_details={'model': 'claude-3'},
+                ),
+                TextPart(content='Here is my answer.'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'reasoning',
+                        'text': 'Let me think about this...',
+                        'state': 'done',
+                        'provider_metadata': {
+                            'pydantic_ai': {
+                                'id': 'thinking_123',
+                                'signature': 'sig_abc',
+                                'provider_name': 'anthropic',
+                                'provider_details': {'model': 'claude-3'},
+                            }
+                        },
+                    },
+                    {'type': 'text', 'text': 'Here is my answer.', 'state': 'done', 'provider_metadata': None},
+                ],
+            }
+        ]
+    )
+
+    # Test roundtrip - verify metadata is preserved when loading back
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+
+    # Sync timestamps for comparison
+    for orig_msg, new_msg in zip(original_messages, reloaded_messages):
+        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
+            new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+
+    assert reloaded_messages == original_messages
