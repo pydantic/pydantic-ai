@@ -288,10 +288,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
-            metadata: Optional metadata to attach to telemetry for this agent.
+            metadata: Optional metadata to store with each run.
                 Provide a dictionary of primitives, or a callable returning one
                 computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
-                Metadata is only recorded when instrumentation is enabled.
+                Resolved metadata is exposed on [`RunContext.metadata`][pydantic_ai.tools.RunContext],
+                [`AgentRun.metadata`][pydantic_ai.agent.AgentRun], and
+                [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult],
+                and is attached to telemetry when instrumentation is enabled.
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
@@ -681,8 +684,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     agent_run = AgentRun(graph_run)
                     yield agent_run
                     final_result = agent_run.result
+                    run_context = build_run_context(agent_run.ctx)
+                    run_metadata = self._compute_agent_metadata(run_context)
+                    run_context.metadata = run_metadata
+                    graph_run.state.metadata = run_metadata
                     if instrumentation_settings and run_span.is_recording():
-                        run_metadata = self._compute_agent_metadata(build_run_context(agent_run.ctx))
                         if instrumentation_settings.include_content and final_result is not None:
                             run_span.set_attribute(
                                 'final_result',

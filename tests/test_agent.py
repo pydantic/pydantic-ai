@@ -2668,6 +2668,29 @@ def test_agent_message_history_includes_run_id() -> None:
     assert len({*run_ids}) == snapshot(1)
 
 
+async def test_agent_run_result_metadata_available() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='metadata output'),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    result = await agent.run('metadata prompt')
+    assert result.output == 'metadata output'
+    assert result.metadata == {'prompt': 'metadata prompt'}
+
+
+async def test_agent_iter_metadata_surfaces_on_result() -> None:
+    agent = Agent(TestModel(custom_output_text='iter metadata output'), metadata={'env': 'tests'})
+
+    async with agent.iter('iter metadata prompt') as agent_run:
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.metadata == {'env': 'tests'}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'env': 'tests'}
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])

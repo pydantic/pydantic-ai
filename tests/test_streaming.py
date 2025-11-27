@@ -1414,6 +1414,34 @@ async def test_iter_stream_output():
     )
 
 
+async def test_streamed_run_result_metadata_available() -> None:
+    agent = Agent(TestModel(custom_output_text='stream metadata'), metadata={'env': 'stream'})
+
+    async with agent.run_stream('stream metadata prompt') as result:
+        assert await result.get_output() == 'stream metadata'
+
+    assert result.metadata == {'env': 'stream'}
+
+
+async def test_agent_stream_metadata_available() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='agent stream metadata'),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    captured_stream: AgentStream | None = None
+    async with agent.iter('agent stream prompt') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    captured_stream = stream
+                    async for _ in stream.stream_text(debounce_by=None):
+                        pass
+
+    assert captured_stream is not None
+    assert captured_stream.metadata == {'prompt': 'agent stream prompt'}
+
+
 async def test_iter_stream_responses():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 

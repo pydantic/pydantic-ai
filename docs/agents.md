@@ -414,6 +414,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
+You can inspect [`agent_run.metadata`][pydantic_ai.agent.AgentRun] or [`agent_run.result.metadata`][pydantic_ai.agent.AgentRunResult] after the run completes to read any metadata configured on the agent.
 
 #### Streaming All Events and Output
 

@@ -353,4 +353,7 @@ agent = Agent(
 )
 ```
 
+Resolved metadata is available on [`RunContext.metadata`][pydantic_ai.tools.RunContext],
+[`AgentRun.metadata`][pydantic_ai.agent.AgentRun], [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult],
+and [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult], so you can persist it alongside outputs.
 When instrumentation is enabled, the resolved metadata is recorded on the agent span under the `agent.metadata` attribute.

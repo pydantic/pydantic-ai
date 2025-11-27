@@ -64,6 +64,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
+    metadata: dict[str, Any] | None = None
+    """Metadata associated with this agent run, if configured."""
 
     @property
     def last_attempt(self) -> bool:

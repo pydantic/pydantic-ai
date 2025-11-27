@@ -94,6 +94,7 @@ class GraphAgentState:
     retries: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
+    metadata: dict[str, Any] | None = None
 
     def increment_retries(
         self,
@@ -450,6 +451,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 _run_ctx=build_run_context(ctx),
                 _usage_limits=ctx.deps.usage_limits,
                 _tool_manager=ctx.deps.tool_manager,
+                _metadata_getter=lambda: ctx.state.metadata,
             )
             yield agent_stream
             # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
@@ -806,6 +808,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
+        metadata=ctx.state.metadata,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
