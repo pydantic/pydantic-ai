@@ -54,9 +54,6 @@ OutputDataT = TypeVar('OutputDataT')
 # Type alias for models parameter - accepts model names/instances or a dict mapping labels to models
 ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | KnownModelName | str] | None
 
-# In-memory cache for performance within a single session
-_memory_cache: dict[str, bytes] = {}
-
 
 def _resolve_models(
     models: ModelsParam,
@@ -114,17 +111,12 @@ def _sanitize_version(version: str) -> str:
 
 
 async def _get_ui_html(version: str) -> bytes:
-    """Get UI HTML content, checking memory cache, then FS cache, then fetching from CDN."""
-    if version in _memory_cache:
-        return _memory_cache[version]
-
+    """Get UI HTML content from filesystem cache or fetch from CDN."""
     cache_dir = _get_cache_dir()
     cache_file = cache_dir / f'{_sanitize_version(version)}.html'
 
     if cache_file.exists():
-        content = cache_file.read_bytes()
-        _memory_cache[version] = content
-        return content
+        return cache_file.read_bytes()
 
     cdn_url = CDN_URL_TEMPLATE.format(version=version)
     async with httpx.AsyncClient() as client:
@@ -133,8 +125,6 @@ async def _get_ui_html(version: str) -> bytes:
         content = response.content
 
     cache_file.write_bytes(content)
-    _memory_cache[version] = content
-
     return content
 
 
@@ -166,7 +156,7 @@ def create_web_app(
     add_api_routes(app, models=resolved_models, builtin_tools=builtin_tools)
 
     async def index(request: Request) -> Response:
-        """Serve the chat UI, cached on filesystem and in memory."""
+        """Serve the chat UI from filesystem cache or CDN."""
         version = request.query_params.get('version')
         ui_version = version or DEFAULT_UI_VERSION
 
@@ -175,7 +165,7 @@ def create_web_app(
         return HTMLResponse(
             content=content,
             headers={
-                'Cache-Control': 'public, max-age=31536000, immutable',
+                'Cache-Control': 'public, max-age=3600',
             },
         )
 
