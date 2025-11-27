@@ -3058,20 +3058,13 @@ async def test_google_native_output_with_builtin_tools_gemini_3(
 
 
 async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    m = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     agent = Agent(m, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='8a7952',
-            identifier='8a7952',
-        )
-    )
+    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='b6e95a'))
     assert messages == snapshot(
         [
             ModelRequest(
@@ -3085,22 +3078,21 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content="Here's an image of an axolotl for you! "),
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
-                            media_type='image/png',
-                            _identifier='8a7952',
-                            identifier='8a7952',
-                        )
-                    ),
+                            media_type='image/jpeg',
+                            _identifier='b6e95a',
+                        ),
+                        provider_details={'thought_signature': IsStr()},
+                    )
                 ],
                 usage=RequestUsage(
                     input_tokens=10,
                     output_tokens=1304,
-                    details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
+                    details={'thoughts_tokens': 115, 'text_prompt_tokens': 10, 'image_candidates_tokens': 1120},
                 ),
-                model_name='gemini-2.5-flash-image',
+                model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -3112,14 +3104,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     )
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            _identifier='7d173c',
-            identifier='7d173c',
-        )
-    )
+    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='14bec0'))
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -3133,22 +3118,26 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content="Certainly! Here's your axolotl with a sombrero: "),
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
-                            media_type='image/png',
-                            _identifier='7d173c',
-                            identifier='7d173c',
-                        )
-                    ),
+                            media_type='image/jpeg',
+                            _identifier='14bec0',
+                        ),
+                        provider_details={'thought_signature': IsStr()},
+                    )
                 ],
                 usage=RequestUsage(
-                    input_tokens=1322,
-                    output_tokens=1304,
-                    details={'text_prompt_tokens': 32, 'image_prompt_tokens': 1290, 'image_candidates_tokens': 1290},
+                    input_tokens=276,
+                    output_tokens=1374,
+                    details={
+                        'thoughts_tokens': 149,
+                        'text_prompt_tokens': 18,
+                        'image_prompt_tokens': 258,
+                        'image_candidates_tokens': 1120,
+                    },
                 ),
-                model_name='gemini-2.5-flash-image',
+                model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -3251,14 +3240,17 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
 
 
 async def test_google_image_generation_with_text(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    m = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run('Generate an illustrated two-sentence story about an axolotl.')
     messages = result.all_messages()
 
     assert result.output == snapshot(
-        'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+        """\
+A little axolotl named Archie lived in a beautiful glass tank, but he always wondered what was beyond the clear walls. One day, he bravely peeked over the edge and discovered a whole new world of sunshine and potted plants.
+
+"""
     )
     assert messages == snapshot(
         [
@@ -3274,23 +3266,28 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+                        content="""\
+A little axolotl named Archie lived in a beautiful glass tank, but he always wondered what was beyond the clear walls. One day, he bravely peeked over the edge and discovered a whole new world of sunshine and potted plants.
+
+""",
+                        provider_details={'thought_signature': IsStr()},
                     ),
                     FilePart(
                         content=BinaryImage(
                             data=IsBytes(),
-                            media_type='image/png',
+                            media_type='image/jpeg',
                             _identifier='00f2af',
                             identifier=IsStr(),
-                        )
+                        ),
+                        provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=14,
-                    output_tokens=1335,
-                    details={'text_prompt_tokens': 14, 'image_candidates_tokens': 1290},
+                    output_tokens=1457,
+                    details={'thoughts_tokens': 174, 'text_prompt_tokens': 14, 'image_candidates_tokens': 1120},
                 ),
-                model_name='gemini-2.5-flash-image',
+                model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -3366,6 +3363,84 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
     with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         await agent.run('Generate an image of an axolotl.')
 
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    agent = Agent(model=model, output_type=NativeOutput(Animal))
+
+    result = await agent.run('Generate an image of an axolotl and then return its details.')
+    assert result.output == snapshot(Animal(species='Ambystoma mexicanum', name='Axolotl'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl and then return its details.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/jpeg',
+                            _identifier='4e5b3e',
+                        ),
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=15,
+                    output_tokens=1334,
+                    details={'thoughts_tokens': 131, 'text_prompt_tokens': 15, 'image_candidates_tokens': 1120},
+                ),
+                model_name='gemini-3-pro-image-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='D2Eoab-bKZvpz7IPx__4kA8',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text or call a tool.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+  "species": "Ambystoma mexicanum",
+  "name": "Axolotl"
+} \
+""",
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=295,
+                    output_tokens=222,
+                    details={'thoughts_tokens': 196, 'text_prompt_tokens': 37, 'image_prompt_tokens': 258},
+                ),
+                model_name='gemini-3-pro-image-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='FWEoacC5OqGEz7IPgMjBwAc',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
 
 async def test_google_image_generation_with_prompted_output(
     allow_model_requests: None, google_provider: GoogleProvider
@@ -3391,6 +3466,82 @@ async def test_google_image_generation_with_tools(allow_model_requests: None, go
 
     with pytest.raises(UserError, match='Tools are not supported by this model.'):
         await agent.run('Generate an image of an animal returned by the get_animal tool.')
+
+
+async def test_google_image_generation_with_web_search(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    agent = Agent(model=model, output_type=BinaryImage, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run(
+        'Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day'
+    )
+    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='787c28'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['', 'current 5-day weather forecast for Mexico City and what to wear']},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'accuweather.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQElsvx97FT3Kr__tvs8zIgS3C1znKqEOvuHdjyLe2WZZsJpbDDqn9gdF6rKV8KMZytsiWXCDcNwD5m0WvZzGWY6eVbnz0lxftYNTSNdXTiv1AtLrmw-NUcnITjEScK_JHJgnr9xmFapH9DXMGWWYKRSfcT3iy96J1gZeWjCBph5Sci23DAhzA==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'weather-and-climate.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGlGJX9f12rrKOYrY71rszTFf5KghgToVKZckqRWzT-cjW-mYE_PV3xRbk0JxQxJS18rkCt-y8qwpB41BMYEuxLnkCSBapX5s-4-0pwPUimTjHK4W65OdkVtjTU5-wlHsAppBwdwXNDSmzXZNUYLE1N0R9SKhLeHVVj-2BYYeoO9GPH',
+                            },
+                            {
+                                'domain': None,
+                                'title': '',
+                                'uri': 'https://www.google.com/search?q=time+in+Mexico+City,+MX',
+                            },
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/jpeg',
+                            _identifier='787c28',
+                        ),
+                        provider_details={'thought_signature': IsStr()},
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=33,
+                    output_tokens=2309,
+                    details={'thoughts_tokens': 529, 'text_prompt_tokens': 33, 'image_candidates_tokens': 1120},
+                ),
+                model_name='gemini-3-pro-image-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='cmIoaZ6pJYXRz7IPs4ia-Ag',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_google_image_generation_tool(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3825,7 +3976,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-test',
         _response=response_iterator(),
-        _timestamp=datetime.datetime.now(datetime.timezone.utc),
+        _timestamp=IsDatetime(),
         _provider_name='test-provider',
         _provider_url='',
     )
