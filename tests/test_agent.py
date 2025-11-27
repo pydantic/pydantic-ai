@@ -3331,6 +3331,179 @@ class TestMultipleToolCalls:
             ]
         )
 
+    def test_exhaustive_strategy_invalid_first_valid_second_output(self):
+        """Test that exhaustive strategy uses the second valid output when the first is invalid."""
+        output_tools_called: list[str] = []
+
+        class FirstOutput(BaseModel):
+            value: str
+
+        class SecondOutput(BaseModel):
+            value: str
+
+        def process_first(output: FirstOutput) -> FirstOutput:
+            """Process first output - will be invalid."""
+            output_tools_called.append('first')
+            if output.value == 'invalid':
+                raise ModelRetry('First output validation failed')
+            return output
+
+        def process_second(output: SecondOutput) -> SecondOutput:
+            """Process second output - will be valid."""
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'invalid'}),
+                    ToolCallPart('second_output', {'value': 'valid'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+        )
+
+        result = agent.run_sync('test invalid first valid second')
+
+        # Verify the result came from the second output tool (first was invalid)
+        assert isinstance(result.output, SecondOutput)
+        assert result.output.value == 'valid'
+
+        # Verify both output tools were called
+        assert output_tools_called == ['first', 'second']
+
+        # Verify we got appropriate messages
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test invalid first valid second', timestamp=IsNow(tz=timezone.utc))],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='first_output', args={'value': 'invalid'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='second_output', args={'value': 'valid'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=55, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='First output validation failed',
+                            tool_name='first_output',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='second_output',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_exhaustive_strategy_valid_first_invalid_second_output(self):
+        """Test that exhaustive strategy uses the first valid output even when the second is invalid."""
+        output_tools_called: list[str] = []
+
+        class FirstOutput(BaseModel):
+            value: str
+
+        class SecondOutput(BaseModel):
+            value: str
+
+        def process_first(output: FirstOutput) -> FirstOutput:
+            """Process first output - will be valid."""
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: SecondOutput) -> SecondOutput:
+            """Process second output - will be invalid."""
+            output_tools_called.append('second')
+            if output.value == 'invalid':
+                raise ModelRetry('Second output validation failed')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+            output_retries=0,  # No retries - model must succeed first try
+        )
+
+        result = agent.run_sync('test valid first invalid second')
+
+        # Verify the result came from the first output tool (second was invalid but we ignore it)
+        assert isinstance(result.output, FirstOutput)
+        assert result.output.value == 'valid'
+
+        # Verify both output tools were called
+        assert output_tools_called == ['first', 'second']
+
+        # Verify we got appropriate messages
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='first_output', args={'value': 'valid'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='second_output', args={'value': 'invalid'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=55, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='first_output',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        RetryPromptPart(
+                            content='Second output validation failed',
+                            tool_name='second_output',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
     def test_early_strategy_with_final_result_in_middle(self):
         """Test that 'early' strategy stops at first final result, regardless of position."""
         tool_called = []
