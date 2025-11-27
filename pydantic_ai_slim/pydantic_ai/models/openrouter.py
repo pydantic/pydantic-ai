@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError
 from typing_extensions import TypedDict, assert_never, override
 
+from .._utils import guard_tool_call_id, now_utc
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import (
     FinishReason,
@@ -31,8 +32,6 @@ try:
         OpenAIChatModel,
         OpenAIChatModelSettings,
         OpenAIStreamedResponse,
-        _guard_tool_call_id,
-        _now_utc,
         number_to_datetime,
         replace,
         split_content_into_text_and_thinking,
@@ -587,7 +586,7 @@ class OpenRouterModel(OpenAIChatModel):
         if response.created:
             timestamp = number_to_datetime(response.created)
         else:
-            timestamp = _now_utc()
+            timestamp = now_utc()
             response.created = int(timestamp.timestamp())
 
         # Workaround for local Ollama which sometimes returns a `None` finish reason.
@@ -602,7 +601,7 @@ class OpenRouterModel(OpenAIChatModel):
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
 
-        if thinking_parts := self._process_thinking(choice.message):
+        if thinking_parts := self._process_thinking(cast(chat.ChatCompletionMessage, choice.message)):
             items.extend(thinking_parts)
 
         if choice.message.content:
@@ -620,7 +619,7 @@ class OpenRouterModel(OpenAIChatModel):
                     raise RuntimeError('Custom tool calls are not supported')
                 else:
                     assert_never(c)
-                part.tool_call_id = _guard_tool_call_id(part)
+                part.tool_call_id = guard_tool_call_id(part)
                 items.append(part)
 
         return ModelResponse(
@@ -646,11 +645,12 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
         assert isinstance(message, _OpenRouterCompletionMessage)
+        message = cast(_OpenRouterCompletionMessage, message)
 
         if reasoning_details := message.reasoning_details:
             return [_from_reasoning_detail(detail) for detail in reasoning_details]
         else:
-            return super()._process_thinking(message)
+            return super()._process_thinking(cast(chat.ChatCompletionMessage, message))
 
     @override
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
