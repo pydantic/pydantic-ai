@@ -1686,17 +1686,19 @@ async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None
 def test_load_mcp_servers(tmp_path: Path):
     config = tmp_path / 'mcp.json'
 
-    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}', encoding='utf-8')
     server = load_mcp_servers(config)[0]
     assert server == MCPServerStreamableHTTP(url='https://example.com/mcp', id='potato', tool_prefix='potato')
 
-    config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
+    config.write_text(
+        '{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}', encoding='utf-8'
+    )
     server = load_mcp_servers(config)[0]
     assert server == MCPServerStdio(
         command='python', args=['-m', 'tests.mcp_server'], id='potato', tool_prefix='potato'
     )
 
-    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}', encoding='utf-8')
     server = load_mcp_servers(config)[0]
     assert server == MCPServerSSE(url='https://example.com/sse', id='potato', tool_prefix='potato')
 
@@ -1711,7 +1713,9 @@ def test_load_mcp_servers_with_env_vars(tmp_path: Path, monkeypatch: pytest.Monk
     # Test with environment variables in command
     monkeypatch.setenv('PYTHON_CMD', 'python3')
     monkeypatch.setenv('MCP_MODULE', 'tests.mcp_server')
-    config.write_text('{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "${MCP_MODULE}"]}}}')
+    config.write_text(
+        '{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "${MCP_MODULE}"]}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
 
@@ -1732,7 +1736,8 @@ def test_load_mcp_servers_env_var_in_env_dict(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setenv('API_KEY', 'secret123')
     config.write_text(
         '{"mcpServers": {"my_server": {"command": "python", "args": ["-m", "tests.mcp_server"], '
-        '"env": {"API_KEY": "${API_KEY}"}}}}'
+        '"env": {"API_KEY": "${API_KEY}"}}}}',
+        encoding='utf-8',
     )
 
     servers = load_mcp_servers(config)
@@ -1750,7 +1755,9 @@ def test_load_mcp_servers_env_var_expansion_url(tmp_path: Path, monkeypatch: pyt
     # Test with environment variables in URL
     monkeypatch.setenv('SERVER_HOST', 'example.com')
     monkeypatch.setenv('SERVER_PORT', '8080')
-    config.write_text('{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}')
+    config.write_text(
+        '{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
 
@@ -1767,7 +1774,7 @@ def test_load_mcp_servers_undefined_env_var(tmp_path: Path, monkeypatch: pytest.
     # Make sure the environment variable is not set
     monkeypatch.delenv('UNDEFINED_VAR', raising=False)
 
-    config.write_text('{"mcpServers": {"my_server": {"command": "${UNDEFINED_VAR}", "args": []}}}')
+    config.write_text('{"mcpServers": {"my_server": {"command": "${UNDEFINED_VAR}", "args": []}}}', encoding='utf-8')
 
     with pytest.raises(ValueError, match='Environment variable \\$\\{UNDEFINED_VAR\\} is not defined'):
         load_mcp_servers(config)
@@ -1779,7 +1786,7 @@ def test_load_mcp_servers_partial_env_vars(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setenv('HOST', 'example.com')
     monkeypatch.setenv('PATH_SUFFIX', 'mcp')
-    config.write_text('{"mcpServers": {"server": {"url": "https://${HOST}/api/${PATH_SUFFIX}"}}}')
+    config.write_text('{"mcpServers": {"server": {"url": "https://${HOST}/api/${PATH_SUFFIX}"}}}', encoding='utf-8')
 
     servers = load_mcp_servers(config)
 
@@ -1798,7 +1805,8 @@ def test_load_mcp_servers_with_non_string_values(tmp_path: Path, monkeypatch: py
     monkeypatch.setenv('PYTHON_CMD', 'python')
     config.write_text(
         '{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "tests.mcp_server"], '
-        '"metadata": {"count": 42, "enabled": true, "value": null}}}}'
+        '"metadata": {"count": 42, "enabled": true, "value": null}}}}',
+        encoding='utf-8',
     )
 
     # This should successfully expand env vars and ignore the metadata field
@@ -1816,7 +1824,9 @@ def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytes
 
     # Test with undefined variable using default
     monkeypatch.delenv('UNDEFINED_VAR', raising=False)
-    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-python3}", "args": []}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-python3}", "args": []}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1826,7 +1836,9 @@ def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytes
 
     # Test with defined variable (should use actual value, not default)
     monkeypatch.setenv('DEFINED_VAR', 'actual_value')
-    config.write_text('{"mcpServers": {"server": {"command": "${DEFINED_VAR:-default_value}", "args": []}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "${DEFINED_VAR:-default_value}", "args": []}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1836,7 +1848,7 @@ def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytes
 
     # Test with empty string as default
     monkeypatch.delenv('UNDEFINED_VAR', raising=False)
-    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-}", "args": []}}}')
+    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-}", "args": []}}}', encoding='utf-8')
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1852,7 +1864,10 @@ def test_load_mcp_servers_with_default_values_in_url(tmp_path: Path, monkeypatch
     # Test with default values in URL
     monkeypatch.delenv('HOST', raising=False)
     monkeypatch.setenv('PROTOCOL', 'https')
-    config.write_text('{"mcpServers": {"server": {"url": "${PROTOCOL:-http}://${HOST:-localhost}:${PORT:-8080}/mcp"}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"url": "${PROTOCOL:-http}://${HOST:-localhost}:${PORT:-8080}/mcp"}}}',
+        encoding='utf-8',
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1869,7 +1884,8 @@ def test_load_mcp_servers_with_default_values_in_env_dict(tmp_path: Path, monkey
     monkeypatch.setenv('CUSTOM_VAR', 'custom_value')
     config.write_text(
         '{"mcpServers": {"server": {"command": "python", "args": [], '
-        '"env": {"API_KEY": "${API_KEY:-default_key}", "CUSTOM": "${CUSTOM_VAR:-fallback}"}}}}'
+        '"env": {"API_KEY": "${API_KEY:-default_key}", "CUSTOM": "${CUSTOM_VAR:-fallback}"}}}}',
+        encoding='utf-8',
     )
 
     servers = load_mcp_servers(config)
@@ -1885,7 +1901,10 @@ def test_load_mcp_servers_with_complex_default_values(tmp_path: Path, monkeypatc
 
     monkeypatch.delenv('PATH_VAR', raising=False)
     # Test default with slashes, dots, and dashes
-    config.write_text('{"mcpServers": {"server": {"command": "${PATH_VAR:-/usr/local/bin/python-3.10}", "args": []}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "${PATH_VAR:-/usr/local/bin/python-3.10}", "args": []}}}',
+        encoding='utf-8',
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1901,7 +1920,8 @@ def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.setenv('REQUIRED_VAR', 'required_value')
     monkeypatch.delenv('OPTIONAL_VAR', raising=False)
     config.write_text(
-        '{"mcpServers": {"server": {"command": "${REQUIRED_VAR}", "args": ["${OPTIONAL_VAR:-default_arg}"]}}}'
+        '{"mcpServers": {"server": {"command": "${REQUIRED_VAR}", "args": ["${OPTIONAL_VAR:-default_arg}"]}}}',
+        encoding='utf-8',
     )
 
     servers = load_mcp_servers(config)

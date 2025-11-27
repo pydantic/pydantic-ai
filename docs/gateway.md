@@ -111,26 +111,71 @@ Before you start, make sure you are on version 1.16 or later of `pydantic-ai`. T
     pip install -U pydantic-ai
     ```
 
-Set the `PYDANTIC_AI_GATEWAY_API_KEY`  environment variable to your Gateway API key:
+Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable to your Gateway API key:
 
 ```bash
-export PYDANTIC_AI_GATEWAY_API_KEY="YOUR_PYDANTIC_AI_GATEWAY_API_KEY"
+export PYDANTIC_AI_GATEWAY_API_KEY="paig_<example_key>"
 ```
 
 You can access multiple models with the same API key, as shown in the code snippet below.
 
-```python {title="hello_world.py"}
-from pydantic_ai import Agent
+=== "Hello World"
 
-agent = Agent('gateway/openai:gpt-5')
+    ```python {title="hello_world.py"}
+    from pydantic_ai import Agent
 
-result = agent.run_sync('Where does "hello world" come from?')
-print(result.output)
-"""
-The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-"""
-```
+    agent = Agent('gateway/openai:gpt-5')
 
+    result = agent.run_sync('Where does "hello world" come from?')
+    print(result.output)
+    """
+    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+    """
+    ```
+
+=== "Passing API Key directly"
+
+    Pass your API key directly using the [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
+
+    ```python {title="passing_api_key.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.gateway import gateway_provider
+
+    provider = gateway_provider('openai', api_key='paig_<example_key>')
+    model = OpenAIChatModel('gpt-5', provider=provider)
+    agent = Agent(model)
+
+    result = agent.run_sync('Where does "hello world" come from?')
+    print(result.output)
+    """
+    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+    """
+    ```
+
+=== "Using a different upstream provider"
+
+    To use an alternate provider or routing group, you can specify it in the route parameter:
+
+    ```python {title="routing_via_provider.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.gateway import gateway_provider
+
+    provider = gateway_provider(
+        'openai',
+        api_key='paig_<example_key>',
+        route='builtin-openai'
+    )
+    model = OpenAIChatModel('gpt-5', provider=provider)
+    agent = Agent(model)
+
+    result = agent.run_sync('Where does "hello world" come from?')
+    print(result.output)
+    """
+    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+    """
+    ```
 
 ### Claude Code
 

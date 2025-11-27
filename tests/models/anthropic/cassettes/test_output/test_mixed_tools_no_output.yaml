@@ -1,0 +1,209 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '552'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's the weather and elevation in Denver?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+        strict: true
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_elevation
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '678'
+      content-type:
+      - application/json
+      retry-after:
+      - '61'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll get the weather and elevation information for Denver.
+        type: text
+      - id: toolu_01BBTvQnxdxk7vPHD1ytXyGs
+        input:
+          city: Denver
+        name: get_weather
+        type: tool_use
+      - id: toolu_017Q9pGQ9Hx126pyyLLnVqJV
+        input:
+          city: Denver
+        name: get_elevation
+        type: tool_use
+      id: msg_01UaeArcGjaycoQeRPRt5CWw
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 612
+        output_tokens: 101
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1181'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's the weather and elevation in Denver?
+          type: text
+        role: user
+      - content:
+        - text: I'll get the weather and elevation information for Denver.
+          type: text
+        - id: toolu_01BBTvQnxdxk7vPHD1ytXyGs
+          input:
+            city: Denver
+          name: get_weather
+          type: tool_use
+        - id: toolu_017Q9pGQ9Hx126pyyLLnVqJV
+          input:
+            city: Denver
+          name: get_elevation
+          type: tool_use
+        role: assistant
+      - content:
+        - content: 'Weather in Denver: Sunny, 22°C'
+          is_error: false
+          tool_use_id: toolu_01BBTvQnxdxk7vPHD1ytXyGs
+          type: tool_result
+        - content: 'Elevation of Denver: 650m above sea level'
+          is_error: false
+          tool_use_id: toolu_017Q9pGQ9Hx126pyyLLnVqJV
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+        strict: true
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_elevation
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '572'
+      content-type:
+      - application/json
+      retry-after:
+      - '43'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          The weather in Denver is **Sunny** with a temperature of **22°C** (about 72°F).
+
+          Denver's elevation is **650 meters above sea level** (approximately 2,133 feet).
+        type: text
+      id: msg_01Dd9NbJY2U5USxC51mo2UUX
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 798
+        output_tokens: 50
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
