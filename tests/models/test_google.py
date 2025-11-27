@@ -3707,24 +3707,22 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         ),
                         BuiltinToolReturnPart(
                             tool_name='file_search',
-                            content={
-                                'retrieved_contexts': [
-                                    {
-                                        'document_name': None,
-                                        'rag_chunk': None,
-                                        'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                        'title': None,
-                                        'uri': None,
-                                    },
-                                    {
-                                        'document_name': None,
-                                        'rag_chunk': None,
-                                        'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                        'title': None,
-                                        'uri': None,
-                                    },
-                                ]
-                            },
+                            content=[
+                                {
+                                    'document_name': None,
+                                    'rag_chunk': None,
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'title': None,
+                                    'uri': None,
+                                },
+                                {
+                                    'document_name': None,
+                                    'rag_chunk': None,
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'title': None,
+                                    'uri': None,
+                                },
+                            ],
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google-gla',
@@ -3781,17 +3779,15 @@ Paris is a major global center for art, fashion, gastronomy, and culture. A famo
                         ),
                         BuiltinToolReturnPart(
                             tool_name='file_search',
-                            content={
-                                'retrieved_contexts': [
-                                    {
-                                        'document_name': None,
-                                        'rag_chunk': None,
-                                        'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                        'title': None,
-                                        'uri': None,
-                                    }
-                                ]
-                            },
+                            content=[
+                                {
+                                    'document_name': None,
+                                    'rag_chunk': None,
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'title': None,
+                                    'uri': None,
+                                }
+                            ],
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google-gla',
@@ -3898,17 +3894,15 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         ),
                         BuiltinToolReturnPart(
                             tool_name='file_search',
-                            content={
-                                'retrieved_contexts': [
-                                    {
-                                        'document_name': None,
-                                        'rag_chunk': None,
-                                        'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                        'title': None,
-                                        'uri': None,
-                                    }
-                                ]
-                            },
+                            content=[
+                                {
+                                    'document_name': None,
+                                    'rag_chunk': None,
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'title': None,
+                                    'uri': None,
+                                }
+                            ],
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google-gla',
@@ -3922,17 +3916,15 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         TextPart(content='The capital of France is Paris. A famous landmark in Paris is the Eiffel'),
                         BuiltinToolReturnPart(
                             tool_name='file_search',
-                            content={
-                                'retrieved_contexts': [
-                                    {
-                                        'document_name': None,
-                                        'rag_chunk': None,
-                                        'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                        'title': None,
-                                        'uri': None,
-                                    }
-                                ]
-                            },
+                            content=[
+                                {
+                                    'document_name': None,
+                                    'rag_chunk': None,
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'title': None,
+                                    'uri': None,
+                                }
+                            ],
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google-gla',
@@ -3983,10 +3975,9 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartStartEvent(
                     index=1,
-                    part=BuiltinToolReturnPart(
-                        tool_name='file_search',
-                        content={
-                            'retrieved_contexts': [
+                        part=BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content=[
                                 {
                                     'document_name': None,
                                     'rag_chunk': None,
@@ -3994,8 +3985,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                                     'title': None,
                                     'uri': None,
                                 }
-                            ]
-                        },
+                            ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -4036,10 +4026,9 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartStartEvent(
                     index=4,
-                    part=BuiltinToolReturnPart(
-                        tool_name='file_search',
-                        content={
-                            'retrieved_contexts': [
+                        part=BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content=[
                                 {
                                     'document_name': None,
                                     'rag_chunk': None,
@@ -4047,8 +4036,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                                     'title': None,
                                     'uri': None,
                                 }
-                            ]
-                        },
+                            ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -4068,17 +4056,15 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
-                        content={
-                            'retrieved_contexts': [
-                                {
-                                    'document_name': None,
-                                    'rag_chunk': None,
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
-                                }
-                            ]
-                        },
+                        content=[
+                            {
+                                'document_name': None,
+                                'rag_chunk': None,
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'title': None,
+                                'uri': None,
+                            }
+                        ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -4095,17 +4081,15 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
-                        content={
-                            'retrieved_contexts': [
-                                {
-                                    'document_name': None,
-                                    'rag_chunk': None,
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
-                                }
-                            ]
-                        },
+                        content=[
+                            {
+                                'document_name': None,
+                                'rag_chunk': None,
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'title': None,
+                                'uri': None,
+                            }
+                        ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',

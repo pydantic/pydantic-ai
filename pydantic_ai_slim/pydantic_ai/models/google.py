@@ -790,7 +790,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     provider_name=self.provider_name,
                     tool_name=FileSearchTool.kind,
                     tool_call_id=self._file_search_tool_call_id,
-                    content={'retrieved_contexts': retrieved_contexts},
+                    content=retrieved_contexts,
                 ),
             )
             self._file_search_tool_call_id = None
@@ -1130,7 +1130,7 @@ def _map_file_search_grounding_metadata(
             provider_name=provider_name,
             tool_name=FileSearchTool.kind,
             tool_call_id=tool_call_id,
-            content={'retrieved_contexts': retrieved_contexts},
+            content=retrieved_contexts,
         ),
     )
 
