@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast, TypeAlias, Annotated
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError
 from typing_extensions import TypedDict, assert_never, override
@@ -10,10 +10,10 @@ from typing_extensions import TypedDict, assert_never, override
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import (
     FinishReason,
-    ModelResponseStreamEvent,
-    ThinkingPart,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
+    ThinkingPart,
     ToolCallPart,
 )
 from ..profiles import ModelProfileSpec
@@ -31,11 +31,11 @@ try:
         OpenAIChatModel,
         OpenAIChatModelSettings,
         OpenAIStreamedResponse,
-        number_to_datetime,
-        _now_utc,
-        split_content_into_text_and_thinking,
-        replace,
         _guard_tool_call_id,
+        _now_utc,
+        number_to_datetime,
+        replace,
+        split_content_into_text_and_thinking,
     )
 except ImportError as _import_error:
     raise ImportError(
