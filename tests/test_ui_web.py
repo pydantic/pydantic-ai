@@ -97,16 +97,15 @@ def test_chat_app_index_endpoint():
         assert response.status_code == 200
         assert response.headers['content-type'] == 'text/html; charset=utf-8'
         assert 'cache-control' in response.headers
-        assert response.headers['cache-control'] == 'public, max-age=31536000, immutable'
+        assert response.headers['cache-control'] == 'public, max-age=3600'
         assert len(response.content) > 0
 
 
 @pytest.mark.anyio
 async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Test that _get_ui_html fetches from CDN when cache misses."""
+    """Test that _get_ui_html fetches from CDN when filesystem cache misses."""
     import pydantic_ai.ui.web.app as app_module
 
-    app_module._memory_cache.clear()  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Test UI</html>'
@@ -137,7 +136,24 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     cache_file: Path = tmp_path / 'test-version.html'
     assert cache_file.exists()
     assert cache_file.read_bytes() == test_content
-    assert app_module._memory_cache['test-version'] == test_content  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that _get_ui_html returns cached content from filesystem."""
+    import pydantic_ai.ui.web.app as app_module
+
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    test_content = b'<html>Cached UI</html>'
+    cache_file = tmp_path / 'cached-version.html'
+    cache_file.write_bytes(test_content)
+
+    from pydantic_ai.ui.web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
+
+    result = await _get_ui_html('cached-version')
+
+    assert result == test_content
 
 
 def test_chat_app_index_caching():

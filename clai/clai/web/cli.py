@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from pydantic import ValidationError
+from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai._cli import _load_agent  # pyright: ignore[reportPrivateUsage]
@@ -38,10 +39,12 @@ def run_web_command(  # noqa: C901
         instructions: System instructions for generic agent
         mcp: Path to JSON file with MCP server configurations
     """
+    console = Console()
+
     if agent_path:
         agent = _load_agent(agent_path)
         if agent is None:
-            print(f'Error: Could not load agent from {agent_path}')
+            console.print(f'[red]Error: Could not load agent from {agent_path}[/red]')
             return 1
     else:
         agent = Agent()
@@ -53,7 +56,7 @@ def run_web_command(  # noqa: C901
                 return instructions
 
     if agent.model is None and not models:
-        print('Error: At least one model (-m) is required when agent has no model')
+        console.print('[red]Error: At least one model (-m) is required when agent has no model[/red]')
         return 1
 
     parsed_tools_ids: list[BUILTIN_TOOL_ID] = []
@@ -77,14 +80,16 @@ def run_web_command(  # noqa: C901
                     inferred = infer_model(model_str)
                     parsed_model_ids.append(f'{inferred.system}:{inferred.model_name}')
                 except UserError:
-                    print(f'Error: Model "{model_str}" requires a provider prefix (e.g., "openai:{model_str}")')
+                    console.print(
+                        f'[red]Error: Model "{model_str}" requires a provider prefix (e.g., "openai:{model_str}")[/red]'
+                    )
                     return 1
 
     parsed_tool_instances: list[AbstractBuiltinTool] = []
     if tools:
         for tool_id in tools:
             if tool_id not in BUILTIN_TOOL_CLASSES:
-                print(f'Warning: Unknown tool "{tool_id}", skipping')
+                console.print(f'[yellow]Warning: Unknown tool "{tool_id}", skipping[/yellow]')
                 continue
 
             tool_class = BUILTIN_TOOL_CLASSES[tool_id]
@@ -94,15 +99,15 @@ def run_web_command(  # noqa: C901
         try:
             mcp_tools = load_mcp_server_tools(mcp)
             parsed_tool_instances.extend(mcp_tools)
-            print(f'Loaded {len(mcp_tools)} MCP server(s) from {mcp}')
+            console.print(f'[dim]Loaded {len(mcp_tools)} MCP server(s) from {mcp}[/dim]')
         except FileNotFoundError as e:
-            print(f'Error: {e}')
+            console.print(f'[red]Error: {e}[/red]')
             return 1
         except ValidationError as e:
-            print(f'Error parsing MCP config: {e}')
+            console.print(f'[red]Error parsing MCP config: {e}[/red]')
             return 1
         except ValueError as e:
-            print(f'Error: {e}')
+            console.print(f'[red]Error: {e}[/red]')
             return 1
 
     if parsed_model_ids:
@@ -115,9 +120,9 @@ def run_web_command(  # noqa: C901
     )
 
     agent_desc = agent_path if agent_path else 'generic agent'
-    print(f'\nStarting chat UI for {agent_desc}...')
-    print(f'Open your browser at: http://{host}:{port}')
-    print('Press Ctrl+C to stop the server\n')
+    console.print(f'\n[green]Starting chat UI for {agent_desc}...[/green]')
+    console.print(f'Open your browser at: [link=http://{host}:{port}]http://{host}:{port}[/link]')
+    console.print('[dim]Press Ctrl+C to stop the server[/dim]\n')
 
     try:
         import uvicorn
@@ -125,12 +130,12 @@ def run_web_command(  # noqa: C901
         uvicorn.run(app, host=host, port=port)
         return 0
     except KeyboardInterrupt:
-        print('\nServer stopped.')
+        console.print('\n[dim]Server stopped.[/dim]')
         return 0
     except ImportError:
-        print('Error: uvicorn is required to run the chat UI')
-        print('Install it with: pip install uvicorn')
+        console.print('[red]Error: uvicorn is required to run the chat UI[/red]')
+        console.print('[dim]Install it with: pip install uvicorn[/dim]')
         return 1
     except Exception as e:
-        print(f'Error starting server: {e}')
+        console.print(f'[red]Error starting server: {e}[/red]')
         return 1
