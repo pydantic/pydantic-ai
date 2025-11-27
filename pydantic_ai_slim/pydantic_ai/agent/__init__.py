@@ -72,7 +72,6 @@ if TYPE_CHECKING:
 
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
-    from ..ui.web.api import AIModel
 
 __all__ = (
     'Agent',
@@ -1514,7 +1513,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def to_web(
         self,
         *,
-        models: list[AIModel] | None = None,
+        models: Sequence[models.Model | models.KnownModelName | str]
+        | dict[str, models.Model | models.KnownModelName | str]
+        | None = None,
         builtin_tools: list[AbstractBuiltinTool] | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
@@ -1523,11 +1524,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         chat interface for interacting with the agent. The UI is downloaded and cached on
         first use, and includes support for model selection and builtin tool configuration.
 
+        The returned Starlette application can be mounted into a FastAPI app or run directly
+        with any ASGI server (uvicorn, hypercorn, etc.).
+
         Args:
-            models: List of AI models to make available in the UI. If not provided,
-                the UI will have no model options.
-            builtin_tools: List of builtin tools for the UI. Tool labels are derived from
-                the tool's `label` property. If not provided, no tools will be available.
+            models: Models to make available in the UI. Can be:
+                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
+                - A dict mapping display labels to model names/instances
+                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                If not provided, the UI will have no model options.
+                Builtin tool support is automatically determined from each model's profile.
+            builtin_tools: Builtin tools to make available. If not provided, no tools
+                will be available. Tool labels in the UI are derived from the tool's
+                `label` property.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -1536,7 +1545,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ```python
             from pydantic_ai import Agent
             from pydantic_ai.builtin_tools import WebSearchTool
-            from pydantic_ai.ui.web import AIModel
 
             agent = Agent('openai:gpt-5')
 
@@ -1544,11 +1552,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def get_weather(city: str) -> str:
                 return f'The weather in {city} is sunny'
 
-            # Customize models and tools
+            # With model names (display names auto-generated)
             app = agent.to_web(
-                models=[
-                    AIModel(id='openai:gpt-5', name='GPT 5', builtin_tools=['web_search']),
-                ],
+                models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
+                builtin_tools=[WebSearchTool()],
+            )
+
+            # Or with custom display labels
+            app = agent.to_web(
+                models={'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'},
                 builtin_tools=[WebSearchTool()],
             )
 

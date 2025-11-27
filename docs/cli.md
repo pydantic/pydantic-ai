@@ -61,7 +61,7 @@ For example, if you have an agent defined in `my_agent.py`:
 ```python
 from pydantic_ai import Agent
 
-my_agent = Agent('openai:gpt-5', system_prompt='You are a helpful assistant.')
+my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
 ```
 
 Launch the web UI with:
@@ -72,99 +72,7 @@ clai web --agent my_agent:my_agent
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface for your agent.
 
-#### Web Command Options
-
-- `--agent`, `-a`: Agent to serve in `module:variable` format
-- `--models`, `-m`: Comma-separated models to make available (e.g., `gpt-5,sonnet-4-5`)
-- `--tools`, `-t`: Comma-separated builtin tool IDs to enable (e.g., `web_search,code_execution`)
-- `--mcp-json`: Path to JSON file with MCP server configurations
-- `--instructions`, `-i`: System instructions for generic agent (when `--agent` not specified)
-- `--host`: Host to bind the server to (default: 127.0.0.1)
-- `--port`: Port to bind the server to (default: 7932)
-
-#### Using with Models and Tools
-
-You can specify which models and builtin tools are available in the UI via CLI flags:
-
-```bash
-# Generic agent with specific models and tools
-clai web -m gpt-5,sonnet-4-5 -t web_search,code_execution
-
-# Custom agent with additional models
-clai web --agent my_agent:my_agent -m gpt-5,gemini-2.5-pro
-
-# Generic agent with system instructions
-clai web -m gpt-5 -i 'You are a helpful coding assistant'
-```
-
-Model names without a provider prefix are automatically inferred:
-- `gpt-*`, `o1`, `o3` → OpenAI
-- `claude-*`, `sonnet`, `opus`, `haiku` → Anthropic
-- `gemini-*` → Google
-
-#### MCP Server Configuration
-
-You can enable MCP (Model Context Protocol) servers using a JSON configuration file:
-
-```bash
-clai web --agent my_agent:my_agent --mcp-json mcp-servers.json
-```
-
-The JSON file format:
-
-```json
-{
-  "mcpServers": {
-    "deepwiki": {
-      "url": "https://mcp.deepwiki.com/mcp"
-    },
-    "github": {
-      "url": "https://api.githubcopilot.com/mcp",
-      "authorizationToken": "${GITHUB_TOKEN}"
-    }
-  }
-}
-```
-
-Environment variables can be referenced using `${VAR_NAME}` syntax, with optional defaults: `${VAR_NAME:-default_value}`.
-
-Each server entry supports:
-- `url` (required): The MCP server URL
-- `authorizationToken` (optional): Authorization token for the server
-- `description` (optional): Description for the server
-- `allowedTools` (optional): List of allowed tool names
-- `headers` (optional): Additional HTTP headers
-
-#### Programmatic Web UI
-
-You can also launch the web UI directly from an `Agent` instance using [`Agent.to_web()`][pydantic_ai.Agent.to_web]:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.ui.web import AIModel
-
-agent = Agent('openai:gpt-5')
-
-# Use defaults
-app = agent.to_web()
-
-# Or customize models and tools
-app = agent.to_web(
-    models=[
-        AIModel(id='openai:gpt-5', name='GPT 5', builtin_tools=['web_search']),
-    ],
-    builtin_tools=[WebSearchTool()],
-)
-```
-
-The returned Starlette app can be run with your preferred ASGI server (uvicorn, hypercorn, etc.):
-
-```bash
-# If you saved the code above in my_agent.py and created an app variable:
-# app = agent.to_web()
-uvicorn my_agent:app --host 0.0.0.0 --port 8080
-```
+For more details on web UI options, MCP server configuration, and programmatic usage with `Agent.to_web()`, see the [Web Chat UI documentation](ui/web.md).
 
 ### Help
 
@@ -191,7 +99,7 @@ You can specify a custom agent using the `--agent` flag with a module path and v
 ```python {title="custom_agent.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='You always respond in Italian.')
+agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 ```
 
 Then run:
@@ -210,7 +118,7 @@ Additionally, you can directly launch CLI mode from an `Agent` instance using `A
 ```python {title="agent_to_cli_sync.py" test="skip" hl_lines=4}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='You always respond in Italian.')
+agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 agent.to_cli_sync()
 ```
 
@@ -219,7 +127,7 @@ You can also use the async interface with `Agent.to_cli()`:
 ```python {title="agent_to_cli.py" test="skip" hl_lines=6}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='You always respond in Italian.')
+agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 
 async def main():
     await agent.to_cli()

@@ -393,26 +393,6 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
     )
 
 
-def test_clai_web_import_error(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
-    env.set('OPENAI_API_KEY', 'test')
-    test_agent = Agent(TestModel(custom_output_text='test'))
-    create_test_module(custom_agent=test_agent)
-
-    # Mock the import to fail
-    import builtins
-
-    original_import = builtins.__import__
-
-    def mock_import(name: str, *args: Any, **kwargs: Any):
-        if name == 'clai.web.cli':
-            raise ImportError('clai.web.cli not found')
-        return original_import(name, *args, **kwargs)
-
-    mocker.patch('builtins.__import__', side_effect=mock_import)
-
-    assert cli(['web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 1
-
-
 def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
 
