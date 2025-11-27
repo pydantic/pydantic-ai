@@ -44,7 +44,13 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            openai_chat_custom_reasoning_field='reasoning_content',
+            # DeepSeek recommends against sending back unchanged reasoning parts in requests.
+            # The following is for compatibility with existing behavior. May want to change later.
+            openai_chat_send_back_thinking_parts='thinking_tags',
+        ).update(profile)
 
     @overload
     def __init__(self) -> None: ...

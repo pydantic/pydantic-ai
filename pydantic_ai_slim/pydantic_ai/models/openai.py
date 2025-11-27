@@ -638,23 +638,23 @@ class OpenAIChatModel(Model):
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
         profile = OpenAIModelProfile.from_profile(self.profile)
-        custom_field = profile.openai_chat_custom_reasoning_field
+        custom_field = profile.openai_chat_custom_reasoning_field or ''
         items: list[ThinkingPart] = []
 
         # Prefer the configured custom reasoning field, if present in profile.
-        if custom_field:
-            reasoning = getattr(message, custom_field, None)
-            if reasoning:  # pragma: no branch
-                items.append(ThinkingPart(id=custom_field, content=reasoning, provider_name=self.system))
-                return items
-
         # Fall back to built-in fields if no custom field result was found.
-        # This behavior is for backward compatibility with older models/profiles.
-        for fallback_field in ('reasoning', 'reasoning_content'):
-            reasoning = getattr(message, fallback_field, None)
-            if reasoning:
-                items.append(ThinkingPart(id=fallback_field, content=reasoning, provider_name=self.system))
-                break
+
+        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+
+        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        for field_name in (custom_field, 'reasoning', 'reasoning_content'):
+            reasoning: str | None = getattr(message, field_name, None)
+            if reasoning:  # pragma: no branch
+                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
+                return items
 
         return items or None
 
@@ -764,10 +764,10 @@ class OpenAIChatModel(Model):
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
-            if profile.openai_chat_include_reasoning_in_request == 'separated' and self.thinkings:
+            if profile.openai_chat_send_back_thinking_parts == 'custom_field' and self.thinkings:
                 field = profile.openai_chat_custom_reasoning_field
                 if field:  # pragma: no branch (handled by profile validation)
-                    message_param[field] = '\n\n'.join(self.thinkings)  # pyright: ignore[reportGeneralTypeIssues]
+                    message_param[field] = '\n\n'.join(self.thinkings)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
@@ -791,11 +791,11 @@ class OpenAIChatModel(Model):
             to implement custom logic for handling thinking parts.
             """
             profile = OpenAIModelProfile.from_profile(self._model.profile)
-            include_method = profile.openai_chat_include_reasoning_in_request
-            if include_method == 'combined':
+            include_method = profile.openai_chat_send_back_thinking_parts
+            if include_method == 'thinking_tags':
                 start_tag, end_tag = self._model.profile.thinking_tags
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
-            elif include_method == 'separated':
+            elif include_method == 'custom_field':
                 self.thinkings.append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
@@ -1905,27 +1905,23 @@ class OpenAIStreamedResponse(StreamedResponse):
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         profile = OpenAIModelProfile.from_profile(self._model_profile)
-        custom_field = profile.openai_chat_custom_reasoning_field
+        custom_field = profile.openai_chat_custom_reasoning_field or ''
 
         # Prefer the configured custom reasoning field, if present in profile.
-        if custom_field:
-            reasoning = getattr(choice.delta, custom_field, None)
-            if reasoning:
-                yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=custom_field,
-                    id=custom_field,
-                    content=reasoning,
-                    provider_name=self.provider_name,
-                )
-
         # Fall back to built-in fields if no custom field result was found.
-        # This behavior is for backward compatibility with older models/profiles.
-        for fallback_field in ('reasoning', 'reasoning_content'):
-            reasoning = getattr(choice.delta, fallback_field, None)
-            if reasoning:
+
+        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+
+        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        for field_name in (custom_field, 'reasoning', 'reasoning_content'):
+            reasoning: str | None = getattr(choice.delta, field_name, None)
+            if reasoning:  # pragma: no branch
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=fallback_field,
-                    id=fallback_field,
+                    vendor_part_id=field_name,
+                    id=field_name,
                     content=reasoning,
                     provider_name=self.provider_name,
                 )

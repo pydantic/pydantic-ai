@@ -11,11 +11,9 @@ See the sections below for how to enable thinking for each provider.
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags are converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](models/openai.md#model-profile).
 
-Some providers might also support native thinking parts that are not delimited by tags. Instead, they are sent and received as separate fields in the API. You can configure the fields with [`openai_chat_custom_reasoning_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_custom_reasoning_field].
+Some [OpenAI-compatible model providers](models/openai.md#openai-compatible-models) might also support native thinking parts that are not delimited by tags. Instead, they are sent and received as separate, custom fields in the API. Typically, if you are calling the model via the `<provider>:<model>` shorthand, Pydantic AI handles it for you. Nonetheless, you can still configure the fields with [`openai_chat_custom_reasoning_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_custom_reasoning_field].
 
-If your provider recommends to send back these custom fields not changed, for caching or interleaved thinking benefits, you can also achieve this with [`openai_chat_include_reasoning_in_request`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_include_reasoning_in_request].
-
-And finally, if your provider generates reasoning parts in a somewhat complex `reasoning_details` field, you might want to look into [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] which has built-in support for parsing such fields.
+If your provider recommends to send back these custom fields not changed, for caching or interleaved thinking benefits, you can also achieve this with [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts].
 
 ### OpenAI Responses
 
