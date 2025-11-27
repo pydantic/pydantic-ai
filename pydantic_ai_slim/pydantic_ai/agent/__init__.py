@@ -291,9 +291,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
                 Callables are invoked after the run finishes (whether it succeeded or raised) so they can
                 inspect the final run state.
-                Resolved metadata is exposed on [`RunContext.metadata`][pydantic_ai.tools.RunContext],
-                [`AgentRun.metadata`][pydantic_ai.agent.AgentRun], and
-                [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult],
+                Resolved metadata can be read after the run completes via
+                [`AgentRun.metadata`][pydantic_ai.agent.AgentRun],
+                [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], and
+                [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult],
                 and is attached to telemetry when instrumentation is enabled.
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
