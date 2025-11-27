@@ -15,7 +15,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Hashable, Iterator
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -46,6 +46,8 @@ Because many vendors have streaming APIs that may produce not-fully-formed tool 
 this includes ToolCallPartDelta's in addition to the more fully-formed ModelResponsePart's.
 """
 
+PartT = TypeVar('PartT', bound=ManagedPart)
+
 
 @dataclass
 class ModelResponsePartsManager:
@@ -66,6 +68,52 @@ class ModelResponsePartsManager:
             A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
         """
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+
+    def __stop_tracking_vendor_id(self, vendor_part_id: VendorId | None) -> None:
+        """Stop tracking a vendor_part_id (no-op if None or not tracked)."""
+        if vendor_part_id is not None:  # pragma: no branch
+            self._vendor_id_to_part_index.pop(vendor_part_id, None)
+
+    def _append_part(self, part: ManagedPart, vendor_part_id: VendorId | None = None) -> int:
+        """Append a part, optionally track vendor_part_id, return new index."""
+        new_index = len(self._parts)
+        self._parts.append(part)
+        if vendor_part_id is not None:
+            self._vendor_id_to_part_index[vendor_part_id] = new_index
+        return new_index
+
+    def _latest_part_isinstance_of(self, *part_types: type[PartT]) -> tuple[PartT, int] | None:
+        """Get the latest part and its index if it's an instance of the given type(s)."""
+        if self._parts:
+            part_index = len(self._parts) - 1
+            latest_part = self._parts[part_index]
+            if isinstance(latest_part, part_types):
+                return latest_part, part_index
+        return None
+
+    def _handle_embedded_thinking_start(
+        self, vendor_part_id: VendorId, provider_details: dict[str, Any] | None
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle <think> tag - create new ThinkingPart."""
+        self.__stop_tracking_vendor_id(vendor_part_id)
+        part = ThinkingPart(content='', provider_details=provider_details)
+        new_index = self._append_part(part, vendor_part_id)
+        yield PartStartEvent(index=new_index, part=part)
+
+    def _handle_embedded_thinking_content(
+        self, vendor_part_id: VendorId, content: str, provider_details: dict[str, Any] | None
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle content inside <think>...</think>."""
+        part_index = self._vendor_id_to_part_index[vendor_part_id]
+        existing_part = self._parts[part_index]
+        assert isinstance(existing_part, ThinkingPart)
+        part_delta = ThinkingPartDelta(content_delta=content, provider_details=provider_details)
+        self._parts[part_index] = part_delta.apply(existing_part)
+        yield PartDeltaEvent(index=part_index, delta=part_delta)
+
+    def _handle_embedded_thinking_end(self, vendor_part_id: VendorId) -> None:
+        """Handle </think> tag - stop tracking so next delta creates new part."""
+        self.__stop_tracking_vendor_id(vendor_part_id)
 
     def handle_text_delta(
         self,
@@ -104,11 +152,7 @@ class ModelResponsePartsManager:
 
         if vendor_part_id is None:
             # If the vendor_part_id is None, check if the latest part is a TextPart to update
-            if self._parts:
-                part_index = len(self._parts) - 1
-                latest_part = self._parts[part_index]
-                if isinstance(latest_part, TextPart):
-                    existing_text_part_and_index = latest_part, part_index
+            existing_text_part_and_index = self._latest_part_isinstance_of(TextPart)
         else:
             # Otherwise, attempt to look up an existing TextPart by vendor_part_id
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -119,13 +163,10 @@ class ModelResponsePartsManager:
                     # We may be building a thinking part instead of a text part if we had previously seen a thinking tag
                     if content == thinking_tags[1]:
                         # When we see the thinking end tag, we're done with the thinking part and the next text delta will need a new part
-                        self._vendor_id_to_part_index.pop(vendor_part_id)
+                        self._handle_embedded_thinking_end(vendor_part_id)
                         return
-                    else:
-                        yield from self.handle_thinking_delta(
-                            vendor_part_id=vendor_part_id, content=content, provider_details=provider_details
-                        )
-                        return
+                    yield from self._handle_embedded_thinking_content(vendor_part_id, content, provider_details)
+                    return
                 elif isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
@@ -133,10 +174,7 @@ class ModelResponsePartsManager:
 
         if thinking_tags and content == thinking_tags[0]:
             # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead
-            self._vendor_id_to_part_index.pop(vendor_part_id, None)
-            yield from self.handle_thinking_delta(
-                vendor_part_id=vendor_part_id, content='', provider_details=provider_details
-            )
+            yield from self._handle_embedded_thinking_start(vendor_part_id, provider_details)
             return
 
         if existing_text_part_and_index is None:
@@ -146,11 +184,8 @@ class ModelResponsePartsManager:
                 return
 
             # There is no existing text part that should be updated, so create a new one
-            new_part_index = len(self._parts)
             part = TextPart(content=content, id=id, provider_details=provider_details)
-            if vendor_part_id is not None:
-                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
-            self._parts.append(part)
+            new_part_index = self._append_part(part, vendor_part_id)
             yield PartStartEvent(index=new_part_index, part=part)
         else:
             # Update the existing TextPart with the new content delta
@@ -225,11 +260,7 @@ class ModelResponsePartsManager:
 
         if vendor_part_id is None:
             # If the vendor_part_id is None, check if the latest part is a ThinkingPart to update
-            if self._parts:
-                part_index = len(self._parts) - 1
-                latest_part = self._parts[part_index]
-                if isinstance(latest_part, ThinkingPart):  # pragma: no branch
-                    existing_thinking_part_and_index = latest_part, part_index
+            existing_thinking_part_and_index = self._latest_part_isinstance_of(ThinkingPart)
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -242,10 +273,12 @@ class ModelResponsePartsManager:
         if existing_thinking_part_and_index is None:
             if content is not None or signature is not None or raw_content_delta is not None:
                 # There is no existing thinking part that should be updated, so create a new one
-                new_part_index = len(self._parts)
                 new_provider_details = dict(provider_details) if provider_details else {}
                 if raw_content_delta is not None:
-                    raw_content_list: list[str] = [''] * (raw_content_index + 1)
+                    # defensive - API spec allows multiple content items, we respect that even if current behavior is index 0 only
+                    raw_content_list: list[str] = []
+                    while len(raw_content_list) <= raw_content_index:
+                        raw_content_list.append('')
                     raw_content_list[raw_content_index] = raw_content_delta
                     new_provider_details['raw_content'] = raw_content_list
                 part = ThinkingPart(
@@ -255,9 +288,7 @@ class ModelResponsePartsManager:
                     provider_name=provider_name,
                     provider_details=new_provider_details or None,
                 )
-                if vendor_part_id is not None:  # pragma: no branch
-                    self._vendor_id_to_part_index[vendor_part_id] = new_part_index
-                self._parts.append(part)
+                new_part_index = self._append_part(part, vendor_part_id)
                 yield PartStartEvent(index=new_part_index, part=part)
             else:
                 raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content, signature, or raw_content')
@@ -326,11 +357,10 @@ class ModelResponsePartsManager:
             # vendor_part_id is None, so check if the latest part is a matching tool call or delta to update
             # When the vendor_part_id is None, if the tool_name is _not_ None, assume this should be a new part rather
             # than a delta on an existing one. We can change this behavior in the future if necessary for some model.
-            if tool_name is None and self._parts:
-                part_index = len(self._parts) - 1
-                latest_part = self._parts[part_index]
-                if isinstance(latest_part, ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta):  # pragma: no branch
-                    existing_matching_part_and_index = latest_part, part_index
+            if tool_name is None:
+                existing_matching_part_and_index = self._latest_part_isinstance_of(
+                    ToolCallPart, BuiltinToolCallPart, ToolCallPartDelta
+                )
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -346,10 +376,7 @@ class ModelResponsePartsManager:
                 tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id, provider_details=provider_details
             )
             part = delta.as_part() or delta
-            if vendor_part_id is not None:
-                self._vendor_id_to_part_index[vendor_part_id] = len(self._parts)
-            new_part_index = len(self._parts)
-            self._parts.append(part)
+            new_part_index = self._append_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
             if isinstance(part, ToolCallPart | BuiltinToolCallPart):
                 return PartStartEvent(index=new_part_index, part=part)
@@ -407,8 +434,7 @@ class ModelResponsePartsManager:
         )
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
-            new_part_index = len(self._parts)
-            self._parts.append(new_part)
+            new_part_index = self._append_part(new_part)
         else:
             # vendor_part_id is provided, so find and overwrite or create a new ToolCallPart.
             maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -416,8 +442,7 @@ class ModelResponsePartsManager:
                 new_part_index = maybe_part_index
                 self._parts[new_part_index] = new_part
             else:
-                new_part_index = len(self._parts)
-                self._parts.append(new_part)
+                new_part_index = self._append_part(new_part)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=new_part)
 
@@ -440,8 +465,7 @@ class ModelResponsePartsManager:
         """
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new part to the end of the list
-            new_part_index = len(self._parts)
-            self._parts.append(part)
+            new_part_index = self._append_part(part)
         else:
             # vendor_part_id is provided, so find and overwrite or create a new part.
             maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -449,7 +473,6 @@ class ModelResponsePartsManager:
                 new_part_index = maybe_part_index
                 self._parts[new_part_index] = part
             else:
-                new_part_index = len(self._parts)
-                self._parts.append(part)
+                new_part_index = self._append_part(part)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=part)
