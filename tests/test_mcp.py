@@ -1996,17 +1996,13 @@ async def test_custom_http_client_not_closed():
 # ============================================================================
 
 
-async def test_tools_caching_with_list_changed_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that list_tools() caches results when server supports listChanged notifications."""
+async def test_tools_caching_enabled_by_default(mcp_server: MCPServerStdio) -> None:
+    """Test that list_tools() caches results by default."""
     async with mcp_server:
-        # Mock the server capabilities to indicate listChanged is supported
-        mcp_server._server_capabilities.tools_list_changed = True  # pyright: ignore[reportPrivateUsage]
-
         # First call - should fetch from server and cache
         tools1 = await mcp_server.list_tools()
         assert len(tools1) > 0
         assert mcp_server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
-        assert mcp_server._tools_cache_valid is True  # pyright: ignore[reportPrivateUsage]
 
         # Mock _client.list_tools to track if it's called again
         original_list_tools = mcp_server._client.list_tools  # pyright: ignore[reportPrivateUsage]
@@ -2022,22 +2018,19 @@ async def test_tools_caching_with_list_changed_capability(mcp_server: MCPServerS
         # Second call - should return cached value without calling server
         tools2 = await mcp_server.list_tools()
         assert tools2 == tools1
-        assert call_count == 0  # list_tools should not have been called
+        assert call_count == 0
 
 
-async def test_tools_no_caching_without_list_changed_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that list_tools() always fetches fresh when server doesn't support listChanged."""
-    async with mcp_server:
-        # Verify the server doesn't advertise listChanged by default
-        # (this depends on the test MCP server implementation)
-        mcp_server._server_capabilities.tools_list_changed = False  # pyright: ignore[reportPrivateUsage]
-
+async def test_tools_no_caching_when_disabled() -> None:
+    """Test that list_tools() always fetches fresh when cache_tools=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_tools=False)
+    async with server:
         # First call
-        tools1 = await mcp_server.list_tools()
+        tools1 = await server.list_tools()
         assert len(tools1) > 0
 
         # Mock _client.list_tools to track calls
-        original_list_tools = mcp_server._client.list_tools  # pyright: ignore[reportPrivateUsage]
+        original_list_tools = server._client.list_tools  # pyright: ignore[reportPrivateUsage]
         call_count = 0
 
         async def mock_list_tools():
@@ -2045,109 +2038,120 @@ async def test_tools_no_caching_without_list_changed_capability(mcp_server: MCPS
             call_count += 1
             return await original_list_tools()
 
-        mcp_server._client.list_tools = mock_list_tools  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
+        server._client.list_tools = mock_list_tools  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
 
-        # Second call - should fetch fresh since no listChanged capability
-        tools2 = await mcp_server.list_tools()
+        # Second call - should fetch fresh since caching is disabled
+        tools2 = await server.list_tools()
         assert tools2 == tools1
-        assert call_count == 1  # list_tools should have been called
+        assert call_count == 1
+
+
+async def test_resources_no_caching_when_disabled() -> None:
+    """Test that list_resources() always fetches fresh when cache_resources=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_resources=False)
+    async with server:
+        assert server.capabilities.resources
+        # First call
+        resources1 = await server.list_resources()
+
+        # Mock _client.list_resources to track calls
+        original_list_resources = server._client.list_resources  # pyright: ignore[reportPrivateUsage]
+        call_count = 0
+
+        async def mock_list_resources():
+            nonlocal call_count
+            call_count += 1
+            return await original_list_resources()
+
+        server._client.list_resources = mock_list_resources  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
+
+        # Second call - should fetch fresh since caching is disabled
+        resources2 = await server.list_resources()
+        assert resources2 == resources1
+        assert call_count == 1
 
 
 async def test_tools_cache_invalidation_on_notification(mcp_server: MCPServerStdio) -> None:
     """Test that tools cache is invalidated when ToolListChangedNotification is received."""
     async with mcp_server:
-        # Enable caching
-        mcp_server._server_capabilities.tools_list_changed = True  # pyright: ignore[reportPrivateUsage]
-
         # Populate cache
         await mcp_server.list_tools()
-        assert mcp_server._tools_cache_valid is True  # pyright: ignore[reportPrivateUsage]
+        assert mcp_server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
 
         # Simulate receiving a tool list changed notification
         notification = ToolListChangedNotification()
         await mcp_server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
 
-        # Cache should be invalidated
-        assert mcp_server._tools_cache_valid is False  # pyright: ignore[reportPrivateUsage]
-
-        # Cached tools are still present but marked invalid
-        assert mcp_server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+        # Cache should be invalidated (set to None)
+        assert mcp_server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_resources_caching_with_list_changed_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that list_resources() caches results when server supports listChanged notifications."""
+async def test_resources_caching_enabled_by_default(mcp_server: MCPServerStdio) -> None:
+    """Test that list_resources() caches results by default."""
     async with mcp_server:
-        # Mock the server capabilities to indicate listChanged is supported
-        mcp_server._server_capabilities.resources_list_changed = True  # pyright: ignore[reportPrivateUsage]
-
+        assert mcp_server.capabilities.resources
         # First call - should fetch from server and cache
-        if mcp_server.capabilities.resources:  # pragma: no branch
-            resources1 = await mcp_server.list_resources()
-            assert mcp_server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
-            assert mcp_server._resources_cache_valid is True  # pyright: ignore[reportPrivateUsage]
+        resources1 = await mcp_server.list_resources()
+        assert mcp_server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
 
-            # Mock _client.list_resources to track if it's called again
-            original_list_resources = mcp_server._client.list_resources  # pyright: ignore[reportPrivateUsage]
-            call_count = 0
+        # Mock _client.list_resources to track if it's called again
+        original_list_resources = mcp_server._client.list_resources  # pyright: ignore[reportPrivateUsage]
+        call_count = 0
 
-            async def mock_list_resources():  # pragma: no cover
-                nonlocal call_count
-                call_count += 1
-                return await original_list_resources()
+        async def mock_list_resources():  # pragma: no cover
+            nonlocal call_count
+            call_count += 1
+            return await original_list_resources()
 
-            mcp_server._client.list_resources = mock_list_resources  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
+        mcp_server._client.list_resources = mock_list_resources  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
 
-            # Second call - should return cached value without calling server
-            resources2 = await mcp_server.list_resources()
-            assert resources2 == resources1
-            assert call_count == 0  # list_resources should not have been called
+        # Second call - should return cached value without calling server
+        resources2 = await mcp_server.list_resources()
+        assert resources2 == resources1
+        assert call_count == 0
 
 
 async def test_resources_cache_invalidation_on_notification(mcp_server: MCPServerStdio) -> None:
     """Test that resources cache is invalidated when ResourceListChangedNotification is received."""
     async with mcp_server:
-        # Enable caching
-        mcp_server._server_capabilities.resources_list_changed = True  # pyright: ignore[reportPrivateUsage]
+        assert mcp_server.capabilities.resources
+        # Populate cache
+        await mcp_server.list_resources()
+        assert mcp_server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
 
-        # Populate cache (if server supports resources)
-        if mcp_server.capabilities.resources:  # pragma: no branch
-            await mcp_server.list_resources()
-            assert mcp_server._resources_cache_valid is True  # pyright: ignore[reportPrivateUsage]
+        # Simulate receiving a "resource list changed" notification
+        notification = ResourceListChangedNotification()
+        await mcp_server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
 
-            # Simulate receiving a resource list changed notification
-            notification = ResourceListChangedNotification()
-            await mcp_server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
-
-            # Cache should be invalidated
-            assert mcp_server._resources_cache_valid is False  # pyright: ignore[reportPrivateUsage]
+        # Cache should be invalidated
+        assert mcp_server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_cache_invalidation_on_reconnection() -> None:
-    """Test that caches are cleared when reconnecting to the server."""
+async def test_cache_cleared_on_connection_close() -> None:
+    """Test that caches are cleared when the connection is closed."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
     # First connection
     async with server:
-        server._server_capabilities.tools_list_changed = True  # pyright: ignore[reportPrivateUsage]
         await server.list_tools()
         assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
-        assert server._tools_cache_valid is True  # pyright: ignore[reportPrivateUsage]
 
-    # After exiting, the server is no longer running
-    # but cache state persists until next connection
+    # After exiting, cache should be cleared by __aexit__
+    assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
-    # Reconnect
+    # Reconnect and verify cache starts empty
     async with server:
-        # Cache should be cleared on fresh connection
         assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
-        assert server._tools_cache_valid is False  # pyright: ignore[reportPrivateUsage]
+        # Fetch again to populate
+        await server.list_tools()
+        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_server_capabilities_list_changed_fields() -> None:
     """Test that ServerCapabilities correctly parses listChanged fields."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        # Test that capabilities are accessible
         caps = server.capabilities
+        assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)

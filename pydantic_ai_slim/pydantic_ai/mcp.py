@@ -226,6 +226,9 @@ class ServerCapabilities:
     prompts: bool = False
     """Whether the server offers any prompt templates."""
 
+    prompts_list_changed: bool = False
+    """Whether the server will emit notifications when the list of prompts changes."""
+
     resources: bool = False
     """Whether the server offers any resources to read."""
 
@@ -250,16 +253,18 @@ class ServerCapabilities:
         Args:
             mcp_capabilities: The MCP SDK ServerCapabilities object.
         """
-        tools_cap = mcp_capabilities.tools
+        prompts_cap = mcp_capabilities.prompts
         resources_cap = mcp_capabilities.resources
+        tools_cap = mcp_capabilities.tools
         return cls(
             experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
             logging=mcp_capabilities.logging is not None,
-            prompts=mcp_capabilities.prompts is not None,
+            prompts=prompts_cap is not None,
+            prompts_list_changed=bool(prompts_cap.listChanged) if prompts_cap else False,
             resources=resources_cap is not None,
+            resources_list_changed=bool(resources_cap.listChanged) if resources_cap else False,
             tools=tools_cap is not None,
             tools_list_changed=bool(tools_cap.listChanged) if tools_cap else False,
-            resources_list_changed=bool(resources_cap.listChanged) if resources_cap else False,
             completions=mcp_capabilities.completions is not None,
         )
 
@@ -329,6 +334,26 @@ class MCPServer(AbstractToolset[Any], ABC):
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
 
+    cache_tools: bool
+    """Whether to cache the list of tools.
+
+    When enabled (default), tools are fetched once and cached until either:
+    - The server sends a `notifications/tools/list_changed` notification
+    - The connection is closed
+
+    Set to `False` for servers that change tools dynamically without sending notifications.
+    """
+
+    cache_resources: bool
+    """Whether to cache the list of resources.
+
+    When enabled (default), resources are fetched once and cached until either:
+    - The server sends a `notifications/resources/list_changed` notification
+    - The connection is closed
+
+    Set to `False` for servers that change resources dynamically without sending notifications.
+    """
+
     _id: str | None
 
     _enter_lock: Lock = field(compare=False)
@@ -343,9 +368,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _instructions: str | None
 
     _cached_tools: list[mcp_types.Tool] | None
-    _tools_cache_valid: bool
     _cached_resources: list[Resource] | None
-    _resources_cache_valid: bool
 
     def __init__(
         self,
@@ -359,6 +382,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_tools: bool = True,
+        cache_resources: bool = True,
         *,
         id: str | None = None,
     ):
@@ -372,6 +397,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.sampling_model = sampling_model
         self.max_retries = max_retries
         self.elicitation_callback = elicitation_callback
+        self.cache_tools = cache_tools
+        self.cache_resources = cache_resources
 
         self._id = id or tool_prefix
 
@@ -382,9 +409,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._running_count = 0
         self._exit_stack = None
         self._cached_tools = None
-        self._tools_cache_valid = False
         self._cached_resources = None
-        self._resources_cache_valid = False
 
     @abstractmethod
     @asynccontextmanager
@@ -449,21 +474,20 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
 
-        Tools are cached when the server advertises `tools.listChanged` capability,
-        with cache invalidation on tool change notifications and reconnection.
-        """
-        async with self:  # Ensure server is running
-            # Only cache if server supports listChanged notifications
-            if self._server_capabilities.tools_list_changed:
-                if self._cached_tools is not None and self._tools_cache_valid:
-                    return self._cached_tools
+        Tools are cached by default, with cache invalidation on:
+        - `notifications/tools/list_changed` notifications from the server
+        - Connection close (cache is cleared in `__aexit__`)
 
+        Set `cache_tools=False` for servers that change tools without sending notifications.
+        """
+        async with self:
+            if self.cache_tools:
+                if self._cached_tools is not None:
+                    return self._cached_tools
                 result = await self._client.list_tools()
                 self._cached_tools = result.tools
-                self._tools_cache_valid = True
                 return result.tools
             else:
-                # Server doesn't support notifications, always fetch fresh
                 result = await self._client.list_tools()
                 return result.tools
 
@@ -571,25 +595,25 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def list_resources(self) -> list[Resource]:
         """Retrieve resources that are currently present on the server.
 
-        Resources are cached when the server advertises `resources.listChanged` capability,
-        with cache invalidation on resource change notifications and reconnection.
+        Resources are cached by default, with cache invalidation on:
+        - `notifications/resources/list_changed` notifications from the server
+        - Connection close (cache is cleared in `__aexit__`)
+
+        Set `cache_resources=False` for servers that change resources without sending notifications.
 
         Raises:
             MCPError: If the server returns an error.
         """
-        async with self:  # Ensure server is running
+        async with self:
             if not self.capabilities.resources:
                 return []
             try:
-                # caching logic same as list_tools
-                if self._server_capabilities.resources_list_changed:
-                    if self._cached_resources is not None and self._resources_cache_valid:
+                if self.cache_resources:
+                    if self._cached_resources is not None:
                         return self._cached_resources
-
                     result = await self._client.list_resources()
                     resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                     self._cached_resources = resources
-                    self._resources_cache_valid = True
                     return resources
                 else:
                     result = await self._client.list_resources()
@@ -658,12 +682,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self._enter_lock:
             if self._running_count == 0:
-                # Invalidate caches on fresh connection
-                self._cached_tools = None
-                self._tools_cache_valid = False
-                self._cached_resources = None
-                self._resources_cache_valid = False
-
                 async with AsyncExitStack() as exit_stack:
                     self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
                     client = ClientSession(
@@ -697,6 +715,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             if self._running_count == 0 and self._exit_stack is not None:
                 await self._exit_stack.aclose()
                 self._exit_stack = None
+                self._cached_tools = None
+                self._cached_resources = None
 
     @property
     def is_running(self) -> bool:
@@ -729,9 +749,9 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def _handle_notification(self, message: Any) -> None:
         """Handle notifications from the MCP server, invalidating caches as needed."""
         if isinstance(message, mcp_types.ToolListChangedNotification):
-            self._tools_cache_valid = False
+            self._cached_tools = None
         elif isinstance(message, mcp_types.ResourceListChangedNotification):
-            self._resources_cache_valid = False
+            self._cached_resources = None
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
@@ -829,6 +849,8 @@ class MCPServerStdio(MCPServer):
     sampling_model: models.Model | None
     max_retries: int
     elicitation_callback: ElicitationFnT | None = None
+    cache_tools: bool
+    cache_resources: bool
 
     def __init__(
         self,
@@ -847,6 +869,8 @@ class MCPServerStdio(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_tools: bool = True,
+        cache_resources: bool = True,
         id: str | None = None,
     ):
         """Build a new MCP server.
@@ -866,6 +890,8 @@ class MCPServerStdio(MCPServer):
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
+            cache_tools: Whether to cache the list of tools.
+            cache_resources: Whether to cache the list of resources.
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
         """
         self.command = command
@@ -884,6 +910,8 @@ class MCPServerStdio(MCPServer):
             sampling_model,
             max_retries,
             elicitation_callback,
+            cache_tools,
+            cache_resources,
             id=id,
         )
 
@@ -983,6 +1011,8 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None
     max_retries: int
     elicitation_callback: ElicitationFnT | None = None
+    cache_tools: bool
+    cache_resources: bool
 
     def __init__(
         self,
@@ -1001,6 +1031,8 @@ class _MCPServerHTTP(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_tools: bool = True,
+        cache_resources: bool = True,
         **_deprecated_kwargs: Any,
     ):
         """Build a new MCP server.
@@ -1020,6 +1052,8 @@ class _MCPServerHTTP(MCPServer):
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
+            cache_tools: Whether to cache the list of tools.
+            cache_resources: Whether to cache the list of resources.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
             if read_timeout is not None:
@@ -1050,6 +1084,8 @@ class _MCPServerHTTP(MCPServer):
             sampling_model,
             max_retries,
             elicitation_callback,
+            cache_tools,
+            cache_resources,
             id=id,
         )
 
