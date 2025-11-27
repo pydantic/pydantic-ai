@@ -35,7 +35,12 @@ KnownEmbeddingModelName = TypeAliasType(
     Literal[
         'openai:text-embedding-ada-002',
         'openai:text-embedding-3-small',
-        'openai:text-embedding-3-largecohere:embed-v4.0',
+        'openai:text-embedding-3-large',
+        'cohere:embed-v4.0',
+        'cohere:embed-english-v3.0',
+        'cohere:embed-english-light-v3.0',
+        'cohere:embed-multilingual-v3.0',
+        'cohere:embed-multilingual-light-v3.0',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Embedder`][pydantic_ai.embeddings.Embedder].

@@ -1,4 +1,6 @@
 import os
+from collections.abc import Iterator
+from typing import Any, get_args
 from unittest.mock import patch
 
 import pytest
@@ -6,7 +8,7 @@ from dirty_equals import IsList
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
-from pydantic_ai.embeddings import Embedder, infer_model
+from pydantic_ai.embeddings import Embedder, KnownEmbeddingModelName, infer_model
 
 from .conftest import try_import
 
@@ -16,11 +18,11 @@ pytestmark = [
 ]
 
 with try_import() as openai_imports_successful:
-    from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
+    from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
-    from pydantic_ai.embeddings.cohere import CohereEmbeddingModel
+    from pydantic_ai.embeddings.cohere import CohereEmbeddingModel, LatestCohereEmbeddingModelNames
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as sentence_transformers_imports_successful:
@@ -227,3 +229,25 @@ async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
             }
         ]
     )
+
+
+@pytest.mark.skipif(
+    not openai_imports_successful() or not cohere_imports_successful(),
+    reason='some embedding package was not installed',
+)
+def test_known_embedding_model_names():  # pragma: lax no cover
+    # Coverage seems to be misbehaving..?
+    def get_model_names(model_name_type: Any) -> Iterator[str]:
+        for arg in get_args(model_name_type):
+            if isinstance(arg, str):
+                yield arg
+            else:
+                yield from get_model_names(arg)
+
+    openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
+    cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
+
+    generated_names = sorted(openai_names + cohere_names)
+
+    known_embedding_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
+    assert generated_names == known_embedding_model_names
