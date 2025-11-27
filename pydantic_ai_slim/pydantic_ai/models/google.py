@@ -748,27 +748,13 @@ class GeminiStreamedResponse(StreamedResponse):
                         part=FilePart(content=BinaryContent.narrow_type(content), provider_details=provider_details),
                     )
                 elif part.executable_code is not None:
-                    code = part.executable_code.code
-                    if code and (file_search_query := _extract_file_search_query(code)):
-                        self._file_search_tool_call_id = _utils.generate_tool_call_id()
-                        part_obj = BuiltinToolCallPart(
-                            provider_name=self.provider_name,
-                            tool_name=FileSearchTool.kind,
-                            tool_call_id=self._file_search_tool_call_id,
-                            args={'query': file_search_query},
-                        )
-                        part_obj.provider_details = provider_details
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=uuid4(),
-                            part=part_obj,
-                        )
-                    else:
-                        code_execution_tool_call_id = _utils.generate_tool_call_id()
-                        part_obj = _map_executable_code(
-                            part.executable_code, self.provider_name, code_execution_tool_call_id
-                        )
-                        part_obj.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
+                    part_obj, new_code_execution_tool_call_id = self._handle_executable_code_streaming(
+                        part.executable_code
+                    )
+                    if new_code_execution_tool_call_id is not None:
+                        code_execution_tool_call_id = new_code_execution_tool_call_id
+                    part_obj.provider_details = provider_details
+                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
                 elif part.code_execution_result is not None:
                     assert code_execution_tool_call_id is not None
                     part = _map_code_execution_result(
@@ -809,6 +795,41 @@ class GeminiStreamedResponse(StreamedResponse):
                 ),
             )
             self._file_search_tool_call_id = None
+
+    def _handle_executable_code_streaming(
+        self, executable_code: ExecutableCode
+    ) -> tuple[ModelResponsePart, str | None]:
+        """Handle executable code for streaming responses.
+
+        Returns a tuple of (part_obj, code_execution_tool_call_id).
+        code_execution_tool_call_id is None for file_search, or the new ID for code_execution.
+        """
+        code = executable_code.code
+        if not code:
+            # Empty code, treat as code execution
+            code_execution_tool_call_id = _utils.generate_tool_call_id()
+            part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
+            return part_obj, code_execution_tool_call_id
+
+        # Check if FileSearchTool was included before trying to parse file_search queries
+        has_file_search_tool = any(
+            isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.builtin_tools
+        )
+
+        if has_file_search_tool and (file_search_query := _extract_file_search_query(code)):
+            self._file_search_tool_call_id = _utils.generate_tool_call_id()
+            part_obj = BuiltinToolCallPart(
+                provider_name=self.provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=self._file_search_tool_call_id,
+                args={'query': file_search_query},
+            )
+            return part_obj, None
+        else:
+            # Regular code execution
+            code_execution_tool_call_id = _utils.generate_tool_call_id()
+            part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
+            return part_obj, code_execution_tool_call_id
 
     @property
     def model_name(self) -> GoogleModelName:
