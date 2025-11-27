@@ -1503,6 +1503,11 @@ def test_streamed_run_result_metadata_none_without_sources() -> None:
     assert streamed.metadata is None
 
 
+def test_streamed_run_result_metadata_none_without_run_or_stream() -> None:
+    streamed = StreamedRunResult(all_messages=[], new_message_index=0, stream_response=None, on_complete=None)
+    assert streamed.metadata is None
+
+
 def test_streamed_run_result_sync_exposes_metadata() -> None:
     run_result = _make_run_result(metadata={'sync': 'metadata'})
     streamed = StreamedRunResult(

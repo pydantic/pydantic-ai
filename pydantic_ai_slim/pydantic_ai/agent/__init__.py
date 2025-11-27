@@ -64,7 +64,7 @@ from ..toolsets._dynamic import (
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
+from .abstract import AbstractAgent, AgentMetadataValue, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -89,8 +89,6 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-
-AgentMetadataValue = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
 
 @dataclasses.dataclass(init=False)
@@ -445,6 +443,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadataValue[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
@@ -464,6 +463,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadataValue[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
@@ -483,6 +483,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadataValue[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
@@ -559,6 +560,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]. The resolved dictionary is shallow merged into the
+                agent's metadata (or any [`Agent.override`][pydantic_ai.agent.Agent.override]) with run-level keys
+                overwriting duplicates.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -688,7 +693,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     def resolve_run_metadata() -> None:
                         nonlocal run_metadata
                         run_context = build_run_context(agent_run.ctx)
-                        run_metadata = self._compute_agent_metadata(run_context)
+                        run_metadata = self._compute_agent_metadata(run_context, metadata)
                         run_context.metadata = run_metadata
                         graph_run.state.metadata = run_metadata
 
@@ -723,13 +728,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             finally:
                 run_span.end()
 
-    def _compute_agent_metadata(self, ctx: RunContext[AgentDepsT]) -> dict[str, Any] | None:
+    def _compute_agent_metadata(
+        self,
+        ctx: RunContext[AgentDepsT],
+        run_metadata_config: AgentMetadataValue[AgentDepsT] | None = None,
+    ) -> dict[str, Any] | None:
         metadata_override = self._override_metadata.get()
-        metadata_config = metadata_override.value if metadata_override is not None else self._metadata
-        if metadata_config is None:
-            return None
+        if metadata_override is not None:
+            base_config = metadata_override.value
+        else:
+            base_config = self._metadata
 
-        metadata = metadata_config(ctx) if callable(metadata_config) else metadata_config
+        base_metadata = self._resolve_metadata_config(base_config, ctx)
+        run_metadata = self._resolve_metadata_config(run_metadata_config, ctx)
+
+        if base_metadata and run_metadata:
+            return {**base_metadata, **run_metadata}
+        return run_metadata or base_metadata
+
+    def _resolve_metadata_config(
+        self,
+        config: AgentMetadataValue[AgentDepsT] | None,
+        ctx: RunContext[AgentDepsT],
+    ) -> dict[str, Any] | None:
+        if config is None:
+            return None
+        metadata = config(ctx) if callable(config) else config
         return metadata
 
     def _run_span_end_attributes(

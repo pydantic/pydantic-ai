@@ -2733,6 +2733,42 @@ async def test_agent_metadata_override_with_callable() -> None:
     assert result.metadata == {'computed': 'callable override prompt'}
 
 
+async def test_agent_run_metadata_kwarg_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg dict output'))
+
+    result = await agent.run('kwarg dict prompt', metadata={'env': 'run'})
+
+    assert result.metadata == {'env': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg callable output'))
+
+    def run_meta(ctx: RunContext[None]) -> dict[str, Any]:
+        return {'prompt': ctx.prompt}
+
+    result = await agent.run('kwarg callable prompt', metadata=run_meta)
+
+    assert result.metadata == {'prompt': 'kwarg callable prompt'}
+
+
+async def test_agent_run_metadata_kwarg_merges_agent_metadata() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg merge output'), metadata={'env': 'base', 'shared': 'agent'})
+
+    result = await agent.run('kwarg merge prompt', metadata={'run': 'value', 'shared': 'run'})
+
+    assert result.metadata == {'env': 'base', 'run': 'value', 'shared': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_merges_override() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg override output'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override', 'override_only': True}):
+        result = await agent.run('kwarg override prompt', metadata={'run_only': True})
+
+    assert result.metadata == {'env': 'override', 'override_only': True, 'run_only': True}
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
