@@ -702,27 +702,10 @@ class GeminiStreamedResponse(StreamedResponse):
             if not parts:
                 continue  # pragma: no cover
 
-            for part in parts:
-                if self._file_search_tool_call_id and candidate.grounding_metadata:
-                    grounding_chunks = candidate.grounding_metadata.grounding_chunks
-                    if grounding_chunks:
-                        retrieved_contexts = [
-                            chunk.retrieved_context.model_dump(mode='json')
-                            for chunk in grounding_chunks
-                            if chunk.retrieved_context
-                        ]
-                        if retrieved_contexts:
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=uuid4(),
-                                part=BuiltinToolReturnPart(
-                                    provider_name=self.provider_name,
-                                    tool_name=FileSearchTool.kind,
-                                    tool_call_id=self._file_search_tool_call_id,
-                                    content={'retrieved_contexts': retrieved_contexts},
-                                ),
-                            )
-                            self._file_search_tool_call_id = None
+            async for event in self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata):
+                yield event
 
+            for part in parts:
                 provider_details: dict[str, Any] | None = None
                 if part.thought_signature:
                     # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
@@ -795,6 +778,37 @@ class GeminiStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+
+    async def _handle_file_search_grounding_metadata_streaming(
+        self, grounding_metadata: GroundingMetadata | None
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Handle file search grounding metadata for streaming responses.
+
+        Yields a BuiltinToolReturnPart if file search results are available in the grounding metadata.
+        """
+        if not self._file_search_tool_call_id or not grounding_metadata:
+            return
+
+        grounding_chunks = grounding_metadata.grounding_chunks
+        if not grounding_chunks:
+            return
+
+        retrieved_contexts = [
+            chunk.retrieved_context.model_dump(mode='json')
+            for chunk in grounding_chunks
+            if chunk.retrieved_context
+        ]
+        if retrieved_contexts:
+            yield self._parts_manager.handle_part(
+                vendor_part_id=uuid4(),
+                part=BuiltinToolReturnPart(
+                    provider_name=self.provider_name,
+                    tool_name=FileSearchTool.kind,
+                    tool_call_id=self._file_search_tool_call_id,
+                    content={'retrieved_contexts': retrieved_contexts},
+                ),
+            )
+            self._file_search_tool_call_id = None
 
     @property
     def model_name(self) -> GoogleModelName:
