@@ -4,14 +4,17 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast, TypeAlias, Annotated
 
-from pydantic import BaseModel, Discriminator
+from pydantic import BaseModel, Discriminator, ValidationError
 from typing_extensions import TypedDict, assert_never, override
 
-from ..exceptions import ModelHTTPError
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import (
     FinishReason,
     ModelResponseStreamEvent,
     ThinkingPart,
+    ModelResponse,
+    ModelResponsePart,
+    ToolCallPart,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -24,7 +27,16 @@ try:
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message
 
-    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIStreamedResponse,
+        number_to_datetime,
+        _now_utc,
+        split_content_into_text_and_thinking,
+        replace,
+        _guard_tool_call_id,
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenRouter model, '
@@ -560,6 +572,67 @@ class OpenRouterModel(OpenAIChatModel):
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
         return new_settings, customized_parameters
+
+    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
+        """Process a non-streamed response, and prepare a message to return."""
+        # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
+        # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
+        # * if the endpoint returns plain text, the return type is a string
+        # Thus we validate it fully here.
+        if not isinstance(response, chat.ChatCompletion):
+            raise UnexpectedModelBehavior(
+                f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
+            )
+
+        if response.created:
+            timestamp = number_to_datetime(response.created)
+        else:
+            timestamp = _now_utc()
+            response.created = int(timestamp.timestamp())
+
+        # Workaround for local Ollama which sometimes returns a `None` finish reason.
+        if response.choices and (choice := response.choices[0]) and choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
+            choice.finish_reason = 'stop'
+
+        try:
+            response = self._validate_completion(response)
+        except ValidationError as e:
+            raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
+
+        choice = response.choices[0]
+        items: list[ModelResponsePart] = []
+
+        if thinking_parts := self._process_thinking(choice.message):
+            items.extend(thinking_parts)
+
+        if choice.message.content:
+            items.extend(
+                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
+                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
+            )
+        if choice.message.tool_calls is not None:
+            for c in choice.message.tool_calls:
+                if isinstance(c, _OpenRouterChatCompletionMessageFunctionToolCall):
+                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                elif isinstance(c, chat.ChatCompletionMessageCustomToolCall):  # pragma: no cover
+                    # NOTE: Custom tool calls are not supported.
+                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
+                    raise RuntimeError('Custom tool calls are not supported')
+                else:
+                    assert_never(c)
+                part.tool_call_id = _guard_tool_call_id(part)
+                items.append(part)
+
+        return ModelResponse(
+            parts=items,
+            usage=self._map_usage(response),
+            model_name=response.model,
+            timestamp=timestamp,
+            provider_details=self._process_provider_details(response),
+            provider_response_id=response.id,
+            provider_name=self._provider.name,
+            finish_reason=self._map_finish_reason(choice.finish_reason),
+        )
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
