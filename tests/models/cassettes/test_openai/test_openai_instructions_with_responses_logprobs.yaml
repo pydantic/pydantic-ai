@@ -1,0 +1,186 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - message.output_text.logprobs
+      input:
+      - content: What is the capital of Minas Gerais?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3981'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2151'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1764012314
+      error: null
+      id: resp_03c6f7a0e7df74a9006924b11a6120819395892ac2d8143b03
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs:
+          - bytes:
+            - 84
+            - 104
+            - 101
+            logprob: -0.0
+            token: The
+            top_logprobs: []
+          - bytes:
+            - 32
+            - 99
+            - 97
+            - 112
+            - 105
+            - 116
+            - 97
+            - 108
+            logprob: 0.0
+            token: ' capital'
+            top_logprobs: []
+          - bytes:
+            - 32
+            - 111
+            - 102
+            logprob: 0.0
+            token: ' of'
+            top_logprobs: []
+          - bytes:
+            - 32
+            - 77
+            - 105
+            - 110
+            - 97
+            - 115
+            logprob: -0.0
+            token: ' Minas'
+            top_logprobs: []
+          - bytes:
+            - 32
+            - 71
+            - 101
+            - 114
+            - 97
+            - 105
+            - 115
+            logprob: -0.0
+            token: ' Gerais'
+            top_logprobs: []
+          - bytes:
+            - 32
+            - 105
+            - 115
+            logprob: -5.2e-05
+            token: ' is'
+            top_logprobs: []
+          - bytes:
+            - 32
+            - 66
+            - 101
+            - 108
+            - 111
+            logprob: -4.3e-05
+            token: ' Belo'
+            top_logprobs: []
+          - bytes:
+            - 32
+            - 72
+            - 111
+            - 114
+            - 105
+            - 122
+            - 111
+            - 110
+            - 116
+            - 101
+            logprob: -2.0e-06
+            token: ' Horizonte'
+            top_logprobs: []
+          - bytes:
+            - 46
+            logprob: -0.0
+            token: .
+            top_logprobs: []
+          text: The capital of Minas Gerais is Belo Horizonte.
+          type: output_text
+        id: msg_03c6f7a0e7df74a9006924b11adb348193adc4091df13b8d7c
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 25
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 10
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 35
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

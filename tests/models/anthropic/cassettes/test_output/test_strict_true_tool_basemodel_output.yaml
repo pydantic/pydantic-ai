@@ -1,0 +1,203 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '640'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Get me info about New York including its population
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_population
+        strict: true
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '491'
+      content-type:
+      - application/json
+      retry-after:
+      - '50'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01UvLpDBkmE68NhdxhfZToRZ
+        input:
+          city: New York
+        name: get_population
+        type: tool_use
+      id: msg_01Ent8KjU61AdpwoAsSPoCvP
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 732
+        output_tokens: 39
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '918'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Get me info about New York including its population
+          type: text
+        role: user
+      - content:
+        - id: toolu_01UvLpDBkmE68NhdxhfZToRZ
+          input:
+            city: New York
+          name: get_population
+          type: tool_use
+        role: assistant
+      - content:
+        - content: '8000000'
+          is_error: false
+          tool_use_id: toolu_01UvLpDBkmE68NhdxhfZToRZ
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_population
+        strict: true
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '536'
+      content-type:
+      - application/json
+      retry-after:
+      - '40'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01Vm6qu6McfGXthpRSSjQBrM
+        input:
+          city: New York
+          country: United States
+          population: 8000000
+        name: final_result
+        type: tool_use
+      id: msg_01Ep2qB6KLjptiMUTkqKmyq6
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 801
+        output_tokens: 76
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
