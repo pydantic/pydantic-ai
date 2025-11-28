@@ -640,3 +640,72 @@ def test_handle_part():
     event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])
+
+
+def test_handle_thinking_delta_merges_raw_content_with_summary():
+    """Test that summaries merge with existing raw-content-only parts.
+
+    This tests the defensive handling for streaming scenarios where raw content
+    arrives before summaries. Raw content uses vendor_part_id='rs_123', while
+    summaries use vendor_part_id='rs_123-0'. Despite different vendor_part_ids,
+    they should merge into a single ThinkingPart.
+
+    As of testing (Nov 2025), gpt-oss-20b via OpenRouter only returns raw content
+    without summaries. This test ensures we handle potential future scenarios.
+    """
+    manager = ModelResponsePartsManager()
+
+    # Step 1: Raw content arrives first with vendor_id='rs_123'
+    events = list(
+        manager.handle_thinking_delta(
+            vendor_part_id='rs_123',
+            raw_content_delta='Raw thinking step 1. ',
+            raw_content_index=0,
+            id='rs_123',
+        )
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(content='', id='rs_123', provider_details={'raw_content': ['Raw thinking step 1. ']}),
+            )
+        ]
+    )
+
+    # Step 2: More raw content arrives (no events emitted for raw-only updates)
+    events = list(
+        manager.handle_thinking_delta(
+            vendor_part_id='rs_123',
+            raw_content_delta='Raw thinking step 2.',
+            raw_content_index=0,
+            id='rs_123',
+        )
+    )
+    assert events == snapshot([])
+    assert manager.get_parts() == snapshot(
+        [
+            ThinkingPart(
+                content='', id='rs_123', provider_details={'raw_content': ['Raw thinking step 1. Raw thinking step 2.']}
+            )
+        ]
+    )
+
+    # Step 3: Summary arrives with DIFFERENT vendor_id but same id - should merge
+    events = list(
+        manager.handle_thinking_delta(
+            vendor_part_id='rs_123-0',  # Different vendor_id!
+            content='Summary of thinking',
+            id='rs_123',  # Same id
+        )
+    )
+    assert events == snapshot([PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Summary of thinking'))])
+    assert manager.get_parts() == snapshot(
+        [
+            ThinkingPart(
+                content='Summary of thinking',
+                id='rs_123',
+                provider_details={'raw_content': ['Raw thinking step 1. Raw thinking step 2.']},
+            )
+        ]
+    )

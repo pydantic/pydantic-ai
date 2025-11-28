@@ -1901,13 +1901,13 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='s3dW9XsE5')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='GJYBCIkcS')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='6c6046190e46478cbb4ed80317db7714',
+                provider_response_id='412174432ea945889703eac58b44ae35',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1916,7 +1916,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='s3dW9XsE5',
+                        tool_call_id='GJYBCIkcS',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1932,15 +1932,15 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The image shows a halved kiwi fruit. Kiwis are known for their bright green flesh with tiny black seeds and a unique, tangy-sweet flavor. They are rich in vitamin C and fiber, making them a healthy snack option.'
+                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi fruit that has been cut in half. The kiwi is known for its bright green flesh with tiny black seeds and a central white core. It is a popular fruit known for its sweet taste and nutritional benefits.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=2935, output_tokens=51),
+                usage=RequestUsage(input_tokens=2931, output_tokens=66),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='e3a0c33aa4b1410fac3ab34359d7e04d',
+                provider_response_id='049b5c7704554d3396e727a95cb6d947',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2310,7 +2310,7 @@ async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mist
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='Okay, the user is asking how to cross the street. I know that crossing the street safely involves a few key steps: first, look both ways to check for oncoming traffic; second, use a crosswalk if one is available; third, obey any traffic signals or signs that are present; and finally, proceed with caution until you have safely reached the other side. Let me summarize these points in a clear and concise manner for the user.'
+                        content='Okay, the user is asking how to cross the street. I know that crossing the street safely involves a few key steps: first, look both ways to check for oncoming traffic; second, use a crosswalk if one is available; third, obey any traffic signals or signs that may be present; and finally, proceed with caution until you have safely reached the other side. Let me compile this information into a clear and concise response.'
                     ),
                     TextPart(
                         content="""\
@@ -2318,19 +2318,28 @@ To cross the street safely, follow these steps:
 
 1. Look both ways to check for oncoming traffic.
 2. Use a crosswalk if one is available.
-3. Obey any traffic signals or signs that are present.
+3. Obey any traffic signals or signs that may be present.
 4. Proceed with caution until you have safely reached the other side.
+
+```markdown
+To cross the street safely, follow these steps:
+
+1. Look both ways to check for oncoming traffic.
+2. Use a crosswalk if one is available.
+3. Obey any traffic signals or signs that may be present.
+4. Proceed with caution until you have safely reached the other side.
+```
 
 By following these steps, you can ensure a safe crossing.\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=166),
+                usage=RequestUsage(input_tokens=10, output_tokens=232),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='746feae2638b45e79f8561504ebbc3dc',
+                provider_response_id='9f9d90210f194076abeee223863eaaf0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

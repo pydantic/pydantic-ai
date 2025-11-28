@@ -83,7 +83,7 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
-    from openai.types.responses.response_reasoning_item_param import Content as ReasoningContent, Summary
+    from openai.types.responses.response_reasoning_item_param import Content as RawContent, Summary
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
@@ -1740,7 +1740,7 @@ class OpenAIResponsesModel(Model):
                                 # Send raw CoT back
                                 assert reasoning_item is not None
                                 reasoning_item['content'] = [
-                                    ReasoningContent(text=text, type='reasoning_text') for text in raw_content
+                                    RawContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
                             start_tag, end_tag = profile.thinking_tags

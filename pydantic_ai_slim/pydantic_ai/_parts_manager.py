@@ -218,6 +218,29 @@ class ModelResponsePartsManager:
         self._parts[part_index] = updated
         return updated
 
+    def _find_raw_content_only_part(self, id: str) -> tuple[ThinkingPart, int] | None:
+        """Find a ThinkingPart that has only raw_content (no summary content yet).
+
+        Handles streaming scenarios where raw content arrives before
+        summaries. In such cases, raw content creates a ThinkingPart with empty content and
+        raw_content in provider_details. When summaries arrive later with a different
+        vendor_part_id, we need to find and reuse that existing part.
+
+        Note: As of testing (Nov 2025), gpt-oss-20b via OpenRouter only returns raw content
+        without summaries. So this functionality defensively handles potential future scenarios with LM Studio,
+        other providers, or future OpenAI configurations that may return both.
+        """
+        for idx, part in enumerate(self._parts):
+            if (
+                isinstance(part, ThinkingPart)
+                and part.id == id
+                and part.content == ''
+                and part.provider_details
+                and 'raw_content' in part.provider_details
+            ):
+                return part, idx
+        return None
+
     def handle_thinking_delta(
         self,
         *,
@@ -269,6 +292,14 @@ class ModelResponsePartsManager:
                 if not isinstance(existing_part, ThinkingPart):
                     raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {existing_part=}')
                 existing_thinking_part_and_index = existing_part, part_index
+            elif content is not None and id is not None:
+                # If vendor_part_id not found but we're adding summary content,
+                # check for existing raw-content-only part to merge with
+                found = self._find_raw_content_only_part(id)
+                if found:
+                    existing_thinking_part_and_index = found
+                    # Register this vendor_id to point to the same part
+                    self._vendor_id_to_part_index[vendor_part_id] = found[1]
 
         if existing_thinking_part_and_index is None:
             if content is not None or signature is not None or raw_content_delta is not None:
