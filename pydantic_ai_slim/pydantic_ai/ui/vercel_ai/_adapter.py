@@ -68,7 +68,6 @@ if TYPE_CHECKING:
 __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
-BUILTIN_TOOL_CALL_ID_PREFIX = 'pyd_ai_builtin'
 
 
 @dataclass
@@ -241,16 +240,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         Args:
             messages: A sequence of ModelMessage objects to convert
-            _id_generator: Optional ID generator function for testing. If not provided, uses uuid.uuid4().
 
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
-
-        def _message_id_generator() -> str:
-            """Generate a message ID."""
-            return uuid.uuid4().hex
-
         tool_returns: dict[str, ToolReturnPart] = {}
         tool_errors: dict[str, RetryPromptPart] = {}
 
@@ -274,18 +267,24 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         system_ui_parts.append(TextUIPart(text=part.content, state='done'))
                     elif isinstance(part, UserPromptPart):
                         user_ui_parts.extend(_convert_user_prompt_part(part))
-                    elif isinstance(part, ToolReturnPart | RetryPromptPart):
-                        # Tool returns/errors don't create separate UI parts
-                        # They're merged into the tool call in the assistant message
+                    elif isinstance(part, ToolReturnPart):
+                        # Tool returns are merged into the tool call in the assistant message
                         pass
+                    elif isinstance(part, RetryPromptPart):
+                        if part.tool_call_id:
+                            # Tool errors with IDs are merged into the tool call in the assistant message
+                            pass
+                        else:
+                            # RetryPromptPart without tool_call_id becomes a user text message
+                            user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
                     else:
                         assert_never(part)
 
                 if system_ui_parts:
-                    result.append(UIMessage(id=_message_id_generator(), role='system', parts=system_ui_parts))
+                    result.append(UIMessage(id=str(uuid.uuid4()), role='system', parts=system_ui_parts))
 
                 if user_ui_parts:
-                    result.append(UIMessage(id=_message_id_generator(), role='user', parts=user_ui_parts))
+                    result.append(UIMessage(id=str(uuid.uuid4()), role='user', parts=user_ui_parts))
 
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
@@ -293,20 +292,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts: list[UIMessagePart] = []
 
                 # For builtin tools, returns can be in the same ModelResponse as calls
-                # Build a local mapping for this message
-                local_builtin_returns: dict[str, BuiltinToolReturnPart] = {}
-                for part in msg.parts:
-                    if isinstance(part, BuiltinToolReturnPart):
-                        local_builtin_returns[part.tool_call_id] = part
+                local_builtin_returns: dict[str, BuiltinToolReturnPart] = {
+                    part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)
+                }
 
                 for part in msg.parts:
                     if isinstance(part, BuiltinToolReturnPart):
                         continue
                     elif isinstance(part, TextPart):
-                        # Combine consecutive text parts by checking the last UI part
+                        # Combine consecutive text parts
                         if ui_parts and isinstance(ui_parts[-1], TextUIPart):
-                            last_text = ui_parts[-1]
-                            ui_parts[-1] = last_text.model_copy(update={'text': last_text.text + part.content})
+                            ui_parts[-1].text += part.content
                         else:
                             ui_parts.append(TextUIPart(text=part.content, state='done'))
                     elif isinstance(part, ThinkingPart):
@@ -333,21 +329,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
                     elif isinstance(part, BaseToolCallPart):
                         if isinstance(part, BuiltinToolCallPart):
-                            prefixed_id = (
-                                f'{BUILTIN_TOOL_CALL_ID_PREFIX}|{part.provider_name or ""}|{part.tool_call_id}'
+                            call_provider_metadata = (
+                                {'pydantic_ai': {'provider_name': part.provider_name}} if part.provider_name else None
                             )
 
                             if builtin_return := local_builtin_returns.get(part.tool_call_id):
                                 content = builtin_return.model_response_str()
-                                call_provider_metadata = (
-                                    {'pydantic_ai': {'provider_name': part.provider_name}}
-                                    if part.provider_name
-                                    else None
-                                )
                                 ui_parts.append(
                                     ToolOutputAvailablePart(
                                         type=f'tool-{part.tool_name}',
-                                        tool_call_id=prefixed_id,
+                                        tool_call_id=part.tool_call_id,
                                         input=part.args_as_json_str(),
                                         output=content,
                                         state='output-available',
@@ -359,10 +350,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 ui_parts.append(
                                     ToolInputAvailablePart(
                                         type=f'tool-{part.tool_name}',
-                                        tool_call_id=prefixed_id,
+                                        tool_call_id=part.tool_call_id,
                                         input=part.args_as_json_str(),
                                         state='input-available',
                                         provider_executed=True,
+                                        call_provider_metadata=call_provider_metadata,
                                     )
                                 )
                         else:
@@ -404,7 +396,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         assert_never(part)
 
                 if ui_parts:  # pragma: no branch
-                    result.append(UIMessage(id=_message_id_generator(), role='assistant', parts=ui_parts))
+                    result.append(UIMessage(id=str(uuid.uuid4()), role='assistant', parts=ui_parts))
             else:
                 assert_never(msg)
 

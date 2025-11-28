@@ -143,12 +143,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Transform protocol-specific messages into Pydantic AI messages."""
         raise NotImplementedError
 
-    @classmethod
-    @abstractmethod
-    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[MessageT]:
-        """Transform Pydantic AI messages into protocol-specific messages."""
-        raise NotImplementedError
-
     @abstractmethod
     def build_event_stream(self) -> UIEventStream[RunInputT, EventT, AgentDepsT, OutputDataT]:
         """Build a protocol-specific event stream transformer."""

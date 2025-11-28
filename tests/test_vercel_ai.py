@@ -2112,7 +2112,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                 'parts': [
                     {
                         'type': 'tool-web_search',
-                        'tool_call_id': 'pyd_ai_builtin|openai|tool_456',
+                        'tool_call_id': 'tool_456',
                         'state': 'output-available',
                         'input': '{"query":"test"}',
                         'output': '{"status":"completed"}',
@@ -2354,7 +2354,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                     {'type': 'text', 'text': 'Before tool', 'state': 'done', 'provider_metadata': None},
                     {
                         'type': 'tool-test',
-                        'tool_call_id': 'pyd_ai_builtin|test|t1',
+                        'tool_call_id': 't1',
                         'state': 'output-available',
                         'input': '{}',
                         'output': 'result',
