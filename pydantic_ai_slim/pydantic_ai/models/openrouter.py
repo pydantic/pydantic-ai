@@ -382,7 +382,7 @@ class _OpenRouterCompletionMessage(chat.ChatCompletionMessage):
 class _OpenRouterChoice(chat_completion.Choice):
     """Wraps OpenAI chat completion choice with OpenRouter specific attributes."""
 
-    native_finish_reason: str
+    native_finish_reason: str | None
     """The provided finish reason by the downstream provider from OpenRouter."""
 
     finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']  # type: ignore[reportIncompatibleVariableOverride]
