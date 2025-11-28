@@ -26,7 +26,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=292
+      - gfet4t7; dur=277
       transfer-encoding:
       - chunked
       vary:
@@ -34,10 +34,10 @@ interactions:
       - X-Origin
       - Referer
     parsed_body:
-      createTime: '2025-11-20T23:37:35.563554Z'
+      createTime: '2025-11-28T21:53:40.468266Z'
       displayName: test-file-search-stream
-      name: fileSearchStores/testfilesearchstream-df5lsen5e6i5
-      updateTime: '2025-11-20T23:37:35.563554Z'
+      name: fileSearchStores/testfilesearchstream-lsy34id7fwk0
+      updateTime: '2025-11-28T21:53:40.468266Z'
     status:
       code: 200
       message: OK
@@ -58,7 +58,7 @@ interactions:
     method: POST
     parsed_body:
       mimeType: text/plain
-    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-df5lsen5e6i5:uploadToFileSearchStore
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0:uploadToFileSearchStore
   response:
     body:
       string: ''
@@ -72,7 +72,7 @@ interactions:
       x-goog-upload-status:
       - active
       x-goog-upload-url:
-      - https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-df5lsen5e6i5:uploadToFileSearchStore?upload_id=AOCedOGNfObKqPepswPfad1VURMafRGrNEQVrJiepVNtwNXCJvYNNAtJEWKxzRzqRKDBLF2WSSRcuRvj7e4LVEIe4A92ZydvIolV6wRE7-qTClo&upload_protocol=resumable
+      - https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0:uploadToFileSearchStore?upload_id=AOCedOHvwjpkJ0FX7gB-GkYoyln9VZ_H7AxB7XF5W9bme5CW92iomOE5BCUJzEbiLfuZSFKTL4jURclB3_tkTp0k6K5c4Uz9IJ1rzqKd3H8JfA&upload_protocol=resumable
     status:
       code: 200
       message: OK
@@ -90,7 +90,7 @@ interactions:
       host:
       - generativelanguage.googleapis.com
     method: POST
-    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-df5lsen5e6i5:uploadToFileSearchStore?upload_id=AOCedOGNfObKqPepswPfad1VURMafRGrNEQVrJiepVNtwNXCJvYNNAtJEWKxzRzqRKDBLF2WSSRcuRvj7e4LVEIe4A92ZydvIolV6wRE7-qTClo&upload_protocol=resumable
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0:uploadToFileSearchStore?upload_id=AOCedOHvwjpkJ0FX7gB-GkYoyln9VZ_H7AxB7XF5W9bme5CW92iomOE5BCUJzEbiLfuZSFKTL4jURclB3_tkTp0k6K5c4Uz9IJ1rzqKd3H8JfA&upload_protocol=resumable
   response:
     headers:
       alt-svc:
@@ -106,12 +106,12 @@ interactions:
       x-goog-upload-status:
       - final
     parsed_body:
-      name: fileSearchStores/testfilesearchstream-df5lsen5e6i5/upload/operations/iifcpg88rbed-d4ggi3qbmddb
+      name: fileSearchStores/testfilesearchstream-lsy34id7fwk0/upload/operations/hjv90oe8r3dy-opag1ewx3ya0
       response:
         '@type': type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
-        documentName: fileSearchStores/testfilesearchstream-df5lsen5e6i5/documents/iifcpg88rbed-d4ggi3qbmddb
+        documentName: fileSearchStores/testfilesearchstream-lsy34id7fwk0/documents/hjv90oe8r3dy-opag1ewx3ya0
         mimeType: text/plain
-        parent: fileSearchStores/testfilesearchstream-df5lsen5e6i5
+        parent: fileSearchStores/testfilesearchstream-lsy34id7fwk0
         sizeBytes: '79'
     status:
       code: 200
@@ -146,38 +146,32 @@ interactions:
       tools:
       - fileSearch:
           file_search_store_names:
-          - fileSearchStores/testfilesearchstream-df5lsen5e6i5
+          - fileSearchStores/testfilesearchstream-lsy34id7fwk0
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse
   response:
     body:
       string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"executableCode\": {\"language\": \"PYTHON\",\"code\":
-        \"   print(file_search.query(query=\\\"what is the capital of France?\\\"))\\n   \"},\"thought\": true}],\"role\":
-        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 18,\"totalTokenCount\":
-        212,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 179},\"modelVersion\":
-        \"gemini-2.5-pro\",\"responseId\": \"RaYfafPuAc63qtsP-bOCyQw\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
-        [{\"executableCode\": {\"language\": \"PYTHON\",\"code\": \"print(file_search.query(query=\\\"what is the capital
-        of France?\\\"))\"}}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\": {\"groundingChunks\":
-        [{\"retrievedContext\": {\"text\": \"Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.\",\"fileSearchStore\":
-        \"fileSearchStores/testfilesearchstream-df5lsen5e6i5\"}}]}}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
-        36,\"totalTokenCount\": 500,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\":
-        238,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 238}],\"thoughtsTokenCount\": 211},\"modelVersion\":
-        \"gemini-2.5-pro\",\"responseId\": \"RaYfafPuAc63qtsP-bOCyQw\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
-        [{\"text\": \"The capital of France\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        15,\"candidatesTokenCount\": 40,\"totalTokenCount\": 792,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        15}],\"toolUsePromptTokenCount\": 526,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 526}],\"thoughtsTokenCount\":
-        211},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"RaYfafPuAc63qtsP-bOCyQw\"}\r\n\r\ndata: {\"candidates\":
-        [{\"content\": {\"parts\": [{\"text\": \" is Paris. A famous landmark in Paris is the Eiffel\"}],\"role\": \"model\"},\"index\":
-        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 51,\"totalTokenCount\": 803,\"promptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\": 526,\"toolUsePromptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 526}],\"thoughtsTokenCount\": 211},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"RaYfafPuAc63qtsP-bOCyQw\"}\r\n\r\ndata:
-        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Tower.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\":
-        0,\"groundingMetadata\": {\"groundingChunks\": [{\"retrievedContext\": {\"text\": \"Paris is the capital of France.
-        The Eiffel Tower is a famous landmark in Paris.\",\"fileSearchStore\": \"fileSearchStores/testfilesearchstream-df5lsen5e6i5\"}}],\"groundingSupports\":
-        [{\"segment\": {\"endIndex\": 31,\"text\": \"The capital of France is Paris.\"},\"groundingChunkIndices\": [1]},{\"segment\":
-        {\"startIndex\": 32,\"endIndex\": 79,\"text\": \"A famous landmark in Paris is the Eiffel Tower.\"},\"groundingChunkIndices\":
-        [1]}]}}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 53,\"totalTokenCount\": 805,\"promptTokensDetails\":
-        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\": 526,\"toolUsePromptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 526}],\"thoughtsTokenCount\": 211},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"RaYfafPuAc63qtsP-bOCyQw\"}\r\n\r\n"
+        \"print(file_search.query(query=\\\"Capital of France\\\"))\\n\"}}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 14,\"totalTokenCount\": 771,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 742},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The capital of France\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 18,\"totalTokenCount\": 1545,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\": 770,\"toolUsePromptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 770}],\"thoughtsTokenCount\": 742},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" is Paris. The city is well-known for its\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 29,\"totalTokenCount\":
+        1556,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\": 770,\"toolUsePromptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 770}],\"thoughtsTokenCount\": 742},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\":
+        \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" famous landmarks,
+        including the Eiffel Tower.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\":
+        {\"groundingChunks\": [{\"retrievedContext\": {\"text\": \"Paris is the capital of France. The Eiffel Tower is a famous
+        landmark in Paris.\",\"fileSearchStore\": \"fileSearchStores/testfilesearchstream-lsy34id7fwk0\"}}],\"groundingSupports\":
+        [{\"segment\": {\"endIndex\": 30,\"text\": \"The capital of France is Paris\"},\"groundingChunkIndices\": [0]},{\"segment\":
+        {\"startIndex\": 32,\"endIndex\": 107,\"text\": \"The city is well-known for its famous landmarks, including the Eiffel
+        Tower\"},\"groundingChunkIndices\": [0]}]}}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        37,\"totalTokenCount\": 1564,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\":
+        770,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 770}],\"thoughtsTokenCount\": 742},\"modelVersion\":
+        \"gemini-2.5-pro\",\"responseId\": \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -186,7 +180,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=2325
+      - gfet4t7; dur=6577
       transfer-encoding:
       - chunked
       vary:
@@ -210,7 +204,7 @@ interactions:
       host:
       - generativelanguage.googleapis.com
     method: DELETE
-    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchstream-df5lsen5e6i5?force=True
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0?force=True
   response:
     headers:
       alt-svc:
@@ -220,7 +214,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=475
+      - gfet4t7; dur=464
       transfer-encoding:
       - chunked
       vary:

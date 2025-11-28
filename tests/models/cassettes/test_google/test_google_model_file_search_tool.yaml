@@ -26,7 +26,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=373
+      - gfet4t7; dur=361
       transfer-encoding:
       - chunked
       vary:
@@ -34,10 +34,10 @@ interactions:
       - X-Origin
       - Referer
     parsed_body:
-      createTime: '2025-11-20T23:37:08.933211Z'
+      createTime: '2025-11-28T21:53:11.611594Z'
       displayName: test-file-search-store
-      name: fileSearchStores/testfilesearchstore-s6zmrh92ulpr
-      updateTime: '2025-11-20T23:37:08.933211Z'
+      name: fileSearchStores/testfilesearchstore-q7prdj5dqu8p
+      updateTime: '2025-11-28T21:53:11.611594Z'
     status:
       code: 200
       message: OK
@@ -58,7 +58,7 @@ interactions:
     method: POST
     parsed_body:
       mimeType: text/plain
-    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-s6zmrh92ulpr:uploadToFileSearchStore
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-q7prdj5dqu8p:uploadToFileSearchStore
   response:
     body:
       string: ''
@@ -72,7 +72,7 @@ interactions:
       x-goog-upload-status:
       - active
       x-goog-upload-url:
-      - https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-s6zmrh92ulpr:uploadToFileSearchStore?upload_id=AOCedOHMyp8-WH0roPvEsby85i78ZlUxHR4ZVhKtN6xXYFFUkHedk2H5w7cIOz4M9p4LeWPKM46woeaM3jNrhq6vfgJmt4ds3RnrIiO5LEsa3g&upload_protocol=resumable
+      - https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-q7prdj5dqu8p:uploadToFileSearchStore?upload_id=AOCedOEcTC9E6s1HGZWpO4c_b-0aojnH3LMpWoIl9NIPTjYMhOOiufSiMBA47XnbHmgen-P9pR4Hc6KwVRz2jD2c5Anth0iF4OTB_7kNQtTtSEo&upload_protocol=resumable
     status:
       code: 200
       message: OK
@@ -90,7 +90,7 @@ interactions:
       host:
       - generativelanguage.googleapis.com
     method: POST
-    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-s6zmrh92ulpr:uploadToFileSearchStore?upload_id=AOCedOHMyp8-WH0roPvEsby85i78ZlUxHR4ZVhKtN6xXYFFUkHedk2H5w7cIOz4M9p4LeWPKM46woeaM3jNrhq6vfgJmt4ds3RnrIiO5LEsa3g&upload_protocol=resumable
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-q7prdj5dqu8p:uploadToFileSearchStore?upload_id=AOCedOEcTC9E6s1HGZWpO4c_b-0aojnH3LMpWoIl9NIPTjYMhOOiufSiMBA47XnbHmgen-P9pR4Hc6KwVRz2jD2c5Anth0iF4OTB_7kNQtTtSEo&upload_protocol=resumable
   response:
     headers:
       alt-svc:
@@ -106,12 +106,12 @@ interactions:
       x-goog-upload-status:
       - final
     parsed_body:
-      name: fileSearchStores/testfilesearchstore-s6zmrh92ulpr/upload/operations/k742l26km1p8-jjheny21pwon
+      name: fileSearchStores/testfilesearchstore-q7prdj5dqu8p/upload/operations/h5s6ca4doiqm-o6z67pznvx9f
       response:
         '@type': type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
-        documentName: fileSearchStores/testfilesearchstore-s6zmrh92ulpr/documents/k742l26km1p8-jjheny21pwon
+        documentName: fileSearchStores/testfilesearchstore-q7prdj5dqu8p/documents/h5s6ca4doiqm-o6z67pznvx9f
         mimeType: text/plain
-        parent: fileSearchStores/testfilesearchstore-s6zmrh92ulpr
+        parent: fileSearchStores/testfilesearchstore-q7prdj5dqu8p
         sizeBytes: '79'
     status:
       code: 200
@@ -146,18 +146,18 @@ interactions:
       tools:
       - fileSearch:
           file_search_store_names:
-          - fileSearchStores/testfilesearchstore-s6zmrh92ulpr
+          - fileSearchStores/testfilesearchstore-q7prdj5dqu8p
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2105'
+      - '1687'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=11428
+      - gfet4t7; dur=6222
       transfer-encoding:
       - chunked
       vary:
@@ -168,47 +168,41 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |-
-              The capital of France is Paris.
-
-              Paris is a major global center for art, fashion, gastronomy, and culture. A famous landmark in the city is the Eiffel Tower. The city is also known for its 19th-century cityscape, which is crisscrossed by wide boulevards and the River Seine.
+          - text: The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.
           role: model
         finishReason: STOP
         groundingMetadata:
           groundingChunks:
           - retrievedContext:
-              fileSearchStore: fileSearchStores/testfilesearchstore-s6zmrh92ulpr
-              text: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
-          - retrievedContext:
-              fileSearchStore: fileSearchStores/testfilesearchstore-s6zmrh92ulpr
+              fileSearchStore: fileSearchStores/testfilesearchstore-q7prdj5dqu8p
               text: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
           groundingSupports:
           - groundingChunkIndices:
-            - 1
+            - 0
             segment:
-              endIndex: 30
-              text: The capital of France is Paris
+              endIndex: 31
+              text: The capital of France is Paris.
           - groundingChunkIndices:
-            - 1
+            - 0
             segment:
-              endIndex: 156
-              startIndex: 107
-              text: A famous landmark in the city is the Eiffel Tower
+              endIndex: 103
+              startIndex: 32
+              text: Paris is also known for its famous landmarks, such as the Eiffel Tower.
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: NKYfaZHSO4udqtsP5YSmuAs
+      responseId: 0hkqacGsFZXjz7IPwIXNwA8
       usageMetadata:
-        candidatesTokenCount: 100
+        candidatesTokenCount: 40
         promptTokenCount: 15
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 15
-        thoughtsTokenCount: 879
-        toolUsePromptTokenCount: 1485
+        thoughtsTokenCount: 257
+        toolUsePromptTokenCount: 288
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 1485
-        totalTokenCount: 2479
+          tokenCount: 288
+        totalTokenCount: 600
     status:
       code: 200
       message: OK
@@ -221,7 +215,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '738'
+      - '565'
       content-type:
       - application/json
       host:
@@ -233,10 +227,7 @@ interactions:
         - text: What is the capital of France?
         role: user
       - parts:
-        - text: |-
-            The capital of France is Paris.
-
-            Paris is a major global center for art, fashion, gastronomy, and culture. A famous landmark in the city is the Eiffel Tower. The city is also known for its 19th-century cityscape, which is crisscrossed by wide boulevards and the River Seine.
+        - text: The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.
         role: model
       - parts:
         - text: Tell me about the Eiffel Tower.
@@ -251,18 +242,18 @@ interactions:
       tools:
       - fileSearch:
           file_search_store_names:
-          - fileSearchStores/testfilesearchstore-s6zmrh92ulpr
+          - fileSearchStores/testfilesearchstore-q7prdj5dqu8p
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2782'
+      - '2685'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=8799
+      - gfet4t7; dur=16011
       transfer-encoding:
       - chunked
       vary:
@@ -274,43 +265,44 @@ interactions:
       - content:
           parts:
           - text: |-
-              The Eiffel Tower is a famous landmark located in Paris, the capital of France. It is one of the most recognizable structures in the world.
+              The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France. It is a wrought-iron lattice tower situated on the Champ de Mars.
 
               Here are some key facts about the Eiffel Tower:
-
-              *   **Construction:** It was designed by the engineer Gustave Eiffel, and his company built it between 1887 and 1889. It was created as the entrance arch for the 1889 Exposition Universelle (World's Fair), which celebrated the 100th anniversary of the French Revolution.
-              *   **Design and Material:** The tower is made of wrought iron and is a masterpiece of structural engineering. Its open-lattice design was innovative for its time and was chosen for its wind resistance and stability.
-              *   **Height:** The Eiffel Tower stands at a height of 330 meters (1,083 feet), including its antennas. For about 41 years, it held the title of the tallest man-made structure in the world until the Chrysler Building in New York City was completed in 1930.
-              *   **Visiting:** The tower has three levels for visitors. The first two levels can be reached by stairs or elevators and feature restaurants and shops. The top level, accessible only by elevator, offers panoramic views of Paris.
-              *   **Cultural Impact:** Initially criticized by some of France's leading artists and intellectuals for its design, the Eiffel Tower has since become a global cultural icon of France and a symbol of Paris itself. It is one of the most visited paid monuments in the world.
+              *   **Creator:** The tower was designed and built by the company of French civil engineer Gustave Eiffel, and it is named after him.
+              *   **Construction:** It was constructed from 1887 to 1889 to serve as the entrance arch for the 1889 World's Fair.
+              *   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
+              *   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.
           role: model
         finishReason: STOP
         groundingMetadata:
           groundingChunks:
           - retrievedContext:
-              fileSearchStore: fileSearchStores/testfilesearchstore-s6zmrh92ulpr
+              fileSearchStore: fileSearchStores/testfilesearchstore-q7prdj5dqu8p
+              text: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+          - retrievedContext:
+              fileSearchStore: fileSearchStores/testfilesearchstore-q7prdj5dqu8p
               text: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
           groundingSupports:
           - groundingChunkIndices:
-            - 0
+            - 1
             segment:
-              endIndex: 78
-              text: The Eiffel Tower is a famous landmark located in Paris, the capital of France.
+              endIndex: 85
+              text: The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: PqYfadjYC8eHqtsPicvToAs
+      responseId: 4xkqadHBDZ7nz7IP0q3F2Qk
       usageMetadata:
-        candidatesTokenCount: 339
-        promptTokenCount: 88
+        candidatesTokenCount: 293
+        promptTokenCount: 46
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 88
-        thoughtsTokenCount: 167
-        toolUsePromptTokenCount: 270
+          tokenCount: 46
+        thoughtsTokenCount: 980
+        toolUsePromptTokenCount: 1436
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 270
-        totalTokenCount: 864
+          tokenCount: 1436
+        totalTokenCount: 2755
     status:
       code: 200
       message: OK
@@ -328,7 +320,7 @@ interactions:
       host:
       - generativelanguage.googleapis.com
     method: DELETE
-    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchstore-s6zmrh92ulpr?force=True
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchstore-q7prdj5dqu8p?force=True
   response:
     headers:
       alt-svc:
@@ -338,7 +330,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=528
+      - gfet4t7; dur=407
       transfer-encoding:
       - chunked
       vary:
