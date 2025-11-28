@@ -21,13 +21,6 @@ RUN --mount=type=cache,target=/var/cache/apt \
   && apt-get clean -y \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Ollama CLI
-# The official install script usually detects the architecture (ARM64 vs AMD64) automatically.
-# We remove all GPU drivers to keep the image slim. Inference is run on the host instance.
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-RUN curl -fsSL https://ollama.com/install.sh | sh \
-  && rm -rf /usr/local/lib/ollama
-
 # The vscode user already exists in the base image with UID 1000.
 USER vscode
 

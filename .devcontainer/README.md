@@ -1,14 +1,14 @@
 ## Requirements
 
-Please ensure that both [Docker](https://docs.docker.com/desktop/) and [Ollama](https://ollama.com/download) are installed and running on the host machine. To configure your IDE, mount your own `.vscode/` or `.cursor/` folders by uncommenting the `mounts` section in `devcontainer.json`.
+Please ensure that both [Docker](https://docs.docker.com/desktop/) and optionally [Ollama](https://ollama.com/download) are installed and running on the host machine. To configure your IDE, mount your own `.vscode/` or `.cursor/` folders by uncommenting the `mounts` section in `devcontainer.json`.
 
 ## Overview
 
 The dev container is built using a hybrid approach: the `Dockerfile` provides low-level customization, while `devcontainer.json` is used for fine-tuning and IDE integration. Minor changes to `devcontainer.json` do not require a full rebuild of the entire image, which speeds up the development workflow.
 
-1. The `Dockerfile` is based on Microsoft's Debian-style [Bookworm image for Python 3.11](https://hub.docker.com/r/microsoft/devcontainers-python). It uses a non-root user named `vscode` and installs system dependencies, `uv`, and the Ollama client. Note that the Ollama instance runs on the host machine for performance reasons.
+1. The `Dockerfile` is based on Microsoft's Debian-style [Bookworm image for Python 3.11](https://hub.docker.com/r/microsoft/devcontainers-python). It uses a non-root user named `vscode` and installs system dependencies and `uv`.
 
-2. The `devcontainer.json` is based on Microsoft's [dev container template](https://github.com/devcontainers/templates/tree/main/src/python) for Python 3. It installs additional development tools via `features`, sets important environment variables, and runs `uv sync`. The container does not enforce any specific IDE configuration; developers are encouraged to mount their own `.vscode/` or `.cursor/` folders externally.
+2. The `devcontainer.json` is based on Microsoft's [dev container template](https://github.com/devcontainers/templates/tree/main/src/python) for Python 3. It installs additional development tools via `features`, sets important environment variables, and runs `uv sync`. The container does not enforce any specific IDE configuration; developers are encouraged to mount their own `.vscode/` or `.cursor/` folders externally. Note that the Ollama instance runs on the host machine for performance reasons.
 
 ## Building and testing the container locally
 
