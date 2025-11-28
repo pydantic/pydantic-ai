@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic
 
+import anyio
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import assert_never
@@ -35,6 +36,8 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
+    default_timeout: float | None = None
+    """Default timeout in seconds for tool execution. None means no timeout."""
 
     @classmethod
     @contextmanager
@@ -62,6 +65,7 @@ class ToolManager(Generic[AgentDepsT]):
             toolset=self.toolset,
             ctx=ctx,
             tools=await self.toolset.get_tools(ctx),
+            default_timeout=self.default_timeout,
         )
 
     @property
@@ -172,7 +176,23 @@ class ToolManager(Generic[AgentDepsT]):
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
 
-            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+            # Determine effective timeout: per-tool timeout takes precedence over default
+            effective_timeout = tool.timeout if tool.timeout is not None else self.default_timeout
+
+            if effective_timeout is not None:
+                try:
+                    with anyio.fail_after(effective_timeout):
+                        result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+                except TimeoutError:
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=f"Tool '{name}' timed out after {effective_timeout} seconds. Please try a different approach.",
+                        tool_call_id=call.tool_call_id,
+                    )
+                    self.failed_tools.add(name)
+                    raise ToolRetryError(m) from None
+            else:
+                result = await self.toolset.call_tool(name, args_dict, ctx, tool)
 
             return result
         except (ValidationError, ModelRetry) as e:

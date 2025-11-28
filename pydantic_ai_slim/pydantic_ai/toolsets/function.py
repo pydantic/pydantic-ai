@@ -119,6 +119,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -137,6 +138,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -193,6 +195,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout). Overrides the agent-level `tool_timeout` if set.
         """
 
         def tool_decorator(
@@ -213,6 +217,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                timeout=timeout,
             )
             return func_
 
@@ -233,6 +238,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -267,6 +273,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout). Overrides the agent-level `tool_timeout` if set.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -295,6 +303,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            timeout=timeout,
         )
         self.add_tool(tool)
 
@@ -340,6 +349,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
+                timeout=tool_def.timeout,
             )
         return tools
 

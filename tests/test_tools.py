@@ -150,6 +150,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -184,6 +185,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -226,6 +228,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -268,6 +271,7 @@ def test_google_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -308,6 +312,7 @@ def test_sphinx_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -354,6 +359,7 @@ def test_numpy_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -388,6 +394,7 @@ def test_only_returns_type():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -413,6 +420,7 @@ def test_docstring_unknown():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -456,6 +464,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -492,6 +501,7 @@ def test_takes_just_model():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -537,6 +547,7 @@ def test_takes_model_and_int():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -902,6 +913,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -974,6 +986,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
             {
                 'description': None,
@@ -989,6 +1002,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
         ]
     )
@@ -1077,6 +1091,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
             {
                 'description': None,
@@ -1090,6 +1105,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
         ]
     )
@@ -1127,6 +1143,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -2452,3 +2469,194 @@ def test_retry_tool_until_last_attempt():
             ),
         ]
     )
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_triggers_retry():
+    """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        # First call: try the slow tool
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        # After receiving retry, return text
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
+
+    agent = Agent(FunctionModel(model_logic), tool_timeout=0.1)
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, but timeout is 0.1s
+        return 'done'
+
+    result = await agent.run('call slow_tool')
+
+    # Check that retry prompt was sent to the model
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'timed out after 0.1 seconds' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'slow_tool'
+
+
+@pytest.mark.anyio
+async def test_per_tool_timeout_overrides_global():
+    """Test that per-tool timeout takes precedence over agent-level timeout."""
+    import asyncio
+
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: ask to run the slow tool
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='slow_but_allowed_tool', args={}, tool_call_id='call-1')]
+            )
+        # Second call: we should see the successful tool return (not a retry)
+        # Check if last message has a successful tool return
+        last_request = messages[-1]
+        if hasattr(last_request, 'parts'):
+            for part in getattr(last_request, 'parts', []):
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(content=f'Tool returned: {part.content}')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_logic), tool_timeout=0.05)  # 50ms global timeout
+
+    @agent.tool_plain(timeout=5.0)  # 5s per-tool timeout
+    async def slow_but_allowed_tool() -> str:
+        await asyncio.sleep(0.2)  # 200ms - would timeout with global, but OK with per-tool
+        return 'completed successfully'
+
+    result = await agent.run('call slow_but_allowed_tool')
+
+    # Should NOT have any retry prompts since per-tool timeout is 5s
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 0
+    assert 'completed successfully' in result.output
+
+
+@pytest.mark.anyio
+async def test_no_timeout_by_default():
+    """Test that tools run without timeout by default (backward compatible)."""
+    import asyncio
+
+    agent = Agent(TestModel())  # No tool_timeout specified
+
+    @agent.tool_plain
+    async def normal_tool() -> str:
+        await asyncio.sleep(0.1)
+        return 'completed'
+
+    result = await agent.run('call normal_tool')
+
+    # Should complete normally without timeout
+    assert 'completed' in result.output
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_retry_counts_as_failed():
+    """Test that timeout counts toward tool retry limit."""
+    import asyncio
+
+    agent = Agent(TestModel(), tool_timeout=0.05, retries=2)
+
+    call_count = 0
+
+    @agent.tool_plain
+    async def flaky_tool() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            await asyncio.sleep(1.0)  # Will timeout
+        return 'finally done'
+
+    await agent.run('call flaky_tool')
+
+    # Tool should have been called 3 times (initial + 2 retries)
+    assert call_count == 3
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_message_format():
+    """Test the format of the retry prompt message on timeout."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_logic), tool_timeout=0.1)
+
+    @agent.tool_plain
+    async def my_slow_tool() -> str:
+        await asyncio.sleep(1.0)
+        return 'done'
+
+    result = await agent.run('call my_slow_tool')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    # Check message contains tool name and timeout value
+    assert 'my_slow_tool' in retry_parts[0].content
+    assert '0.1' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'my_slow_tool'
+
+
+def test_tool_timeout_definition():
+    """Test that timeout is properly set on ToolDefinition."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain(timeout=30.0)
+    def tool_with_timeout() -> str:
+        return 'done'
+
+    # Get tool definition through the toolset
+    tool = agent._function_toolset.tools['tool_with_timeout']
+    assert tool.timeout == 30.0
+    assert tool.tool_def.timeout == 30.0
+
+
+def test_tool_timeout_default_none():
+    """Test that timeout defaults to None when not specified."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def tool_without_timeout() -> str:
+        return 'done'
+
+    tool = agent._function_toolset.tools['tool_without_timeout']
+    assert tool.timeout is None
+    assert tool.tool_def.timeout is None
