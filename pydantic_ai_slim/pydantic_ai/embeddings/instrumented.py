@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai.models.instrumented import ANY_ADAPTER, InstrumentationSettings
+from pydantic_ai.models.instrumented import ANY_ADAPTER, CostCalculationFailedWarning, InstrumentationSettings
 
 from .base import EmbeddingModel, EmbedInputType
+from .result import EmbeddingResult
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
 
@@ -50,19 +52,9 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         super().__init__(wrapped)
         self.instrumentation_settings = options or InstrumentationSettings()
 
-    @overload
-    async def embed(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]: ...
-
-    @overload
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]: ...
-
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         with self._instrument(documents, input_type, settings) as finish:
             result = await self.wrapped.embed(documents, input_type=input_type, settings=settings)
             finish(result)
@@ -74,7 +66,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         documents: str | Sequence[str],
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None,
-    ) -> Iterator[Callable[[list[float] | list[list[float]]], None]]:
+    ) -> Iterator[Callable[[EmbeddingResult], None]]:
         operation = 'embed'
         span_name = f'{operation} {self.model_name}'
 
@@ -111,31 +103,46 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         try:
             with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
-                def finish(result: list[float] | list[list[float]]):
+                def finish(result: EmbeddingResult):
                     if not span.is_recording():
                         return
 
-                    # Calculate output dimension
-                    if isinstance(result, list) and result:
-                        if isinstance(result[0], list):
-                            # Multiple embeddings
-                            output_dim = len(result[0]) if result[0] else 0
-                            num_outputs = len(result)
-                        else:
-                            # Single embedding
-                            output_dim = len(result)
-                            num_outputs = 1
-                    else:
-                        output_dim = 0
-                        num_outputs = 0
-
-                    attributes_to_set = {
-                        'gen_ai.embedding.dimension': output_dim,
-                        'gen_ai.embedding.num_outputs': num_outputs,
+                    attributes_to_set: dict[str, AttributeValue] = {
+                        **result.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': result.model_name or self.model_name,
                     }
+
+                    try:
+                        price_calculation = result.cost()
+                    except LookupError:
+                        # The cost of this provider/model is unknown, which is common.
+                        pass
+                    except Exception as e:
+                        warnings.warn(
+                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
+                        )
+                    else:
+                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
+
+                    # Calculate output dimension
+                    embeddings = result.embeddings
+                    if embeddings:
+                        output_dim = len(embeddings[0]) if embeddings[0] else 0
+                        num_outputs = len(embeddings)
+
+                        attributes_to_set.update(
+                            {
+                                'gen_ai.embedding.dimension': output_dim,
+                                'gen_ai.embedding.num_outputs': num_outputs,
+                            }
+                        )
+
+                    if result.provider_response_id is not None:
+                        attributes_to_set['gen_ai.response.id'] = result.provider_response_id
+
                     span.set_attributes(attributes_to_set)
 
-                    # TODO (DouweM): Include cost as metric etc, just like on InstrumentedModel
+                    # TODO (DouweM): Record cost metric
 
                 yield finish
         finally:

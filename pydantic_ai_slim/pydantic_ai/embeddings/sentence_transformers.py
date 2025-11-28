@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, cast, overload
+from typing import Any, cast
 
 import pydantic_ai._utils as _utils
-from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
-from pydantic_ai.embeddings.settings import EmbeddingSettings
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+from .base import EmbeddingModel, EmbedInputType
+from .result import EmbeddingResult
+from .settings import EmbeddingSettings
 
 try:
     import numpy as np
@@ -73,26 +75,18 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         """The embedding model provider/system identifier."""
         return 'sentence-transformers'
 
-    @overload
-    async def embed(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]: ...
-
-    @overload
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]: ...
-
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> list[float] | list[list[float]]:
-        docs, is_single_document, settings = self.prepare_embed(documents, settings)
-        embeddings = await self._embed(docs, input_type, cast(SentenceTransformersEmbeddingSettings, settings))
-        return embeddings[0] if is_single_document else embeddings
+        docs, settings = self.prepare_embed(documents, settings)
+        return await self._embed(docs, input_type, cast(SentenceTransformersEmbeddingSettings, settings))
 
     async def _embed(
-        self, documents: Sequence[str], input_type: EmbedInputType, settings: SentenceTransformersEmbeddingSettings
-    ) -> list[list[float]]:
+        self,
+        documents: str | Sequence[str],
+        input_type: EmbedInputType,
+        settings: SentenceTransformersEmbeddingSettings,
+    ) -> EmbeddingResult:
         device = settings.get('sentence_transformers_device', None)
         normalize = settings.get('sentence_transformers_normalize_embeddings', False)
         batch_size = settings.get('sentence_transformers_batch_size', None)
@@ -111,7 +105,15 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             normalize_embeddings=normalize,
             **{'batch_size': batch_size} if batch_size is not None else {},  # type: ignore[reportArgumentType]
         )
-        return np_embeddings.tolist()  # type: ignore[reportUnknownReturnType]
+        embeddings = np_embeddings.tolist()  # type: ignore[reportAttributeAccessIssue]
+
+        return EmbeddingResult(
+            embeddings=embeddings,  # type: ignore[reportUnknownArgumentType]
+            inputs=documents,
+            input_type=input_type,
+            model_name=self.model_name,
+            provider_name=self.system,
+        )
 
     async def max_input_tokens(self) -> int | None:
         model = await self._get_model()

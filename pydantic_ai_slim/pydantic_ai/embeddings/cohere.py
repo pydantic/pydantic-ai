@@ -1,15 +1,20 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast
 
-from pydantic_ai.embeddings.base import EmbeddingModel, EmbedInputType
-from pydantic_ai.embeddings.settings import EmbeddingSettings
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.providers import infer_provider
+from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.usage import RequestUsage
+
+from .base import EmbeddingModel, EmbedInputType
+from .result import EmbeddingResult
+from .settings import EmbeddingSettings
 
 try:
+    from cohere import AsyncClientV2
     from cohere.core.request_options import RequestOptions
-    from cohere.v2.client import EmbedInputType as CohereEmbedInputType
+    from cohere.types.embed_by_type_response import EmbedByTypeResponse
+    from cohere.types.embed_input_type import EmbedInputType as CohereEmbedInputType
     from cohere.v2.types.v2embed_request_truncate import V2EmbedRequestTruncate
 
     from pydantic_ai.providers.cohere import CohereProvider
@@ -73,7 +78,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         self,
         model_name: CohereEmbeddingModelName,
         *,
-        provider: Literal['cohere'] | CohereProvider = 'cohere',
+        provider: Literal['cohere'] | Provider[AsyncClientV2] | CohereProvider = 'cohere',
         settings: EmbeddingSettings | None = None,
     ):
         """Initialize an Cohere model.
@@ -92,7 +97,7 @@ class CohereEmbeddingModel(EmbeddingModel):
             provider = infer_provider(provider)
         self._provider = provider
         self._client = provider.client
-        self._v1_client = provider.v1_client
+        self._v1_client = provider.v1_client if isinstance(provider, CohereProvider) else None
 
         super().__init__(settings=settings)
 
@@ -111,28 +116,15 @@ class CohereEmbeddingModel(EmbeddingModel):
         """The embedding model provider."""
         return self._provider.name
 
-    @overload
     async def embed(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]:
-        pass
-
-    @overload
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]:
-        pass
-
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
-        documents, is_single_document, settings = self.prepare_embed(documents, settings)
-        embeddings = await self._embed(documents, input_type, cast(CohereEmbeddingSettings, settings))
-        return embeddings[0] if is_single_document else embeddings
+        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> EmbeddingResult:
+        documents, settings = self.prepare_embed(documents, settings)
+        return await self._embed(documents, input_type, cast(CohereEmbeddingSettings, settings))
 
     async def _embed(
-        self, documents: Sequence[str], input_type: EmbedInputType, settings: CohereEmbeddingSettings
-    ) -> list[list[float]]:
+        self, documents: str | Sequence[str], input_type: EmbedInputType, settings: CohereEmbeddingSettings
+    ) -> EmbeddingResult:
         request_options = RequestOptions()
         if extra_headers := settings.get('extra_headers'):
             request_options['additional_headers'] = extra_headers
@@ -156,10 +148,18 @@ class CohereEmbeddingModel(EmbeddingModel):
         if embeddings is None:
             raise UnexpectedModelBehavior(
                 'The Cohere embeddings response did not have an `embeddings` field holding a list of floats',
-                str(response.data),
+                response,
             )
 
-        return embeddings
+        return EmbeddingResult(
+            embeddings=embeddings,
+            inputs=documents,
+            input_type=input_type,
+            usage=_map_usage(response),
+            model_name=self.model_name,
+            provider_name=self.system,
+            provider_response_id=response.id,
+        )
 
     async def max_input_tokens(self) -> int | None:
         return _MAX_INPUT_TOKENS.get(self.model_name)
@@ -173,3 +173,17 @@ class CohereEmbeddingModel(EmbeddingModel):
             offline=False,
         )
         return len(result.tokens)
+
+
+def _map_usage(response: EmbedByTypeResponse) -> RequestUsage:
+    u = response.meta
+    if u is None or u.billed_units is None:
+        return RequestUsage()
+    usage_data = u.billed_units.model_dump(exclude_none=True)
+    details = {k: int(v) for k, v in usage_data.items() if k != 'input_tokens' and isinstance(v, int | float) and v > 0}
+
+    # TODO (DouweM): Use RequestUsage.extract() once https://github.com/pydantic/genai-prices/blob/main/prices/providers/cohere.yml has been updated
+    return RequestUsage(
+        input_tokens=int(u.billed_units.input_tokens or 0),
+        details=details,
+    )

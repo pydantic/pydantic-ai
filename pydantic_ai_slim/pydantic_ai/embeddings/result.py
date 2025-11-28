@@ -36,6 +36,8 @@ class EmbeddingResult:
 
     provider_response_id: str | None = None
 
+    # TODO (DouweM): Support `result[idx: int]` and `result[document: str]`
+
     def cost(self) -> genai_types.PriceCalculation:
         """Calculate the cost of the usage.
 
