@@ -7466,7 +7466,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
 
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
         f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
         test_file_path = f.name
 
@@ -7623,7 +7623,10 @@ def test_map_file_search_tool_call():
             ),
             BuiltinToolReturnPart(
                 tool_name='file_search',
-                content={'status': 'completed', 'results': [{'id': 'result-1', 'title': 'Test Result', 'url': 'https://example.com', 'score': 0.9}]},
+                content={
+                    'status': 'completed',
+                    'results': [{'id': 'result-1', 'title': 'Test Result', 'url': 'https://example.com', 'score': 0.9}],
+                },
                 tool_call_id='test-id',
                 provider_name='openai',
             ),
@@ -7645,7 +7648,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
 
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
         f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
         test_file_path = f.name
 

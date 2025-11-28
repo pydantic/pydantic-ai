@@ -97,9 +97,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_FILE_SEARCH_QUERY_PATTERN = re.compile(
-    r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)'
-)
+_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
 
 
 LatestGoogleModelNames = Literal[

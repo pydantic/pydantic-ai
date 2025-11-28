@@ -4064,7 +4064,7 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
 async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
     client = google_provider.client
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
         f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
         test_file_path = f.name
 
@@ -4233,7 +4233,7 @@ Here are some key facts about the Eiffel Tower:
 async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
     client = google_provider.client
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
         f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
         test_file_path = f.name
 
@@ -4348,14 +4348,14 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartStartEvent(
                     index=1,
-                        part=BuiltinToolReturnPart(
-                            tool_name='file_search',
-                            content=[
-                                {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'file_search_store': 'fileSearchStores/testfilesearchstream-df5lsen5e6i5',
-                                }
-                            ],
+                    part=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content=[
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-df5lsen5e6i5',
+                            }
+                        ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -4396,14 +4396,14 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartStartEvent(
                     index=4,
-                        part=BuiltinToolReturnPart(
-                            tool_name='file_search',
-                            content=[
-                                {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'file_search_store': 'fileSearchStores/testfilesearchstream-df5lsen5e6i5',
-                                }
-                            ],
+                    part=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content=[
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-df5lsen5e6i5',
+                            }
+                        ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -4840,4 +4840,3 @@ def test_google_missing_tool_call_thought_signature():
             ],
         }
     )
-
