@@ -1215,6 +1215,57 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
     assert result.output == snapshot('The capital of England is London.')
 
 
+async def test_message_history_can_start_with_model_response(allow_model_requests: None, openai_api_key: str):
+    """Test that an agent run with message_history starting with ModelResponse is executed correctly."""
+
+    openai_model = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    message_history = [ModelResponse(parts=[TextPart('Where do you want to go today?')])]
+
+    agent = Agent(model=openai_model)
+
+    result = await agent.run('Answer in 5 words only. Who is Tux?', message_history=message_history)
+
+    assert result.output == snapshot('Linux mascot, a penguin character.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Where do you want to go today?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Answer in 5 words only. Who is Tux?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Linux mascot, a penguin character.')],
+                usage=RequestUsage(
+                    input_tokens=31,
+                    output_tokens=8,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
@@ -2207,6 +2258,40 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
             'bytes': [119, 111, 114, 108, 100],
             'top_logprobs': [],
         }
+    ]
+
+
+async def test_openai_instructions_with_responses_logprobs(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        'gpt-4o-mini',
+        provider=OpenAIProvider(api_key=openai_api_key),
+    )
+    agent = Agent(m, instructions='You are a helpful assistant.')
+    result = await agent.run(
+        'What is the capital of Minas Gerais?',
+        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
+    )
+    messages = result.all_messages()
+    response = cast(Any, messages[1])
+    text_part = response.parts[0]
+    assert hasattr(text_part, 'provider_details')
+    assert text_part.provider_details is not None
+    assert 'logprobs' in text_part.provider_details
+    assert text_part.provider_details['logprobs'] == [
+        {'token': 'The', 'logprob': -0.0, 'bytes': [84, 104, 101], 'top_logprobs': []},
+        {'token': ' capital', 'logprob': 0.0, 'bytes': [32, 99, 97, 112, 105, 116, 97, 108], 'top_logprobs': []},
+        {'token': ' of', 'logprob': 0.0, 'bytes': [32, 111, 102], 'top_logprobs': []},
+        {'token': ' Minas', 'logprob': -0.0, 'bytes': [32, 77, 105, 110, 97, 115], 'top_logprobs': []},
+        {'token': ' Gerais', 'logprob': -0.0, 'bytes': [32, 71, 101, 114, 97, 105, 115], 'top_logprobs': []},
+        {'token': ' is', 'logprob': -5.2e-05, 'bytes': [32, 105, 115], 'top_logprobs': []},
+        {'token': ' Belo', 'logprob': -4.3e-05, 'bytes': [32, 66, 101, 108, 111], 'top_logprobs': []},
+        {
+            'token': ' Horizonte',
+            'logprob': -2.0e-06,
+            'bytes': [32, 72, 111, 114, 105, 122, 111, 110, 116, 101],
+            'top_logprobs': [],
+        },
+        {'token': '.', 'logprob': -0.0, 'bytes': [46], 'top_logprobs': []},
     ]
 
 
