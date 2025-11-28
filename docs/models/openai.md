@@ -138,7 +138,7 @@ Web search, Code interpreter, Image generation, and File search are natively sup
 
 Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
 
-```python {title="computer_use_tool.py"}
+```python {title="computer_use_tool.py" test="skip"}
 from openai.types.responses import ComputerToolParam
 
 from pydantic_ai import Agent
