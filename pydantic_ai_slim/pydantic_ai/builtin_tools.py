@@ -6,13 +6,14 @@ from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 __all__ = (
     'AbstractBuiltinTool',
     'WebSearchTool',
     'WebSearchUserLocation',
     'CodeExecutionTool',
+    'WebFetchTool',
     'UrlContextTool',
     'ImageGenerationTool',
     'MemoryTool',
@@ -167,16 +168,76 @@ class CodeExecutionTool(AbstractBuiltinTool):
 
 
 @dataclass(kw_only=True)
-class UrlContextTool(AbstractBuiltinTool):
+class WebFetchTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
+
+    The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
 
     Supported by:
 
+    * Anthropic
     * Google
     """
 
-    kind: str = 'url_context'
+    max_uses: int | None = None
+    """If provided, the tool will stop fetching URLs after the given number of uses.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    allowed_domains: list[str] | None = None
+    """If provided, only these domains will be fetched.
+
+    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
+
+    Supported by:
+
+    * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
+    """
+
+    blocked_domains: list[str] | None = None
+    """If provided, these domains will never be fetched.
+
+    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
+
+    Supported by:
+
+    * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
+    """
+
+    enable_citations: bool = False
+    """If True, enables citations for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    max_content_tokens: int | None = None
+    """Maximum content length in tokens for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    kind: str = 'web_fetch'
     """The kind of tool."""
+
+
+@deprecated('Use `WebFetchTool` instead.')
+@dataclass(kw_only=True)
+class UrlContextTool(WebFetchTool):
+    """Deprecated alias for WebFetchTool. Use WebFetchTool instead.
+
+    Overrides kind to 'url_context' so old serialized payloads with {"kind": "url_context", ...}
+    can be deserialized to UrlContextTool for backward compatibility.
+    """
+
+    kind: str = 'url_context'
+    """The kind of tool (deprecated value for backward compatibility)."""
 
 
 @dataclass(kw_only=True)

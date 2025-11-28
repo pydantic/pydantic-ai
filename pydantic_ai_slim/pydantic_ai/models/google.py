@@ -14,7 +14,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, FileSearchTool, ImageGenerationTool, UrlContextTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, FileSearchTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -87,6 +87,7 @@ try:
         ToolDict,
         ToolListUnionDict,
         UrlContextDict,
+        UrlContextMetadata,
         VideoMetadataDict,
     )
 except ImportError as _import_error:
@@ -113,6 +114,7 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-pro-preview',
+    'gemini-3-pro-image-preview',
 ]
 """Latest Gemini models."""
 
@@ -354,7 +356,7 @@ class GoogleModel(Model):
             for tool in model_request_parameters.builtin_tools:
                 if isinstance(tool, WebSearchTool):
                     tools.append(ToolDict(google_search=GoogleSearchDict()))
-                elif isinstance(tool, UrlContextTool):
+                elif isinstance(tool, WebFetchTool):
                     tools.append(ToolDict(url_context=UrlContextDict()))
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
@@ -430,7 +432,7 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools = self._get_tools(model_request_parameters)
-        if tools and not self.profile.supports_tools:
+        if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
         response_mime_type = None
@@ -521,6 +523,7 @@ class GoogleModel(Model):
             vendor_id=vendor_id,
             vendor_details=vendor_details,
             finish_reason=finish_reason,
+            url_context_metadata=candidate.url_context_metadata,
         )
 
     async def _process_streamed_response(
@@ -568,13 +571,13 @@ class GoogleModel(Model):
                         )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            message_parts.append({'text': part.model_response()})  # pragma: no cover
+                            message_parts.append({'text': part.model_response()})
                         else:
                             message_parts.append(
                                 {
                                     'function_response': {
                                         'name': part.tool_name,
-                                        'response': {'call_error': part.model_response()},
+                                        'response': {'error': part.model_response()},
                                         'id': part.tool_call_id,
                                     }
                                 }
@@ -696,6 +699,15 @@ class GeminiStreamedResponse(StreamedResponse):
             #         vendor_part_id=uuid4(), part=web_search_return
             #     )
 
+            # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
+            # so we can safely yield it here
+            web_fetch_call, web_fetch_return = _map_url_context_metadata(
+                candidate.url_context_metadata, self.provider_name
+            )
+            if web_fetch_call and web_fetch_return:
+                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
+                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
+
             if candidate.content is None or candidate.content.parts is None:
                 if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
                     raise UnexpectedModelBehavior(
@@ -745,6 +757,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif part.inline_data is not None:
+                    if part.thought:  # pragma: no cover
+                        # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
+                        # > The model generates up to two interim images to test composition and logic. The last image within Thinking is also the final rendered image.
+                        # We currently don't expose these image thoughts as they can't be represented with `ThinkingPart`
+                        continue
                     data = part.inline_data.data
                     mime_type = part.inline_data.mime_type
                     assert data and mime_type, 'Inline data must have data and mime type'
@@ -926,11 +943,9 @@ def _process_response_from_parts(
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
+    url_context_metadata: UrlContextMetadata | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
-
-    # We don't currently turn `candidate.url_context_metadata` into BuiltinToolCallPart and BuiltinToolReturnPart for UrlContextTool.
-    # Please file an issue if you need this.
 
     web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
     if web_search_call and web_search_return:
@@ -941,6 +956,10 @@ def _process_response_from_parts(
     if file_search_call and file_search_return:
         items.append(file_search_call)
         items.append(file_search_return)
+    web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
+    if web_fetch_call and web_fetch_return:
+        items.append(web_fetch_call)
+        items.append(web_fetch_return)
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
@@ -1160,3 +1179,28 @@ def _extract_file_search_query(code: str) -> str | None:
         query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
         return query
     return None
+
+
+def _map_url_context_metadata(
+    url_context_metadata: UrlContextMetadata | None, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    if url_context_metadata and (url_metadata := url_context_metadata.url_metadata):
+        tool_call_id = _utils.generate_tool_call_id()
+        # Extract URLs from the metadata
+        urls = [meta.retrieved_url for meta in url_metadata if meta.retrieved_url]
+        return (
+            BuiltinToolCallPart(
+                provider_name=provider_name,
+                tool_name=WebFetchTool.kind,
+                tool_call_id=tool_call_id,
+                args={'urls': urls} if urls else None,
+            ),
+            BuiltinToolReturnPart(
+                provider_name=provider_name,
+                tool_name=WebFetchTool.kind,
+                tool_call_id=tool_call_id,
+                content=[meta.model_dump(mode='json') for meta in url_metadata],
+            ),
+        )
+    else:
+        return None, None

@@ -7802,3 +7802,18 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         os.unlink(test_file_path)
         await _cleanup_openai_resources(file, vector_store, async_client)
 
+
+async def test_openai_responses_runs_with_instructions_only(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='Generate a short article about artificial intelligence in 3 sentences.')
+
+    # Run with only instructions, no explicit input messages
+    result = await agent.run()
+
+    # Verify we got a valid response
+    assert result.output
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0
