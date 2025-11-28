@@ -115,7 +115,7 @@ def tmp_path_cwd(tmp_path: Path):
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
 )
 @pytest.mark.parametrize('example', find_filter_examples())
-def test_docs_examples(  # noqa: C901
+def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -214,10 +214,6 @@ def test_docs_examples(  # noqa: C901
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
     # and https://github.com/pydantic/pytest-examples/issues/46
     if 'import DatabaseConn' in example.source:
-        ruff_ignore.append('I001')
-    # `from pydantic_ai import` and `from pydantic_ai.models.* import` wrongly sorted in imports
-    # Same pytest-examples issue as DatabaseConn above
-    if 'from pydantic_ai import' in example.source and 'from pydantic_ai.models.' in example.source:
         ruff_ignore.append('I001')
 
     if noqa:
