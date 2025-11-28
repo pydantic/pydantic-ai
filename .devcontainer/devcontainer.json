@@ -55,7 +55,7 @@
       "onAutoForward": "silent"
     }
   },
-  // Use 'containerEnv' to set environment variables in the container.
+  // Use 'containerEnv' to set environment variables in the container. Visible system-wide. For example when `docker exec` is used.
   // Connect to Ollama instance running on host machine
   "containerEnv": {
     "OLLAMA_HOST": "http://host.docker.internal:11434", // Ollama CLI is installed in the container via Dockerfile. But we use the host's Ollama instance.
@@ -65,8 +65,11 @@
     "CMAKE_ARGS": "-DGGML_NATIVE=OFF", // Switch off native architecture optimization! Building llama-cpp-python on Apple Silicon fails otherwise.
     "UV_FROZEN": "1",
     "UV_LINK_MODE": "copy",
-    "UV_COMPILE_BYTECODE": "1"
+    "UV_COMPILE_BYTECODE": "1", // uv will compile .py files to .pyc files. Speeds up startup time.
+    "PYTHONUNBUFFERED": "1" // Ensure stdout and stderr are unbuffered.
   },
+  // Use 'remoteEnv' to set environment variables for the remote workspace. Visible to VS Code background process only.
+  "remoteEnv": {},
   // Use 'postCreateCommand' to run commands after the container is created.
   "postCreateCommand": [
     "bash",

@@ -31,4 +31,4 @@ RUN curl -fsSL https://ollama.com/install.sh | sh \
 # The vscode user already exists in the base image with UID 1000.
 USER vscode
 
-WORKDIR /workspace
+WORKDIR /workspaces/pydantic-ai
