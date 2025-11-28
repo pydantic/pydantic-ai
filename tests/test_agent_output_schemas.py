@@ -96,6 +96,15 @@ async def test_tool_output_json_schema():
         }
     )
 
+    # multiple duplicate output types
+    agent = Agent(
+        'test',
+        output_type=[ToolOutput(bool), ToolOutput(bool), ToolOutput(bool)],
+    )
+    assert agent.output_json_schema() == snapshot(
+        {'anyOf': [{'type': 'boolean'}, {'type': 'boolean'}, {'type': 'boolean'}]}
+    )
+
 
 async def test_native_output_json_schema():
     agent = Agent(
