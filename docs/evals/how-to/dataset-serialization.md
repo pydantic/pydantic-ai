@@ -255,7 +255,7 @@ from pydantic_evals import Dataset
 schema = Dataset[str, str, Any].model_json_schema_with_evaluators()
 
 # Save manually
-with open('custom_schema.json', 'w') as f:
+with open('custom_schema.json', 'w', encoding='utf-8') as f:
     json.dump(schema, f, indent=2)
 ```
 

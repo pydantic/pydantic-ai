@@ -65,6 +65,7 @@ try:
         ChatCompletionContentPartTextParam,
         chat_completion,
         chat_completion_chunk,
+        chat_completion_token_logprob,
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
@@ -169,7 +170,11 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
     openai_logprobs: bool
-    """Include log probabilities in the response."""
+    """Include log probabilities in the response.
+
+    For Chat models, these will be included in `ModelResponse.provider_details['logprobs']`.
+    For Responses models, these will be included in the response output parts `TextPart.provider_details['logprobs']`.
+    """
 
     openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
@@ -660,7 +665,7 @@ class OpenAIChatModel(Model):
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
-        model_name = first_chunk.model or self._model_name
+        model_name = first_chunk.model or self.model_name
 
         return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
@@ -681,7 +686,7 @@ class OpenAIChatModel(Model):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
+        return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -1157,7 +1162,10 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        items.append(TextPart(content.text, id=item.id))
+                        part_provider_details: dict[str, Any] | None = None
+                        if content.logprobs:
+                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                        items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
@@ -1216,7 +1224,7 @@ class OpenAIResponsesModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1264,7 +1272,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(
+    async def _responses_create(  # noqa: C901
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
@@ -1323,13 +1331,27 @@ class OpenAIResponsesModel(Model):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')
+        if model_settings.get('openai_logprobs'):
+            include.append('message.output_text.logprobs')
+
+        # When there are no input messages and we're not reusing a previous response,
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions.
+        # To avoid this provide an explicit empty user message.
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
-                model=self._model_name,
+                model=self.model_name,
                 instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
                 tools=tools or OMIT,
@@ -1342,6 +1364,7 @@ class OpenAIResponsesModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', OMIT),
                 previous_response_id=previous_response_id or OMIT,
+                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', OMIT),
                 text=text or OMIT,
@@ -1569,7 +1592,7 @@ class OpenAIResponsesModel(Model):
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system and send_item_ids:
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
@@ -1639,7 +1662,7 @@ class OpenAIResponsesModel(Model):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item.provider_name == self.system and send_item_ids:
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
@@ -1931,7 +1954,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         return _map_provider_details(chunk.choices[0])
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
@@ -2253,7 +2276,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -2269,6 +2292,24 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+# Convert logprobs to a serializable format
+def _map_logprobs(
+    logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
+    | list[responses.response_output_text.Logprob],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            'token': lp.token,
+            'bytes': lp.bytes,
+            'logprob': lp.logprob,
+            'top_logprobs': [
+                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+            ],
+        }
+        for lp in logprobs
+    ]
 
 
 def _map_usage(
@@ -2319,19 +2360,7 @@ def _map_provider_details(
 
     # Add logprobs to vendor_details if available
     if choice.logprobs is not None and choice.logprobs.content:
-        # Convert logprobs to a serializable format
-        provider_details['logprobs'] = [
-            {
-                'token': lp.token,
-                'bytes': lp.bytes,
-                'logprob': lp.logprob,
-                'top_logprobs': [
-                    {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                ],
-            }
-            for lp in choice.logprobs.content
-        ]
-
+        provider_details['logprobs'] = _map_logprobs(choice.logprobs.content)
     if raw_finish_reason := choice.finish_reason:
         provider_details['finish_reason'] = raw_finish_reason
 
