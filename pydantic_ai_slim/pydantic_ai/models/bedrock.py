@@ -9,7 +9,6 @@ from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
-import anyio
 import anyio.to_thread
 from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
@@ -104,6 +103,7 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
     'anthropic.claude-opus-4-20250514-v1:0',
     'us.anthropic.claude-opus-4-20250514-v1:0',
+    'global.anthropic.claude-opus-4-5-20251101-v1:0',
     'anthropic.claude-sonnet-4-20250514-v1:0',
     'us.anthropic.claude-sonnet-4-20250514-v1:0',
     'eu.anthropic.claude-sonnet-4-20250514-v1:0',
@@ -155,7 +155,7 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'tool_use': 'tool_call',
 }
 
-_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.')
+_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.')
 """Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
 
 Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
