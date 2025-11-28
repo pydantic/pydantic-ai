@@ -301,7 +301,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                 for part in msg.parts:
                     if isinstance(part, BuiltinToolReturnPart):
-                        # Skip builtin tool returns - they're handled by the tool call logic
                         continue
                     elif isinstance(part, TextPart):
                         # Combine consecutive text parts by checking the last UI part
@@ -337,9 +336,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             prefixed_id = (
                                 f'{BUILTIN_TOOL_CALL_ID_PREFIX}|{part.provider_name or ""}|{part.tool_call_id}'
                             )
-                            builtin_return = local_builtin_returns.get(part.tool_call_id)
 
-                            if builtin_return:
+                            if builtin_return := local_builtin_returns.get(part.tool_call_id):
                                 content = builtin_return.model_response_str()
                                 call_provider_metadata = (
                                     {'pydantic_ai': {'provider_name': part.provider_name}}
@@ -371,7 +369,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             tool_return = tool_returns.get(part.tool_call_id)
                             tool_error = tool_errors.get(part.tool_call_id)
 
-                            if tool_return and isinstance(tool_return, ToolReturnPart):
+                            if isinstance(tool_return, ToolReturnPart):
                                 content = tool_return.model_response_str()
                                 ui_parts.append(
                                     DynamicToolOutputAvailablePart(
