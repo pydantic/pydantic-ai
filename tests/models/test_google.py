@@ -4307,6 +4307,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -4318,6 +4319,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     assert old_google_response == snapshot(
         {
@@ -4342,6 +4344,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -4352,6 +4355,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     assert old_google_response == snapshot(
         {
@@ -4376,6 +4380,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -4386,6 +4391,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     assert old_google_response == snapshot(
         {
@@ -4412,6 +4418,7 @@ def test_google_missing_tool_call_thought_signature():
             provider_name='openai',
         ),
         'google-gla',
+        True,
     )
     assert google_response == snapshot(
         {
@@ -4423,5 +4430,24 @@ def test_google_missing_tool_call_thought_signature():
                 },
                 {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
             ],
+        }
+    )
+
+
+def test_google_mapping_when_does_not_support_tools():
+    google_response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='tool', args={}, tool_call_id='tool_call_id'),
+            ],
+            provider_name='openai',
+        ),
+        'google-gla',
+        False,
+    )
+    assert google_response == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'text': 'Tool tool called with args {}'}],
         }
     )
