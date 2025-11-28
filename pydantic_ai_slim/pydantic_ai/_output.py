@@ -418,7 +418,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             json_schemas.append(json_schema)
         if self.allows_image:
             json_schema = TypeAdapter(_messages.BinaryImage).json_schema()
-            json_schema = {k:v for k,v in json_schema['properties'].items() if k in ['data', 'media_type']}
+            json_schema = {k: v for k, v in json_schema['properties'].items() if k in ['data', 'media_type']}
             json_schemas.append(json_schema)
 
         if len(json_schemas) == 1:
@@ -795,29 +795,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
 
-        json_schema = UnionOutputProcessor.make_discriminated_json_schema_union(
-            object_keys=list(self._processors.keys()),
-            json_schemas=json_schemas,
-            all_defs=all_defs,
-        )
-
-        super().__init__(
-            object_def=OutputObjectDefinition(
-                json_schema=json_schema,
-                strict=strict,
-                name=name,
-                description=description,
-            )
-        )
-
-    @staticmethod
-    def make_discriminated_json_schema_union(
-        object_keys: Sequence[str],
-        json_schemas: Sequence[JsonSchema],
-        all_defs: JsonSchema,
-    ):
         discriminated_json_schemas: list[ObjectJsonSchema] = []
-        for object_key, json_schema in zip(object_keys, json_schemas):
+        for object_key, json_schema in zip(self._processors.keys(), json_schemas):
             title = json_schema.pop('title', None)
             description = json_schema.pop('description', None)
 
@@ -853,7 +832,14 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         if all_defs:
             json_schema['$defs'] = all_defs
 
-        return json_schema
+        super().__init__(
+            object_def=OutputObjectDefinition(
+                json_schema=json_schema,
+                strict=strict,
+                name=name,
+                description=description,
+            )
+        )
 
     async def process(
         self,
