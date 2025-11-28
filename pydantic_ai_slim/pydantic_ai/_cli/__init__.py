@@ -10,16 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import BaseModel, ImportString, ValidationError
 from typing_inspection.introspection import get_literal_values
 
-from . import __version__
-from ._run_context import AgentDepsT
-from .agent import AbstractAgent, Agent
-from .exceptions import UserError
-from .messages import ModelMessage, ModelResponse
-from .models import KnownModelName, infer_model
-from .output import OutputDataT
+from .. import __version__
+from .._run_context import AgentDepsT
+from ..agent import AbstractAgent, Agent
+from ..exceptions import UserError
+from ..messages import ModelMessage, ModelResponse
+from ..models import KnownModelName, infer_model
+from ..output import OutputDataT
 
 try:
     import argcomplete
@@ -44,32 +43,6 @@ except ImportError as _import_error:
 
 
 __all__ = 'cli', 'cli_exit'
-
-
-class _AgentLoader(BaseModel):
-    """Helper model for loading agents using Pydantic ImportString."""
-
-    agent: ImportString  # type: ignore[valid-type]
-
-
-def _load_agent(agent_path: str) -> Agent | None:
-    """Load an agent from module path in uvicorn style.
-
-    Args:
-        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
-
-    Returns:
-        Agent instance or None if loading fails
-    """
-    sys.path.insert(0, str(Path.cwd()))
-    try:
-        loader = _AgentLoader(agent=agent_path)
-        agent = loader.agent  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        if not isinstance(agent, Agent):
-            return None
-        return agent  # pyright: ignore[reportUnknownVariableType]
-    except ValidationError:
-        return None
 
 
 PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
@@ -198,10 +171,9 @@ Special prompts:
             '--model',
             action='append',
             dest='models',
-            help='Model to make available (can be repeated, e.g., -m gpt-5 -m claude-sonnet-4-5). '
-            'Format: "provider:model_name" (e.g., "openai:gpt-5"). '
-            'Prefix-less names allowed for: gpt*, o1, o3, claude*, gemini*. '
-            'First model is default, subsequent ones are UI options.',
+            help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+            'Format: "provider:model_name". Prefix-less names (gpt-5, claude-sonnet-4-5, gemini-2.5-pro) '
+            'auto-infer provider. First model is preselected in UI; additional models appear as options.',
         )
         web_parser.add_argument(
             '-t',
@@ -209,7 +181,7 @@ Special prompts:
             action='append',
             dest='tools',
             help='Builtin tool to enable (can be repeated, e.g., -t web_search -t code_execution). '
-            'Available: web_search, code_execution, image_generation, web_fetch, memory.',
+            'Available: web_search, code_execution, image_generation, web_fetch.',
         )
         web_parser.add_argument(
             '-i',
@@ -228,9 +200,9 @@ Special prompts:
     args = parser.parse_args(args_list)
 
     if prog_name == 'clai' and getattr(args, 'command', None) == 'web':
-        from clai.web.cli import run_web_command
+        from ._web import _run_web_command  # pyright: ignore[reportPrivateUsage]
 
-        return run_web_command(
+        return _run_web_command(
             agent_path=args.agent,
             host=args.host,
             port=args.port,
@@ -253,6 +225,8 @@ Special prompts:
 
     agent: Agent[None, str] = cli_agent
     if args.agent:
+        from ._web import _load_agent  # pyright: ignore[reportPrivateUsage]
+
         loaded = _load_agent(args.agent)
         if loaded is None:
             console.print(f'[red]Error: Could not load agent from {args.agent}[/red]')

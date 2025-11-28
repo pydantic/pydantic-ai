@@ -17,7 +17,7 @@ from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
 
-from .api import AIModel, add_api_routes
+from .api import ModelInfo, add_api_routes
 
 
 def format_model_display_name(model_name: str) -> str:
@@ -27,7 +27,12 @@ def format_model_display_name(model_name: str) -> str:
     - gpt-5 -> GPT 5
     - claude-sonnet-4-5 -> Claude Sonnet 4.5
     - gemini-2.5-pro -> Gemini 2.5 Pro
+    - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
     """
+    # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
+    if '/' in model_name:
+        model_name = model_name.split('/')[-1]
+
     parts = model_name.split('-')
     result: list[str] = []
 
@@ -45,7 +50,7 @@ def format_model_display_name(model_name: str) -> str:
     return ' '.join(result)
 
 
-DEFAULT_UI_VERSION = 'latest'
+DEFAULT_UI_VERSION = '0.0.3'
 CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -58,7 +63,7 @@ ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | Know
 def _resolve_models(
     models: ModelsParam,
     builtin_tools: list[AbstractBuiltinTool] | None,
-) -> list[AIModel]:
+) -> list[ModelInfo]:
     """Convert models parameter to list of AIModel objects.
 
     Args:
@@ -71,8 +76,8 @@ def _resolve_models(
     if models is None:
         return []
 
-    builtin_tool_ids = {tool.kind for tool in (builtin_tools or [])}
-    result: list[AIModel] = []
+    builtin_tool_types = {type(tool) for tool in (builtin_tools or [])}
+    result: list[ModelInfo] = []
 
     if isinstance(models, Mapping):
         items = list(models.items())
@@ -84,8 +89,8 @@ def _resolve_models(
         model_id = f'{model.system}:{model.model_name}'
         display_name = label or format_model_display_name(model.model_name)
         model_supported_tools = model.supported_builtin_tools()
-        supported_tool_ids = list(model_supported_tools & builtin_tool_ids)
-        result.append(AIModel(id=model_id, name=display_name, builtin_tools=supported_tool_ids))  # pyright: ignore[reportArgumentType]
+        supported_tool_ids = [t.kind for t in (model_supported_tools & builtin_tool_types)]
+        result.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
 
     return result
 
