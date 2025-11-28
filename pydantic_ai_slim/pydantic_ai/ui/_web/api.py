@@ -7,16 +7,16 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import BUILTIN_TOOL_ID, AbstractBuiltinTool
-from pydantic_ai.ui.vercel_ai._adapter import VercelAIAdapter
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 
-class AIModel(BaseModel, alias_generator=to_camel, populate_by_name=True):
+class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
     """Defines an AI model with its associated built-in tools."""
 
     id: str
     name: str
-    builtin_tools: list[BUILTIN_TOOL_ID]
+    builtin_tools: list[str]
 
 
 def _get_agent(request: Request) -> Agent:
@@ -37,7 +37,7 @@ class BuiltinToolInfo(BaseModel, alias_generator=to_camel, populate_by_name=True
 class _ConfigureFrontend(BaseModel, alias_generator=to_camel, populate_by_name=True):
     """Response model for frontend configuration."""
 
-    models: list[AIModel]
+    models: list[ModelInfo]
     builtin_tools: list[BuiltinToolInfo]
 
 
@@ -45,12 +45,12 @@ class _ChatRequestExtra(BaseModel, extra='ignore', alias_generator=to_camel):
     """Extra data extracted from chat request."""
 
     model: str | None = None
-    builtin_tools: list[BUILTIN_TOOL_ID] = []
+    builtin_tools: list[str] = []
 
 
 def add_api_routes(
     app: Starlette,
-    models: list[AIModel] | None = None,
+    models: list[ModelInfo] | None = None,
     builtin_tools: list[AbstractBuiltinTool] | None = None,
 ) -> None:
     """Add API routes to a Starlette app.
@@ -61,8 +61,9 @@ def add_api_routes(
         builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
     """
     _models = models or []
+    _model_ids = {m.id for m in _models}
     _builtin_tools = builtin_tools or []
-    _tools_by_kind: dict[str, AbstractBuiltinTool] = {tool.kind: tool for tool in _builtin_tools}
+    _tools_by_id: dict[str, AbstractBuiltinTool] = {tool.unique_id: tool for tool in _builtin_tools}
 
     async def options_chat(request: Request) -> Response:
         """Handle CORS preflight requests."""
@@ -85,8 +86,16 @@ def add_api_routes(
         agent = _get_agent(request)
         adapter = await VercelAIAdapter.from_request(request, agent=agent)
         extra_data = _ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+
+        # Validate model is in allowed list
+        if extra_data.model and _model_ids and extra_data.model not in _model_ids:
+            return JSONResponse(
+                {'error': f'Model "{extra_data.model}" is not in the allowed models list'},
+                status_code=400,
+            )
+
         request_builtin_tools = [
-            _tools_by_kind[tool_id] for tool_id in extra_data.builtin_tools if tool_id in _tools_by_kind
+            _tools_by_id[tool_id] for tool_id in extra_data.builtin_tools if tool_id in _tools_by_id
         ]
         streaming_response = await VercelAIAdapter.dispatch_request(
             request,
