@@ -7625,9 +7625,21 @@ def test_map_file_search_tool_call():
                 tool_name='file_search',
                 content={
                     'status': 'completed',
-                    'results': [{'id': 'result-1', 'title': 'Test Result', 'url': 'https://example.com', 'score': 0.9}],
+                    'results': [
+                        {
+                            'attributes': None,
+                            'file_id': None,
+                            'filename': None,
+                            'id': 'result-1',
+                            'text': None,
+                            'title': 'Test Result',
+                            'url': 'https://example.com',
+                            'score': 0.9,
+                        }
+                    ],
                 },
                 tool_call_id='test-id',
+                timestamp=IsDatetime(),
                 provider_name='openai',
             ),
         )
