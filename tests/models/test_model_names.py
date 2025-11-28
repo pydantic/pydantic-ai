@@ -70,31 +70,13 @@ def test_known_model_names():  # pragma: lax no cover
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
-    gateway_names = [
-        'gateway/anthropic:claude-haiku-4-5',
-        'gateway/anthropic:claude-opus-4-0',
-        'gateway/anthropic:claude-sonnet-4-5',
-        'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
-        'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
-        'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'gateway/bedrock:us.amazon.nova-lite-v1:0',
-        'gateway/bedrock:us.amazon.nova-micro-v1:0',
-        'gateway/bedrock:us.amazon.nova-pro-v1:0',
-        'gateway/google-vertex:gemini-2.5-flash',
-        'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-pro',
-        'gateway/google-vertex:gemini-3-pro-preview',
-        'gateway/groq:deepseek-r1-distill-llama-70b',
-        'gateway/groq:gemma2-9b-it',
-        'gateway/groq:llama-3.1-8b-instant',
-        'gateway/groq:llama-3.3-70b-versatile',
-        'gateway/groq:qwen-qwq-32b',
-        'gateway/openai:gpt-5',
-        'gateway/openai:gpt-5-mini',
-        'gateway/openai:gpt-5-pro',
-        'gateway/openai:o3',
-        'gateway/openai:o4-mini',
-    ]
+    gateway_names = (
+        [f'gateway/anthropic:{n}' for n in get_model_names(AnthropicModelName)]
+        + [f'gateway/bedrock:{n}' for n in get_model_names(BedrockModelName)]
+        + [f'gateway/google-vertex:{n}' for n in get_model_names(GoogleModelName)]
+        + [f'gateway/groq:{n}' for n in get_model_names(GroqModelName)]
+        + [f'gateway/openai:{n}' for n in get_model_names(OpenAIModelName)]
+    )
     huggingface_names = [f'huggingface:{n}' for n in get_model_names(HuggingFaceModelName)]
     heroku_names = get_heroku_model_names()
     cerebras_names = get_cerebras_model_names()
