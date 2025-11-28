@@ -385,7 +385,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         return UnionOutputProcessor(outputs=outputs, strict=strict, name=name, description=description)
 
-    def build_json_schema(self) -> JsonSchema:
+    def build_json_schema(self) -> JsonSchema:  # noqa: C901
         # allow any output with {'type': 'string'} if no constraints
         if not any([self.allows_deferred_tools, self.allows_image, self.object_def, self.toolset]):
             return TypeAdapter(str).json_schema()
@@ -407,7 +407,8 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 json_schema = tool_processor.object_def.json_schema
                 if k := tool_processor.outer_typed_dict_key:
                     json_schema = json_schema['properties'][k]
-                json_schemas.append(json_schema)
+                if json_schema not in json_schemas:
+                    json_schemas.append(json_schema)
 
         elif self.allows_text:
             json_schema = TypeAdapter(str).json_schema()
@@ -415,11 +416,14 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if self.allows_deferred_tools:
             json_schema = TypeAdapter(DeferredToolRequests).json_schema(mode='serialization')
-            json_schemas.append(json_schema)
+            if json_schema not in json_schemas:
+                json_schemas.append(json_schema)
+
         if self.allows_image:
             json_schema = TypeAdapter(_messages.BinaryImage).json_schema()
             json_schema = {k: v for k, v in json_schema['properties'].items() if k in ['data', 'media_type']}
-            json_schemas.append(json_schema)
+            if json_schema not in json_schemas:
+                json_schemas.append(json_schema)
 
         if len(json_schemas) == 1:
             return json_schemas[0]
