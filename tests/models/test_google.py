@@ -3895,25 +3895,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             timestamp=IsDatetime(),
                             provider_name='google-gla',
                         ),
-                        BuiltinToolCallPart(
-                            tool_name='file_search',
-                            args={'query': 'what is the capital of France?'},
-                            tool_call_id=IsStr(),
-                            provider_name='google-gla',
-                        ),
                         TextPart(content='The capital of France is Paris. A famous landmark in Paris is the Eiffel'),
-                        BuiltinToolReturnPart(
-                            tool_name='file_search',
-                            content=[
-                                {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'file_search_store': 'fileSearchStores/testfilesearchstream-df5lsen5e6i5',
-                                }
-                            ],
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                            provider_name='google-gla',
-                        ),
                         TextPart(content=' Tower.'),
                     ],
                     usage=RequestUsage(

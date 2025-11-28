@@ -757,10 +757,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     part_obj, new_code_execution_tool_call_id = self._handle_executable_code_streaming(
                         part.executable_code
                     )
-                    if new_code_execution_tool_call_id is not None:
-                        code_execution_tool_call_id = new_code_execution_tool_call_id
-                    part_obj.provider_details = provider_details
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
+                    if part_obj is not None:
+                        if new_code_execution_tool_call_id is not None:
+                            code_execution_tool_call_id = new_code_execution_tool_call_id
+                        part_obj.provider_details = provider_details
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
                 elif part.code_execution_result is not None:
                     assert code_execution_tool_call_id is not None
                     part = _map_code_execution_result(
@@ -797,10 +798,11 @@ class GeminiStreamedResponse(StreamedResponse):
 
     def _handle_executable_code_streaming(
         self, executable_code: ExecutableCode
-    ) -> tuple[ModelResponsePart, str | None]:
+    ) -> tuple[ModelResponsePart | None, str | None]:
         """Handle executable code for streaming responses.
 
         Returns a tuple of (part_obj, code_execution_tool_call_id).
+        part_obj is None if the part was already generated (to avoid duplicates).
         code_execution_tool_call_id is None for file_search, or the new ID for code_execution.
         """
         code = executable_code.code
@@ -816,14 +818,16 @@ class GeminiStreamedResponse(StreamedResponse):
         )
 
         if has_file_search_tool and (file_search_query := _extract_file_search_query(code)):
-            self._file_search_tool_call_id = _utils.generate_tool_call_id()
-            part_obj = BuiltinToolCallPart(
-                provider_name=self.provider_name,
-                tool_name=FileSearchTool.kind,
-                tool_call_id=self._file_search_tool_call_id,
-                args={'query': file_search_query},
-            )
-            return part_obj, None
+            if self._file_search_tool_call_id is None:
+                self._file_search_tool_call_id = _utils.generate_tool_call_id()
+                part_obj = BuiltinToolCallPart(
+                    provider_name=self.provider_name,
+                    tool_name=FileSearchTool.kind,
+                    tool_call_id=self._file_search_tool_call_id,
+                    args={'query': file_search_query},
+                )
+                return part_obj, None
+            return None, None
         else:
             # Regular code execution
             code_execution_tool_call_id = _utils.generate_tool_call_id()
