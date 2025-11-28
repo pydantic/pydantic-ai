@@ -546,12 +546,22 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # wasteful and could produce a different result (e.g. when text output is followed by tool calls).
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
+                                # FIX for Anthropic bug: When final_result came from text (tool_name is None) and there are tool_calls,
+                                # don't pass final_result - let the tools execute. This fixes the bug where Anthropic returns
+                                # text before tool calls in the same message, and tools weren't being executed with end_strategy='early'.
+                                pass_final_result = final_result
+                                if (
+                                    final_result.tool_name is None  # final_result from text, not from an output tool
+                                    and stream.response.tool_calls  # there are tool calls to execute
+                                ):
+                                    pass_final_result = None
+
                                 parts: list[_messages.ModelRequestPart] = []
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
                                     tool_calls=stream.response.tool_calls,
                                     tool_call_results=None,
-                                    final_result=final_result,
+                                    final_result=pass_final_result,
                                     ctx=graph_ctx,
                                     output_parts=parts,
                                 ):

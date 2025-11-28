@@ -7742,3 +7742,122 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     assert usage2.cache_read_tokens > 0
     assert usage2.cache_write_tokens > 0
     assert usage2.output_tokens > 0
+
+
+async def test_text_and_tool_call(allow_model_requests: None):
+    """Test that when Anthropic returns both text and a tool call, the tool is executed."""
+    mock_responses = [
+        BetaMessage(
+            id='msg_test',
+            model='claude-sonnet-4-5',
+            role='assistant',
+            content=[
+                BetaTextBlock(text='I will create the document for you.', type='text'),
+                BetaToolUseBlock(
+                    id='toolu_01test',
+                    name='create_doc',
+                    input={'filename': 'test.md', 'title': 'Test'},
+                    type='tool_use',
+                ),
+            ],
+            stop_reason='tool_use',
+            type='message',
+            usage=BetaUsage(input_tokens=100, output_tokens=50),
+        ),
+        BetaMessage(
+            id='msg_test2',
+            model='claude-sonnet-4-5',
+            role='assistant',
+            content=[
+                BetaTextBlock(text='Document created successfully', type='text'),
+            ],
+            stop_reason='end_turn',
+            type='message',
+            usage=BetaUsage(input_tokens=150, output_tokens=10),
+        ),
+    ]
+
+    mock_client = MockAnthropic.create_mock(mock_responses)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    tool_called: list[tuple[str, str]] = []
+
+    @agent.tool_plain
+    def create_doc(filename: str, title: str) -> str:
+        """Create a document."""
+        tool_called.append((filename, title))
+        return f'Created: {filename} with title: {title}'
+
+    result = await agent.run('Create a test document')
+
+    # The tool should have been called
+    assert len(tool_called) == 1, (
+        f'Tool was not executed despite being in the model response. Tool calls: {tool_called}'
+    )
+    assert tool_called[0] == ('test.md', 'Test'), f'Tool called with wrong args: {tool_called[0]}'
+
+    # Verify the messages contain both the tool call and the tool result
+    messages = result.all_messages()
+    assert len(messages) >= 3  # user prompt, assistant with tool call, tool result + final response
+
+    # Find the assistant response with the tool call
+    assistant_responses = [m for m in messages if isinstance(m, ModelResponse)]
+    assert len(assistant_responses) >= 1
+
+    first_response = assistant_responses[0]
+    # Should have both text and tool call
+    part_types = [type(p).__name__ for p in first_response.parts]
+    assert 'TextPart' in part_types, f'Expected TextPart in first response, got: {part_types}'
+    assert 'ToolCallPart' in part_types, f'Expected ToolCallPart in first response, got: {part_types}'
+
+    # Final output should contain the result of the tool execution
+    assert 'Document created successfully' in result.output
+
+
+async def test_text_and_tool_call_single_response_retries(allow_model_requests: None):
+    """Test that tools are executed even when subsequent model requests fail (retrying)."""
+    mock_response = BetaMessage(
+        id='msg_test',
+        model='claude-sonnet-4-5',
+        role='assistant',
+        content=[
+            BetaTextBlock(
+                text='Creo subito un documento Markdown con il template completo per la brand strategy IT.', type='text'
+            ),
+            BetaToolUseBlock(
+                id='toolu_01WV916W9B7JZsojifF9svEy',
+                name='markdown_create_document',
+                input={'filename': 'brand_strategy_template.md', 'title': 'IT Brand Strategy Template'},
+                type='tool_use',
+            ),
+        ],
+        stop_reason='tool_use',
+        type='message',
+        usage=BetaUsage(input_tokens=100, output_tokens=50),
+    )
+
+    # Only provide ONE response - agent will retry and get the same response
+    mock_client = MockAnthropic.create_mock(mock_response)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    tool_called: list[tuple[str, str]] = []
+
+    @agent.tool_plain
+    def markdown_create_document(filename: str, title: str) -> str:
+        """Create a markdown document."""
+        tool_called.append((filename, title))
+        return f'Created: {filename} with title: {title}'
+
+    # With only one mock response, the agent will execute the tool, then retry
+    with pytest.raises((IndexError, UsageLimitExceeded)):
+        await agent.run(
+            'Ciao mi crei un documento Markdown con il template per la brand strategy?',
+            usage_limits=UsageLimits(request_limit=3),
+        )
+
+    # The tool SHOULD have been called multiple times (once per retry)
+    assert len(tool_called) >= 1, f'Tool was not executed! Tool calls: {tool_called}'
+    # Verify the tool was called with the correct arguments
+    assert all(call == ('brand_strategy_template.md', 'IT Brand Strategy Template') for call in tool_called)
