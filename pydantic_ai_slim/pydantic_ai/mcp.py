@@ -497,7 +497,10 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         mapped = [await self._map_tool_result_part(part) for part in result.content]
         if result.meta:
-            return (
+            # The following branching cannot be tested until FastMCP is updated to version 2.13.1
+            # such that the MCP server can generate ToolResult and result.meta can be specified.
+            # TODO: Add tests for the following branching once FastMCP is updated.
+            return (  # pragma: no cover
                 messages.ToolReturn(return_value=mapped[0], metadata=result.meta)
                 if len(mapped) == 1
                 else messages.ToolReturn(return_value=mapped, metadata=result.meta)
