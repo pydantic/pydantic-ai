@@ -7590,6 +7590,47 @@ Would you like to know anything specific about the Eiffel Tower?\
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
+def test_map_file_search_tool_call():
+    from openai.types.responses.response_file_search_tool_call import ResponseFileSearchToolCall
+
+    from pydantic_ai.models.openai import _map_file_search_tool_call  # pyright: ignore[reportPrivateUsage]
+
+    item = ResponseFileSearchToolCall.model_validate(
+        {
+            'id': 'test-id',
+            'queries': ['test query'],
+            'status': 'completed',
+            'results': [
+                {
+                    'id': 'result-1',
+                    'title': 'Test Result',
+                    'url': 'https://example.com',
+                    'score': 0.9,
+                }
+            ],
+            'type': 'file_search_call',
+        }
+    )
+
+    call_part, return_part = _map_file_search_tool_call(item, 'openai')
+    assert (call_part, return_part) == snapshot(
+        (
+            BuiltinToolCallPart(
+                tool_name='file_search',
+                args={'queries': ['test query']},
+                tool_call_id='test-id',
+                provider_name='openai',
+            ),
+            BuiltinToolReturnPart(
+                tool_name='file_search',
+                content={'status': 'completed', 'results': [{'id': 'result-1', 'title': 'Test Result', 'url': 'https://example.com', 'score': 0.9}]},
+                tool_call_id='test-id',
+                provider_name='openai',
+            ),
+        )
+    )
+
+
 @pytest.mark.vcr()
 async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
     import asyncio
