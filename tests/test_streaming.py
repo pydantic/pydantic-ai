@@ -1138,13 +1138,10 @@ async def test_early_strategy_with_external_tool_call():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='test early strategy with external tool call',
-                        timestamp=IsNow(tz=datetime.timezone.utc),
-                        part_kind='user-prompt',
+                        content='test early strategy with external tool call', timestamp=IsNow(tz=datetime.timezone.utc)
                     )
                 ],
                 run_id=IsStr(),
-                kind='request',
             ),
             ModelResponse(
                 parts=[
@@ -1164,7 +1161,6 @@ async def test_early_strategy_with_external_tool_call():
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 run_id=IsStr(),
-                kind='response',
             ),
             ModelRequest(
                 parts=[
@@ -1182,7 +1178,6 @@ async def test_early_strategy_with_external_tool_call():
                     ),
                 ],
                 run_id=IsStr(),
-                kind='request',
             ),
         ]
     )
