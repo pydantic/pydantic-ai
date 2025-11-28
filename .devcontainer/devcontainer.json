@@ -16,12 +16,44 @@
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installLsof": true,
       "installBuildTools": true, // This option installs build-essential
-      "upgradePackages": true
+      "upgradePackages": true,
+      "installZsh": false,
+      "installOhMyZsh": false
     },
     "ghcr.io/devcontainers-community/features/deno:1": {
       "version": "latest"
     },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  // Port forwarding for local services
+  "forwardPorts": [
+    8000,
+    8080,
+    11434,
+    54320,
+    54321
+  ],
+  "portsAttributes": {
+    "8000": {
+      "label": "MkDocs Server",
+      "onAutoForward": "notify"
+    },
+    "8080": {
+      "label": "FastAPI/Example Apps",
+      "onAutoForward": "notify"
+    },
+    "11434": {
+      "label": "Ollama",
+      "onAutoForward": "silent"
+    },
+    "54320": {
+      "label": "PostgreSQL",
+      "onAutoForward": "silent"
+    },
+    "54321": {
+      "label": "PostgreSQL (pgvector)",
+      "onAutoForward": "silent"
+    }
   },
   // Use 'containerEnv' to set environment variables in the container.
   // Connect to Ollama instance running on host machine
