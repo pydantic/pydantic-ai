@@ -1567,7 +1567,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Then run with: uvicorn app:app --reload
             ```
         """
-        from ..ui.web import create_web_app
+        from ..ui._web import create_web_app
 
         return create_web_app(self, models=models, builtin_tools=builtin_tools)
 

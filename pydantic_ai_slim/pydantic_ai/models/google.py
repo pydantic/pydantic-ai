@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import AbstractBuiltinTool, CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -231,9 +231,9 @@ class GoogleModel(Model):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[str]:
-        """Return the set of builtin tool IDs this model class can handle."""
-        return frozenset({'web_search', 'code_execution', 'web_fetch', 'image_generation'})
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model class can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, ImageGenerationTool})
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters

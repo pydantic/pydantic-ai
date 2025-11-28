@@ -18,7 +18,9 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
-    'BUILTIN_TOOL_CLASSES',
+    'get_builtin_tool_ids',
+    'get_builtin_tool_types',
+    'get_builtin_tool_cls',
 )
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -427,21 +429,20 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.kind
 
 
-BUILTIN_TOOL_ID = Literal[
-    'web_search',
-    'code_execution',
-    'image_generation',
-    'web_fetch',
-    'memory',
-    'mcp_server',
-]
+def get_builtin_tool_ids() -> frozenset[str]:
+    """Get the set of all builtin tool IDs (excluding deprecated tools like url_context)."""
+    return frozenset(_BUILTIN_TOOL_TYPES.keys() - {'url_context'})
 
-ACTIVE_BUILTIN_TOOL_IDS: frozenset[str] = frozenset(BUILTIN_TOOL_ID.__args__)
 
-BUILTIN_TOOL_CLASSES: dict[BUILTIN_TOOL_ID, type[AbstractBuiltinTool]] = {
-    'web_search': WebSearchTool,
-    'code_execution': CodeExecutionTool,
-    'image_generation': ImageGenerationTool,
-    'web_fetch': WebFetchTool,
-    'memory': MemoryTool,
-}
+def get_builtin_tool_types() -> frozenset[type[AbstractBuiltinTool]]:
+    """Get the set of all builtin tool types (excluding deprecated tools like UrlContextTool)."""
+    return frozenset(cls for kind, cls in _BUILTIN_TOOL_TYPES.items() if kind != 'url_context')
+
+
+def get_builtin_tool_cls(tool_id: str) -> type[AbstractBuiltinTool] | None:
+    """Get a builtin tool class by its ID.
+
+    Args:
+        tool_id: The tool ID (e.g., 'web_search', 'code_execution')
+    """
+    return _BUILTIN_TOOL_TYPES.get(tool_id)

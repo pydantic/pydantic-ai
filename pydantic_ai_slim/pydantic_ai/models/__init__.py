@@ -703,8 +703,8 @@ class Model(ABC):
         raise NotImplementedError()
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[str]:
-        """Return the set of builtin tool IDs this model class can handle.
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model class can handle.
 
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.

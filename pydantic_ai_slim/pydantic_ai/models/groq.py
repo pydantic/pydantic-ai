@@ -15,7 +15,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..builtin_tools import WebSearchTool
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -180,9 +180,9 @@ class GroqModel(Model):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[str]:
-        """Return the set of builtin tool IDs this model class can handle."""
-        return frozenset({'web_search'})
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model class can handle."""
+        return frozenset({WebSearchTool})
 
     async def request(
         self,

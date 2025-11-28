@@ -13,7 +13,14 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -269,9 +276,9 @@ class AnthropicModel(Model):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[str]:
-        """Return the set of builtin tool IDs this model class can handle."""
-        return frozenset({'web_search', 'code_execution', 'web_fetch', 'memory', 'mcp_server'})
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model class can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
     async def request(
         self,
