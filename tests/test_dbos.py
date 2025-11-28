@@ -1784,10 +1784,10 @@ async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
     steps = await dbos.list_workflow_steps_async(wfid)
     assert [step['function_name'] for step in steps] == snapshot(
         [
-            'fastmcp_agent__fastmcp_toolset__deepwiki.get_tools',
+            'fastmcp_agent__mcp_server__deepwiki.get_tools',
             'fastmcp_agent__model.request',
-            'fastmcp_agent__fastmcp_toolset__deepwiki.call_tool',
-            'fastmcp_agent__fastmcp_toolset__deepwiki.get_tools',
+            'fastmcp_agent__mcp_server__deepwiki.call_tool',
+            'fastmcp_agent__mcp_server__deepwiki.get_tools',
             'fastmcp_agent__model.request',
         ]
     )

@@ -31,7 +31,7 @@ class DBOSFastMCPToolset(WrapperToolset[AgentDepsT], ABC):
         self._step_config = step_config or {}
         self._step_name_prefix = step_name_prefix
         id_suffix = f'__{wrapped.id}' if wrapped.id else ''
-        self._name = f'{step_name_prefix}__fastmcp_toolset{id_suffix}'
+        self._name = f'{step_name_prefix}__mcp_server{id_suffix}'
 
         # Wrap get_tools in a DBOS step.
         @DBOS.step(
