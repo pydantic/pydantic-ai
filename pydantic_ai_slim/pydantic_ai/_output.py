@@ -596,6 +596,7 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
@@ -683,6 +684,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str | dict[str, Any] | None,
+        *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
@@ -702,7 +704,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             data = _utils.strip_markdown_fences(data)
 
         try:
-            output = self.validate(data, allow_partial)
+            output = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -719,13 +721,19 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     def validate(
         self,
         data: str | dict[str, Any] | None,
+        *,
         allow_partial: bool = False,
+        validation_context: Any | None = None,
     ) -> dict[str, Any]:
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
-            return self.validator.validate_json(data or '{}', allow_partial=pyd_allow_partial)
+            return self.validator.validate_json(
+                data or '{}', allow_partial=pyd_allow_partial, context=validation_context
+            )
         else:
-            return self.validator.validate_python(data or {}, allow_partial=pyd_allow_partial)
+            return self.validator.validate_python(
+                data or {}, allow_partial=pyd_allow_partial, context=validation_context
+            )
 
     async def call(
         self,
@@ -844,12 +852,16 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         union_object = await self._union_processor.process(
-            data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            data,
+            run_context=run_context,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
         )
 
         result = union_object.result
@@ -865,7 +877,10 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 raise
 
         return await processor.process(
-            inner_data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            inner_data,
+            run_context=run_context,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
         )
 
 
@@ -873,7 +888,9 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
+        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -904,14 +921,22 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
+        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         args = {self._str_argument_name: data}
         data = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
 
-        return await super().process(data, run_context, allow_partial, wrap_validation_errors)
+        return await super().process(
+            data,
+            run_context=run_context,
+            validation_context=validation_context,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+        )
 
 
 @dataclass(init=False)
