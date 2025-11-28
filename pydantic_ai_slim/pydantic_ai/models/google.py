@@ -1100,11 +1100,18 @@ def _extract_file_search_retrieved_contexts(
     """
     if not grounding_chunks:
         return []
-    return [
-        chunk.retrieved_context.model_dump(mode='json', exclude_none=True)
-        for chunk in grounding_chunks
-        if chunk.retrieved_context
-    ]
+    retrieved_contexts = []
+    for chunk in grounding_chunks:
+        if not chunk.retrieved_context:
+            continue
+        context_dict = chunk.retrieved_context.model_dump(mode='json', exclude_none=True, by_alias=False)
+        file_search_store = getattr(chunk.retrieved_context, 'file_search_store', None)
+        if file_search_store is None:
+            file_search_store = getattr(chunk.retrieved_context, 'fileSearchStore', None)
+        if file_search_store is not None:
+            context_dict['file_search_store'] = file_search_store
+        retrieved_contexts.append(context_dict)
+    return retrieved_contexts
 
 
 def _map_file_search_grounding_metadata(
