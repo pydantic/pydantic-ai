@@ -413,14 +413,13 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             json_schema = TypeAdapter(str).json_schema()
             json_schemas.append(json_schema)
 
-        special_output_types: list[type] = []
         if self.allows_deferred_tools:
-            special_output_types.append(DeferredToolRequests)
+            json_schema = TypeAdapter(DeferredToolRequests).json_schema(mode='serialization')
+            json_schemas.append(json_schema)
         if self.allows_image:
-            special_output_types.append(_messages.BinaryImage)
-        for output_type in special_output_types:
-            output_type_json_schema = TypeAdapter(output_type).json_schema(mode='serialization')
-            json_schemas.append(output_type_json_schema)
+            json_schema = TypeAdapter(_messages.BinaryImage).json_schema()
+            json_schema = {k:v for k,v in json_schema['properties'].items() if k in ['data', 'media_type']}
+            json_schemas.append(json_schema)
 
         if len(json_schemas) == 1:
             return json_schemas[0]
