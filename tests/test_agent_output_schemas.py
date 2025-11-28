@@ -30,117 +30,61 @@ async def test_text_output_json_schema():
 
 
 async def test_auto_output_json_schema():
+    # one output
     agent = Agent('test', output_type=bool)
-    assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
+    assert agent.output_json_schema() == snapshot({'type': 'boolean'})
 
-    agent = Agent('test', output_type=bool | int)
+    # multiple outputs
+    agent = Agent('test', output_type=str | bool | Foo)
     assert agent.output_json_schema() == snapshot(
         {
-            'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'bool'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'bool',
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'int'},
-                                'data': {
-                                    'properties': {'response': {'type': 'integer'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'int',
-                        },
-                    ]
+            'anyOf': [
+                {'type': 'string'},
+                {'type': 'boolean'},
+                {
+                    'properties': {'a': {'items': {'$ref': '#/$defs/Bar'}, 'type': 'array'}, 'b': {'type': 'integer'}},
+                    'required': ['a', 'b'],
+                    'title': 'Foo',
+                    'type': 'object',
+                },
+            ],
+            '$defs': {
+                'Bar': {
+                    'properties': {'answer': {'type': 'string'}},
+                    'required': ['answer'],
+                    'title': 'Bar',
+                    'type': 'object',
                 }
             },
-            'required': ['result'],
-            'additionalProperties': False,
         }
     )
 
 
 async def test_tool_output_json_schema():
+    # one output
     agent = Agent(
         'test',
         output_type=[ToolOutput(bool)],
     )
-    assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
+    assert agent.output_json_schema() == snapshot({'type': 'boolean'})
 
+    # multiple outputs
     agent = Agent(
         'test',
-        output_type=[ToolOutput(bool, name='alice', description='Dreaming...')],
-    )
-    assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
-
-    agent = Agent(
-        'test',
-        output_type=[ToolOutput(bool), ToolOutput(Foo)],
+        output_type=[ToolOutput(str), ToolOutput(bool), ToolOutput(Foo)],
     )
     assert agent.output_json_schema() == snapshot(
         {
-            'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'final_result_bool'},
-                                'data': {
-                                    'properties': {'response': {'type': 'boolean'}},
-                                    'required': ['response'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                        },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'final_result_Foo'},
-                                'data': {
-                                    'properties': {
-                                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'type': 'array'},
-                                        'b': {'type': 'integer'},
-                                    },
-                                    'required': ['a', 'b'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'Foo',
-                        },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+            'anyOf': [
+                {'type': 'string'},
+                {'type': 'boolean'},
+                {
+                    'properties': {'a': {'items': {'$ref': '#/$defs/Bar'}, 'type': 'array'}, 'b': {'type': 'integer'}},
+                    'required': ['a', 'b'],
+                    'title': 'Foo',
+                    'type': 'object',
+                },
+            ],
             '$defs': {
                 'Bar': {
                     'properties': {'answer': {'type': 'string'}},
@@ -158,17 +102,7 @@ async def test_native_output_json_schema():
         'test',
         output_type=NativeOutput([bool]),
     )
-    assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
-
-    agent = Agent(
-        'test',
-        output_type=NativeOutput([bool], name='native_output_name', description='native_output_description'),
-    )
-    assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
+    assert agent.output_json_schema() == snapshot({'type': 'boolean'})
 
 
 async def test_prompted_output_json_schema():
@@ -176,17 +110,7 @@ async def test_prompted_output_json_schema():
         'test',
         output_type=PromptedOutput([bool]),
     )
-    assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
-
-    agent = Agent(
-        'test',
-        output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description'),
-    )
-    assert agent.output_json_schema() == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
+    assert agent.output_json_schema() == snapshot({'type': 'boolean'})
 
 
 async def test_custom_output_json_schema():
@@ -211,6 +135,7 @@ async def test_custom_output_json_schema():
 
 
 async def test_image_output_json_schema():
+    # one output
     agent = Agent('test', output_type=BinaryImage)
     assert agent.output_json_schema() == snapshot(
         {
@@ -271,71 +196,57 @@ distinguish multiple files.\
             'type': 'object',
         }
     )
-    agent = Agent('test', output_type=str | BinaryImage)
+
+    # multiple outputs
+    agent = Agent('test', output_type=str | bool | BinaryImage)
     assert agent.output_json_schema() == snapshot(
         {
-            'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
-                            'type': 'object',
-                            'properties': {'kind': {'type': 'string', 'const': 'str'}, 'data': {'type': 'string'}},
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
+            'anyOf': [
+                {'type': 'string'},
+                {'type': 'boolean'},
+                {
+                    'properties': {
+                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Media Type',
                         },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'BinaryImage'},
-                                'data': {
-                                    'properties': {
-                                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
-                                        'media_type': {
-                                            'anyOf': [
-                                                {
-                                                    'enum': [
-                                                        'audio/wav',
-                                                        'audio/mpeg',
-                                                        'audio/ogg',
-                                                        'audio/flac',
-                                                        'audio/aiff',
-                                                        'audio/aac',
-                                                    ],
-                                                    'type': 'string',
-                                                },
-                                                {
-                                                    'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-                                                    'type': 'string',
-                                                },
-                                                {
-                                                    'enum': [
-                                                        'application/pdf',
-                                                        'text/plain',
-                                                        'text/csv',
-                                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                                        'text/html',
-                                                        'text/markdown',
-                                                        'application/msword',
-                                                        'application/vnd.ms-excel',
-                                                    ],
-                                                    'type': 'string',
-                                                },
-                                                {'type': 'string'},
-                                            ],
-                                            'title': 'Media Type',
-                                        },
-                                        'vendor_metadata': {
-                                            'anyOf': [
-                                                {'additionalProperties': True, 'type': 'object'},
-                                                {'type': 'null'},
-                                            ],
-                                            'default': None,
-                                            'title': 'Vendor Metadata',
-                                        },
-                                        'identifier': {
-                                            'description': """\
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'identifier': {
+                            'description': """\
 Identifier for the binary content, such as a unique ID.
 
 This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
@@ -348,30 +259,16 @@ e.g. "This is file <identifier>:" preceding the `BinaryContent`.
 It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
 distinguish multiple files.\
 """,
-                                            'readOnly': True,
-                                            'title': 'Identifier',
-                                            'type': 'string',
-                                        },
-                                        'kind': {
-                                            'const': 'binary',
-                                            'default': 'binary',
-                                            'title': 'Kind',
-                                            'type': 'string',
-                                        },
-                                    },
-                                    'required': ['data', 'media_type', 'identifier'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'BinaryImage',
+                            'readOnly': True,
+                            'title': 'Identifier',
+                            'type': 'string',
                         },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+                    },
+                    'required': ['data', 'media_type', 'identifier'],
+                    'title': 'BinaryImage',
+                    'type': 'object',
+                },
+            ]
         }
     )
 
@@ -380,59 +277,29 @@ async def test_override_output_json_schema():
     agent = Agent('test')
     assert agent.output_json_schema() == snapshot({'type': 'string'})
     output_type = [ToolOutput(bool)]
-    assert agent.output_json_schema(output_type=output_type) == snapshot(
-        {'type': 'object', 'properties': {'response': {'type': 'boolean'}}, 'required': ['response']}
-    )
+    assert agent.output_json_schema(output_type=output_type) == snapshot({'type': 'boolean'})
 
 
 async def test_deferred_output_json_schema():
     agent = Agent('test', output_type=[str, DeferredToolRequests])
     assert agent.output_json_schema() == snapshot(
         {
-            'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
+            'anyOf': [
+                {'type': 'string'},
+                {
+                    'properties': {
+                        'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
+                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'metadata': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Metadata',
                             'type': 'object',
-                            'properties': {'kind': {'type': 'string', 'const': 'str'}, 'data': {'type': 'string'}},
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
                         },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'DeferredToolRequests'},
-                                'data': {
-                                    'properties': {
-                                        'calls': {
-                                            'items': {'$ref': '#/$defs/ToolCallPart'},
-                                            'title': 'Calls',
-                                            'type': 'array',
-                                        },
-                                        'approvals': {
-                                            'items': {'$ref': '#/$defs/ToolCallPart'},
-                                            'title': 'Approvals',
-                                            'type': 'array',
-                                        },
-                                        'metadata': {
-                                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
-                                            'title': 'Metadata',
-                                            'type': 'object',
-                                        },
-                                    },
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'DeferredToolRequests',
-                        },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+                    },
+                    'title': 'DeferredToolRequests',
+                    'type': 'object',
+                },
+            ],
             '$defs': {
                 'ToolCallPart': {
                     'description': 'A tool call from a model.',
@@ -469,94 +336,67 @@ async def test_deferred_output_json_schema():
         }
     )
 
+    # special case of only BinaryImage and DeferredToolRequests
     agent = Agent('test', output_type=[BinaryImage, DeferredToolRequests])
     assert agent.output_json_schema() == snapshot(
         {
-            'type': 'object',
-            'properties': {
-                'result': {
-                    'anyOf': [
-                        {
+            'anyOf': [
+                {
+                    'properties': {
+                        'calls': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Calls', 'type': 'array'},
+                        'approvals': {'items': {'$ref': '#/$defs/ToolCallPart'}, 'title': 'Approvals', 'type': 'array'},
+                        'metadata': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Metadata',
                             'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'DeferredToolRequests'},
-                                'data': {
-                                    'properties': {
-                                        'calls': {
-                                            'items': {'$ref': '#/$defs/ToolCallPart'},
-                                            'title': 'Calls',
-                                            'type': 'array',
-                                        },
-                                        'approvals': {
-                                            'items': {'$ref': '#/$defs/ToolCallPart'},
-                                            'title': 'Approvals',
-                                            'type': 'array',
-                                        },
-                                        'metadata': {
-                                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
-                                            'title': 'Metadata',
-                                            'type': 'object',
-                                        },
-                                    },
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'DeferredToolRequests',
                         },
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'kind': {'type': 'string', 'const': 'BinaryImage'},
-                                'data': {
-                                    'properties': {
-                                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
-                                        'media_type': {
-                                            'anyOf': [
-                                                {
-                                                    'enum': [
-                                                        'audio/wav',
-                                                        'audio/mpeg',
-                                                        'audio/ogg',
-                                                        'audio/flac',
-                                                        'audio/aiff',
-                                                        'audio/aac',
-                                                    ],
-                                                    'type': 'string',
-                                                },
-                                                {
-                                                    'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-                                                    'type': 'string',
-                                                },
-                                                {
-                                                    'enum': [
-                                                        'application/pdf',
-                                                        'text/plain',
-                                                        'text/csv',
-                                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                                        'text/html',
-                                                        'text/markdown',
-                                                        'application/msword',
-                                                        'application/vnd.ms-excel',
-                                                    ],
-                                                    'type': 'string',
-                                                },
-                                                {'type': 'string'},
-                                            ],
-                                            'title': 'Media Type',
-                                        },
-                                        'vendor_metadata': {
-                                            'anyOf': [
-                                                {'additionalProperties': True, 'type': 'object'},
-                                                {'type': 'null'},
-                                            ],
-                                            'default': None,
-                                            'title': 'Vendor Metadata',
-                                        },
-                                        'identifier': {
-                                            'description': """\
+                    },
+                    'title': 'DeferredToolRequests',
+                    'type': 'object',
+                },
+                {
+                    'properties': {
+                        'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ],
+                            'title': 'Media Type',
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'identifier': {
+                            'description': """\
 Identifier for the binary content, such as a unique ID.
 
 This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
@@ -569,30 +409,16 @@ e.g. "This is file <identifier>:" preceding the `BinaryContent`.
 It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
 distinguish multiple files.\
 """,
-                                            'readOnly': True,
-                                            'title': 'Identifier',
-                                            'type': 'string',
-                                        },
-                                        'kind': {
-                                            'const': 'binary',
-                                            'default': 'binary',
-                                            'title': 'Kind',
-                                            'type': 'string',
-                                        },
-                                    },
-                                    'required': ['data', 'media_type', 'identifier'],
-                                    'type': 'object',
-                                },
-                            },
-                            'required': ['kind', 'data'],
-                            'additionalProperties': False,
-                            'title': 'BinaryImage',
+                            'readOnly': True,
+                            'title': 'Identifier',
+                            'type': 'string',
                         },
-                    ]
-                }
-            },
-            'required': ['result'],
-            'additionalProperties': False,
+                    },
+                    'required': ['data', 'media_type', 'identifier'],
+                    'title': 'BinaryImage',
+                    'type': 'object',
+                },
+            ],
             '$defs': {
                 'ToolCallPart': {
                     'description': 'A tool call from a model.',

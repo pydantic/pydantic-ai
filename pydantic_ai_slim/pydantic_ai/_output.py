@@ -390,23 +390,28 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         if not any([self.allows_deferred_tools, self.allows_image, self.object_def, self.toolset]):
             return TypeAdapter(str).json_schema()
 
-        object_keys: list[str] = []
         json_schemas: list[ObjectJsonSchema] = []
 
-        if self.object_def:
-            json_schema = self.object_def.json_schema
+        processor = getattr(self, 'processor', None)
+        if isinstance(processor, ObjectOutputProcessor):
+            json_schema = processor.object_def.json_schema
+            if k := processor.outer_typed_dict_key:
+                json_schema = json_schema['properties'][k]
             json_schemas.append(json_schema)
-            object_key = json_schema.get('title') or self.object_def.name or 'result'
-            object_keys.append(object_key)
+
         elif self.toolset:
-            for name, tool_processor in self.toolset.processors.items():
-                json_schema = tool_processor.object_def.json_schema
+            if self.allows_text:
+                json_schema = TypeAdapter(str).json_schema()
                 json_schemas.append(json_schema)
-                object_keys.append(name)
-        elif self.text_processor:
+            for tool_processor in self.toolset.processors.values():
+                json_schema = tool_processor.object_def.json_schema
+                if k := tool_processor.outer_typed_dict_key:
+                    json_schema = json_schema['properties'][k]
+                json_schemas.append(json_schema)
+
+        elif self.allows_text:
             json_schema = TypeAdapter(str).json_schema()
             json_schemas.append(json_schema)
-            object_keys.append(str.__name__)
 
         special_output_types: list[type] = []
         if self.allows_deferred_tools:
@@ -416,24 +421,16 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         for output_type in special_output_types:
             output_type_json_schema = TypeAdapter(output_type).json_schema(mode='serialization')
             json_schemas.append(output_type_json_schema)
-            object_keys.append(output_type.__name__)
 
-        # do not further process JSON if not needed
         if len(json_schemas) == 1:
             return json_schemas[0]
 
         json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
+        json_schema: JsonSchema = {'anyOf': json_schemas}
+        if all_defs:
+            json_schema['$defs'] = all_defs
 
-        unique_object_keys: list[str] = []
-        for key in object_keys:
-            count = 1
-            new_key = key
-            while new_key in unique_object_keys:
-                count += 1
-                new_key = f'{key}_{count}'
-            unique_object_keys.append(new_key)
-
-        return UnionOutputProcessor.make_discriminated_json_schema_union(unique_object_keys, json_schemas, all_defs)
+        return json_schema
 
 
 @dataclass(init=False)
