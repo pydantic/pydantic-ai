@@ -1101,7 +1101,7 @@ def _extract_file_search_retrieved_contexts(
     if not grounding_chunks:
         return []
     return [
-        chunk.retrieved_context.model_dump(mode='json')
+        chunk.retrieved_context.model_dump(mode='json', exclude_none=True)
         for chunk in grounding_chunks
         if chunk.retrieved_context
     ]

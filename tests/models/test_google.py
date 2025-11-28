@@ -3709,18 +3709,10 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_name='file_search',
                             content=[
                                 {
-                                    'document_name': None,
-                                    'rag_chunk': None,
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
                                 },
                                 {
-                                    'document_name': None,
-                                    'rag_chunk': None,
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
                                 },
                             ],
                             tool_call_id=IsStr(),
@@ -3781,11 +3773,7 @@ Paris is a major global center for art, fashion, gastronomy, and culture. A famo
                             tool_name='file_search',
                             content=[
                                 {
-                                    'document_name': None,
-                                    'rag_chunk': None,
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -3896,11 +3884,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_name='file_search',
                             content=[
                                 {
-                                    'document_name': None,
-                                    'rag_chunk': None,
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -3918,11 +3902,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_name='file_search',
                             content=[
                                 {
-                                    'document_name': None,
-                                    'rag_chunk': None,
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -3979,11 +3959,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_name='file_search',
                             content=[
                                 {
-                                    'document_name': None,
-                                    'rag_chunk': None,
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
                                 }
                             ],
                         tool_call_id=IsStr(),
@@ -4030,11 +4006,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_name='file_search',
                             content=[
                                 {
-                                    'document_name': None,
-                                    'rag_chunk': None,
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                    'title': None,
-                                    'uri': None,
                                 }
                             ],
                         tool_call_id=IsStr(),
@@ -4058,11 +4030,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         tool_name='file_search',
                         content=[
                             {
-                                'document_name': None,
-                                'rag_chunk': None,
                                 'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                'title': None,
-                                'uri': None,
                             }
                         ],
                         tool_call_id=IsStr(),
@@ -4083,11 +4051,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         tool_name='file_search',
                         content=[
                             {
-                                'document_name': None,
-                                'rag_chunk': None,
                                 'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
-                                'title': None,
-                                'uri': None,
                             }
                         ],
                         tool_call_id=IsStr(),
