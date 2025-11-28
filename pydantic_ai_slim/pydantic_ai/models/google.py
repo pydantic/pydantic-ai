@@ -829,7 +829,6 @@ class GeminiStreamedResponse(StreamedResponse):
             part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
             return part_obj, code_execution_tool_call_id
 
-        # Check if FileSearchTool was included before trying to parse file_search queries
         has_file_search_tool = any(
             isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.builtin_tools
         )
