@@ -271,12 +271,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # Tool returns are merged into the tool call in the assistant message
                         pass
                     elif isinstance(part, RetryPromptPart):
-                        if part.tool_call_id:
-                            # Tool errors with IDs are merged into the tool call in the assistant message
-                            pass
-                        else:
-                            # RetryPromptPart without tool_call_id becomes a user text message
-                            user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
+                        # RetryPromptPart always has a tool_call_id (generated if not provided).
+                        # These are handled when processing ToolCallPart in ModelResponse,
+                        # where they become DynamicToolOutputErrorPart via the tool_errors dict.
+                        pass
                     else:
                         assert_never(part)
 
