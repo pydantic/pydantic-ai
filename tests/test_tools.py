@@ -2514,7 +2514,7 @@ async def test_per_tool_timeout_overrides_global():
     """Test that per-tool timeout takes precedence over agent-level timeout."""
     import asyncio
 
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     call_count = 0
