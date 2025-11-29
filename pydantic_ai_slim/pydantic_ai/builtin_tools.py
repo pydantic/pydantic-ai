@@ -429,7 +429,7 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.kind
 
 
-def get_builtin_tool_ids() -> frozenset[str]:
+def get_builtin_tool_ids() -> frozenset[str]:  # pragma: no cover
     """Get the set of all builtin tool IDs (excluding deprecated tools like url_context)."""
     return frozenset(_BUILTIN_TOOL_TYPES.keys() - {'url_context'})
 

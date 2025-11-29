@@ -2,6 +2,7 @@ import sys
 import types
 from collections.abc import Callable
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,6 +24,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli._web import _run_web_command  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
@@ -366,18 +368,18 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         ('custom-model', 'Custom Model'),
     ],
 )
-def test_format_display_name(model_name: str, expected: str):
-    """Test model display name formatting for UI."""
-    from pydantic_ai.ui.web import format_model_display_name
+def test_model_label(model_name: str, expected: str):
+    """Test Model.label formatting for UI."""
+    from pydantic_ai.models.test import TestModel
 
-    assert format_model_display_name(model_name) == expected
+    model = TestModel(model_name=model_name)
+    assert model.label == expected
 
 
 def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
     """Test web command without agent creates generic agent."""
     env.set('OPENAI_API_KEY', 'test')
-    mock_run_web = mocker.MagicMock(return_value=0)
-    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
 
     assert cli(['web', '-m', 'gpt-5', '-t', 'web_search'], prog_name='clai') == 0
 
@@ -395,17 +397,13 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
 def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
 
-    # Mock the run_web_command function - must be before create_test_module
-    # to avoid test isolation issues with mocker.patch.dict saving/restoring sys.modules
-    mock_run_web = mocker.MagicMock(return_value=0)
-    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
 
     assert cli(['web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 0
 
-    # Verify run_web_command was called with correct args
     mock_run_web.assert_called_once_with(
         agent_path='test_module:custom_agent',
         host='127.0.0.1',
@@ -421,8 +419,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
     """Test web command with multiple -m flags."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.MagicMock(return_value=0)
-    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
@@ -447,8 +444,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
     """Test web command with multiple -t flags."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.MagicMock(return_value=0)
-    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
@@ -475,8 +471,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
     """Test generic agent with custom instructions."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.MagicMock(return_value=0)
-    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
 
     assert cli(['web', '-m', 'gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
 
@@ -495,8 +490,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
     """Test web command with custom host/port."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.MagicMock(return_value=0)
-    mocker.patch.dict('sys.modules', {'clai.web.cli': mocker.MagicMock(run_web_command=mock_run_web)})
+    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
@@ -515,3 +509,155 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         instructions=None,
         mcp=None,
     )
+
+
+def test_run_web_command_agent_with_model(
+    mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
+):
+    """Test _run_web_command uses agent's model when no -m flag provided."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    result = _run_web_command(agent_path='test_module:custom_agent')
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+
+def test_run_web_command_generic_agent_no_model(capfd: CaptureFixture[str]):
+    """Test _run_web_command returns error when no agent and no model provided."""
+
+    result = _run_web_command()
+
+    assert result == 1
+    output = capfd.readouterr().out
+    assert 'At least one model (-m) is required' in output
+
+
+def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test _run_web_command creates generic agent with system prompt decorator."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    result = _run_web_command(models=['test'], instructions='You are a helpful assistant')
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    # Verify agent was created with instructions
+    call_args = mock_create_app.call_args
+    agent = call_args[0][0]
+    assert agent is not None
+    assert 'You are a helpful assistant' in agent._instructions
+
+
+def test_run_web_command_agent_load_failure(capfd: CaptureFixture[str]):
+    """Test _run_web_command returns error when agent path is invalid."""
+
+    result = _run_web_command(agent_path='nonexistent_module:agent')
+
+    assert result == 1
+    output = capfd.readouterr().out
+    assert 'Could not load agent' in output
+
+
+def test_run_web_command_unknown_tool(mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test _run_web_command warns about unknown tool IDs."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    result = _run_web_command(models=['test'], tools=['unknown_tool_xyz'])
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+    output = capfd.readouterr().out
+    assert 'Unknown tool "unknown_tool_xyz"' in output
+
+
+def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test _run_web_command warns about memory tool requiring agent configuration."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    result = _run_web_command(models=['test'], tools=['memory'])
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+    output = capfd.readouterr().out
+    assert 'MemoryTool requires agent to have memory configured' in output
+
+
+def test_run_web_command_mcp_file_not_found(capfd: CaptureFixture[str]):
+    """Test _run_web_command returns error when MCP file is missing."""
+
+    result = _run_web_command(models=['test'], mcp='/nonexistent/path/mcp.json')
+
+    assert result == 1
+    output = capfd.readouterr().out
+    assert 'Config file' in output and 'not found' in output
+
+
+def test_run_web_command_mcp_validation_error(tmp_path: Path, capfd: CaptureFixture[str]):
+    """Test _run_web_command returns error for invalid MCP JSON structure."""
+    import json
+
+    mcp_file = tmp_path / 'invalid_mcp.json'
+    mcp_file.write_text(json.dumps({'mcpServers': {'bad': {}}}))
+
+    result = _run_web_command(models=['test'], mcp=str(mcp_file))
+
+    assert result == 1
+    output = capfd.readouterr().out
+    assert 'Error parsing MCP config' in output
+
+
+def test_run_web_command_agent_with_builtin_tools(
+    mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
+):
+    """Test _run_web_command merges agent's builtin tools with CLI-provided tools."""
+    from pydantic_ai.builtin_tools import WebSearchTool
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    # Create agent with web_search tool already configured
+    test_agent = Agent(TestModel(custom_output_text='test'), builtin_tools=[WebSearchTool()])
+    create_test_module(custom_agent=test_agent)
+
+    # Add code_execution via CLI
+    result = _run_web_command(agent_path='test_module:custom_agent', tools=['code_execution'])
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    # Verify both tools are present
+    call_kwargs = mock_create_app.call_args.kwargs
+    builtin_tools = call_kwargs.get('builtin_tools', [])
+    tool_kinds = {t.kind for t in builtin_tools}
+    assert 'web_search' in tool_kinds
+    assert 'code_execution' in tool_kinds
+
+
+def test_run_web_command_mcp_success(tmp_path: Path, mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test _run_web_command successfully loads MCP servers."""
+    import json
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    mcp_file = tmp_path / 'mcp.json'
+    mcp_file.write_text(json.dumps({'mcpServers': {'test-server': {'url': 'https://example.com/mcp'}}}))
+
+    result = _run_web_command(models=['test'], mcp=str(mcp_file))
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+    output = capfd.readouterr().out
+    assert 'Loaded 1 MCP server(s)' in output

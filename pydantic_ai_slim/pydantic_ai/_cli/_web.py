@@ -4,22 +4,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, ImportString, ValidationError
+from pydantic import ImportString, TypeAdapter, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, get_builtin_tool_cls
+from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import infer_model
-from pydantic_ai.ui._web import create_web_app, load_mcp_server_tools
+from pydantic_ai.ui._web import create_web_app
 
 __all__ = ['_run_web_command']
 
-
-class _AgentLoader(BaseModel):
-    """Helper model for loading agents using Pydantic ImportString."""
-
-    agent: ImportString  # type: ignore[valid-type]
+_import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
 
 
 def _load_agent(agent_path: str) -> Agent | None:
@@ -33,11 +31,10 @@ def _load_agent(agent_path: str) -> Agent | None:
     """
     sys.path.insert(0, str(Path.cwd()))
     try:
-        loader = _AgentLoader(agent=agent_path)
-        agent = loader.agent  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        if not isinstance(agent, Agent):
+        obj = _import_string_adapter.validate_python(agent_path)
+        if not isinstance(obj, Agent):
             return None
-        return agent  # pyright: ignore[reportUnknownVariableType]
+        return obj  # pyright: ignore[reportUnknownVariableType]
     except ValidationError:
         return None
 
@@ -70,13 +67,7 @@ def _run_web_command(  # noqa: C901
             console.print(f'[red]Error: Could not load agent from {agent_path}[/red]')
             return 1
     else:
-        agent = Agent()
-
-        if instructions:
-
-            @agent.system_prompt
-            def system_prompt() -> str:  # pyright: ignore[reportUnusedFunction]
-                return instructions  # pragma: no cover
+        agent = Agent(instructions=instructions)
 
     if agent.model is None and not models:
         console.print('[red]Error: At least one model (-m) is required when agent has no model[/red]')
@@ -105,12 +96,12 @@ def _run_web_command(  # noqa: C901
                 continue
             all_tool_instances.append(tool_cls())
 
-    # Load MCP server tools if specified
+    # Load MCP servers as toolsets if specified
+    mcp_servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []
     if mcp:
         try:
-            mcp_tools = load_mcp_server_tools(mcp)
-            all_tool_instances.extend(mcp_tools)
-            console.print(f'[dim]Loaded {len(mcp_tools)} MCP server(s) from {mcp}[/dim]')
+            mcp_servers = load_mcp_servers(mcp)
+            console.print(f'[dim]Loaded {len(mcp_servers)} MCP server(s) from {mcp}[/dim]')
         except FileNotFoundError as e:
             console.print(f'[red]Error: {e}[/red]')
             return 1
@@ -125,6 +116,7 @@ def _run_web_command(  # noqa: C901
         agent,
         models=models,
         builtin_tools=all_tool_instances if all_tool_instances else None,
+        toolsets=mcp_servers if mcp_servers else None,
     )
 
     agent_desc = agent_path if agent_path else 'generic agent'

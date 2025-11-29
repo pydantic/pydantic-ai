@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +16,8 @@ with try_import() as starlette_import_successful:
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
 
-    from pydantic_ai.builtin_tools import MCPServerTool, WebSearchTool
-    from pydantic_ai.ui.web import create_web_app
+    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.ui._web import create_web_app
 
 
 pytestmark = [
@@ -104,7 +103,7 @@ def test_chat_app_index_endpoint():
 @pytest.mark.anyio
 async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from CDN when filesystem cache misses."""
-    import pydantic_ai.ui.web.app as app_module
+    import pydantic_ai.ui._web.app as app_module
 
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
@@ -128,7 +127,7 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
     monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
 
-    from pydantic_ai.ui.web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
 
     result = await _get_ui_html('test-version')
 
@@ -141,7 +140,7 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 @pytest.mark.anyio
 async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html returns cached content from filesystem."""
-    import pydantic_ai.ui.web.app as app_module
+    import pydantic_ai.ui._web.app as app_module
 
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
@@ -149,7 +148,7 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     cache_file = tmp_path / 'cached-version.html'
     cache_file.write_bytes(test_content)
 
-    from pydantic_ai.ui.web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.ui._web.app import _get_ui_html  # pyright: ignore[reportPrivateUsage]
 
     result = await _get_ui_html('cached-version')
 
@@ -172,7 +171,7 @@ def test_chat_app_index_caching():
 
 def test_get_agent_missing():
     """Test that _get_agent raises RuntimeError when agent is not configured."""
-    from pydantic_ai.ui.web.api import _get_agent  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.ui._web.api import _get_agent  # pyright: ignore[reportPrivateUsage]
 
     app = Starlette()
 
@@ -223,149 +222,6 @@ def test_chat_app_options_endpoint():
     with TestClient(app) as client:
         response = client.options('/api/chat')
         assert response.status_code == 200
-
-
-def test_expand_env_vars_simple(monkeypatch: pytest.MonkeyPatch):
-    """Test _expand_env_vars with a simple environment variable."""
-    from pydantic_ai.ui.web._mcp import _expand_env_vars  # pyright: ignore[reportPrivateUsage]
-
-    monkeypatch.setenv('TEST_VAR', 'test_value')
-    result = _expand_env_vars('${TEST_VAR}')
-    assert result == 'test_value'
-
-
-def test_expand_env_vars_with_default():
-    """Test _expand_env_vars uses default value when env var is not set."""
-    from pydantic_ai.ui.web._mcp import _expand_env_vars  # pyright: ignore[reportPrivateUsage]
-
-    result = _expand_env_vars('${UNDEFINED_VAR:-default_value}')
-    assert result == 'default_value'
-
-
-def test_expand_env_vars_empty_default():
-    """Test _expand_env_vars with empty default value."""
-    from pydantic_ai.ui.web._mcp import _expand_env_vars  # pyright: ignore[reportPrivateUsage]
-
-    result = _expand_env_vars('${UNDEFINED_VAR:-}')
-    assert result == ''
-
-
-def test_expand_env_vars_missing_raises():
-    """Test _expand_env_vars raises ValueError for undefined env var without default."""
-    from pydantic_ai.ui.web._mcp import _expand_env_vars  # pyright: ignore[reportPrivateUsage]
-
-    with pytest.raises(ValueError, match='Environment variable .* is not defined'):
-        _expand_env_vars('${UNDEFINED_VAR_NO_DEFAULT}')
-
-
-def test_expand_env_vars_nested_dict(monkeypatch: pytest.MonkeyPatch):
-    """Test _expand_env_vars recursively expands in dicts."""
-    from pydantic_ai.ui.web._mcp import _expand_env_vars  # pyright: ignore[reportPrivateUsage]
-
-    monkeypatch.setenv('TOKEN', 'secret123')
-    result = _expand_env_vars({'url': 'https://example.com', 'token': '${TOKEN}'})
-    assert result == {'url': 'https://example.com', 'token': 'secret123'}
-
-
-def test_expand_env_vars_nested_list(monkeypatch: pytest.MonkeyPatch):
-    """Test _expand_env_vars recursively expands in lists."""
-    from pydantic_ai.ui.web._mcp import _expand_env_vars  # pyright: ignore[reportPrivateUsage]
-
-    monkeypatch.setenv('ITEM', 'value')
-    result = _expand_env_vars(['${ITEM}', 'static'])
-    assert result == ['value', 'static']
-
-
-def test_expand_env_vars_passthrough():
-    """Test _expand_env_vars passes through non-string/dict/list values."""
-    from pydantic_ai.ui.web._mcp import _expand_env_vars  # pyright: ignore[reportPrivateUsage]
-
-    assert _expand_env_vars(123) == 123
-    assert _expand_env_vars(None) is None
-    assert _expand_env_vars(True) is True
-
-
-def test_load_mcp_server_tools_basic(tmp_path: Path):
-    """Test loading MCP server tools from a config file."""
-    from pydantic_ai.ui.web._mcp import load_mcp_server_tools
-
-    config = {
-        'mcpServers': {
-            'test-server': {
-                'url': 'https://example.com/mcp',
-            }
-        }
-    }
-    config_file: Path = tmp_path / 'mcp.json'
-    config_file.write_text(json.dumps(config), encoding='utf-8')
-
-    tools = load_mcp_server_tools(str(config_file))
-    assert tools == snapshot([MCPServerTool(id='test-server', url='https://example.com/mcp')])
-
-
-def test_load_mcp_server_tools_with_all_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test loading MCP server tools with all optional fields."""
-    from pydantic_ai.ui.web._mcp import load_mcp_server_tools
-
-    monkeypatch.setenv('MCP_TOKEN', 'my-secret-token')
-
-    config = {
-        'mcpServers': {
-            'full-server': {
-                'url': 'https://example.com/mcp',
-                'authorizationToken': '${MCP_TOKEN}',
-                'description': 'A test MCP server',
-                'allowedTools': ['tool1', 'tool2'],
-                'headers': {'X-Custom': 'header-value'},
-            }
-        }
-    }
-    config_file: Path = tmp_path / 'mcp.json'
-    config_file.write_text(json.dumps(config), encoding='utf-8')
-
-    tools = load_mcp_server_tools(str(config_file))
-    assert tools == snapshot(
-        [
-            MCPServerTool(
-                id='full-server',
-                url='https://example.com/mcp',
-                authorization_token='my-secret-token',
-                description='A test MCP server',
-                allowed_tools=['tool1', 'tool2'],
-                headers={'X-Custom': 'header-value'},
-            )
-        ]
-    )
-
-
-def test_load_mcp_server_tools_file_not_found():
-    """Test load_mcp_server_tools raises FileNotFoundError for missing file."""
-    from pydantic_ai.ui.web._mcp import load_mcp_server_tools
-
-    with pytest.raises(FileNotFoundError, match='MCP config file not found'):
-        load_mcp_server_tools('/nonexistent/path/mcp.json')
-
-
-def test_load_mcp_server_tools_multiple_servers(tmp_path: Path):
-    """Test loading multiple MCP servers from config."""
-    from pydantic_ai.ui.web._mcp import load_mcp_server_tools
-
-    config = {
-        'mcpServers': {
-            'server-a': {'url': 'https://a.example.com/mcp'},
-            'server-b': {'url': 'https://b.example.com/mcp'},
-        }
-    }
-    config_file: Path = tmp_path / 'mcp.json'
-    config_file.write_text(json.dumps(config), encoding='utf-8')
-
-    tools = load_mcp_server_tools(str(config_file))
-    assert tools == snapshot(
-        [
-            MCPServerTool(id='server-a', url='https://a.example.com/mcp'),
-            MCPServerTool(id='server-b', url='https://b.example.com/mcp'),
-        ]
-    )
 
 
 def test_mcp_server_tool_label():
@@ -429,15 +285,46 @@ def test_supported_builtin_tools(model_cls: str):
     else:
         raise ValueError(f'Unknown model class: {model_cls}')  # pragma: no cover
 
+    from pydantic_ai.builtin_tools import AbstractBuiltinTool
+
     result = cls.supported_builtin_tools()
     assert isinstance(result, frozenset)
-    assert all(isinstance(t, str) for t in result)
+    assert all(issubclass(t, AbstractBuiltinTool) for t in result)
 
 
-def test_builtin_tool_id_sync():
-    """Test that BUILTIN_TOOL_ID Literal stays in sync with BUILTIN_TOOL_CLASSES registry."""
-    from pydantic_ai.builtin_tools import ACTIVE_BUILTIN_TOOL_IDS, BUILTIN_TOOL_CLASSES
+def test_post_chat_invalid_model():
+    """Test POST /api/chat returns 400 when model is not in allowed list."""
+    from pydantic_ai.models.test import TestModel
 
-    # BUILTIN_TOOL_CLASSES should have all IDs except 'mcp_server' (which is handled separately)
-    expected_in_classes = ACTIVE_BUILTIN_TOOL_IDS - {'mcp_server'}
-    assert set(BUILTIN_TOOL_CLASSES.keys()) == expected_in_classes
+    agent = Agent(TestModel(custom_output_text='Hello'))
+    # Use 'test' as the allowed model, then send a different model in the request
+    app = create_web_app(agent, models=['test'])
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'test-id',
+                'messages': [
+                    {
+                        'id': 'msg-1',
+                        'role': 'user',
+                        'parts': [{'type': 'text', 'text': 'Hello'}],
+                    }
+                ],
+                'model': 'test:different_model',
+                'builtinTools': [],
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json() == snapshot({'error': 'Model "test:different_model" is not in the allowed models list'})
+
+
+def test_model_label_openrouter():
+    """Test Model.label handles OpenRouter-style names with /."""
+    from pydantic_ai.models.test import TestModel
+
+    model = TestModel(model_name='meta-llama/llama-3-70b')
+    assert model.label == snapshot('Llama 3 70b')
