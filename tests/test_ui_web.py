@@ -241,53 +241,34 @@ def test_model_profile():
 
 
 @pytest.mark.parametrize(
-    'model_cls',
+    'model_name',
     [
-        pytest.param('anthropic', id='anthropic'),
-        pytest.param('google', id='google'),
-        pytest.param('groq', id='groq'),
-        pytest.param('openai', id='openai'),
-        pytest.param('openai_responses', id='openai-responses'),
+        pytest.param('anthropic:claude-sonnet-4-5', id='anthropic'),
+        pytest.param('google-gla:gemini-2.0-flash', id='google'),
+        pytest.param('groq:llama-3.3-70b-versatile', id='groq'),
+        pytest.param('openai:gpt-4o', id='openai'),
+        pytest.param('openai-responses:gpt-4o', id='openai-responses'),
         pytest.param('function', id='function'),
         pytest.param('test', id='test'),
     ],
 )
-def test_supported_builtin_tools(model_cls: str):
-    """Test supported_builtin_tools() classmethod on all model classes."""
-    if model_cls == 'anthropic':
-        from pydantic_ai.models.anthropic import AnthropicModel
+def test_supported_builtin_tools(model_name: str):
+    """Test model.profile.supported_builtin_tools returns proper tool types."""
+    from pydantic_ai.builtin_tools import AbstractBuiltinTool
+    from pydantic_ai.models import infer_model
 
-        cls = AnthropicModel
-    elif model_cls == 'google':
-        from pydantic_ai.models.google import GoogleModel
-
-        cls = GoogleModel
-    elif model_cls == 'groq':
-        from pydantic_ai.models.groq import GroqModel
-
-        cls = GroqModel
-    elif model_cls == 'openai':
-        from pydantic_ai.models.openai import OpenAIChatModel
-
-        cls = OpenAIChatModel
-    elif model_cls == 'openai_responses':
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-
-        cls = OpenAIResponsesModel
-    elif model_cls == 'function':
+    if model_name == 'function':
         from pydantic_ai.models.function import FunctionModel
 
-        cls = FunctionModel
-    elif model_cls == 'test':
+        model = FunctionModel(lambda m, a: None)  # type: ignore
+    elif model_name == 'test':
         from pydantic_ai.models.test import TestModel
 
-        cls = TestModel
+        model = TestModel()
     else:
-        raise ValueError(f'Unknown model class: {model_cls}')  # pragma: no cover
+        model = infer_model(model_name)
 
-    from pydantic_ai.builtin_tools import AbstractBuiltinTool
-
-    result = cls.supported_builtin_tools()
+    result = model.profile.supported_builtin_tools
     assert isinstance(result, frozenset)
     assert all(issubclass(t, AbstractBuiltinTool) for t in result)
 

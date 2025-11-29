@@ -234,7 +234,8 @@ class HuggingFaceModel(Model):
         else:
             tool_choice = 'auto'
 
-        if model_request_parameters.builtin_tools:
+        if model_request_parameters.builtin_tools:  # pragma: no cover
+            # this check is done in the base Model class - leave this as a placeholder for when Bedrock supports built-in tools
             raise UserError('HuggingFace does not support built-in tools')
 
         hf_messages = await self._map_messages(messages, model_request_parameters)

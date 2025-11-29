@@ -462,10 +462,15 @@ class OpenAIChatModel(Model):
         """The model provider."""
         return self._provider.name
 
-    @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model class can handle."""
-        return frozenset({WebSearchTool})
+    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle.
+
+        WebSearchTool is only supported if openai_chat_supports_web_search is True.
+        """
+        openai_profile = OpenAIModelProfile.from_profile(profile)
+        if openai_profile.openai_chat_supports_web_search:
+            return frozenset({WebSearchTool})
+        return frozenset()
 
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
@@ -748,12 +753,6 @@ class OpenAIChatModel(Model):
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
-                if not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search:
-                    raise UserError(
-                        f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
-                        f'Please use `OpenAIResponsesModel` instead.'
-                    )
-
                 if tool.user_location:
                     return WebSearchOptions(
                         search_context_size=tool.search_context_size,
@@ -763,10 +762,7 @@ class OpenAIChatModel(Model):
                         ),
                     )
                 return WebSearchOptions(search_context_size=tool.search_context_size)
-            else:
-                raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
-                )
+        return None
 
     @dataclass
     class _MapModelResponseContext:
@@ -1156,9 +1152,8 @@ class OpenAIResponsesModel(Model):
         """The model provider."""
         return self._provider.name
 
-    @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model class can handle."""
+    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, ImageGenerationTool})
 
     async def request(

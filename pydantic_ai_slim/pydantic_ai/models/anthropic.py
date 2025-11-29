@@ -44,7 +44,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
@@ -275,9 +275,8 @@ class AnthropicModel(Model):
         """The model provider."""
         return self._provider.name
 
-    @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model class can handle."""
+    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
     async def request(

@@ -179,9 +179,8 @@ class GroqModel(Model):
         """The model provider."""
         return self._provider.name
 
-    @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model class can handle."""
+    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
     async def request(
@@ -392,7 +391,7 @@ class GroqModel(Model):
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
-            else:
+            else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
                 )

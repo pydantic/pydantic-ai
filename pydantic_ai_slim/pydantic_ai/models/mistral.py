@@ -224,7 +224,8 @@ class MistralModel(Model):
         """Make a non-streaming request to the model."""
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
+        if model_request_parameters.builtin_tools:  # pragma: no cover
+            # this check is done in the base Model class - leave this as a placeholder for when Bedrock supports built-in tools
             raise UserError('Mistral does not support built-in tools')
 
         try:

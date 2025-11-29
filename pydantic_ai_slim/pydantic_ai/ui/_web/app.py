@@ -56,7 +56,7 @@ def _resolve_models(
         model = infer_model(model_ref)
         model_id = f'{model.system}:{model.model_name}'
         display_name = label or model.label
-        model_supported_tools = model.supported_builtin_tools()
+        model_supported_tools = model.profile.supported_builtin_tools
         supported_tool_ids = [t.kind for t in (model_supported_tools & builtin_tool_types)]
         result.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
 
