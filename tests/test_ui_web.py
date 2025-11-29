@@ -87,7 +87,7 @@ def test_chat_app_configure_endpoint_empty():
 
 
 def test_chat_app_index_endpoint():
-    """Test that the index endpoint serves the UI from CDN."""
+    """Test that the index endpoint serves HTML with proper caching headers."""
     agent = Agent('test')
     app = create_web_app(agent)
 
