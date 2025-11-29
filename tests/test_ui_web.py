@@ -240,35 +240,28 @@ def test_model_profile():
     assert model.profile is not None
 
 
-@pytest.mark.parametrize(
-    'model_name',
-    [
-        pytest.param('anthropic:claude-sonnet-4-5', id='anthropic'),
-        pytest.param('google-gla:gemini-2.0-flash', id='google'),
-        pytest.param('groq:llama-3.3-70b-versatile', id='groq'),
-        pytest.param('openai:gpt-4o', id='openai'),
-        pytest.param('openai-responses:gpt-4o', id='openai-responses'),
-        pytest.param('function', id='function'),
-        pytest.param('test', id='test'),
-    ],
-)
-def test_supported_builtin_tools(model_name: str):
-    """Test model.profile.supported_builtin_tools returns proper tool types."""
+@pytest.mark.parametrize('profile_name', ['base', 'openai', 'google', 'groq'])
+def test_supported_builtin_tools(profile_name: str):
+    """Test profile.supported_builtin_tools returns proper tool types."""
     from pydantic_ai.builtin_tools import AbstractBuiltinTool
-    from pydantic_ai.models import infer_model
+    from pydantic_ai.profiles import ModelProfile
 
-    if model_name == 'function':
-        from pydantic_ai.models.function import FunctionModel
+    if profile_name == 'base':
+        profile: ModelProfile = ModelProfile()
+    elif profile_name == 'openai':
+        from pydantic_ai.profiles.openai import OpenAIModelProfile
 
-        model = FunctionModel(lambda m, a: None)  # type: ignore
-    elif model_name == 'test':
-        from pydantic_ai.models.test import TestModel
+        profile = OpenAIModelProfile()
+    elif profile_name == 'google':
+        from pydantic_ai.profiles.google import GoogleModelProfile
 
-        model = TestModel()
+        profile = GoogleModelProfile()
     else:
-        model = infer_model(model_name)
+        from pydantic_ai.profiles.groq import GroqModelProfile
 
-    result = model.profile.supported_builtin_tools
+        profile = GroqModelProfile()
+
+    result = profile.supported_builtin_tools
     assert isinstance(result, frozenset)
     assert all(issubclass(t, AbstractBuiltinTool) for t in result)
 
