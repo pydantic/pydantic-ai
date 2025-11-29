@@ -1,5 +1,8 @@
 """API routes for the web chat UI."""
 
+from collections.abc import Sequence
+from typing import Any
+
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 from starlette.applications import Starlette
@@ -8,6 +11,7 @@ from starlette.responses import JSONResponse, Response
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 
@@ -52,6 +56,7 @@ def add_api_routes(
     app: Starlette,
     models: list[ModelInfo] | None = None,
     builtin_tools: list[AbstractBuiltinTool] | None = None,
+    toolsets: Sequence[AbstractToolset[Any]] | None = None,
 ) -> None:
     """Add API routes to a Starlette app.
 
@@ -59,10 +64,12 @@ def add_api_routes(
         app: The Starlette app to add routes to.
         models: Optional list of AI models. If not provided, the UI will have no model options.
         builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
+        toolsets: Optional list of toolsets (e.g., MCP servers). These provide additional tools.
     """
     _models = models or []
     _model_ids = {m.id for m in _models}
     _builtin_tools = builtin_tools or []
+    _toolsets = list(toolsets) if toolsets else None
     _tools_by_id: dict[str, AbstractBuiltinTool] = {tool.unique_id: tool for tool in _builtin_tools}
 
     async def options_chat(request: Request) -> Response:
@@ -102,6 +109,7 @@ def add_api_routes(
             agent=agent,
             model=extra_data.model,
             builtin_tools=request_builtin_tools,
+            toolsets=_toolsets,
         )
         return streaming_response
 

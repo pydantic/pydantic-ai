@@ -96,6 +96,7 @@ class TestModel(Model):
         custom_output_text: str | None = None,
         custom_output_args: Any | None = None,
         seed: int = 0,
+        model_name: str = 'test',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -105,7 +106,7 @@ class TestModel(Model):
         self.custom_output_args = custom_output_args
         self.seed = seed
         self.last_model_request_parameters = None
-        self._model_name = 'test'
+        self._model_name = model_name
         self._system = 'test'
         super().__init__(settings=settings, profile=profile)
 

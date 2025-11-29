@@ -1,5 +1,3 @@
-"""Factory function for creating a web chat app for a Pydantic AI agent."""
-
 from __future__ import annotations
 
 import os
