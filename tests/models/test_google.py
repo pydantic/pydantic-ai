@@ -539,7 +539,7 @@ print(result)\
 
 
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(
         model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
     )
@@ -551,7 +551,10 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
         Args:
             country: The country name.
         """
-        raise ModelRetry('The country is not supported.')
+        if country == 'La France':
+            return 'Paris'
+        else:
+            raise ModelRetry('The country is not supported. Use "La France" instead.')
 
     result = await agent.run('What is the capital of France?')
     assert result.all_messages() == snapshot(
@@ -564,11 +567,18 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_capital',
+                        args={'country': 'France'},
+                        tool_call_id=IsStr(),
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=57, output_tokens=170, details={'thoughts_tokens': 155, 'text_prompt_tokens': 57}
+                    input_tokens=57, output_tokens=139, details={'thoughts_tokens': 124, 'text_prompt_tokens': 57}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -579,7 +589,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='The country is not supported.',
+                        content='The country is not supported. Use "La France" instead.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -589,14 +599,46 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content='I am sorry, I cannot fulfill this request. The country "France" is not supported by my system.'
+                    ToolCallPart(
+                        tool_name='get_capital',
+                        args={'country': 'La France'},
+                        tool_call_id=IsStr(),
+                        provider_details={'thought_signature': IsStr()},
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=104, output_tokens=200, details={'thoughts_tokens': 178, 'text_prompt_tokens': 104}
+                    input_tokens=109, output_tokens=215, details={'thoughts_tokens': 199, 'text_prompt_tokens': 109}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_capital',
+                        content='Paris',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Paris',
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=142, output_tokens=98, details={'thoughts_tokens': 97, 'text_prompt_tokens': 142}
+                ),
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
