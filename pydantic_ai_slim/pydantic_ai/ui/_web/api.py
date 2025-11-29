@@ -49,7 +49,9 @@ class _ChatRequestExtra(BaseModel, extra='ignore', alias_generator=to_camel):
     """Extra data extracted from chat request."""
 
     model: str | None = None
+    """Model ID selected by the user, e.g. 'openai:gpt-5'. Maps to JSON field 'model'."""
     builtin_tools: list[str] = []
+    """Tool IDs selected by the user, e.g. ['web_search', 'code_execution']. Maps to JSON field 'builtinTools'."""
 
 
 def add_api_routes(
@@ -80,7 +82,7 @@ def add_api_routes(
         """Endpoint to configure the frontend with available models and tools."""
         config = _ConfigureFrontend(
             models=_models,
-            builtin_tools=[BuiltinToolInfo(id=tool.kind, name=tool.label) for tool in _builtin_tools],
+            builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in _builtin_tools],
         )
         return JSONResponse(config.model_dump(by_alias=True))
 
