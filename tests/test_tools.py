@@ -2492,7 +2492,7 @@ async def test_tool_timeout_triggers_retry():
     @agent.tool_plain
     async def slow_tool() -> str:
         await asyncio.sleep(1.0)  # 1 second, but timeout is 0.1s
-        return 'done'
+        return 'done'  # pragma: no cover
 
     result = await agent.run('call slow_tool')
 
@@ -2527,14 +2527,8 @@ async def test_per_tool_timeout_overrides_global():
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='slow_but_allowed_tool', args={}, tool_call_id='call-1')]
             )
-        # Second call: we should see the successful tool return (not a retry)
-        # Check if last message has a successful tool return
-        last_request = messages[-1]
-        if hasattr(last_request, 'parts'):
-            for part in getattr(last_request, 'parts', []):
-                if isinstance(part, ToolReturnPart):
-                    return ModelResponse(parts=[TextPart(content=f'Tool returned: {part.content}')])
-        return ModelResponse(parts=[TextPart(content='done')])
+        # Second call: tool completed successfully, return final response
+        return ModelResponse(parts=[TextPart(content='Tool completed successfully')])
 
     agent = Agent(FunctionModel(model_logic), tool_timeout=0.05)  # 50ms global timeout
 
@@ -2617,7 +2611,7 @@ async def test_tool_timeout_message_format():
     @agent.tool_plain
     async def my_slow_tool() -> str:
         await asyncio.sleep(1.0)
-        return 'done'
+        return 'done'  # pragma: no cover
 
     result = await agent.run('call my_slow_tool')
 
@@ -2641,7 +2635,7 @@ def test_tool_timeout_definition():
 
     @agent.tool_plain(timeout=30.0)
     def tool_with_timeout() -> str:
-        return 'done'
+        return 'done'  # pragma: no cover
 
     # Get tool definition through the toolset
     tool = agent._function_toolset.tools['tool_with_timeout']
@@ -2655,7 +2649,7 @@ def test_tool_timeout_default_none():
 
     @agent.tool_plain
     def tool_without_timeout() -> str:
-        return 'done'
+        return 'done'  # pragma: no cover
 
     tool = agent._function_toolset.tools['tool_without_timeout']
     assert tool.timeout is None
