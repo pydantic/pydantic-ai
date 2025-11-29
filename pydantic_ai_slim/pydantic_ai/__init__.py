@@ -11,6 +11,7 @@ from .agent import (
 )
 from .builtin_tools import (
     CodeExecutionTool,
+    FileSystemTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
@@ -102,6 +103,7 @@ from .toolsets import (
     ApprovalRequiredToolset,
     CombinedToolset,
     ExternalToolset,
+    FileSystemToolset,
     FilteredToolset,
     FunctionToolset,
     PrefixedToolset,
@@ -206,6 +208,7 @@ __all__ = (
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'ExternalToolset',
+    'FileSystemToolset',
     'FilteredToolset',
     'FunctionToolset',
     'PrefixedToolset',
@@ -220,6 +223,7 @@ __all__ = (
     'WebFetchTool',
     'UrlContextTool',
     'CodeExecutionTool',
+    'FileSystemTool',
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',

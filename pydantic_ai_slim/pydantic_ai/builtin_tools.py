@@ -2,11 +2,14 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, deprecated
+
+if TYPE_CHECKING:
+    from .toolsets.filesystem import FileSystemToolset
 
 __all__ = (
     'AbstractBuiltinTool',
@@ -18,6 +21,7 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'FileSystemTool',
 )
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -400,3 +404,72 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.get('kind', AbstractBuiltinTool.kind)
     else:
         return tool_data.kind
+
+
+@dataclass(kw_only=True)
+class FileSystemTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to access the file system.
+
+    Unlike other builtin tools that are implemented by model providers,
+    FileSystemTool creates local callable tools for file operations.
+
+    This tool provides read and optionally write access to files on the local
+    file system. For security, you should configure allowed_paths to restrict
+    access to specific directories.
+
+    Supported by: All models (implemented as a local toolset)
+
+    Example usage:
+        ```python
+        from pydantic_ai import Agent
+        from pydantic_ai.builtin_tools import FileSystemTool
+
+        agent = Agent(
+            'openai:gpt-4',
+            builtin_tools=[
+                FileSystemTool(
+                    allowed_paths=['/home/user/data'],
+                    allow_write=False,
+                ),
+            ],
+        )
+        ```
+    """
+
+    from pathlib import Path as _Path
+
+    allowed_paths: list[str | _Path] | None = None
+    """List of paths the agent is allowed to access.
+    If None or empty, allows access to current working directory only."""
+
+    allow_write: bool = False
+    """Whether to allow write operations (create, modify)."""
+
+    allow_delete: bool = False
+    """Whether to allow delete operations. Only applies if allow_write is True."""
+
+    max_file_size: int = 10 * 1024 * 1024  # 10 MB
+    """Maximum file size to read in bytes."""
+
+    allowed_extensions: list[str] | None = None
+    """If provided, only files with these extensions can be accessed.
+    Example: ['.txt', '.json', '.py']"""
+
+    kind: str = 'file_system'
+    """The kind of tool."""
+
+    def to_toolset(self) -> FileSystemToolset:
+        """Convert this configuration to a FileSystemToolset.
+
+        Returns:
+            A FileSystemToolset configured with the same settings.
+        """
+        from .toolsets.filesystem import FileSystemToolset
+
+        return FileSystemToolset(
+            allowed_paths=list(self.allowed_paths) if self.allowed_paths else [],
+            allow_write=self.allow_write,
+            allow_delete=self.allow_delete,
+            max_file_size=self.max_file_size,
+            allowed_extensions=self.allowed_extensions,
+        )
