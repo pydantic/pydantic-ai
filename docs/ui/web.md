@@ -142,3 +142,9 @@ Available builtin tools:
 - `image_generation` - Image generation
 - `web_fetch` - Fetch content from URLs
 - `memory` - Persistent memory across conversations
+
+!!! note "Memory Tool Requirements"
+    The `memory` tool requires the agent to have memory configured via the
+    `memory` parameter when creating the agent. It cannot be enabled via
+    the CLI `-t memory` flag alone - an agent with memory must be provided
+    via `--agent`.
