@@ -358,3 +358,51 @@ I'm designed to be conversational and to engage with users in a way that's helpf
             }
         ]
     )
+
+
+async def test_openrouter_tool_optional_parameters(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+
+    class FindEducationContentFilters(BaseModel):
+        title: str | None = None
+
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Can you find me any education content?')],
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='find_education_content',
+                    description='',
+                    parameters_json_schema=FindEducationContentFilters.model_json_schema(),
+                )
+            ],
+            allow_text_output=True,  # Allow model to either use tools or respond directly
+        ),
+    )
+
+    assert len(response.parts) == 2
+
+    tool_call_part = response.parts[1]
+    assert isinstance(tool_call_part, ToolCallPart)
+    assert tool_call_part.tool_call_id == snapshot('toolu_vrtx_015QAXScZzRDPttiPoc34AdD')
+    assert tool_call_part.tool_name == 'find_education_content'
+    assert tool_call_part.args == snapshot(None)
+
+    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    tool_call_message = mapped_messages[0]
+    assert tool_call_message['role'] == 'assistant'
+    assert tool_call_message.get('content') == snapshot("I'll search for education content for you.")
+    assert tool_call_message.get('tool_calls') == snapshot(
+        [
+            {
+                'id': 'toolu_vrtx_015QAXScZzRDPttiPoc34AdD',
+                'type': 'function',
+                'function': {
+                    'name': 'find_education_content',
+                    'arguments': '{}',
+                },
+            }
+        ]
+    )
