@@ -16,39 +16,9 @@ from starlette.responses import HTMLResponse, Response
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.toolsets import AbstractToolset
 
 from .api import ModelInfo, add_api_routes
-
-
-def format_model_display_name(model_name: str) -> str:
-    """Format model name for display in UI.
-
-    Handles common patterns:
-    - gpt-5 -> GPT 5
-    - claude-sonnet-4-5 -> Claude Sonnet 4.5
-    - gemini-2.5-pro -> Gemini 2.5 Pro
-    - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
-    """
-    # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
-    if '/' in model_name:
-        model_name = model_name.split('/')[-1]
-
-    parts = model_name.split('-')
-    result: list[str] = []
-
-    for i, part in enumerate(parts):
-        if i == 0 and part.lower() == 'gpt':
-            result.append(part.upper())
-        elif part.replace('.', '').isdigit():
-            if result and result[-1].replace('.', '').isdigit():
-                result[-1] = f'{result[-1]}.{part}'
-            else:
-                result.append(part)
-        else:
-            result.append(part.capitalize())
-
-    return ' '.join(result)
-
 
 DEFAULT_UI_VERSION = '0.0.3'
 CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
@@ -87,7 +57,7 @@ def _resolve_models(
     for label, model_ref in items:
         model = infer_model(model_ref)
         model_id = f'{model.system}:{model.model_name}'
-        display_name = label or format_model_display_name(model.model_name)
+        display_name = label or model.label
         model_supported_tools = model.supported_builtin_tools()
         supported_tool_ids = [t.kind for t in (model_supported_tools & builtin_tool_types)]
         result.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
@@ -137,6 +107,7 @@ def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
     builtin_tools: list[AbstractBuiltinTool] | None = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -145,9 +116,11 @@ def create_web_app(
         models: Models to make available in the UI. Can be:
             - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
             - A dict mapping display labels to model names/instances
-              (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
             If not provided, the UI will have no model options.
         builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
+        toolsets: Optional list of toolsets (e.g., MCP servers). These provide additional tools
+            that work with any model.
 
     Returns:
         A configured Starlette application ready to be served
@@ -158,7 +131,7 @@ def create_web_app(
 
     app.state.agent = agent
 
-    add_api_routes(app, models=resolved_models, builtin_tools=builtin_tools)
+    add_api_routes(app, models=resolved_models, builtin_tools=builtin_tools, toolsets=toolsets)
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""

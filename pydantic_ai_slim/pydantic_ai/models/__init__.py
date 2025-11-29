@@ -702,6 +702,11 @@ class Model(ABC):
         """The model name."""
         raise NotImplementedError()
 
+    @property
+    def label(self) -> str:
+        """Human-friendly display label for the model."""
+        return _format_model_label(self.model_name)
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model class can handle.
@@ -941,6 +946,36 @@ make costly requests to a model during tests.
 The testing models [`TestModel`][pydantic_ai.models.test.TestModel] and
 [`FunctionModel`][pydantic_ai.models.function.FunctionModel] are no affected by this setting.
 """
+
+
+def _format_model_label(model_name: str) -> str:
+    """Format model name for display in UI.
+
+    Handles common patterns:
+    - gpt-5 -> GPT 5
+    - claude-sonnet-4-5 -> Claude Sonnet 4.5
+    - gemini-2.5-pro -> Gemini 2.5 Pro
+    - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
+    """
+    # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
+    if '/' in model_name:
+        model_name = model_name.split('/')[-1]
+
+    parts = model_name.split('-')
+    result: list[str] = []
+
+    for i, part in enumerate(parts):
+        if i == 0 and part.lower() == 'gpt':
+            result.append(part.upper())
+        elif part.replace('.', '').isdigit():
+            if result and result[-1].replace('.', '').isdigit():
+                result[-1] = f'{result[-1]}.{part}'
+            else:
+                result.append(part)
+        else:
+            result.append(part.capitalize())
+
+    return ' '.join(result)
 
 
 def check_allow_model_requests() -> None:
