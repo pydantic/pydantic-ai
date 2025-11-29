@@ -7491,6 +7491,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                     ThinkingPart(
                         content='',
                         id='rs_123',
+                        provider_name='openai',
                         provider_details={'raw_content': ['Let me think about this...', 'The answer is 4.']},
                     ),
                     TextPart(content='4', id='msg_123'),
@@ -7558,6 +7559,74 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                         provider_details={'raw_content': ['Raw thinking step 1', 'Raw thinking step 2']},
                     ),
                     TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_multiple_summaries(allow_model_requests: None):
+    """Test reasoning item with multiple summaries.
+
+    When a reasoning item has multiple summary texts, each should become a separate ThinkingPart.
+    """
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[
+                    Summary(text='First summary', type='summary_text'),
+                    Summary(text='Second summary', type='summary_text'),
+                    Summary(text='Third summary', type='summary_text'),
+                ],
+                type='reasoning',
+                encrypted_content='encrypted_sig',
+                content=[
+                    ReasoningContent(text='Raw thinking step 1', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='Done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('Test multiple summaries')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Test multiple summaries',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='First summary',
+                        id='rs_123',
+                        signature='encrypted_sig',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Raw thinking step 1']},
+                    ),
+                    ThinkingPart(content='Second summary', id='rs_123'),
+                    ThinkingPart(content='Third summary', id='rs_123'),
+                    TextPart(content='Done', id='msg_123'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -7703,6 +7772,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ThinkingPart(
                         content='',
                         id='rs_123',
+                        provider_name='openai',
                         provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
                     ),
                     TextPart(content='4', id='msg_123'),

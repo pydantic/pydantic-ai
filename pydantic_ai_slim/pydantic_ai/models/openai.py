@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -83,7 +83,10 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
-    from openai.types.responses.response_reasoning_item_param import Content as RawContent, Summary
+    from openai.types.responses.response_reasoning_item_param import (
+        Content as ReasoningContent,
+        Summary as ReasoningSummary,
+    )
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
@@ -1147,20 +1150,20 @@ class OpenAIResponsesModel(Model):
                                 content=summary.text,
                                 id=item.id,
                                 signature=signature,
-                                provider_name=self.system if signature else None,
+                                provider_name=self.system if (signature or provider_details) else None,
                                 provider_details=provider_details,
                             )
                         )
                         # We only need to store the signature and raw_content once.
                         signature = None
                         provider_details = None
-                elif signature or raw_content:
+                elif signature or provider_details:
                     items.append(
                         ThinkingPart(
                             content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system if signature else None,
+                            provider_name=self.system if (signature or provider_details) else None,
                             provider_details=provider_details,
                         )
                     )
@@ -1705,8 +1708,10 @@ class OpenAIResponsesModel(Model):
                         # If `send_item_ids` is false, we won't send the `BuiltinToolReturnPart`, but OpenAI does not have a type for files from the assistant.
                         pass
                     elif isinstance(item, ThinkingPart):
-                        # Get raw CoT content from provider_details if present
-                        raw_content: list[str] | None = (item.provider_details or {}).get('raw_content')
+                        # Get raw CoT content from provider_details if present and from this provider
+                        raw_content: list[str] | None = None
+                        if item.provider_name == self.system:
+                            raw_content = (item.provider_details or {}).get('raw_content')
 
                         if item.id and (send_item_ids or raw_content):
                             signature: str | None = None
@@ -1733,14 +1738,14 @@ class OpenAIResponsesModel(Model):
                                 assert reasoning_item is not None
                                 reasoning_item['summary'] = [
                                     *reasoning_item['summary'],
-                                    Summary(text=item.content, type='summary_text'),
+                                    ReasoningSummary(text=item.content, type='summary_text'),
                                 ]
 
                             if raw_content:
                                 # Send raw CoT back
                                 assert reasoning_item is not None
                                 reasoning_item['content'] = [
-                                    RawContent(text=text, type='reasoning_text') for text in raw_content
+                                    ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
                             start_tag, end_tag = profile.thinking_tags
@@ -2126,9 +2131,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 if isinstance(chunk.item, responses.ResponseReasoningItem):
                     if signature := chunk.item.encrypted_content:  # pragma: no branch
-                        # Add the signature to the part corresponding to the first summary item
+                        # Add the signature to the part corresponding to the first summary/raw CoT
                         for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=f'{chunk.item.id}-0',
+                            vendor_part_id=chunk.item.id,
                             id=chunk.item.id,
                             signature=signature,
                             provider_name=self.provider_name,
@@ -2166,8 +2171,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
+                # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
+                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
                 for event in self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
+                    vendor_part_id=vendor_id,
                     content=chunk.part.text,
                     id=chunk.item_id,
                 ):
@@ -2180,19 +2187,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
+                # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
+                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
                 for event in self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
+                    vendor_part_id=vendor_id,
                     content=chunk.delta,
                     id=chunk.item_id,
                 ):
                     yield event
 
             elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
+                # Handle raw CoT from gpt-oss models using callback pattern
                 for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=chunk.item_id,
-                    raw_content_delta=chunk.delta,
-                    raw_content_index=chunk.content_index,
                     id=chunk.item_id,
+                    provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
                 ):
                     yield event
 
@@ -2329,6 +2338,25 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
+    """Create a callback that updates raw_content in provider_details.
+
+    This is used for streaming raw CoT from gpt-oss models. The callback pattern keeps
+    raw_content logic in OpenAI code while the parts manager stays provider-agnostic.
+    """
+
+    def update_provider_details(existing: dict[str, Any] | None) -> dict[str, Any]:
+        details = dict(existing or {})
+        raw_list: list[str] = list(details.get('raw_content', []))
+        while len(raw_list) <= index:
+            raw_list.append('')
+        raw_list[index] += delta
+        details['raw_content'] = raw_list
+        return details
+
+    return update_provider_details
 
 
 # Convert logprobs to a serializable format

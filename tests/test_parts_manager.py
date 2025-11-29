@@ -577,38 +577,57 @@ def test_handle_thinking_delta_no_content_or_signature():
     # Add a thinking part first
     list(manager.handle_thinking_delta(vendor_part_id='thinking', content='initial', signature=None))
 
-    # Try to update with no content or signature - should raise error
-    with pytest.raises(UnexpectedModelBehavior, match='Cannot update a ThinkingPart with no content or signature'):
-        list(manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None))
-
-
-def test_handle_thinking_delta_raw_content_extends_list():
-    manager = ModelResponsePartsManager()
-    list(manager.handle_thinking_delta(vendor_part_id='t', raw_content_delta='first', raw_content_index=0))
-    list(manager.handle_thinking_delta(vendor_part_id='t', raw_content_delta='third', raw_content_index=2))
-    part = manager.get_parts()[0]
-    assert isinstance(part, ThinkingPart)
-    assert part.provider_details is not None
-    assert part.provider_details['raw_content'] == ['first', '', 'third']
-
-
-def test_handle_thinking_delta_raw_content_with_content():
-    manager = ModelResponsePartsManager()
-    list(manager.handle_thinking_delta(vendor_part_id='t', content='initial'))
-    events = list(
-        manager.handle_thinking_delta(
-            vendor_part_id='t',
-            raw_content_delta='raw',
-            raw_content_index=0,
-            content=' more',
-        )
+    # Updating with no content, signature, or provider_details is a no-op (emits delta event)
+    # question for PR: should we even emit here?
+    events = list(manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None))
+    assert events == snapshot(
+        [
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=None, signature_delta=None, provider_name=None, provider_details=None
+                ),
+            )
+        ]
     )
-    assert len(events) == 1
-    part = manager.get_parts()[0]
-    assert isinstance(part, ThinkingPart)
-    assert part.content == 'initial more'
-    assert part.provider_details is not None
-    assert part.provider_details['raw_content'] == ['raw']
+
+
+def test_handle_thinking_delta_provider_details_callback():
+    """Test that provider_details can be a callback function."""
+    manager = ModelResponsePartsManager()
+
+    # Create initial part with provider_details
+    list(manager.handle_thinking_delta(vendor_part_id='t', content='initial', provider_details={'count': 1}))
+
+    # Update using callback to modify provider_details
+    def update_details(existing: dict[str, Any] | None) -> dict[str, Any]:
+        details = dict(existing or {})
+        details['count'] = details.get('count', 0) + 1
+        return details
+
+    list(manager.handle_thinking_delta(vendor_part_id='t', content=' more', provider_details=update_details))
+
+    assert manager.get_parts() == snapshot([ThinkingPart(content='initial more', provider_details={'count': 2})])
+
+
+def test_handle_thinking_delta_provider_details_callback_from_none():
+    """Test callback when existing provider_details is None."""
+    manager = ModelResponsePartsManager()
+
+    # Create initial part without provider_details
+    list(manager.handle_thinking_delta(vendor_part_id='t', content='initial'))
+
+    # Update using callback that handles None
+    def add_details(existing: dict[str, Any] | None) -> dict[str, Any]:
+        details = dict(existing or {})
+        details['new_key'] = 'new_value'
+        return details
+
+    list(manager.handle_thinking_delta(vendor_part_id='t', content=' more', provider_details=add_details))
+
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='initial more', provider_details={'new_key': 'new_value'})]
+    )
 
 
 def test_handle_part():
@@ -640,72 +659,3 @@ def test_handle_part():
     event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])
-
-
-def test_handle_thinking_delta_merges_raw_content_with_summary():
-    """Test that summaries merge with existing raw-content-only parts.
-
-    This tests the defensive handling for streaming scenarios where raw content
-    arrives before summaries. Raw content uses vendor_part_id='rs_123', while
-    summaries use vendor_part_id='rs_123-0'. Despite different vendor_part_ids,
-    they should merge into a single ThinkingPart.
-
-    As of testing (Nov 2025), gpt-oss-20b via OpenRouter only returns raw content
-    without summaries. This test ensures we handle potential future scenarios.
-    """
-    manager = ModelResponsePartsManager()
-
-    # Step 1: Raw content arrives first with vendor_id='rs_123'
-    events = list(
-        manager.handle_thinking_delta(
-            vendor_part_id='rs_123',
-            raw_content_delta='Raw thinking step 1. ',
-            raw_content_index=0,
-            id='rs_123',
-        )
-    )
-    assert events == snapshot(
-        [
-            PartStartEvent(
-                index=0,
-                part=ThinkingPart(content='', id='rs_123', provider_details={'raw_content': ['Raw thinking step 1. ']}),
-            )
-        ]
-    )
-
-    # Step 2: More raw content arrives (no events emitted for raw-only updates)
-    events = list(
-        manager.handle_thinking_delta(
-            vendor_part_id='rs_123',
-            raw_content_delta='Raw thinking step 2.',
-            raw_content_index=0,
-            id='rs_123',
-        )
-    )
-    assert events == snapshot([])
-    assert manager.get_parts() == snapshot(
-        [
-            ThinkingPart(
-                content='', id='rs_123', provider_details={'raw_content': ['Raw thinking step 1. Raw thinking step 2.']}
-            )
-        ]
-    )
-
-    # Step 3: Summary arrives with DIFFERENT vendor_id but same id - should merge
-    events = list(
-        manager.handle_thinking_delta(
-            vendor_part_id='rs_123-0',  # Different vendor_id!
-            content='Summary of thinking',
-            id='rs_123',  # Same id
-        )
-    )
-    assert events == snapshot([PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Summary of thinking'))])
-    assert manager.get_parts() == snapshot(
-        [
-            ThinkingPart(
-                content='Summary of thinking',
-                id='rs_123',
-                provider_details={'raw_content': ['Raw thinking step 1. Raw thinking step 2.']},
-            )
-        ]
-    )
