@@ -66,7 +66,7 @@ agent = Agent('openai:gpt-5')
 def get_weather(city: str) -> str:
     return f'The weather in {city} is sunny'
 
-# Create app with model names (display names auto-generated)
+# Create app with model names (their display names are auto-generated)
 app = agent.to_web(
     models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
     builtin_tools=[WebSearchTool()],
