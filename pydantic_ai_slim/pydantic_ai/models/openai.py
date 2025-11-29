@@ -1041,7 +1041,11 @@ class OpenAIChatModel(Model):
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        audio = InputAudio(data=item.base64, format=item.format)
+                        profile = OpenAIModelProfile.from_profile(self.profile)
+                        if profile.openai_audio_input_encoding == 'uri':
+                            audio = InputAudio(data=item.data_uri, format=item.format)
+                        else:
+                            audio = InputAudio(data=item.base64, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
                         content.append(
@@ -1061,7 +1065,16 @@ class OpenAIChatModel(Model):
                         'wav',
                         'mp3',
                     ), f'Unsupported audio format: {downloaded_item["data_type"]}'
-                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+                    profile = OpenAIModelProfile.from_profile(self.profile)
+                    if profile.openai_audio_input_encoding == 'uri':
+                        format_to_mime = {'wav': 'audio/wav', 'mp3': 'audio/mpeg'}
+                        mime_type = format_to_mime.get(
+                            downloaded_item['data_type'], f'audio/{downloaded_item["data_type"]}'
+                        )
+                        data_uri = f'data:{mime_type};base64,{downloaded_item["data"]}'
+                        audio = InputAudio(data=data_uri, format=downloaded_item['data_type'])
+                    else:
+                        audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
                     if self._is_text_like_media_type(item.media_type):
