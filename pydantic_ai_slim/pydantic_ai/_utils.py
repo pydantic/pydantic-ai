@@ -234,6 +234,15 @@ def sync_anext(iterator: Iterator[T]) -> T:
         raise StopAsyncIteration() from e
 
 
+def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
+    loop = get_event_loop()
+    while True:
+        try:
+            yield loop.run_until_complete(anext(async_iter))
+        except StopAsyncIteration:
+            break
+
+
 def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
@@ -458,12 +467,14 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*\})', flags=re.DOTALL)
+
+
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
 
-    regex = r'```(?:\w+)?\n(\{.*\})\n```'
-    match = re.search(regex, text, re.DOTALL)
+    match = re.search(_MARKDOWN_FENCES_PATTERN, text)
     if match:
         return match.group(1)
 
@@ -489,3 +500,12 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
     else:
         return ()
+
+
+def get_event_loop():
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:  # pragma: lax no cover
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    return event_loop

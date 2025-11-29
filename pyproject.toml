@@ -56,7 +56,7 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
 outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
-outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}"]
+outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 
@@ -126,7 +126,7 @@ docs = [
 docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
 
 [tool.hatch.build.targets.wheel]
-only-include = ["/README.md"]
+bypass-selection = true
 
 [tool.hatch.build.targets.sdist]
 include = ["/README.md", "/Makefile", "/tests"]
@@ -142,9 +142,11 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    "typings/**/*.pyi",
 ]
 
 [tool.ruff.lint]
+preview = true  # For `PLW1514`
 extend-select = [
     "Q",
     "RUF100",
@@ -154,6 +156,7 @@ extend-select = [
     "I",
     "D",
     "TID251",
+    "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -176,6 +179,7 @@ convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
+"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
@@ -186,8 +190,10 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
+"typings/**/*.pyi" = ["F401", "PYI044", "PYI035", "ANN401"]
 
 [tool.pyright]
+stubPath = "typings"
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
@@ -217,6 +223,7 @@ exclude = [
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
+mypy_path = "typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReduceFirstValue, reduce_list_append
+from pydantic_graph.beta.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
 
 pytestmark = pytest.mark.anyio
 
@@ -343,3 +343,57 @@ async def test_mixed_sequential_and_parallel_execution():
     assert 'parallel-100' in state.log
     assert 'step3' in state.log
     assert result == 'Result: 152'  # (50+1) + (100+1) = 152
+
+
+async def test_multiple_sequential_joins():
+    g = GraphBuilder(output_type=list[int])
+
+    @g.step
+    async def source(ctx: StepContext[None, None, None]) -> int:
+        return 10
+
+    @g.step
+    async def add_one(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs + 1]
+
+    @g.step
+    async def add_two(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs + 2]
+
+    @g.step
+    async def add_three(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs + 3]
+
+    collect = g.join(reduce_list_extend, initial_factory=list[int], parent_fork_id='source_fork', node_id='collect')
+    mediator = g.join(reduce_list_extend, initial_factory=list[int], node_id='mediator')
+
+    # Broadcasting: send the value from source to all three steps
+    g.add(
+        g.edge_from(g.start_node).to(source),
+        g.edge_from(source).to(add_one, add_two, add_three, fork_id='source_fork'),
+        g.edge_from(add_one, add_two).to(mediator),
+        g.edge_from(mediator).to(collect),
+        g.edge_from(add_three).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run()
+    assert sorted(result) == [11, 12, 13]
+
+
+async def test_early_termination_from_nested_generator():
+    """Test that a generator wrapping an iteration can be terminated early."""
+    g = GraphBuilder()
+    g.add_edge(g.start_node, g.end_node)
+    graph = g.build()
+
+    async def stream_graph():
+        async with graph.iter() as run:
+            async for node in run:  # pragma: no branch
+                yield node
+
+    gen = stream_graph()
+    async for _ in gen:  # pragma: no branch
+        break
+    await gen.aclose()

@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -21,7 +21,7 @@ from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition
+from .._output import OutputObjectDefinition, PromptedOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
@@ -47,7 +47,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import infer_provider
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -57,11 +57,6 @@ KnownModelName = TypeAliasType(
     Literal[
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-5-sonnet-20240620',
-        'anthropic:claude-3-5-sonnet-20241022',
-        'anthropic:claude-3-5-sonnet-latest',
-        'anthropic:claude-haiku-4-5',
-        'anthropic:claude-haiku-4-5-20251001',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
@@ -69,69 +64,79 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-3-opus-latest',
         'anthropic:claude-4-opus-20250514',
         'anthropic:claude-4-sonnet-20250514',
+        'anthropic:claude-haiku-4-5',
+        'anthropic:claude-haiku-4-5-20251001',
         'anthropic:claude-opus-4-0',
         'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
+        'anthropic:claude-opus-4-5',
+        'anthropic:claude-opus-4-5-20251101',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5',
         'anthropic:claude-sonnet-4-5-20250929',
-        'bedrock:amazon.titan-tg1-large',
-        'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-text-express-v1',
-        'bedrock:us.amazon.nova-pro-v1:0',
-        'bedrock:us.amazon.nova-lite-v1:0',
-        'bedrock:us.amazon.nova-micro-v1:0',
-        'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'bedrock:amazon.titan-text-lite-v1',
+        'bedrock:amazon.titan-tg1-large',
         'bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
-        'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
-        'bedrock:anthropic.claude-instant-v1',
-        'bedrock:anthropic.claude-v2:1',
-        'bedrock:anthropic.claude-v2',
-        'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
-        'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
-        'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-        'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
-        'bedrock:anthropic.claude-3-opus-20240229-v1:0',
-        'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
         'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+        'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
         'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+        'bedrock:anthropic.claude-3-opus-20240229-v1:0',
+        'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
+        'bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        'bedrock:anthropic.claude-instant-v1',
         'bedrock:anthropic.claude-opus-4-20250514-v1:0',
-        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
-        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
-        'bedrock:cohere.command-text-v14',
-        'bedrock:cohere.command-r-v1:0',
-        'bedrock:cohere.command-r-plus-v1:0',
+        'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:anthropic.claude-v2',
+        'bedrock:anthropic.claude-v2:1',
         'bedrock:cohere.command-light-text-v14',
-        'bedrock:meta.llama3-8b-instruct-v1:0',
-        'bedrock:meta.llama3-70b-instruct-v1:0',
-        'bedrock:meta.llama3-1-8b-instruct-v1:0',
-        'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
-        'bedrock:meta.llama3-1-70b-instruct-v1:0',
-        'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+        'bedrock:cohere.command-r-plus-v1:0',
+        'bedrock:cohere.command-r-v1:0',
+        'bedrock:cohere.command-text-v14',
+        'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+        'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
         'bedrock:meta.llama3-1-405b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
-        'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+        'bedrock:meta.llama3-1-70b-instruct-v1:0',
+        'bedrock:meta.llama3-1-8b-instruct-v1:0',
+        'bedrock:meta.llama3-70b-instruct-v1:0',
+        'bedrock:meta.llama3-8b-instruct-v1:0',
         'bedrock:mistral.mistral-7b-instruct-v0:2',
-        'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
+        'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'bedrock:us.amazon.nova-lite-v1:0',
+        'bedrock:us.amazon.nova-micro-v1:0',
+        'bedrock:us.amazon.nova-pro-v1:0',
+        'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
+        'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+        'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
+        'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
+        'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+        'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+        'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
+        'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
+        'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
+        'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
+        'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
+        'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         'cerebras:gpt-oss-120b',
-        'cerebras:llama3.1-8b',
         'cerebras:llama-3.3-70b',
-        'cerebras:llama-4-scout-17b-16e-instruct',
-        'cerebras:llama-4-maverick-17b-128e-instruct',
+        'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
         'cerebras:qwen-3-235b-a22b-thinking-2507',
+        'cerebras:qwen-3-32b',
+        'cerebras:zai-glm-4.6',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
         'cohere:command-nightly',
@@ -140,60 +145,70 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
+        'google-gla:gemini-flash-latest',
+        'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
         'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-flash-latest',
+        'google-gla:gemini-2.5-flash-image',
         'google-gla:gemini-2.5-flash-lite',
         'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.5-pro',
+        'google-gla:gemini-3-pro-preview',
+        'google-gla:gemini-3-pro-image-preview',
+        'google-vertex:gemini-flash-latest',
+        'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
         'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-flash-latest',
+        'google-vertex:gemini-2.5-flash-image',
         'google-vertex:gemini-2.5-flash-lite',
         'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.5-pro',
+        'google-vertex:gemini-3-pro-preview',
+        'google-vertex:gemini-3-pro-image-preview',
+        'grok:grok-2-image-1212',
+        'grok:grok-2-vision-1212',
+        'grok:grok-3',
+        'grok:grok-3-fast',
+        'grok:grok-3-mini',
+        'grok:grok-3-mini-fast',
         'grok:grok-4',
         'grok:grok-4-0709',
-        'grok:grok-3',
-        'grok:grok-3-mini',
-        'grok:grok-3-fast',
-        'grok:grok-3-mini-fast',
-        'grok:grok-2-vision-1212',
-        'grok:grok-2-image-1212',
+        'groq:deepseek-r1-distill-llama-70b',
+        'groq:deepseek-r1-distill-qwen-32b',
         'groq:distil-whisper-large-v3-en',
         'groq:gemma2-9b-it',
-        'groq:llama-3.3-70b-versatile',
         'groq:llama-3.1-8b-instant',
+        'groq:llama-3.2-11b-vision-preview',
+        'groq:llama-3.2-1b-preview',
+        'groq:llama-3.2-3b-preview',
+        'groq:llama-3.2-90b-vision-preview',
+        'groq:llama-3.3-70b-specdec',
+        'groq:llama-3.3-70b-versatile',
         'groq:llama-guard-3-8b',
         'groq:llama3-70b-8192',
         'groq:llama3-8b-8192',
+        'groq:mistral-saba-24b',
         'groq:moonshotai/kimi-k2-instruct',
-        'groq:whisper-large-v3',
-        'groq:whisper-large-v3-turbo',
         'groq:playai-tts',
         'groq:playai-tts-arabic',
-        'groq:qwen-qwq-32b',
-        'groq:mistral-saba-24b',
-        'groq:qwen-2.5-coder-32b',
         'groq:qwen-2.5-32b',
-        'groq:deepseek-r1-distill-qwen-32b',
-        'groq:deepseek-r1-distill-llama-70b',
-        'groq:llama-3.3-70b-specdec',
-        'groq:llama-3.2-1b-preview',
-        'groq:llama-3.2-3b-preview',
-        'groq:llama-3.2-11b-vision-preview',
-        'groq:llama-3.2-90b-vision-preview',
+        'groq:qwen-2.5-coder-32b',
+        'groq:qwen-qwq-32b',
+        'groq:whisper-large-v3',
+        'groq:whisper-large-v3-turbo',
+        'heroku:amazon-rerank-1-0',
         'heroku:claude-3-5-haiku',
         'heroku:claude-3-5-sonnet-latest',
         'heroku:claude-3-7-sonnet',
-        'heroku:claude-4-sonnet',
         'heroku:claude-3-haiku',
+        'heroku:claude-4-5-haiku',
+        'heroku:claude-4-5-sonnet',
+        'heroku:claude-4-sonnet',
+        'heroku:cohere-rerank-3-5',
         'heroku:gpt-oss-120b',
         'heroku:nova-lite',
         'heroku:nova-pro',
@@ -209,17 +224,19 @@ KnownModelName = TypeAliasType(
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
         'mistral:mistral-small-latest',
-        'moonshotai:moonshot-v1-8k',
-        'moonshotai:moonshot-v1-32k',
-        'moonshotai:moonshot-v1-128k',
-        'moonshotai:moonshot-v1-8k-vision-preview',
-        'moonshotai:moonshot-v1-32k-vision-preview',
-        'moonshotai:moonshot-v1-128k-vision-preview',
+        'moonshotai:kimi-k2-0711-preview',
         'moonshotai:kimi-latest',
         'moonshotai:kimi-thinking-preview',
-        'moonshotai:kimi-k2-0711-preview',
+        'moonshotai:moonshot-v1-128k',
+        'moonshotai:moonshot-v1-128k-vision-preview',
+        'moonshotai:moonshot-v1-32k',
+        'moonshotai:moonshot-v1-32k-vision-preview',
+        'moonshotai:moonshot-v1-8k',
+        'moonshotai:moonshot-v1-8k-vision-preview',
         'openai:chatgpt-4o-latest',
         'openai:codex-mini-latest',
+        'openai:computer-use-preview',
+        'openai:computer-use-preview-2025-03-11',
         'openai:gpt-3.5-turbo',
         'openai:gpt-3.5-turbo-0125',
         'openai:gpt-3.5-turbo-0301',
@@ -263,16 +280,24 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-search-preview-2025-03-11',
         'openai:gpt-5',
         'openai:gpt-5-2025-08-07',
-        'openai:o1',
         'openai:gpt-5-chat-latest',
-        'openai:o1-2024-12-17',
+        'openai:gpt-5-codex',
         'openai:gpt-5-mini',
-        'openai:o1-mini',
         'openai:gpt-5-mini-2025-08-07',
-        'openai:o1-mini-2024-09-12',
         'openai:gpt-5-nano',
-        'openai:o1-preview',
         'openai:gpt-5-nano-2025-08-07',
+        'openai:gpt-5-pro',
+        'openai:gpt-5-pro-2025-10-06',
+        'openai:gpt-5.1',
+        'openai:gpt-5.1-2025-11-13',
+        'openai:gpt-5.1-chat-latest',
+        'openai:gpt-5.1-codex',
+        'openai:gpt-5.1-mini',
+        'openai:o1',
+        'openai:o1-2024-12-17',
+        'openai:o1-mini',
+        'openai:o1-mini-2024-09-12',
+        'openai:o1-preview',
         'openai:o1-preview-2024-09-12',
         'openai:o1-pro',
         'openai:o1-pro-2025-03-19',
@@ -282,14 +307,12 @@ KnownModelName = TypeAliasType(
         'openai:o3-deep-research-2025-06-26',
         'openai:o3-mini',
         'openai:o3-mini-2025-01-31',
+        'openai:o3-pro',
+        'openai:o3-pro-2025-06-10',
         'openai:o4-mini',
         'openai:o4-mini-2025-04-16',
         'openai:o4-mini-deep-research',
         'openai:o4-mini-deep-research-2025-06-26',
-        'openai:o3-pro',
-        'openai:o3-pro-2025-06-10',
-        'openai:computer-use-preview',
-        'openai:computer-use-preview-2025-03-11',
         'test',
     ],
 )
@@ -309,12 +332,19 @@ class ModelRequestParameters:
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
+    prompted_output_template: str | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    @cached_property
+    def prompted_output_instructions(self) -> str | None:
+        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
+            return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+        return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -352,7 +382,10 @@ class Model(ABC):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Make a request to the model."""
+        """Make a request to the model.
+
+        This is ultimately called by `pydantic_ai._agent_graph.ModelRequestNode._make_request(...)`.
+        """
         raise NotImplementedError()
 
     async def count_tokens(
@@ -408,23 +441,52 @@ class Model(ABC):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         """Prepare request inputs before they are passed to the provider.
 
-        This merges the given ``model_settings`` with the model's own ``settings`` attribute and ensures
-        ``customize_request_parameters`` is applied to the resolved
+        This merges the given `model_settings` with the model's own `settings` attribute and ensures
+        `customize_request_parameters` is applied to the resolved
         [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]. Subclasses can override this method if
         they need to customize the preparation flow further, but most implementations should simply call
-        ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
+        `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
         model_settings = merge_model_settings(self.settings, model_settings)
 
-        if builtin_tools := model_request_parameters.builtin_tools:
+        params = self.customize_request_parameters(model_request_parameters)
+
+        if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
-            model_request_parameters = replace(
-                model_request_parameters,
+            params = replace(
+                params,
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        model_request_parameters = self.customize_request_parameters(model_request_parameters)
-        return model_settings, model_request_parameters
+        if params.output_mode == 'auto':
+            output_mode = self.profile.default_structured_output_mode
+            params = replace(
+                params,
+                output_mode=output_mode,
+                allow_text_output=output_mode in ('native', 'prompted'),
+            )
+
+        # Reset irrelevant fields
+        if params.output_tools and params.output_mode != 'tool':
+            params = replace(params, output_tools=[])
+        if params.output_object and params.output_mode not in ('native', 'prompted'):
+            params = replace(params, output_object=None)
+        if params.prompted_output_template and params.output_mode != 'prompted':
+            params = replace(params, prompted_output_template=None)  # pragma: no cover
+
+        # Set default prompted output template
+        if params.output_mode == 'prompted' and not params.prompted_output_template:
+            params = replace(params, prompted_output_template=self.profile.prompted_output_template)
+
+        # Check if output mode is supported
+        if params.output_mode == 'native' and not self.profile.supports_json_schema_output:
+            raise UserError('Native structured output is not supported by this model.')
+        if params.output_mode == 'tool' and not self.profile.supports_tools:
+            raise UserError('Tool output is not supported by this model.')
+        if params.allow_image_output and not self.profile.supports_image_output:
+            raise UserError('Image output is not supported by this model.')
+
+        return model_settings, params
 
     @property
     @abstractmethod
@@ -462,13 +524,17 @@ class Model(ABC):
         return None
 
     @staticmethod
-    def _get_instructions(messages: list[ModelMessage]) -> str | None:
+    def _get_instructions(
+        messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+    ) -> str | None:
         """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
         In the case that a "mock" request was generated to include a tool-return part for a result tool,
         we want to use the instructions from the second-to-most-recent request (which should correspond to the
         original request that generated the response that resulted in the tool-return part).
         """
+        instructions = None
+
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -476,33 +542,38 @@ class Model(ABC):
                 if len(last_two_requests) == 2:
                     break
                 if message.instructions is not None:
-                    return message.instructions
+                    instructions = message.instructions
+                    break
 
         # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-        if len(last_two_requests) != 2:
-            return None
+        if instructions is None and len(last_two_requests) == 2:
+            most_recent_request = last_two_requests[0]
+            second_most_recent_request = last_two_requests[1]
 
-        most_recent_request = last_two_requests[0]
-        second_most_recent_request = last_two_requests[1]
+            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
+            # we use the instructions from the second-to-most-recent request. This is necessary because when handling
+            # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
+            # have the relevant instructions from the agent.
 
-        # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
-        # we use the instructions from the second-to-most-recent request. This is necessary because when handling
-        # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
-        # have the relevant instructions from the agent.
+            # While it's possible that you could have a message history where the most recent request has only tool returns,
+            # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
+            # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
+            # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
+            # with no parts at all immediately before the request that has the tool calls (that works because we only look
+            # at the two most recent ModelRequests here).
 
-        # While it's possible that you could have a message history where the most recent request has only tool returns,
-        # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
-        # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
-        # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
-        # with no parts at all immediately before the request that has the tool calls (that works because we only look
-        # at the two most recent ModelRequests here).
+            # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
-        # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
+            if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
+                instructions = second_most_recent_request.instructions
 
-        if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-            return second_most_recent_request.instructions
+        if model_request_parameters and (output_instructions := model_request_parameters.prompted_output_instructions):
+            if instructions:
+                instructions = '\n\n'.join([instructions, output_instructions])
+            else:
+                instructions = output_instructions
 
-        return None
+        return instructions
 
 
 @dataclass
@@ -677,8 +748,17 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
-    """Infer the model from the name."""
+def infer_model(  # noqa: C901
+    model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
+) -> Model:
+    """Infer the model from the name.
+
+    Args:
+        model:
+            Model name to instantiate, in the format of `provider:model`. Use the string "test" to instantiate TestModel.
+        provider_factory:
+            Function that instantiates a provider object. The provider name is passed into the function parameter. Defaults to `provider.infer_provider`.
+    """
     if isinstance(model, Model):
         return model
     elif model == 'test':
@@ -713,11 +793,14 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    provider = infer_provider(provider_name)
+    provider: Provider[Any] = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
+        from ..providers.gateway import normalize_gateway_provider
+
         model_kind = provider_name.removeprefix('gateway/')
+        model_kind = normalize_gateway_provider(model_kind)
     if model_kind in (
         'openai',
         'azure',
@@ -729,7 +812,6 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'heroku',
         'moonshotai',
         'ollama',
-        'openrouter',
         'together',
         'vercel',
         'litellm',
@@ -760,6 +842,10 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'mistral':
         from .mistral import MistralModel
 
@@ -906,23 +992,27 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
-    schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
+    """Customize the tool definition using the given transformer.
+
+    If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
+    """
+    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     parameters_json_schema = schema_transformer.walk()
     return replace(
-        t,
+        tool_def,
         parameters_json_schema=parameters_json_schema,
-        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+        strict=schema_transformer.is_strict_compatible if tool_def.strict is None else tool_def.strict,
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=o.strict)
+def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+    schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
-        o,
+        output_object,
         json_schema=json_schema,
-        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+        strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
 
 

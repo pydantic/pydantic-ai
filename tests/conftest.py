@@ -198,7 +198,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
         sanitized_name = re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', request.node.name)[:max_name_len]
         module_name = f'{sanitized_name}_{secrets.token_hex(5)}'
         path = tmp_path / f'{module_name}.py'
-        path.write_text(source_code)
+        path.write_text(source_code, encoding='utf-8')
         filename = str(path)
 
         if module_name_prefix:  # pragma: no cover
@@ -352,7 +352,7 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 @pytest.fixture(scope='session')
 def text_document_content(assets_path: Path) -> BinaryContent:
-    content = assets_path.joinpath('dummy.txt').read_text()
+    content = assets_path.joinpath('dummy.txt').read_text(encoding='utf-8')
     bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
     return bin_content
 
@@ -424,6 +424,7 @@ def bedrock_provider():
             region_name=os.getenv('AWS_REGION', 'us-east-1'),
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
         )
         yield BedrockProvider(bedrock_client=bedrock_client)
         bedrock_client.close()

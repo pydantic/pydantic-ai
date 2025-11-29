@@ -5,6 +5,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.server.session import ServerSession
 from mcp.types import (
+    Annotations,
     BlobResourceContents,
     CreateMessageResult,
     EmbeddedResource,
@@ -16,7 +17,7 @@ from mcp.types import (
 )
 from pydantic import AnyUrl, BaseModel
 
-mcp = FastMCP('Pydantic AI MCP Server')
+mcp = FastMCP('Pydantic AI MCP Server', instructions='Be a helpful assistant.')
 log_level = 'unset'
 
 
@@ -120,9 +121,19 @@ async def get_product_name_link() -> ResourceLink:
     )
 
 
-@mcp.resource('resource://product_name.txt', mime_type='text/plain')
+@mcp.resource(
+    'resource://product_name.txt',
+    mime_type='text/plain',
+    annotations=Annotations(audience=['user', 'assistant'], priority=0.5),
+)
 async def product_name_resource() -> str:
-    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text()
+    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text(encoding='utf-8')
+
+
+@mcp.resource('resource://greeting/{name}', mime_type='text/plain')
+async def greeting_resource_template(name: str) -> str:
+    """Dynamic greeting resource template."""
+    return f'Hello, {name}!'
 
 
 @mcp.tool()
