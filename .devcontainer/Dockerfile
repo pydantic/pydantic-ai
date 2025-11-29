@@ -1,8 +1,8 @@
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 FROM mcr.microsoft.com/devcontainers/python:${PYTHON_VERSION}-bookworm
 
-# Copy uv and uvx (pinned version)
-COPY --from=ghcr.io/astral-sh/uv:0.9.11 /uv /uvx /bin/
+# Copy uv and uvx (latest version)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Set non-interactive frontend for apt
 ENV DEBIAN_FRONTEND=noninteractive
@@ -10,14 +10,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Enable Docker BuildKit for cache mounts
 ENV DOCKER_BUILDKIT=1
 
-# Install system dependencies with cache mount for faster rebuilds (pinned versions)
+# Install system dependencies with cache mount for faster rebuilds (latest versions)
 RUN --mount=type=cache,target=/var/cache/apt \
   --mount=type=cache,target=/var/lib/apt/lists \
   apt-get update \
   && apt-get install -y --no-install-recommends \
-  cmake=3.25.1-1 \
-  ninja-build=1.11.1-2~deb12u1 \
-  libclang-dev=1:14.0-55.7~deb12u1 \
+  cmake \
+  ninja-build \
+  libclang-dev \
   && apt-get clean -y \
   && rm -rf /var/lib/apt/lists/*
 
