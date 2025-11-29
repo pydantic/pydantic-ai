@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 
 import pydantic
@@ -436,9 +437,7 @@ class FileSystemTool(AbstractBuiltinTool):
         ```
     """
 
-    from pathlib import Path as _Path
-
-    allowed_paths: list[str | _Path] | None = None
+    allowed_paths: list[str | Path] | None = None
     """List of paths the agent is allowed to access.
     If None or empty, allows access to current working directory only."""
 
