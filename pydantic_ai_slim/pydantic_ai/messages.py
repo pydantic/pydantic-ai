@@ -466,6 +466,33 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
+@dataclass(repr=False)
+class TextContent:
+    """A plain text response from a model with optional metadata."""
+
+    content: str
+    """The text content of the response."""
+
+    _: KW_ONLY
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    kind: Literal['text'] = 'text'
+    """Type identifier, this is available as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the text content is non-empty."""
+        return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(init=False, repr=False)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
@@ -669,7 +696,7 @@ class CachePoint:
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
-UserContent: TypeAlias = str | MultiModalContent | CachePoint
+UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
 @dataclass(repr=False)
@@ -1042,9 +1069,6 @@ class TextPart:
     """Additional data returned by the provider that can't be mapped to standard fields.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
-
-    metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""

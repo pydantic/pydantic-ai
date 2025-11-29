@@ -31,6 +31,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -374,6 +375,8 @@ class GeminiModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
+                elif isinstance(item, TextContent):
+                    content.append({'text': item.content})
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append(

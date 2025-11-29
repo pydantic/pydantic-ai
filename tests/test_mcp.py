@@ -22,6 +22,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    messages,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
@@ -115,7 +116,7 @@ async def test_tool_response_single_text_part_metadata(run_context: RunContext[i
         assert tools[2].description.startswith('Generate the Collatz conjecture sequence for a given number.')
 
         result = await server.direct_call_tool('get_collatz_conjecture', {'n': 7})
-        assert isinstance(result, TextPart)
+        assert isinstance(result, messages.TextContent)
         assert result.content == snapshot('[7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1]')
         assert result.metadata == snapshot({'pydantic_ai': {'tool': 'collatz_conjecture', 'n': 7, 'length': 17}})
 

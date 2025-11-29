@@ -490,23 +490,23 @@ class MCPServer(AbstractToolset[Any], ABC):
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
             # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-            return_value = structured
-            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
-                return_value = structured['result']
-            return messages.ToolReturn(return_value=return_value, metadata=result.meta) if result.meta else return_value
-
-        mapped = [await self._map_tool_result_part(part) for part in result.content]
+            return_value = (
+                structured['result']
+                if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured
+                else structured
+            )
+        else:
+            mapped = [await self._map_tool_result_part(part) for part in result.content]
+            return_value = mapped[0] if len(mapped) == 1 else mapped
         if result.meta:
             # The following branching cannot be tested until FastMCP is updated to version 2.13.1
             # such that the MCP server can generate ToolResult and result.meta can be specified.
             # TODO: Add tests for the following branching once FastMCP is updated.
             return (  # pragma: no cover
-                messages.ToolReturn(return_value=mapped[0], metadata=result.meta)
-                if len(mapped) == 1
-                else messages.ToolReturn(return_value=mapped, metadata=result.meta)
+                messages.ToolReturn(return_value=return_value, metadata=result.meta)
             )
         else:
-            return mapped[0] if len(mapped) == 1 else mapped
+            return return_value
 
     async def call_tool(
         self,
@@ -587,16 +587,22 @@ class MCPServer(AbstractToolset[Any], ABC):
     @overload
     async def read_resource(
         self, uri: str
-    ) -> str | messages.TextPart | messages.BinaryContent | list[str | messages.TextPart | messages.BinaryContent]: ...
+    ) -> (
+        str | messages.TextContent | messages.BinaryContent | list[str | messages.TextContent | messages.BinaryContent]
+    ): ...
 
     @overload
     async def read_resource(
         self, uri: Resource
-    ) -> str | messages.TextPart | messages.BinaryContent | list[str | messages.TextPart | messages.BinaryContent]: ...
+    ) -> (
+        str | messages.TextContent | messages.BinaryContent | list[str | messages.TextContent | messages.BinaryContent]
+    ): ...
 
     async def read_resource(
         self, uri: str | Resource
-    ) -> str | messages.TextPart | messages.BinaryContent | list[str | messages.TextPart | messages.BinaryContent]:
+    ) -> (
+        str | messages.TextContent | messages.BinaryContent | list[str | messages.TextContent | messages.BinaryContent]
+    ):
         """Read the contents of a specific resource by URI.
 
         Args:
@@ -695,13 +701,13 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
-    ) -> str | messages.TextPart | messages.BinaryContent | dict[str, Any] | list[Any]:
+    ) -> str | messages.TextContent | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
         if isinstance(part, mcp_types.TextContent):
             text = part.text
             if part.meta:
-                return messages.TextPart(content=text, metadata=part.meta)
+                return messages.TextContent(content=text, metadata=part.meta)
             else:
                 if text.startswith(('[', '{')):
                     try:
@@ -729,10 +735,12 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     def _get_content(
         self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
-    ) -> str | messages.TextPart | messages.BinaryContent:
+    ) -> str | messages.TextContent | messages.BinaryContent:
         if isinstance(resource, mcp_types.TextResourceContents):
             return (
-                resource.text if not resource.meta else messages.TextPart(content=resource.text, metadata=resource.meta)
+                resource.text
+                if not resource.meta
+                else messages.TextContent(content=resource.text, metadata=resource.meta)
             )
         elif isinstance(resource, mcp_types.BlobResourceContents):
             return messages.BinaryContent(
@@ -1200,12 +1208,12 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
 ToolResult = (
     str
-    | messages.TextPart
+    | messages.TextContent
     | messages.BinaryContent
     | messages.ToolReturn
     | dict[str, Any]
     | list[Any]
-    | Sequence[str | messages.TextPart | messages.BinaryContent | dict[str, Any] | list[Any]]
+    | Sequence[str | messages.TextContent | messages.BinaryContent | dict[str, Any] | list[Any]]
 )
 """The result type of an MCP tool call."""
 
