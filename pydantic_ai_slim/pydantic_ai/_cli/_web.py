@@ -50,6 +50,10 @@ def _run_web_command(  # noqa: C901
 ) -> int:
     """Run the web command to serve an agent via web UI.
 
+    If an agent is provided, its model and builtin tools are used as defaults.
+    CLI-specified models and tools are added on top. Duplicates are removed.
+    MCP servers are loaded as toolsets if specified.
+
     Args:
         agent_path: Agent path in 'module:variable' format. If None, creates generic agent.
         host: Host to bind the server to.
@@ -73,18 +77,19 @@ def _run_web_command(  # noqa: C901
         console.print('[red]Error: At least one model (-m) is required when agent has no model[/red]')
         return 1
 
-    # If no CLI models provided but agent has a model, use agent's model
-    if not models and agent.model is not None:
-        resolved_model = infer_model(agent.model)
-        models = [f'{resolved_model.system}:{resolved_model.model_name}']
+    # build models list
+    if agent.model is not None:
+        resolved = infer_model(agent.model)
+        agent_model = f'{resolved.system}:{resolved.model_name}'
+        models = [agent_model] + [m for m in (models or []) if m != agent_model]
 
-    # Collect builtin tools: agent's own + CLI-provided
+    # collect builtin tools
     all_tool_instances: list[AbstractBuiltinTool] = []
 
-    # Add agent's own builtin tools first (these are always enabled)
+    # agent's own builtin tools first
     all_tool_instances.extend(agent._builtin_tools)  # pyright: ignore[reportPrivateUsage]
 
-    # Parse and add CLI tools
+    # then CLI tools
     if tools:
         for tool_id in tools:
             tool_cls = get_builtin_tool_cls(tool_id)
@@ -128,7 +133,7 @@ def _run_web_command(  # noqa: C901
         import uvicorn
 
         uvicorn.run(app, host=host, port=port)
-        return 0  # pragma: no cover
+        return 0
     except KeyboardInterrupt:  # pragma: no cover
         console.print('\n[dim]Server stopped.[/dim]')
         return 0
