@@ -369,7 +369,6 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
-    _cached_prompts: list[mcp_types.Prompt] | None
 
     def __init__(
         self,
@@ -411,7 +410,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._exit_stack = None
         self._cached_tools = None
         self._cached_resources = None
-        self._cached_prompts = None
 
     @abstractmethod
     @asynccontextmanager
@@ -719,7 +717,6 @@ class MCPServer(AbstractToolset[Any], ABC):
                 self._exit_stack = None
                 self._cached_tools = None
                 self._cached_resources = None
-                self._cached_prompts = None
 
     @property
     def is_running(self) -> bool:
@@ -755,8 +752,6 @@ class MCPServer(AbstractToolset[Any], ABC):
             self._cached_tools = None
         elif isinstance(message, mcp_types.ResourceListChangedNotification):
             self._cached_resources = None
-        elif isinstance(message, mcp_types.PromptListChangedNotification):
-            self._cached_prompts = None
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
@@ -896,7 +891,9 @@ class MCPServerStdio(MCPServer):
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
             cache_tools: Whether to cache the list of tools.
+                See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
+                See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
         """
         self.command = command
@@ -1058,7 +1055,9 @@ class _MCPServerHTTP(MCPServer):
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
             cache_tools: Whether to cache the list of tools.
+                See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
+                See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
             if read_timeout is not None:
