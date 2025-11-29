@@ -2,6 +2,7 @@ import sys
 import types
 from collections.abc import Callable
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,7 +23,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli import LAST_CONVERSATION_FILENAME, cli, cli_agent, handle_slash_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
@@ -54,6 +55,15 @@ def create_test_module():
     finally:
         if 'test_module' in sys.modules:  # pragma: no branch
             del sys.modules['test_module']
+
+
+@pytest.fixture
+def empty_last_conversation_path(tmp_path: Path, mocker: MockerFixture) -> Path:
+    path = tmp_path / LAST_CONVERSATION_FILENAME
+    mocker.patch('pydantic_ai._cli.PYDANTIC_AI_HOME', tmp_path)
+    path.unlink(missing_ok=True)
+
+    return path
 
 
 def test_agent_flag(
@@ -164,6 +174,51 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
+@pytest.mark.parametrize('args', [['hello', '-c'], ['hello', '--continue']])
+def test_cli_continue_last_conversation(
+    args: list[str],
+    capfd: CaptureFixture[str],
+    env: TestEnv,
+    empty_last_conversation_path: Path,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    with cli_agent.override(model=TestModel(custom_output_text='# world')):
+        assert cli(args) == 0
+        assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# world'])
+        assert empty_last_conversation_path.exists()
+        content = empty_last_conversation_path.read_text()
+        assert content
+
+        assert cli(args) == 0
+        assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# world'])
+        assert empty_last_conversation_path.exists()
+        # verify that new content is appended to the file
+        assert len(empty_last_conversation_path.read_text()) > len(content)
+
+
+@pytest.mark.parametrize('args', [['hello', '-c'], ['hello', '--continue']])
+def test_cli_continue_last_conversation_corrupted_file(
+    args: list[str],
+    capfd: CaptureFixture[str],
+    env: TestEnv,
+    empty_last_conversation_path: Path,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    empty_last_conversation_path.write_text('not a valid json')
+    with cli_agent.override(model=TestModel(custom_output_text='# world')):
+        assert cli(args) == 0
+        assert capfd.readouterr().out.splitlines() == snapshot(
+            [
+                IsStr(),
+                'Error loading last conversation, it is corrupted or invalid.',
+                'Starting a new conversation.',
+                '# world',
+            ]
+        )
+        assert empty_last_conversation_path.exists()
+        assert empty_last_conversation_path.read_text()
+
+
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
 
@@ -264,21 +319,42 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
+    mock_run_chat.assert_awaited_once_with(
+        True,
+        IsInstance(Agent),
+        IsInstance(Console),
+        'monokai',
+        'pai',
+        message_history=None,
+    )
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'pai')
+    mock_run_chat.assert_awaited_once_with(
+        True,
+        IsInstance(Agent),
+        IsInstance(Console),
+        'default',
+        'pai',
+        message_history=None,
+    )
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
+    mock_run_chat.assert_awaited_once_with(
+        True,
+        IsInstance(Agent),
+        IsInstance(Console),
+        'monokai',
+        'pai',
+        message_history=None,
+    )
 
 
 def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
