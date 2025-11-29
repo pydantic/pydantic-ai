@@ -433,7 +433,8 @@ class BedrockConverseModel(Model):
         if tool_config:
             params['toolConfig'] = tool_config
 
-        if model_request_parameters.builtin_tools:
+        if model_request_parameters.builtin_tools:  # pragma: no cover
+            # this check is done in the base Model class - leave this as a placeholder for when Bedrock supports built-in tools
             raise UserError('Bedrock does not support built-in tools')
 
         # Bedrock supports a set of specific extra parameters
