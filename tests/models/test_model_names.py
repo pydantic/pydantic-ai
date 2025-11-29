@@ -20,6 +20,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
+    from pydantic_ai.providers.gateway import gateway_provider_to_model_names
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
@@ -70,13 +71,11 @@ def test_known_model_names():  # pragma: lax no cover
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
-    gateway_names = (
-        [f'gateway/anthropic:{n}' for n in get_model_names(AnthropicModelName)]
-        + [f'gateway/bedrock:{n}' for n in get_model_names(BedrockModelName)]
-        + [f'gateway/google-vertex:{n}' for n in get_model_names(GoogleModelName)]
-        + [f'gateway/groq:{n}' for n in get_model_names(GroqModelName)]
-        + [f'gateway/openai:{n}' for n in get_model_names(OpenAIModelName)]
-    )
+    gateway_names = [
+        f'gateway/{provider}:{model_name}'
+        for provider, model_names in gateway_provider_to_model_names().items()
+        for model_name in get_model_names(model_names)
+    ]
     huggingface_names = [f'huggingface:{n}' for n in get_model_names(HuggingFaceModelName)]
     heroku_names = get_heroku_model_names()
     cerebras_names = get_cerebras_model_names()
