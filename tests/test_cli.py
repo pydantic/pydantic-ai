@@ -661,3 +661,42 @@ def test_run_web_command_mcp_success(tmp_path: Path, mocker: MockerFixture, capf
     mock_uvicorn_run.assert_called_once()
     output = capfd.readouterr().out
     assert 'Loaded 1 MCP server(s)' in output
+
+
+def test_run_web_command_agent_model_merged_with_cli_models(
+    mocker: MockerFixture, create_test_module: Callable[..., None]
+):
+    """Test that agent's model is included first, followed by CLI models."""
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    result = _run_web_command(
+        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+    )
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs.get('models') == snapshot(['test:test', 'openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+
+
+def test_run_web_command_agent_model_deduplicated(mocker: MockerFixture, create_test_module: Callable[..., None]):
+    """Test that duplicate models are removed when CLI passes the same model as agent."""
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    # Pass the same model that the agent has, plus another
+    result = _run_web_command(agent_path='test_module:custom_agent', models=['test:test', 'openai:gpt-5'])
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs.get('models') == snapshot(['test:test', 'openai:gpt-5'])
