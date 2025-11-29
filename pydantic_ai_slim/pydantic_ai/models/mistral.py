@@ -264,7 +264,7 @@ class MistralModel(Model):
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
+        if model_request_parameters.builtin_tools:  # pragma: no cover
             raise UserError('Mistral does not support built-in tools')
 
         if model_request_parameters.function_tools:
