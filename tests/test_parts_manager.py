@@ -577,19 +577,9 @@ def test_handle_thinking_delta_no_content_or_signature():
     # Add a thinking part first
     list(manager.handle_thinking_delta(vendor_part_id='thinking', content='initial', signature=None))
 
-    # Updating with no content, signature, or provider_details is a no-op (emits delta event)
-    # question for PR: should we even emit here?
+    # Updating with no content, signature, or provider_details emits no event
     events = list(manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None))
-    assert events == snapshot(
-        [
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=None, signature_delta=None, provider_name=None, provider_details=None
-                ),
-            )
-        ]
-    )
+    assert events == []
 
 
 def test_handle_thinking_delta_provider_details_callback():

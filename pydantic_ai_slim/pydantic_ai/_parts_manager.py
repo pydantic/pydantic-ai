@@ -272,6 +272,10 @@ class ModelResponsePartsManager:
                 else provider_details
             )
 
+            # Skip if nothing to update
+            if content is None and signature is None and provider_name is None and resolved_details is None:
+                return
+
             part_delta = ThinkingPartDelta(
                 content_delta=content,
                 signature_delta=signature,
