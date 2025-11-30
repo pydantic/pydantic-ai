@@ -11,6 +11,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
+from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
@@ -25,6 +26,7 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'BuiltinToolFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -120,6 +122,17 @@ agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 ```
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.
+"""
+
+BuiltinToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
+]
+"""Definition of a function that can prepare a builtin tool at call time.
+
+This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
+or omit it completely from a step.
+
+Usage `BuiltinToolFunc[AgentDepsT]`.
 """
 
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
