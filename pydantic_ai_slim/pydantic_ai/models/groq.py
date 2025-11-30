@@ -555,7 +555,7 @@ class GroqStreamedResponse(StreamedResponse):
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                 if self._provider_timestamp is not None:  # pragma: no branch
                     provider_details_dict['timestamp'] = number_to_datetime(self._provider_timestamp)
-                if provider_details_dict:
+                if provider_details_dict:  # pragma: no branch
                     self.provider_details = provider_details_dict
 
                 if choice.delta.reasoning is not None:
