@@ -2354,6 +2354,7 @@ async def test_google_url_input(
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2396,6 +2397,7 @@ async def test_google_url_input_force_download(
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2403,9 +2405,9 @@ async def test_google_url_input_force_download(
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
-                provider_name='google-vertex',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

@@ -141,6 +141,7 @@ async def test_url_input(
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -148,8 +149,10 @@ async def test_url_input(
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -180,6 +183,7 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -187,8 +191,10 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
