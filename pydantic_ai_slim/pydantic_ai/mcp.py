@@ -36,6 +36,7 @@ try:
     from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
     from mcp.shared.message import SessionMessage
+    from mcp.shared.session import RequestResponder
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -746,12 +747,18 @@ class MCPServer(AbstractToolset[Any], ABC):
             model=self.sampling_model.model_name,
         )
 
-    async def _handle_notification(self, message: Any) -> None:
+    async def _handle_notification(
+        self,
+        message: RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]
+        | mcp_types.ServerNotification
+        | Exception,
+    ) -> None:
         """Handle notifications from the MCP server, invalidating caches as needed."""
-        if isinstance(message, mcp_types.ToolListChangedNotification):
-            self._cached_tools = None
-        elif isinstance(message, mcp_types.ResourceListChangedNotification):
-            self._cached_resources = None
+        if isinstance(message, mcp_types.ServerNotification):  # pragma: no branch
+            if isinstance(message.root, mcp_types.ToolListChangedNotification):
+                self._cached_tools = None
+            elif isinstance(message.root, mcp_types.ResourceListChangedNotification):
+                self._cached_resources = None
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock

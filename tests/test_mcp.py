@@ -95,7 +95,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(18)
+        assert len(tools) == snapshot(19)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -156,7 +156,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(18)
+        assert len(tools) == snapshot(19)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -2046,20 +2046,21 @@ async def test_tools_no_caching_when_disabled() -> None:
 
 async def test_tools_cache_invalidation_on_notification() -> None:
     """Test that tools cache is invalidated when ToolListChangedNotification is received."""
-    from mcp.types import ToolListChangedNotification
-
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        # Populate cache
-        await server.list_tools()
-        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+        # Get initial tools - hidden_tool should NOT be present (it's disabled at startup)
+        tools1 = await server.list_tools()
+        tool_names1 = [t.name for t in tools1]
+        assert 'hidden_tool' not in tool_names1
+        assert 'enable_hidden_tool' in tool_names1
 
-        # Simulate receiving a tool list changed notification
-        notification = ToolListChangedNotification()
-        await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
+        # Enable the hidden tool (server sends ToolListChangedNotification)
+        await server.direct_call_tool('enable_hidden_tool', {})
 
-        # Cache should be invalidated (set to None)
-        assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+        # Get tools again - hidden_tool should now be present (cache was invalidated)
+        tools2 = await server.list_tools()
+        tool_names2 = [t.name for t in tools2]
+        assert 'hidden_tool' in tool_names2
 
 
 async def test_resources_caching_enabled_by_default() -> None:
@@ -2096,7 +2097,7 @@ async def test_resources_no_caching_when_disabled() -> None:
 
 async def test_resources_cache_invalidation_on_notification() -> None:
     """Test that resources cache is invalidated when ResourceListChangedNotification is received."""
-    from mcp.types import ResourceListChangedNotification
+    from mcp.types import ResourceListChangedNotification, ServerNotification
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
@@ -2107,7 +2108,7 @@ async def test_resources_cache_invalidation_on_notification() -> None:
         assert server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
 
         # Simulate receiving a resource list changed notification
-        notification = ResourceListChangedNotification()
+        notification = ServerNotification(ResourceListChangedNotification())
         await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
 
         # Cache should be invalidated
