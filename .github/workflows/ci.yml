@@ -338,7 +338,7 @@ jobs:
         with:
           runCmd: |
             bash -c '
-              set -o errexit
+              set -o errexit -o pipefail -o nounset
               uv --version
               uvx --version
               pre-commit --version
