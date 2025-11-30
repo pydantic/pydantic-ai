@@ -50,6 +50,7 @@ with try_import() as imports_successful:
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
     from mcp.types import (
+        AudioContent,
         CreateMessageRequestParams,
         ElicitRequestParams,
         ElicitResult,
@@ -1526,12 +1527,20 @@ def test_map_from_mcp_params_model_response():
 
 
 def test_map_from_pai_messages_with_binary_content():
-    """Test that map_from_pai_messages correctly converts image and audio content to MCP format."""
+    """Test that map_from_pai_messages correctly converts image and audio content to MCP format.
+
+    Note: BinaryContent.data is base64-encoded bytes (e.g., base64.b64encode(b'raw')).
+    map_from_pai_messages decodes this to get the base64 string for MCP.
+    """
+    # BinaryContent.data is base64-encoded bytes
+    image_data = base64.b64encode(b'raw_image_bytes')
+    audio_data = base64.b64encode(b'raw_audio_bytes')
+
     message = ModelRequest(
         parts=[
             UserPromptPart(content='text message'),
-            UserPromptPart(content=[BinaryContent(data=b'img', media_type='image/png')]),
-            UserPromptPart(content=[BinaryContent(data=b'audio', media_type='audio/wav')]),
+            UserPromptPart(content=[BinaryContent(data=image_data, media_type='image/png')]),
+            UserPromptPart(content=[BinaryContent(data=audio_data, media_type='audio/wav')]),
         ]
     )
     system_prompt, sampling_msgs = map_from_pai_messages([message])
@@ -1543,7 +1552,7 @@ def test_map_from_pai_messages_with_binary_content():
                 'role': 'user',
                 'content': {
                     'type': 'image',
-                    'data': 'aW1n',
+                    'data': 'raw_image_bytes',
                     'mimeType': 'image/png',
                     'annotations': None,
                     '_meta': None,
@@ -1553,7 +1562,7 @@ def test_map_from_pai_messages_with_binary_content():
                 'role': 'user',
                 'content': {
                     'type': 'audio',
-                    'data': 'YXVkaW8=',
+                    'data': 'raw_audio_bytes',
                     'mimeType': 'audio/wav',
                     'annotations': None,
                     '_meta': None,
@@ -1566,6 +1575,15 @@ def test_map_from_pai_messages_with_binary_content():
 def test_map_from_model_response():
     with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
         map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
+
+
+async def test_map_tool_result_part_audio():
+    """Test that _map_tool_result_part correctly handles AudioContent."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    audio_content = AudioContent(type='audio', data='ZmFrZV9hdWRpb19kYXRh', mimeType='audio/mpeg')
+    async with server:
+        result = await server._map_tool_result_part(audio_content)  # pyright: ignore[reportPrivateUsage]
+        assert result == BinaryContent(data=b'fake_audio_data', media_type='audio/mpeg')
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):

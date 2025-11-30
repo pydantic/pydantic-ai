@@ -86,24 +86,27 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                         for chunk in part.content:
                             if isinstance(chunk, str):
                                 add_msg('user', mcp_types.TextContent(type='text', text=chunk))
-                            elif isinstance(chunk, messages.BinaryContent) and chunk.is_image:
-                                add_msg(
-                                    'user',
-                                    mcp_types.ImageContent(
-                                        type='image',
-                                        data=base64.b64encode(chunk.data).decode(),
-                                        mimeType=chunk.media_type,
-                                    ),
-                                )
-                            elif isinstance(chunk, messages.BinaryContent) and chunk.is_audio:
-                                add_msg(
-                                    'user',
-                                    mcp_types.AudioContent(
-                                        type='audio',
-                                        data=base64.b64encode(chunk.data).decode(),
-                                        mimeType=chunk.media_type,
-                                    ),
-                                )
+                            elif isinstance(chunk, messages.BinaryContent):
+                                # `BinaryContent.data` are base64-encoded bytes.
+                                base64_data = base64.b64decode(chunk.data).decode()
+                                if chunk.is_image:
+                                    add_msg(
+                                        'user',
+                                        mcp_types.ImageContent(
+                                            type='image',
+                                            data=base64_data,
+                                            mimeType=chunk.media_type,
+                                        ),
+                                    )
+                                elif chunk.is_audio:
+                                    add_msg(
+                                        'user',
+                                        mcp_types.AudioContent(
+                                            type='audio',
+                                            data=base64_data,
+                                            mimeType=chunk.media_type,
+                                        ),
+                                    )
                             else:
                                 raise NotImplementedError(f'Unsupported content type: {type(chunk)}')
         else:
