@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -611,7 +611,7 @@ class OpenAIChatModel(Model):
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
-    def _process_thinking(self, message: chat.ChatCompletionMessage) -> Generator[ThinkingPart]:
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> Iterable[ThinkingPart]:
         """Hook that maps reasoning tokens to thinking parts.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
@@ -627,7 +627,7 @@ class OpenAIChatModel(Model):
         if reasoning := getattr(message, 'reasoning', None):
             yield ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system)
 
-    def _process_content(self, message: chat.ChatCompletionMessage) -> Generator[TextPart | ThinkingPart]:
+    def _process_content(self, message: chat.ChatCompletionMessage) -> Iterable[TextPart | ThinkingPart]:
         """Hook that maps the message content to thinking or text parts.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
@@ -636,7 +636,7 @@ class OpenAIChatModel(Model):
             for part in split_content_into_text_and_thinking(message.content, self.profile.thinking_tags):
                 yield replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part
 
-    def _process_tool_calls(self, message: chat.ChatCompletionMessage) -> Generator[ToolCallPart]:
+    def _process_tool_calls(self, message: chat.ChatCompletionMessage) -> Iterable[ToolCallPart]:
         """Hook that maps tool calls to tool call parts.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.

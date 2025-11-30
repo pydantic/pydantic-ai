@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import itertools
-from collections.abc import Generator, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -572,7 +572,7 @@ class OpenRouterModel(OpenAIChatModel):
         return response
 
     @override
-    def _process_thinking(self, message: chat.ChatCompletionMessage) -> Generator[ThinkingPart]:
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> Iterable[ThinkingPart]:
         assert isinstance(message, _OpenRouterCompletionMessage)
 
         if reasoning_details := message.reasoning_details:
@@ -581,7 +581,7 @@ class OpenRouterModel(OpenAIChatModel):
         else:
             yield from super()._process_thinking(message)
 
-    def _process_image(self, message: chat.ChatCompletionMessage) -> Generator[FilePart]:
+    def _process_image(self, message: chat.ChatCompletionMessage) -> Iterable[FilePart]:
         assert isinstance(message, _OpenRouterCompletionMessage)
 
         if images := message.images:
