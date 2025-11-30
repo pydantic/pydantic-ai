@@ -1,18 +1,14 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/python
 {
-  "name": "Python 3",
+  "name": "Pydantic AI",
   "build": {
     "dockerfile": "Dockerfile"
   },
   // Features to add to the dev container. More info: https://containers.dev/features.
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/rocker-org/devcontainer-features/pandoc:1": {},
     "ghcr.io/lukewiwa/features/shellcheck:0": {},
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "latest"
-    },
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installLsof": true,
       "installBuildTools": true, // This option installs build-essential
@@ -30,8 +26,7 @@
     8000,
     8080,
     11434,
-    54320,
-    54321
+    54320
   ],
   "portsAttributes": {
     "8000": {
@@ -48,10 +43,6 @@
     },
     "54320": {
       "label": "PostgreSQL",
-      "onAutoForward": "silent"
-    },
-    "54321": {
-      "label": "PostgreSQL (pgvector)",
       "onAutoForward": "silent"
     }
   },
