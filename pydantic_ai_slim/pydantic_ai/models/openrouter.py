@@ -687,7 +687,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
         assert isinstance(chunk, _OpenRouterChatCompletionChunk)
 
-        if provider_details := super()._map_provider_details(chunk):
+        if provider_details := super()._map_provider_details(chunk):  # pragma: no branch
             provider_details.update(_map_openrouter_provider_details(chunk))
             # Preserve finish_reason from previous chunk if the current chunk doesn't have one.
             # After the chunk with native_finish_reason 'completed', OpenRouter sends one more

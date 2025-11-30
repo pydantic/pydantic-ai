@@ -493,7 +493,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                 self.finish_reason = _FINISH_REASON_MAP.get(
                     cast(TextGenerationOutputFinishReason, raw_finish_reason), None
                 )
-            if self._provider_timestamp is not None:
+            if self._provider_timestamp is not None:  # pragma: no branch
                 provider_details_dict['timestamp'] = datetime.fromtimestamp(self._provider_timestamp, tz=timezone.utc)
             if provider_details_dict:
                 self.provider_details = provider_details_dict

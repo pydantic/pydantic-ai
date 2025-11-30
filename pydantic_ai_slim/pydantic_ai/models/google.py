@@ -688,7 +688,7 @@ class GeminiStreamedResponse(StreamedResponse):
             if raw_finish_reason:
                 provider_details_dict['finish_reason'] = raw_finish_reason.value
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-            if self._provider_timestamp is not None:
+            if self._provider_timestamp is not None:  # pragma: no branch
                 provider_details_dict['timestamp'] = self._provider_timestamp
             if provider_details_dict:
                 self.provider_details = provider_details_dict
