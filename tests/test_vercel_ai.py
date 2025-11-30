@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, MutableMapping
+from datetime import timezone
 from typing import Any, cast
 
 import pytest
@@ -59,7 +60,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
 )
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
 
-from .conftest import IsDatetime, IsSameStr, IsStr, try_import
+from .conftest import IsDatetime, IsNow, IsSameStr, IsStr, try_import
 
 with try_import() as starlette_import_successful:
     from starlette.requests import Request
@@ -184,7 +185,8 @@ Use a tool
 """,
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -216,7 +218,8 @@ I'd be happy to help you use a tool! However, I need more information about what
                         content='Give me the ToCs',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -237,7 +240,8 @@ I'd be happy to help you use a tool! However, I need more information about what
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -257,7 +261,8 @@ I'd be happy to help you use a tool! However, I need more information about what
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -273,7 +278,8 @@ I'd be happy to help you use a tool! However, I need more information about what
                         content='How do I get FastAPI instrumentation to include the HTTP request and response',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -1832,7 +1838,8 @@ async def test_adapter_load_messages():
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -1848,7 +1855,8 @@ async def test_adapter_load_messages():
                         content='Give me the ToCs',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -1869,7 +1877,8 @@ async def test_adapter_load_messages():
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -1889,7 +1898,8 @@ async def test_adapter_load_messages():
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -1909,7 +1919,8 @@ async def test_adapter_load_messages():
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[

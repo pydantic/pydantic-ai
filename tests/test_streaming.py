@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import datetime
 import json
 import re
 from collections.abc import AsyncIterable, AsyncIterator
@@ -73,6 +72,7 @@ async def test_streamed_text_response():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -89,6 +89,7 @@ async def test_streamed_text_response():
                             tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -109,6 +110,7 @@ async def test_streamed_text_response():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -125,6 +127,7 @@ async def test_streamed_text_response():
                             tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -165,6 +168,7 @@ def test_streamed_text_sync_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -181,6 +185,7 @@ def test_streamed_text_sync_response():
                         tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -211,6 +216,7 @@ def test_streamed_text_sync_response():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -227,6 +233,7 @@ def test_streamed_text_sync_response():
                         tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -589,6 +596,7 @@ async def test_call_tool():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -607,6 +615,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -616,6 +625,7 @@ async def test_call_tool():
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -634,6 +644,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -658,6 +669,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
             ]
@@ -689,6 +701,7 @@ async def test_empty_response():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -698,7 +711,11 @@ async def test_empty_response():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[], run_id=IsStr()),
+            ModelRequest(
+                parts=[],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
@@ -733,6 +750,7 @@ async def test_call_tool_wrong_name():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -789,6 +807,7 @@ async def test_early_strategy_stops_after_first_final_result():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -823,6 +842,7 @@ async def test_early_strategy_stops_after_first_final_result():
                         tool_call_id=IsStr(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -849,6 +869,7 @@ async def test_early_strategy_uses_first_final_result():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -876,6 +897,7 @@ async def test_early_strategy_uses_first_final_result():
                         tool_call_id=IsStr(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -918,6 +940,7 @@ async def test_exhaustive_strategy_executes_all_tools():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -960,6 +983,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1006,10 +1030,11 @@ async def test_early_strategy_with_final_result_in_middle():
                 parts=[
                     UserPromptPart(
                         content='test early strategy with final result in middle',
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                         part_kind='user-prompt',
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -1042,7 +1067,7 @@ async def test_early_strategy_with_final_result_in_middle():
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=14),
                 model_name='function::sf',
-                timestamp=IsNow(tz=datetime.timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
             ),
@@ -1052,31 +1077,32 @@ async def test_early_strategy_with_final_result_in_middle():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                         part_kind='tool-return',
                     ),
                     ToolReturnPart(
                         tool_name='regular_tool',
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                         part_kind='tool-return',
                     ),
                     ToolReturnPart(
                         tool_name='another_tool',
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                         part_kind='tool-return',
                     ),
                     RetryPromptPart(
                         content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
                         tool_name='unknown_tool',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                         part_kind='retry-prompt',
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -1139,10 +1165,11 @@ async def test_early_strategy_with_external_tool_call():
                 parts=[
                     UserPromptPart(
                         content='test early strategy with external tool call',
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                         part_kind='user-prompt',
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -1162,7 +1189,7 @@ async def test_early_strategy_with_external_tool_call():
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=7),
                 model_name='function::sf',
-                timestamp=IsNow(tz=datetime.timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
             ),
@@ -1172,15 +1199,16 @@ async def test_early_strategy_with_external_tool_call():
                         tool_name='final_result',
                         content='Output tool not used - a final result was already processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                     ToolReturnPart(
                         tool_name='regular_tool',
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -1228,10 +1256,11 @@ async def test_early_strategy_with_deferred_tool_call():
                 parts=[
                     UserPromptPart(
                         content='test early strategy with external tool call',
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                         part_kind='user-prompt',
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -1246,7 +1275,7 @@ async def test_early_strategy_with_deferred_tool_call():
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=3),
                 model_name='function::sf',
-                timestamp=IsNow(tz=datetime.timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
             ),
@@ -1256,9 +1285,10 @@ async def test_early_strategy_with_deferred_tool_call():
                         tool_name='regular_tool',
                         content=1,
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 kind='request',
             ),
@@ -1292,6 +1322,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                         content='test early strategy with regular tool calls', timestamp=IsNow(tz=timezone.utc)
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1308,6 +1339,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                         tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1327,6 +1359,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                         tool_call_id=IsStr(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -1774,6 +1807,7 @@ async def test_tool_raises_approval_required():
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1792,6 +1826,7 @@ async def test_tool_raises_approval_required():
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(

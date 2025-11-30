@@ -582,10 +582,8 @@ class OpenAIChatModel(Model):
                 f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
             )
 
-        if response.created:
-            timestamp = number_to_datetime(response.created)
-        else:
-            timestamp = _now_utc()
+        timestamp = _now_utc()
+        if not response.created:
             response.created = int(timestamp.timestamp())
 
         # Workaround for local Ollama which sometimes returns a `None` finish reason.
@@ -621,12 +619,16 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
 
+        provider_details = self._process_provider_details(response)
+        if response.created:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(response.created)
+
         return ModelResponse(
             parts=items,
             usage=self._map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_details=self._process_provider_details(response),
+            provider_details=provider_details,
             provider_response_id=response.id,
             provider_name=self._provider.name,
             finish_reason=self._map_finish_reason(choice.finish_reason),
@@ -672,9 +674,10 @@ class OpenAIChatModel(Model):
             _model_name=model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=number_to_datetime(first_chunk.created),
+            _timestamp=_now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.created,
         )
 
     @property
@@ -1130,7 +1133,7 @@ class OpenAIResponsesModel(Model):
         self, response: responses.Response, model_request_parameters: ModelRequestParameters
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = number_to_datetime(response.created_at)
+        timestamp = _now_utc()
         items: list[ModelResponsePart] = []
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
@@ -1216,11 +1219,13 @@ class OpenAIResponsesModel(Model):
                 pass
 
         finish_reason: FinishReason | None = None
-        provider_details: dict[str, Any] | None = None
+        provider_details: dict[str, Any] = {}
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
-            provider_details = {'finish_reason': raw_finish_reason}
+            provider_details['finish_reason'] = raw_finish_reason
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+        if response.created_at:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(response.created_at)
 
         return ModelResponse(
             parts=items,
@@ -1230,7 +1235,7 @@ class OpenAIResponsesModel(Model):
             timestamp=timestamp,
             provider_name=self._provider.name,
             finish_reason=finish_reason,
-            provider_details=provider_details,
+            provider_details=provider_details or None,
         )
 
     async def _process_streamed_response(
@@ -1249,9 +1254,11 @@ class OpenAIResponsesModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.response.model,
             _response=peekable_response,
-            _timestamp=number_to_datetime(first_chunk.response.created_at),
+            _timestamp=_now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            # type of created_at is float but it's actually a Unix timestamp in seconds
+            _provider_timestamp=int(first_chunk.response.created_at),
         )
 
     @overload
@@ -1838,6 +1845,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: int | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._validate_response():
@@ -1861,7 +1869,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             if raw_finish_reason := choice.finish_reason:
                 self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
-            if provider_details := self._map_provider_details(chunk):
+            if provider_details := self._map_provider_details(chunk):  # pragma: no branch
                 self.provider_details = provider_details
 
             for event in self._map_part_delta(choice):
@@ -1951,7 +1959,10 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
         """
-        return _map_provider_details(chunk.choices[0])
+        provider_details = _map_provider_details(chunk.choices[0])
+        if self._provider_timestamp is not None:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(self._provider_timestamp)
+        return provider_details
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
@@ -1990,6 +2001,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: int | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
@@ -2000,9 +2012,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
+                provider_details: dict[str, Any] = {}
                 if raw_finish_reason:  # pragma: no branch
-                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+                if self._provider_timestamp is not None:  # pragma: no branch
+                    provider_details['timestamp'] = number_to_datetime(self._provider_timestamp)
+                self.provider_details = provider_details or None
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
