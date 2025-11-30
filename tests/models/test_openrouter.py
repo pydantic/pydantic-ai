@@ -431,11 +431,13 @@ async def test_openrouter_image_generation_streaming(allow_model_requests: None,
         model_name='google/gemini-2.5-flash-image-preview',
         provider=provider,
     )
-    settings = OpenRouterModelSettings(openrouter_modalities=['image', 'text'])
+    settings = OpenRouterModelSettings(
+        openrouter_modalities=['image', 'text'], openrouter_image_config={'aspect_ratio': '3:2'}
+    )
 
     agent = Agent(model=model, output_type=str | BinaryImage, model_settings=settings)
 
-    async with agent.run_stream('A cat') as result:
+    async with agent.run_stream('A dog') as result:
         async for output in result.stream_output():
             if isinstance(output, str):
                 assert output == snapshot('Here you go: ')

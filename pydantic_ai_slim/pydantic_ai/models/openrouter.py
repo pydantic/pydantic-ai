@@ -201,6 +201,12 @@ class OpenRouterUsageConfig(TypedDict, total=False):
     include: bool
 
 
+class OpenRouterImageConfig(TypedDict, total=False):
+    """Configuration for OpenRouter image generation."""
+
+    aspect_ratio: Literal['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']
+
+
 class OpenRouterModelSettings(ModelSettings, total=False):
     """Settings used for an OpenRouter model request."""
 
@@ -244,6 +250,12 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     """To control the usage of the model.
 
     The usage config object consolidates settings for enabling detailed usage information. [See more](https://openrouter.ai/docs/use-cases/usage-accounting)
+    """
+
+    openrouter_image_config: OpenRouterImageConfig
+    """To control the image generation of the model.
+
+    The image config object consolidates settings for controlling the image generation of the model. [See more](https://openrouter.ai/docs/guides/overview/multimodal/image-generation#image-aspect-ratio-configuration)
     """
 
 
@@ -511,6 +523,8 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
         extra_body['usage'] = usage
     if modalities := model_settings.pop('openrouter_modalities', None):
         extra_body['modalities'] = modalities
+    if image_config := model_settings.pop('openrouter_image_config', None):
+        extra_body['image_config'] = image_config
 
     model_settings['extra_body'] = extra_body
 
