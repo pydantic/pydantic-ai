@@ -94,7 +94,9 @@
         "tamasfe.even-better-toml"
       ]
     }
-  }
+  },
+  // Uncomment to copy .env file into the container.
+  // "initializeCommand": "cp ../my-env/.env ./.env",
   // Uncomment to mount .vscode and .cursor directories from other repositories or directories.
   // "mounts": [
   //   {
