@@ -57,7 +57,7 @@ with try_import() as imports_successful:
         TextContent,
     )
 
-    from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
+    from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -1521,6 +1521,44 @@ def test_map_from_mcp_params_model_response():
                 parts=[TextPart(content='xx')],
                 timestamp=IsNow(tz=timezone.utc),
             )
+        ]
+    )
+
+
+def test_map_from_pai_messages_with_binary_content():
+    """Test that map_from_pai_messages correctly converts image and audio content to MCP format."""
+    message = ModelRequest(
+        parts=[
+            UserPromptPart(content='text message'),
+            UserPromptPart(content=[BinaryContent(data=b'img', media_type='image/png')]),
+            UserPromptPart(content=[BinaryContent(data=b'audio', media_type='audio/wav')]),
+        ]
+    )
+    system_prompt, sampling_msgs = map_from_pai_messages([message])
+    assert system_prompt == ''
+    assert [m.model_dump(by_alias=True) for m in sampling_msgs] == snapshot(
+        [
+            {'role': 'user', 'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None}},
+            {
+                'role': 'user',
+                'content': {
+                    'type': 'image',
+                    'data': 'aW1n',
+                    'mimeType': 'image/png',
+                    'annotations': None,
+                    '_meta': None,
+                },
+            },
+            {
+                'role': 'user',
+                'content': {
+                    'type': 'audio',
+                    'data': 'YXVkaW8=',
+                    'mimeType': 'audio/wav',
+                    'annotations': None,
+                    '_meta': None,
+                },
+            },
         ]
     )
 

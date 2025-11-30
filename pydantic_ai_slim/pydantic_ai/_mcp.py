@@ -91,11 +91,19 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                                     'user',
                                     mcp_types.ImageContent(
                                         type='image',
-                                        data=base64.b64decode(chunk.data).decode(),
+                                        data=base64.b64encode(chunk.data).decode(),
                                         mimeType=chunk.media_type,
                                     ),
                                 )
-                            # TODO(Marcelo): Add support for audio content.
+                            elif isinstance(chunk, messages.BinaryContent) and chunk.is_audio:
+                                add_msg(
+                                    'user',
+                                    mcp_types.AudioContent(
+                                        type='audio',
+                                        data=base64.b64encode(chunk.data).decode(),
+                                        mimeType=chunk.media_type,
+                                    ),
+                                )
                             else:
                                 raise NotImplementedError(f'Unsupported content type: {type(chunk)}')
         else:
