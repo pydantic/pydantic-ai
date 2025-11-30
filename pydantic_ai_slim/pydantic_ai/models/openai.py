@@ -611,15 +611,6 @@ class OpenAIChatModel(Model):
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
-    def _process_parts(self, message: chat.ChatCompletionMessage) -> Iterable[ModelResponsePart]:
-        """Hook that defines the mappings to transform message contents to response parts.
-
-        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
-        """
-        return itertools.chain(
-            self._process_thinking(message), self._process_content(message), self._process_tool_calls(message)
-        )
-
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> Generator[ThinkingPart]:
         """Hook that maps reasoning tokens to thinking parts.
 
@@ -662,6 +653,15 @@ class OpenAIChatModel(Model):
                     assert_never(c)
                 part.tool_call_id = _guard_tool_call_id(part)
                 yield part
+
+    def _process_parts(self, message: chat.ChatCompletionMessage) -> Iterable[ModelResponsePart]:
+        """Hook that defines the mappings to transform message contents to response parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        return itertools.chain(
+            self._process_thinking(message), self._process_content(message), self._process_tool_calls(message)
+        )
 
     async def _process_streamed_response(
         self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
