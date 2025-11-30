@@ -1576,6 +1576,14 @@ def test_map_from_pai_messages_with_binary_content():
         ]
     )
 
+    # Unsupported binary content type raises NotImplementedError
+    video_data = base64.b64encode(b'raw_video_bytes')
+    message_with_video = ModelRequest(
+        parts=[UserPromptPart(content=[BinaryContent(data=video_data, media_type='video/mp4')])]
+    )
+    with pytest.raises(NotImplementedError, match='Unsupported binary content type: video/mp4'):
+        map_from_pai_messages([message_with_video])
+
 
 def test_map_from_model_response():
     with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):

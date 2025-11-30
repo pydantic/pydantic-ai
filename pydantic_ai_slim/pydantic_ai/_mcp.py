@@ -107,6 +107,8 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                                             mimeType=chunk.media_type,
                                         ),
                                     )
+                                else:
+                                    raise NotImplementedError(f'Unsupported binary content type: {chunk.media_type}')
                             else:
                                 raise NotImplementedError(f'Unsupported content type: {type(chunk)}')
         else:
