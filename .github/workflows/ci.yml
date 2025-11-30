@@ -344,7 +344,7 @@ jobs:
               pre-commit --version
               make lint
               make typecheck
-              # make test
+              make test
               echo "Dev container built and run successfully"
             '
 
