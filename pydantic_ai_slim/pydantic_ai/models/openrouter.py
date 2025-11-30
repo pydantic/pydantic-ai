@@ -694,7 +694,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             # chunk with usage data (see cassette test_openrouter_stream_with_native_options.yaml)
             # which has native_finish_reason: null. Since provider_details is replaced on each
             # chunk, we need to carry forward the finish_reason from the previous chunk.
-            if 'finish_reason' not in provider_details and self.provider_details:
+            if 'finish_reason' not in provider_details and self.provider_details:  # pragma: no branch
                 if previous_finish_reason := self.provider_details.get('finish_reason'):
                     provider_details['finish_reason'] = previous_finish_reason
             return provider_details

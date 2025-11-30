@@ -684,12 +684,14 @@ class GeminiStreamedResponse(StreamedResponse):
                 self.provider_response_id = chunk.response_id
 
             raw_finish_reason = candidate.finish_reason
+            provider_details_dict: dict[str, Any] = {}
             if raw_finish_reason:
-                provider_details_dict: dict[str, Any] = {'finish_reason': raw_finish_reason.value}
-                if self._provider_timestamp is not None:  # pragma: no branch
-                    provider_details_dict['timestamp'] = self._provider_timestamp
-                self.provider_details = provider_details_dict
+                provider_details_dict['finish_reason'] = raw_finish_reason.value
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+            if self._provider_timestamp is not None:
+                provider_details_dict['timestamp'] = self._provider_timestamp
+            if provider_details_dict:
+                self.provider_details = provider_details_dict
 
             # Google streams the grounding metadata (including the web search queries and results)
             # _after_ the text that was generated using it, so it would show up out of order in the stream,
