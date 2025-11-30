@@ -50,6 +50,8 @@ class ModelProfile:
         """
     )
     """The instructions template to use for prompted structured output. The '{schema}' placeholder will be replaced with the JSON schema for the output."""
+    use_structured_output_for_prompted_output = True
+    """Use json schema or json object for prompted output"""
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
 
