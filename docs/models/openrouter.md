@@ -78,18 +78,18 @@ agent = Agent(model, model_settings=settings)
 
 You can use OpenRouter models that support image generation with the `openrouter_modalities` setting:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent, BinaryImage
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModelSettings
 
-settings = OpenRouterModelSettings(
-    openrouter_modalities=['image', 'text']
+agent = Agent(
+    model='openrouter:google/gemini-2.5-flash-image-preview',
+    output_type=str | BinaryImage,
+    model_settings=OpenRouterModelSettings(openrouter_modalities=['image', 'text']),
 )
-model = OpenRouterModel('google/gemini-2.5-flash-image-preview', provider=provider)
-agent = Agent(model=model, output_type=str | BinaryImage, model_settings=settings)
 
-result = await agent.run('A cat')
-# result.output is a BinaryImage
+result = agent.run_sync('A cat')
+assert isinstance(result.output, BinaryImage)
 ```
 
 You can further customize image generation using `openrouter_image_config`:
@@ -107,22 +107,24 @@ settings = OpenRouterModelSettings(
 
 Image generation also works with streaming:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent, BinaryImage
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModelSettings
 
-settings = OpenRouterModelSettings(
-    openrouter_modalities=['image', 'text'],
-    openrouter_image_config={'aspect_ratio': '3:2'}
+agent = Agent(
+    model='openrouter:google/gemini-2.5-flash-image-preview',
+    output_type=str | BinaryImage,
+    model_settings=OpenRouterModelSettings(
+        openrouter_modalities=['image', 'text'],
+        openrouter_image_config={'aspect_ratio': '3:2'},
+    ),
 )
-model = OpenRouterModel('google/gemini-2.5-flash-image-preview', provider=provider)
-agent = Agent(model=model, output_type=str | BinaryImage, model_settings=settings)
 
-async with agent.run_stream('A dog') as result:
-    async for output in result.stream_output():
-        if isinstance(output, str):
-            print(output)
-        elif isinstance(output, BinaryImage):
-            # Handle the generated image
-            print(f'Generated image: {output.media_type}')
+response = agent.run_stream_sync('A dog')
+for output in response.stream_output():
+    if isinstance(output, str):
+        print(output)
+    elif isinstance(output, BinaryImage):
+        # Handle the generated image
+        print(f'Generated image: {output.media_type}')
 ```
