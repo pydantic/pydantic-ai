@@ -153,7 +153,6 @@ async def test_url_input(
                 provider_url='https://us-central1-aiplatform.googleapis.com/v1/projects/pydantic-ai/locations/us-central1/publishers/google/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
-                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -196,7 +195,6 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                 provider_url='https://us-central1-aiplatform.googleapis.com/v1/projects/pydantic-ai/locations/us-central1/publishers/google/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
-                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
