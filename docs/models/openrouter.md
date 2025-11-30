@@ -73,3 +73,56 @@ model = OpenRouterModel('openai/gpt-5')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## Image Generation
+
+You can use OpenRouter models that support image generation with the `openrouter_modalities` setting:
+
+```python
+from pydantic_ai import Agent, BinaryImage
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+
+settings = OpenRouterModelSettings(
+    openrouter_modalities=['image', 'text']
+)
+model = OpenRouterModel('google/gemini-2.5-flash-image-preview', provider=provider)
+agent = Agent(model=model, output_type=str | BinaryImage, model_settings=settings)
+
+result = await agent.run('A cat')
+# result.output is a BinaryImage
+```
+
+You can further customize image generation using `openrouter_image_config`:
+
+```python
+from pydantic_ai.models.openrouter import OpenRouterModelSettings
+
+settings = OpenRouterModelSettings(
+    openrouter_modalities=['image', 'text'],
+    openrouter_image_config={'aspect_ratio': '3:2'}
+)
+```
+
+> Available aspect ratios: `'1:1'`, `'2:3'`, `'3:2'`, `'3:4'`, `'4:3'`, `'4:5'`, `'5:4'`, `'9:16'`, `'16:9'`, `'21:9'`.
+
+Image generation also works with streaming:
+
+```python
+from pydantic_ai import Agent, BinaryImage
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+
+settings = OpenRouterModelSettings(
+    openrouter_modalities=['image', 'text'],
+    openrouter_image_config={'aspect_ratio': '3:2'}
+)
+model = OpenRouterModel('google/gemini-2.5-flash-image-preview', provider=provider)
+agent = Agent(model=model, output_type=str | BinaryImage, model_settings=settings)
+
+async with agent.run_stream('A dog') as result:
+    async for output in result.stream_output():
+        if isinstance(output, str):
+            print(output)
+        elif isinstance(output, BinaryImage):
+            # Handle the generated image
+            print(f'Generated image: {output.media_type}')
+```
