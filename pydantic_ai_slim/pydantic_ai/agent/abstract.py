@@ -1030,6 +1030,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 timestamp=datetime.datetime(...),
                             )
                         ],
+                        timestamp=datetime.datetime(...),
                         run_id='...',
                     )
                 ),

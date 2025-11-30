@@ -500,6 +500,8 @@ class GoogleModel(Model):
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
+            if response.create_time is not None:
+                vendor_details['timestamp'] = response.create_time
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         if candidate.content is None or candidate.content.parts is None:
@@ -538,9 +540,10 @@ class GoogleModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
-            _timestamp=first_chunk.create_time or _utils.now_utc(),
+            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.create_time,
         )
 
     async def _map_messages(
@@ -665,6 +668,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         code_execution_tool_call_id: str | None = None
@@ -681,7 +685,10 @@ class GeminiStreamedResponse(StreamedResponse):
 
             raw_finish_reason = candidate.finish_reason
             if raw_finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+                provider_details_dict: dict[str, Any] = {'finish_reason': raw_finish_reason.value}
+                if self._provider_timestamp is not None:
+                    provider_details_dict['timestamp'] = self._provider_timestamp
+                self.provider_details = provider_details_dict
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Google streams the grounding metadata (including the web search queries and results)

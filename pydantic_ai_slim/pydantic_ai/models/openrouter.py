@@ -471,7 +471,8 @@ def _map_openrouter_provider_details(
     provider_details: dict[str, Any] = {}
 
     provider_details['downstream_provider'] = response.provider
-    provider_details['finish_reason'] = response.choices[0].native_finish_reason
+    if native_finish_reason := response.choices[0].native_finish_reason:
+        provider_details['finish_reason'] = native_finish_reason
 
     if usage := response.usage:
         if cost := usage.cost:
@@ -688,6 +689,14 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         if provider_details := super()._map_provider_details(chunk):
             provider_details.update(_map_openrouter_provider_details(chunk))
+            # Preserve finish_reason from previous chunk if the current chunk doesn't have one.
+            # After the chunk with native_finish_reason 'completed', OpenRouter sends one more
+            # chunk with usage data (see cassette test_openrouter_stream_with_native_options.yaml)
+            # which has native_finish_reason: null. Since provider_details is replaced on each
+            # chunk, we need to carry forward the finish_reason from the previous chunk.
+            if 'finish_reason' not in provider_details and self.provider_details:
+                if previous_finish_reason := self.provider_details.get('finish_reason'):
+                    provider_details['finish_reason'] = previous_finish_reason
             return provider_details
 
     @override

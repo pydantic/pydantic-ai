@@ -348,10 +348,7 @@ class MistralModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         assert response.choices, 'Unexpected empty response choice.'
 
-        if response.created:
-            timestamp = number_to_datetime(response.created)
-        else:
-            timestamp = _now_utc()
+        timestamp = _now_utc()
 
         choice = response.choices[0]
         content = choice.message.content
@@ -370,7 +367,9 @@ class MistralModel(Model):
                 parts.append(tool)
 
         raw_finish_reason = choice.finish_reason
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if response.created:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(response.created)
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
@@ -398,18 +397,14 @@ class MistralModel(Model):
                 'Streamed response ended without content or tool calls'
             )
 
-        if first_chunk.data.created:
-            timestamp = number_to_datetime(first_chunk.data.created)
-        else:
-            timestamp = _now_utc()
-
         return MistralStreamedResponse(
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
             _model_name=first_chunk.data.model,
-            _timestamp=timestamp,
+            _timestamp=_now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.data.created,
         )
 
     @staticmethod
@@ -618,7 +613,7 @@ class MistralStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
     _provider_url: str
-
+    _provider_timestamp: int | None = None
     _delta_content: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -635,7 +630,10 @@ class MistralStreamedResponse(StreamedResponse):
                 continue
 
             if raw_finish_reason := choice.finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason}
+                provider_details_dict: dict[str, Any] = {'finish_reason': raw_finish_reason}
+                if self._provider_timestamp is not None:
+                    provider_details_dict['timestamp'] = number_to_datetime(self._provider_timestamp)
+                self.provider_details = provider_details_dict
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Handle the text part of the response

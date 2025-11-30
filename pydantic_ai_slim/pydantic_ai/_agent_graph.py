@@ -19,7 +19,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
+from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
@@ -447,6 +447,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        self.request.timestamp = now_utc()
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters, run_context
         ) as streamed_response:
@@ -479,6 +480,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return self._result  # pragma: no cover
 
         model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
+        self.request.timestamp = now_utc()
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 

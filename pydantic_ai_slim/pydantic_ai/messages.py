@@ -1001,6 +1001,9 @@ class ModelRequest:
 
     _: KW_ONLY
 
+    timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp when the request was sent to the model."""
+
     instructions: str | None = None
     """The instructions for the model."""
 
@@ -1242,9 +1245,10 @@ class ModelResponse:
     """The name of the model that generated the response."""
 
     timestamp: datetime = field(default_factory=_now_utc)
-    """The timestamp of the response.
+    """The timestamp when the response was received locally.
 
-    If the model provides a timestamp in the response (as OpenAI does) that will be used.
+    This is always a high-precision local datetime. Provider-specific timestamps
+    (if available) are stored in `provider_details['timestamp']`.
     """
 
     kind: Literal['response'] = 'response'

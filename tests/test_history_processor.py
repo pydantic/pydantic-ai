@@ -62,10 +62,13 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
 
     assert received_messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -73,10 +76,13 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
     assert captured_messages == result.all_messages()
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -124,7 +130,8 @@ async def test_history_processor_run_replaces_message_history(
                         content='Processed answer',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -133,9 +140,12 @@ async def test_history_processor_run_replaces_message_history(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Question 3', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
@@ -183,7 +193,8 @@ async def test_history_processor_streaming_replaces_message_history(
                         content='Processed answer',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -192,9 +203,12 @@ async def test_history_processor_streaming_replaces_message_history(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Question 3', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
@@ -238,16 +252,20 @@ async def test_history_processor_messages_sent_to_provider(
                         content='New question',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
     assert captured_messages == result.all_messages()
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelRequest(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -304,9 +322,15 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
         result = await agent.run('New question', message_history=message_history)
     assert received_messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='[SECOND] [FIRST] Question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='[SECOND] [FIRST] Question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='Answer')], timestamp=IsDatetime()),
-            ModelRequest(parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
@@ -318,7 +342,8 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                         content='[SECOND] [FIRST] Question',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Answer')],
@@ -330,7 +355,8 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                         content='[SECOND] [FIRST] New question',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -371,7 +397,8 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                         content='Question 2',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -384,7 +411,8 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                         content='Question 1',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
@@ -393,6 +421,7 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -441,7 +470,8 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                         content='Question 2',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -454,7 +484,8 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                         content='Question 1',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
@@ -463,6 +494,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -509,7 +541,8 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                         content='PREFIX: test',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -522,7 +555,8 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                         content='PREFIX: test',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -564,6 +598,7 @@ async def test_history_processor_with_context_async(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             )
         ]
@@ -578,6 +613,7 @@ async def test_history_processor_with_context_async(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -642,7 +678,8 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                         content='TEST: Question 2',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -655,7 +692,8 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                         content='TEST: Question 1',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
@@ -663,7 +701,8 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                         content='TEST: Question 2',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -702,7 +741,8 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                         content='Modified message',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -715,7 +755,8 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                         content='Modified message',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -770,10 +811,13 @@ async def test_callable_class_history_processor_no_op(
 
     assert received_messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -781,10 +825,13 @@ async def test_callable_class_history_processor_no_op(
     assert captured_messages == result.all_messages()
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -818,10 +865,13 @@ async def test_callable_class_history_processor_with_ctx_no_op(
 
     assert received_messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -829,10 +879,13 @@ async def test_callable_class_history_processor_with_ctx_no_op(
     assert captured_messages == result.all_messages()
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(

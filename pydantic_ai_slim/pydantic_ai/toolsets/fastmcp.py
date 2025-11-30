@@ -187,7 +187,7 @@ def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResu
 def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
     if isinstance(part, TextContent):
         return part.text
-    elif isinstance(part, ImageContent | AudioContent):
+    elif isinstance(part, (ImageContent, AudioContent)):
         return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
     elif isinstance(part, EmbeddedResource):
         if isinstance(part.resource, BlobResourceContents):

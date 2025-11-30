@@ -449,7 +449,8 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],

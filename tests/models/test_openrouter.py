@@ -1,3 +1,4 @@
+import datetime
 from collections.abc import Sequence
 from typing import Literal, cast
 
@@ -96,7 +97,20 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
 
         _ = [chunk async for chunk in stream]
 
-        assert stream.provider_details == snapshot({'finish_reason': 'completed', 'downstream_provider': 'xAI'})
+        assert stream.provider_details is not None
+        assert stream.provider_details == snapshot(
+            {
+                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'finish_reason': 'completed',
+                'cost': 0.00333825,
+                'upstream_inference_cost': None,
+                'is_byok': False,
+                'downstream_provider': 'xAI',
+            }
+        )
+        # Explicitly verify native_finish_reason is 'completed' and wasn't overwritten by the
+        # final usage chunk (which has native_finish_reason: null, see cassette for details)
+        assert stream.provider_details['finish_reason'] == 'completed'
         assert stream.finish_reason == snapshot('stop')
 
 

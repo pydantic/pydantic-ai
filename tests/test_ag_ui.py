@@ -6,6 +6,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
+from datetime import timezone
 from http import HTTPStatus
 from typing import Any
 
@@ -52,7 +53,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsDatetime, IsSameStr, try_import
+from .conftest import IsDatetime, IsNow, IsSameStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -1525,7 +1526,8 @@ async def test_messages() -> None:
                         content='User message',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[
@@ -1566,7 +1568,8 @@ async def test_messages() -> None:
                         content='User message',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelResponse(
                 parts=[TextPart(content='Assistant message')],

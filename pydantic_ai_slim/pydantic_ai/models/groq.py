@@ -321,7 +321,7 @@ class GroqModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = number_to_datetime(response.created)
+        timestamp = _utils.now_utc()
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.reasoning is not None:
@@ -341,7 +341,9 @@ class GroqModel(Model):
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
 
         raw_finish_reason = choice.finish_reason
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if response.created:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(response.created)
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
             parts=items,
@@ -371,9 +373,10 @@ class GroqModel(Model):
             _response=peekable_response,
             _model_name=first_chunk.model,
             _model_profile=self.profile,
-            _timestamp=number_to_datetime(first_chunk.created),
+            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
+            _provider_timestamp=first_chunk.created,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -528,6 +531,7 @@ class GroqStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: int | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
@@ -546,7 +550,10 @@ class GroqStreamedResponse(StreamedResponse):
                     continue
 
                 if raw_finish_reason := choice.finish_reason:
-                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    provider_details_dict: dict[str, Any] = {'finish_reason': raw_finish_reason}
+                    if self._provider_timestamp is not None:
+                        provider_details_dict['timestamp'] = number_to_datetime(self._provider_timestamp)
+                    self.provider_details = provider_details_dict
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
                 if choice.delta.reasoning is not None:

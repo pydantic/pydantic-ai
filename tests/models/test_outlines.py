@@ -326,6 +326,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -342,6 +343,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -353,6 +355,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -374,6 +377,7 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -404,6 +408,7 @@ async def test_request_async_model(mock_async_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -439,6 +444,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -470,6 +476,7 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -526,6 +533,7 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),

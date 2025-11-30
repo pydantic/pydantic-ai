@@ -131,6 +131,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -308,6 +309,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -339,6 +341,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -370,6 +373,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -446,6 +450,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -477,6 +482,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -775,6 +781,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -838,6 +845,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -867,6 +875,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -901,6 +910,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -937,6 +947,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -985,6 +996,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1022,6 +1034,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1081,6 +1094,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1216,6 +1230,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1249,7 +1264,10 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime.datetime(2025, 9, 10, 22, 46, 57, tzinfo=datetime.timezone.utc),
+                },
                 provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1277,6 +1295,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1433,6 +1452,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
