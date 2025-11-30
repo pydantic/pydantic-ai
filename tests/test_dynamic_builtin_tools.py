@@ -48,6 +48,7 @@ class InspectToolsModel(Model):
 
 async def test_dynamic_builtin_tool_configured():
     model = InspectToolsModel()
+    assert model.system == 'test'
     agent = Agent(model, builtin_tools=[prepared_web_search], deps_type=UserContext)
 
     user_context = UserContext(location='London')
