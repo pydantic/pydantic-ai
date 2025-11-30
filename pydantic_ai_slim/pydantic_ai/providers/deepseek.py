@@ -44,7 +44,9 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer, supports_json_object_output=True
+        ).update(profile)
 
     @overload
     def __init__(self) -> None: ...
