@@ -1,5 +1,5 @@
 ARG PYTHON_VERSION=3.12
-FROM mcr.microsoft.com/devcontainers/python:${PYTHON_VERSION}-bookworm
+FROM mcr.microsoft.com/devcontainers/python:${PYTHON_VERSION}-trixie
 
 # Copy uv and uvx (latest version)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/

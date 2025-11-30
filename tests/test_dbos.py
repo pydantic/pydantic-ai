@@ -81,12 +81,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.vcr,
-    pytest.mark.xdist_group(name='dbos'),
-    pytest.mark.skip(reason='Possible DBOS bug? Skip test for now.'),
-]
+pytestmark = [pytest.mark.anyio, pytest.mark.vcr, pytest.mark.xdist_group(name='dbos')]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
