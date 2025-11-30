@@ -231,8 +231,145 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         return builder.messages
 
+    @staticmethod
+    def _dump_request_message(msg: ModelRequest) -> tuple[list[UIMessagePart], list[UIMessagePart]]:
+        """Convert a ModelRequest into a UIMessage."""
+        system_ui_parts: list[UIMessagePart] = []
+        user_ui_parts: list[UIMessagePart] = []
+
+        for part in msg.parts:
+            if isinstance(part, SystemPromptPart):
+                system_ui_parts.append(TextUIPart(text=part.content, state='done'))
+            elif isinstance(part, UserPromptPart):
+                user_ui_parts.extend(_convert_user_prompt_part(part))
+            elif isinstance(part, ToolReturnPart):
+                # Tool returns are merged into the tool call in the assistant message
+                pass
+            elif isinstance(part, RetryPromptPart):
+                # RetryPromptPart always has a tool_call_id (generated if not provided).
+                # These are handled when processing ToolCallPart in ModelResponse,
+                # where they become DynamicToolOutputErrorPart via the tool_errors dict.
+                pass
+            else:
+                assert_never(part)
+
+        return system_ui_parts, user_ui_parts
+
+    @staticmethod
+    def _dump_response_message(  # noqa: C901
+        msg: ModelResponse,
+        tool_returns: dict[str, ToolReturnPart],
+        tool_errors: dict[str, RetryPromptPart],
+    ) -> list[UIMessagePart]:
+        """Convert a ModelResponse into a UIMessage."""
+        ui_parts: list[UIMessagePart] = []
+
+        # For builtin tools, returns can be in the same ModelResponse as calls
+        local_builtin_returns: dict[str, BuiltinToolReturnPart] = {
+            part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)
+        }
+
+        for part in msg.parts:
+            if isinstance(part, BuiltinToolReturnPart):
+                continue
+            elif isinstance(part, TextPart):
+                # Combine consecutive text parts
+                if ui_parts and isinstance(ui_parts[-1], TextUIPart):
+                    ui_parts[-1].text += part.content
+                else:
+                    ui_parts.append(TextUIPart(text=part.content, state='done'))
+            elif isinstance(part, ThinkingPart):
+                thinking_metadata: dict[str, Any] = {}
+                if part.id is not None:
+                    thinking_metadata['id'] = part.id
+                if part.signature is not None:
+                    thinking_metadata['signature'] = part.signature
+                if part.provider_name is not None:
+                    thinking_metadata['provider_name'] = part.provider_name
+                if part.provider_details is not None:
+                    thinking_metadata['provider_details'] = part.provider_details
+
+                provider_metadata = {'pydantic_ai': thinking_metadata} if thinking_metadata else None
+                ui_parts.append(ReasoningUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
+            elif isinstance(part, FilePart):
+                ui_parts.append(
+                    FileUIPart(
+                        url=part.content.data_uri,
+                        media_type=part.content.media_type,
+                    )
+                )
+            elif isinstance(part, BaseToolCallPart):
+                if isinstance(part, BuiltinToolCallPart):
+                    call_provider_metadata = (
+                        {'pydantic_ai': {'provider_name': part.provider_name}} if part.provider_name else None
+                    )
+
+                    if builtin_return := local_builtin_returns.get(part.tool_call_id):
+                        content = builtin_return.model_response_str()
+                        ui_parts.append(
+                            ToolOutputAvailablePart(
+                                type=f'tool-{part.tool_name}',
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_json_str(),
+                                output=content,
+                                state='output-available',
+                                provider_executed=True,
+                                call_provider_metadata=call_provider_metadata,
+                            )
+                        )
+                    else:  # pragma: no cover
+                        ui_parts.append(
+                            ToolInputAvailablePart(
+                                type=f'tool-{part.tool_name}',
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_json_str(),
+                                state='input-available',
+                                provider_executed=True,
+                                call_provider_metadata=call_provider_metadata,
+                            )
+                        )
+                else:
+                    tool_return = tool_returns.get(part.tool_call_id)
+                    tool_error = tool_errors.get(part.tool_call_id)
+
+                    if isinstance(tool_return, ToolReturnPart):
+                        content = tool_return.model_response_str()
+                        ui_parts.append(
+                            DynamicToolOutputAvailablePart(
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_json_str(),
+                                output=content,
+                                state='output-available',
+                            )
+                        )
+                    elif tool_error:
+                        error_text = tool_error.model_response()
+                        ui_parts.append(
+                            DynamicToolOutputErrorPart(
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_json_str(),
+                                error_text=error_text,
+                                state='output-error',
+                            )
+                        )
+                    else:
+                        ui_parts.append(
+                            DynamicToolInputAvailablePart(
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=part.args_as_json_str(),
+                                state='input-available',
+                            )
+                        )
+            else:
+                assert_never(part)
+
+        return ui_parts
+
     @classmethod
-    def dump_messages(  # noqa: C901
+    def dump_messages(
         cls,
         messages: Sequence[ModelMessage],
     ) -> list[UIMessage]:
@@ -259,25 +396,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                system_ui_parts: list[UIMessagePart] = []
-                user_ui_parts: list[UIMessagePart] = []
-
-                for part in msg.parts:
-                    if isinstance(part, SystemPromptPart):
-                        system_ui_parts.append(TextUIPart(text=part.content, state='done'))
-                    elif isinstance(part, UserPromptPart):
-                        user_ui_parts.extend(_convert_user_prompt_part(part))
-                    elif isinstance(part, ToolReturnPart):
-                        # Tool returns are merged into the tool call in the assistant message
-                        pass
-                    elif isinstance(part, RetryPromptPart):
-                        # RetryPromptPart always has a tool_call_id (generated if not provided).
-                        # These are handled when processing ToolCallPart in ModelResponse,
-                        # where they become DynamicToolOutputErrorPart via the tool_errors dict.
-                        pass
-                    else:
-                        assert_never(part)
-
+                system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 if system_ui_parts:
                     result.append(UIMessage(id=str(uuid.uuid4()), role='system', parts=system_ui_parts))
 
@@ -287,112 +406,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
-                ui_parts: list[UIMessagePart] = []
-
-                # For builtin tools, returns can be in the same ModelResponse as calls
-                local_builtin_returns: dict[str, BuiltinToolReturnPart] = {
-                    part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)
-                }
-
-                for part in msg.parts:
-                    if isinstance(part, BuiltinToolReturnPart):
-                        continue
-                    elif isinstance(part, TextPart):
-                        # Combine consecutive text parts
-                        if ui_parts and isinstance(ui_parts[-1], TextUIPart):
-                            ui_parts[-1].text += part.content
-                        else:
-                            ui_parts.append(TextUIPart(text=part.content, state='done'))
-                    elif isinstance(part, ThinkingPart):
-                        thinking_metadata: dict[str, Any] = {}
-                        if part.id is not None:
-                            thinking_metadata['id'] = part.id
-                        if part.signature is not None:
-                            thinking_metadata['signature'] = part.signature
-                        if part.provider_name is not None:
-                            thinking_metadata['provider_name'] = part.provider_name
-                        if part.provider_details is not None:
-                            thinking_metadata['provider_details'] = part.provider_details
-
-                        provider_metadata = {'pydantic_ai': thinking_metadata} if thinking_metadata else None
-                        ui_parts.append(
-                            ReasoningUIPart(text=part.content, state='done', provider_metadata=provider_metadata)
-                        )
-                    elif isinstance(part, FilePart):
-                        ui_parts.append(
-                            FileUIPart(
-                                url=part.content.data_uri,
-                                media_type=part.content.media_type,
-                            )
-                        )
-                    elif isinstance(part, BaseToolCallPart):
-                        if isinstance(part, BuiltinToolCallPart):
-                            call_provider_metadata = (
-                                {'pydantic_ai': {'provider_name': part.provider_name}} if part.provider_name else None
-                            )
-
-                            if builtin_return := local_builtin_returns.get(part.tool_call_id):
-                                content = builtin_return.model_response_str()
-                                ui_parts.append(
-                                    ToolOutputAvailablePart(
-                                        type=f'tool-{part.tool_name}',
-                                        tool_call_id=part.tool_call_id,
-                                        input=part.args_as_json_str(),
-                                        output=content,
-                                        state='output-available',
-                                        provider_executed=True,
-                                        call_provider_metadata=call_provider_metadata,
-                                    )
-                                )
-                            else:  # pragma: no cover
-                                ui_parts.append(
-                                    ToolInputAvailablePart(
-                                        type=f'tool-{part.tool_name}',
-                                        tool_call_id=part.tool_call_id,
-                                        input=part.args_as_json_str(),
-                                        state='input-available',
-                                        provider_executed=True,
-                                        call_provider_metadata=call_provider_metadata,
-                                    )
-                                )
-                        else:
-                            tool_return = tool_returns.get(part.tool_call_id)
-                            tool_error = tool_errors.get(part.tool_call_id)
-
-                            if isinstance(tool_return, ToolReturnPart):
-                                content = tool_return.model_response_str()
-                                ui_parts.append(
-                                    DynamicToolOutputAvailablePart(
-                                        tool_name=part.tool_name,
-                                        tool_call_id=part.tool_call_id,
-                                        input=part.args_as_json_str(),
-                                        output=content,
-                                        state='output-available',
-                                    )
-                                )
-                            elif tool_error:
-                                error_text = tool_error.model_response()
-                                ui_parts.append(
-                                    DynamicToolOutputErrorPart(
-                                        tool_name=part.tool_name,
-                                        tool_call_id=part.tool_call_id,
-                                        input=part.args_as_json_str(),
-                                        error_text=error_text,
-                                        state='output-error',
-                                    )
-                                )
-                            else:
-                                ui_parts.append(
-                                    DynamicToolInputAvailablePart(
-                                        tool_name=part.tool_name,
-                                        tool_call_id=part.tool_call_id,
-                                        input=part.args_as_json_str(),
-                                        state='input-available',
-                                    )
-                                )
-                    else:
-                        assert_never(part)
-
+                ui_parts: list[UIMessagePart] = cls._dump_response_message(
+                    msg, tool_returns=tool_returns, tool_errors=tool_errors
+                )
                 if ui_parts:  # pragma: no branch
                     result.append(UIMessage(id=str(uuid.uuid4()), role='assistant', parts=ui_parts))
             else:
