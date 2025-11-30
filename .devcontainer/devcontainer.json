@@ -50,11 +50,9 @@
     }
   },
   // Use 'containerEnv' to set environment variables in the container. Visible system-wide. For example when `docker exec` is used.
-  // Connect to Ollama instance running on host machine
   "containerEnv": {
-    "OLLAMA_HOST": "http://host.docker.internal:11434", // Ollama CLI is installed in the container via Dockerfile. But we use the host's Ollama instance.
+    "OLLAMA_HOST": "http://host.docker.internal:11434", // Connect to Ollama instance running on host machine.
     "COLUMNS": "150",
-    "CI": "true",
     "LOGFIRE_INSPECT_ARGUMENTS": "0",
     "CMAKE_ARGS": "-DGGML_NATIVE=OFF", // Switch off native architecture optimization! Building llama-cpp-python on Apple Silicon fails otherwise.
     "UV_FROZEN": "1",
