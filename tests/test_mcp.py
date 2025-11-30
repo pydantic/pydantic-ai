@@ -1540,7 +1540,8 @@ def test_map_from_pai_messages_with_binary_content():
         parts=[
             UserPromptPart(content='text message'),
             UserPromptPart(content=[BinaryContent(data=image_data, media_type='image/png')]),
-            UserPromptPart(content=[BinaryContent(data=audio_data, media_type='audio/wav')]),
+            # cover the loop continuation branch
+            UserPromptPart(content=[BinaryContent(data=audio_data, media_type='audio/wav'), 'text after audio']),
         ]
     )
     system_prompt, sampling_msgs = map_from_pai_messages([message])
@@ -1567,6 +1568,10 @@ def test_map_from_pai_messages_with_binary_content():
                     'annotations': None,
                     '_meta': None,
                 },
+            },
+            {
+                'role': 'user',
+                'content': {'type': 'text', 'text': 'text after audio', 'annotations': None, '_meta': None},
             },
         ]
     )
