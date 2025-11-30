@@ -57,7 +57,7 @@ with try_import() as vllm_imports_successful:
     import vllm
 
     # We try to load the vllm model to ensure it is available
-    try:  # pragma: no lax cover
+    try:  # pragma: lax no cover
         vllm.LLM('microsoft/Phi-3-mini-4k-instruct')
     except RuntimeError as e:  # pragma: lax no cover
         if 'Found no NVIDIA driver' in str(e) or 'Device string must not be empty' in str(e):
