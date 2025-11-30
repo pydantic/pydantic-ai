@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    BinaryImage,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -406,3 +407,19 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
             }
         ]
     )
+
+
+async def test_openrouter_image_generation(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel(
+        model_name='google/gemini-2.5-flash-image-preview',
+        provider=provider,
+    )
+    settings = OpenRouterModelSettings(openrouter_modalities=['image', 'text'])
+
+    agent = Agent(model=model, output_type=str | BinaryImage, model_settings=settings)
+
+    result = await agent.run('A cat')
+
+    assert result.response.text == snapshot('Here is a cat for you! ')
+    assert isinstance(result.output, BinaryImage)

@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -598,28 +598,7 @@ class OpenAIChatModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
-        items: list[ModelResponsePart] = []
-
-        if thinking_parts := self._process_thinking(choice.message):
-            items.extend(thinking_parts)
-
-        if choice.message.content:
-            items.extend(
-                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
-            )
-        if choice.message.tool_calls is not None:
-            for c in choice.message.tool_calls:
-                if isinstance(c, ChatCompletionMessageFunctionToolCall):
-                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
-                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
-                    # NOTE: Custom tool calls are not supported.
-                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
-                    raise RuntimeError('Custom tool calls are not supported')
-                else:
-                    assert_never(c)
-                part.tool_call_id = _guard_tool_call_id(part)
-                items.append(part)
+        items = list(self._process_parts(choice.message))
 
         return ModelResponse(
             parts=items,
@@ -632,25 +611,57 @@ class OpenAIChatModel(Model):
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
-    def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
+    def _process_parts(self, message: chat.ChatCompletionMessage) -> Iterable[ModelResponsePart]:
+        """Hook that defines the mappings to transform message contents to response parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        return itertools.chain(
+            self._process_thinking(message), self._process_content(message), self._process_tool_calls(message)
+        )
+
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> Generator[ThinkingPart]:
         """Hook that maps reasoning tokens to thinking parts.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        items: list[ThinkingPart] = []
-
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(message, 'reasoning_content', None):
-            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
+            yield ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system)
 
         # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
         if reasoning := getattr(message, 'reasoning', None):
-            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+            yield ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system)
 
-        return items
+    def _process_content(self, message: chat.ChatCompletionMessage) -> Generator[TextPart | ThinkingPart]:
+        """Hook that maps the message content to thinking or text parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        if message.content:
+            for part in split_content_into_text_and_thinking(message.content, self.profile.thinking_tags):
+                yield replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part
+
+    def _process_tool_calls(self, message: chat.ChatCompletionMessage) -> Generator[ToolCallPart]:
+        """Hook that maps tool calls to tool call parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        if message.tool_calls is not None:
+            for c in message.tool_calls:
+                if isinstance(c, ChatCompletionMessageFunctionToolCall):
+                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
+                    # NOTE: Custom tool calls are not supported.
+                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
+                    raise RuntimeError('Custom tool calls are not supported')
+                else:
+                    assert_never(c)
+                part.tool_call_id = _guard_tool_call_id(part)
+                yield part
 
     async def _process_streamed_response(
         self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
