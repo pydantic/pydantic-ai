@@ -56,7 +56,7 @@ from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
-    from openai.types import AllModels, chat, responses
+    from openai.types import AllModels, chat, responses, ResponseFormatJSONObject
     from openai.types.chat import (
         ChatCompletionChunk,
         ChatCompletionContentPartImageParam,
@@ -505,15 +505,7 @@ class OpenAIChatModel(Model):
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
-        response_format: chat.completion_create_params.ResponseFormat | None = None
-        if model_request_parameters.output_mode == 'native':
-            output_object = model_request_parameters.output_object
-            assert output_object is not None
-            response_format = self._map_json_schema(output_object)
-        elif (
-            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
-        ):  # pragma: no branch
-            response_format = {'type': 'json_object'}
+        response_format = self._get_response_format(model_request_parameters)
 
         unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
         for setting in unsupported_model_settings:
@@ -687,6 +679,24 @@ class OpenAIChatModel(Model):
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
+    def _get_response_format(self, model_request_parameters: ModelRequestParameters) -> chat.completion_create_params.ResponseFormat | None:
+        def get_json_schema_response_format():
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            return self._map_json_schema(output_object)
+
+        response_format: chat.completion_create_params.ResponseFormat | None = None
+        if model_request_parameters.output_mode == 'native':
+            response_format = get_json_schema_response_format()
+        elif model_request_parameters.output_mode == 'prompted':  # pragma: no branch
+            if self.profile.use_structured_output_for_prompted_output:
+                if self.profile.supports_json_schema_output:
+                    response_format = get_json_schema_response_format()
+                elif self.profile.supports_json_object_output:
+                    response_format = {'type': 'json_object'}
+
+        return response_format
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -1299,16 +1309,8 @@ class OpenAIResponsesModel(Model):
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
-        text: responses.ResponseTextConfigParam | None = None
-        if model_request_parameters.output_mode == 'native':
-            output_object = model_request_parameters.output_object
-            assert output_object is not None
-            text = {'format': self._map_json_schema(output_object)}
-        elif (
-            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
-        ):  # pragma: no branch
-            text = {'format': {'type': 'json_object'}}
-
+        text = self._get_response_text(model_request_parameters)
+        if text and isinstance(text.get("format"), ResponseFormatJSONObject):
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
@@ -1379,6 +1381,24 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
+    def _get_response_text(self, model_request_parameters: ModelRequestParameters) -> responses.ResponseTextConfigParam | None:
+        def get_json_schema_response_text() -> responses.ResponseTextConfigParam:
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            return {'format': self._map_json_schema(output_object)}
+
+        text: responses.ResponseTextConfigParam | None = None
+        if model_request_parameters.output_mode == 'native':
+            text = get_json_schema_response_text()
+        elif model_request_parameters.output_mode == 'prompted':  # pragma: no branch
+            if self.profile.use_structured_output_for_prompted_output:
+                if self.profile.supports_json_schema_output:
+                    text = get_json_schema_response_text()
+                elif self.profile.supports_json_object_output:
+                    text = {'format': {'type': 'json_object'}}
+
+        return text
+        
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
