@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -10,15 +11,13 @@ from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import (
-    ModelMessage,
-    ModelResponse,
-    ModelResponseStreamEvent,
-)
+from pydantic_ai import ModelMessage, ModelResponse, ModelResponseStreamEvent, models
+from pydantic_ai._run_context import CURRENT_RUN_CONTEXT
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage
@@ -33,7 +32,18 @@ class _RequestParams:
     # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
-    serialized_run_context: Any
+    serialized_run_context: Any | None = None
+    model_key: str | None = None
+    model_name: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelSelection:
+    model_key: str | None = None
+    model_name: str | None = None
+
+
+TemporalProviderFactory = Callable[[str, RunContext[Any] | None, Any | None], Provider[Any]]
 
 
 class TemporalStreamedResponse(StreamedResponse):
@@ -79,37 +89,44 @@ class TemporalModel(WrapperModel):
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         event_stream_handler: EventStreamHandler[Any] | None = None,
-        model_suffix: str | None = None,
+        model_selection_var: ContextVar[ModelSelection] | None = None,
+        model_instances: Mapping[str, Model] | None = None,
+        model_string_map: Mapping[str, str] | None = None,
+        provider_factory: TemporalProviderFactory | None = None,
     ):
         super().__init__(model)
         self.activity_config = activity_config
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
+        self._model_selection_var = model_selection_var
+        self._model_instances = dict(model_instances or {})
+        self._model_string_map = dict(model_string_map or {})
+        self._provider_factory = provider_factory
 
-        # Generate activity names with optional model suffix
-        if model_suffix:
-            request_activity_name = f'{activity_name_prefix}__model__{model_suffix}__request'
-            request_stream_activity_name = f'{activity_name_prefix}__model__{model_suffix}__request_stream'
-        else:
-            request_activity_name = f'{activity_name_prefix}__model_request'
-            request_stream_activity_name = f'{activity_name_prefix}__model_request_stream'
+        request_activity_name = f'{activity_name_prefix}__model_request'
+        request_stream_activity_name = f'{activity_name_prefix}__model_request_stream'
 
         @activity.defn(name=request_activity_name)
-        async def request_activity(params: _RequestParams) -> ModelResponse:
-            return await self.wrapped.request(
+        async def request_activity(params: _RequestParams, deps: Any) -> ModelResponse:
+            model_for_request = self._resolve_model(params, deps)
+            return await model_for_request.request(
                 params.messages,
                 cast(ModelSettings | None, params.model_settings),
                 params.model_request_parameters,
             )
 
         self.request_activity = request_activity
+        self.request_activity.__annotations__['deps'] = deps_type
 
-        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
+        async def request_stream_activity(params: _RequestParams, deps: Any) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
 
+            if params.serialized_run_context is None:
+                raise UserError('Serialized run context is required for Temporal streaming activities.')
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-            async with self.wrapped.request_stream(
+            model_for_request = self._resolve_model(params, deps)
+            async with model_for_request.request_stream(
                 params.messages,
                 cast(ModelSettings | None, params.model_settings),
                 params.model_request_parameters,
@@ -141,14 +158,27 @@ class TemporalModel(WrapperModel):
 
         self._validate_model_request_parameters(model_request_parameters)
 
+        selection = self._current_selection()
+        run_context = CURRENT_RUN_CONTEXT.get()
+        serialized_run_context = None
+        deps: Any | None = None
+        if run_context is not None:
+            serialized_run_context = self.run_context_type.serialize_run_context(run_context)
+            deps = run_context.deps
+
         return await workflow.execute_activity(
             activity=self.request_activity,
-            arg=_RequestParams(
-                messages=messages,
-                model_settings=cast(dict[str, Any] | None, model_settings),
-                model_request_parameters=model_request_parameters,
-                serialized_run_context=None,
-            ),
+            args=[
+                _RequestParams(
+                    messages=messages,
+                    model_settings=cast(dict[str, Any] | None, model_settings),
+                    model_request_parameters=model_request_parameters,
+                    serialized_run_context=serialized_run_context,
+                    model_key=selection.model_key,
+                    model_name=selection.model_name,
+                ),
+                deps,
+            ],
             **self.activity_config,
         )
 
@@ -178,6 +208,7 @@ class TemporalModel(WrapperModel):
 
         self._validate_model_request_parameters(model_request_parameters)
 
+        selection = self._current_selection()
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         response = await workflow.execute_activity(
             activity=self.request_stream_activity,
@@ -187,6 +218,8 @@ class TemporalModel(WrapperModel):
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
+                    model_key=selection.model_key,
+                    model_name=selection.model_name,
                 ),
                 run_context.deps,
             ],
@@ -197,3 +230,41 @@ class TemporalModel(WrapperModel):
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
             raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
+
+    def _current_selection(self) -> ModelSelection:
+        if self._model_selection_var is None:
+            return ModelSelection(model_key='default', model_name=None)
+        selection = self._model_selection_var.get()
+        if selection.model_key is None and selection.model_name is None:
+            return ModelSelection(model_key='default', model_name=None)
+        return selection
+
+    def _resolve_model(self, params: _RequestParams, deps: Any | None) -> Model:
+        if params.model_key:
+            if params.model_key in self._model_instances:
+                return self._model_instances[params.model_key]
+            if params.model_key in self._model_string_map:
+                return self._infer_model(self._model_string_map[params.model_key], params, deps)
+            raise UserError(
+                f'Model "{params.model_key}" is not registered with this TemporalAgent. '
+                'Register model instances using `additional_models` when constructing the agent.'
+            )
+
+        if params.model_name:
+            return self._infer_model(params.model_name, params, deps)
+
+        return self.wrapped
+
+    def _infer_model(self, model_name: str, params: _RequestParams, deps: Any | None) -> Model:
+        run_context: RunContext[Any] | None = None
+        if params.serialized_run_context is not None:
+            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+
+        provider_factory = self._provider_factory
+        if provider_factory is None:
+            return models.infer_model(model_name)
+
+        def _factory(provider_name: str) -> Provider[Any]:
+            return provider_factory(provider_name, run_context, deps)
+
+        return models.infer_model(model_name, provider_factory=_factory)

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Generic, Literal, overload
+from typing import Any, Literal, overload
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
@@ -13,7 +13,7 @@ from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Never, TypeVar
+from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
@@ -40,16 +40,9 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
-from ._model import TemporalModel
+from ._model import ModelSelection, TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
-
-# Type variable for additional models registered with the TemporalAgent.
-# This captures the union of model types/strings passed to additional_models,
-# enabling type-safe model selection at runtime.
-# When no additional models are provided, defaults to Never (only None/default allowed).
-# Bound to Model | str since those are the only valid model types.
-AdditionalModelsT = TypeVar('AdditionalModelsT', bound='Model | str', default=Never)
 
 
 @dataclass
@@ -59,65 +52,16 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
-class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, OutputDataT, AdditionalModelsT]):
-    @overload
+class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         name: str | None = None,
-        additional_models: None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        activity_config: ActivityConfig | None = None,
-        model_activity_config: ActivityConfig | None = None,
-        toolset_activity_config: dict[str, ActivityConfig] | None = None,
-        tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] | None = None,
-        run_context_type: type[TemporalRunContext[AgentDepsT]] = ...,
-        temporalize_toolset_func: Callable[
-            [
-                AbstractToolset[AgentDepsT],
-                str,
-                ActivityConfig,
-                dict[str, ActivityConfig | Literal[False]],
-                type[AgentDepsT],
-                type[TemporalRunContext[AgentDepsT]],
-            ],
-            AbstractToolset[AgentDepsT],
-        ] = ...,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        wrapped: AbstractAgent[AgentDepsT, OutputDataT],
-        *,
-        name: str | None = None,
-        additional_models: Sequence[AdditionalModelsT],
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        activity_config: ActivityConfig | None = None,
-        model_activity_config: ActivityConfig | None = None,
-        toolset_activity_config: dict[str, ActivityConfig] | None = None,
-        tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] | None = None,
-        run_context_type: type[TemporalRunContext[AgentDepsT]] = ...,
-        temporalize_toolset_func: Callable[
-            [
-                AbstractToolset[AgentDepsT],
-                str,
-                ActivityConfig,
-                dict[str, ActivityConfig | Literal[False]],
-                type[AgentDepsT],
-                type[TemporalRunContext[AgentDepsT]],
-            ],
-            AbstractToolset[AgentDepsT],
-        ] = ...,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        wrapped: AbstractAgent[AgentDepsT, OutputDataT],
-        *,
-        name: str | None = None,
-        additional_models: Sequence[AdditionalModelsT] | None = None,
+        additional_models: Mapping[str, Model | models.KnownModelName | str]
+        | Sequence[models.KnownModelName | str]
+        | None = None,
+        provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
@@ -143,7 +87,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         Args:
             wrapped: The agent to wrap.
             name: Optional unique agent name to use in the Temporal activities' names. If not provided, the agent's `name` will be used.
-            additional_models: Optional list of additional models to register with the agent. These can be specified as Model instances or model strings (e.g., 'openai:gpt-4', 'anthropic:claude-sonnet-4-5'). Models can be selected at runtime using the `model` parameter in the run methods.
+            additional_models:
+                Optional mapping or sequence of additional models to register with the agent.
+                - When providing a mapping, keys define the names that can be referenced at runtime and the values are either `Model` instances or model strings (e.g., `'openai:gpt-4'`).
+                - When providing a sequence, only provider/model strings are allowed and they will be referenced by their literal string when calling `run(model=...)`.
+                Model instances must be registered via the mapping form so they can be referenced by name.
+            provider_factory:
+                Optional callable used when instantiating models from provider strings (both pre-registered and those supplied at runtime).
+                The callable receives the provider name, the current run context (if available) and the run dependencies, allowing custom configuration such as injecting API keys stored on `deps`.
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             activity_config: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
             model_activity_config: The Temporal activity config to use for model request activities. This is merged with the base activity config.
@@ -164,6 +115,20 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         self._name = name
         self._event_stream_handler = event_stream_handler
         self.run_context_type = run_context_type
+
+        wrapped_model = wrapped.model
+        if not isinstance(wrapped_model, Model):
+            raise UserError(
+                'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
+            )
+
+        self._registered_model_instances: dict[str, Model] = {'default': wrapped_model}
+        self._registered_model_names: dict[str, str] = {}
+        self._default_selection = ModelSelection(model_key='default', model_name=None)
+        self._model_selection_var: ContextVar[ModelSelection] = ContextVar(
+            '_temporal_model_selection',
+            default=self._default_selection,
+        )
 
         # start_to_close_timeout is required
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
@@ -190,10 +155,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         activity_name_prefix = f'agent__{self.name}'
 
         activities: list[Callable[..., Any]] = []
-        if not isinstance(wrapped.model, Model):
-            raise UserError(
-                'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
-            )
 
         async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
             # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
@@ -215,61 +176,33 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         )
         activities.append(self.event_stream_handler_activity)
 
-        # Temporalize the primary model (default)
+        if additional_models:
+            if isinstance(additional_models, Mapping):
+                for key, value in additional_models.items():
+                    self._register_additional_model(key, value)
+            else:
+                for value in additional_models:
+                    if not isinstance(value, str):
+                        raise UserError(
+                            'When providing `additional_models` as a sequence, all entries must be model strings like "openai:gpt-4o". '
+                            'To register Model instances, pass a mapping of names to models.'
+                        )
+                    self._register_string_model(value, value)
+
         temporal_model = TemporalModel(
-            wrapped.model,
+            wrapped_model,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config | model_activity_config,
             deps_type=self.deps_type,
             run_context_type=self.run_context_type,
             event_stream_handler=self.event_stream_handler,
+            model_selection_var=self._model_selection_var,
+            model_instances=self._registered_model_instances,
+            model_string_map=self._registered_model_names,
+            provider_factory=provider_factory,
         )
         activities.extend(temporal_model.temporal_activities)
-
-        # Store models in a dictionary with 'default' as the key for the primary model
-        self._models: dict[str, TemporalModel] = {'default': temporal_model}
-        self._default_model = temporal_model
-
-        # Store original models for lookup (maps Model id or str to key)
-        self._model_to_key: dict[int | str, str] = {}
-
-        # Temporalize additional models if provided
-        if additional_models:
-            for additional_model in additional_models:
-                # Convert string to Model instance if needed, tracking lookup key
-                lookup_key: int | str
-                if isinstance(additional_model, str):
-                    # For string models, use the string as the lookup key
-                    lookup_key = additional_model
-                    model = models.infer_model(additional_model)
-                else:
-                    # For Model instances, use object id as the lookup key
-                    lookup_key = id(additional_model)
-                    model = additional_model
-
-                # Generate a unique key for this model
-                base_key = self._generate_model_key(model)
-
-                # If key exists, append index to make it unique
-                model_key = base_key
-                counter = 1
-                while model_key in self._models:
-                    model_key = f'{base_key}_{counter}'
-                    counter += 1
-
-                # Temporalize the model with a suffix
-                temporal_additional_model = TemporalModel(
-                    model,
-                    activity_name_prefix=activity_name_prefix,
-                    activity_config=activity_config | model_activity_config,
-                    deps_type=self.deps_type,
-                    run_context_type=self.run_context_type,
-                    event_stream_handler=self.event_stream_handler,
-                    model_suffix=model_key,
-                )
-                activities.extend(temporal_additional_model.temporal_activities)
-                self._models[model_key] = temporal_additional_model
-                self._model_to_key[lookup_key] = model_key
+        self._temporal_model = temporal_model
 
         def temporalize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             id = toolset.id
@@ -297,48 +230,57 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
 
-    def _generate_model_key(self, model: Model | str) -> str:
-        """Generate a consistent key for model lookup."""
-        if isinstance(model, str):  # pragma: no cover
-            # Parse model string like "openai:gpt-5" -> "openai_gpt_5"
-            return model.replace(':', '_').replace('-', '_').replace('.', '_')
-        else:
-            # For model instances, try to get a meaningful name
-            if hasattr(model, 'model_name') and model.model_name:
-                model_name = model.model_name
-            else:
-                model_name = model.__class__.__name__
-            return model_name.lower().replace('-', '_').replace('.', '_').replace(':', '_')
+    def _register_additional_model(
+        self,
+        name: str,
+        model: Model | models.KnownModelName | str,
+    ) -> None:
+        if isinstance(model, Model):
+            self._register_model_instance(name, model)
+        elif isinstance(model, str):
+            self._register_string_model(name, model)
+        else:  # pragma: no cover
+            raise UserError('Invalid model specification provided to `additional_models`.')
 
-    def _select_model(self, model: AdditionalModelsT | None = None) -> TemporalModel:
-        """Select the appropriate TemporalModel based on the model parameter."""
-        if model is None:  # pragma: no cover
-            # Use the default model
-            return self._default_model
+    def _register_model_instance(self, name: str, model: Model) -> None:
+        key = self._normalize_model_name(name)
+        self._registered_model_instances[key] = model
 
-        # First, try to find the model using the lookup table
-        lookup_key: int | str
-        if isinstance(model, str):
-            lookup_key = model
-        else:
-            lookup_key = id(model)
+    def _register_string_model(self, name: str, model_identifier: str) -> None:
+        key = self._normalize_model_name(name)
+        self._registered_model_names[key] = model_identifier
 
-        # Check if we have this exact model registered
-        if lookup_key in self._model_to_key:
-            model_key = self._model_to_key[lookup_key]
-            return self._models[model_key]
+    def _normalize_model_name(self, name: str) -> str:
+        normalized = name.strip()
+        if not normalized:
+            raise UserError('Model names must be non-empty strings.')
+        if normalized == 'default':
+            raise UserError("Model name 'default' is reserved for the agent's primary model.")
+        if normalized in self._registered_model_instances or normalized in self._registered_model_names:
+            raise UserError(f'Duplicate model name {normalized!r} provided to `additional_models`.')
+        return normalized
 
-        # If not found, raise an error
-        if isinstance(model, str):
-            model_repr = f'"{model}"'
-        else:
-            model_repr = f'{model.__class__.__name__} instance'
+    def _select_model(self, model: models.Model | models.KnownModelName | str | None = None) -> ModelSelection:
+        """Select the appropriate model based on the runtime parameter."""
+        if model is None:
+            return self._default_selection
 
-        raise UserError(
-            f'Model {model_repr} is not registered with this TemporalAgent. '
-            f'Available models: {", ".join(self._models.keys())}. '
-            f'To use this model, add it to the `additional_models` parameter when creating the TemporalAgent.'
-        )
+        if isinstance(model, Model):
+            raise UserError(
+                'Model instances cannot be selected at runtime inside a Temporal workflow. '
+                'Register the model via the mapping form of `additional_models` and reference it by name.'
+            )
+
+        if model == 'default':
+            return self._default_selection
+
+        if model in self._registered_model_instances:
+            return ModelSelection(model_key=model, model_name=None)
+
+        if model in self._registered_model_names:
+            return ModelSelection(model_key=model, model_name=self._registered_model_names[model])
+
+        return ModelSelection(model_key=None, model_name=model)
 
     @property
     def name(self) -> str | None:
@@ -352,7 +294,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
 
     @property
     def model(self) -> Model:
-        return self._default_model
+        return self._temporal_model
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
@@ -391,12 +333,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(self, selected_model: TemporalModel | None = None) -> Iterator[None]:
+    def _temporal_overrides(self, selection: ModelSelection | None = None) -> Iterator[None]:
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        # Use the selected model if provided, otherwise use the default
-        model_to_use = selected_model if selected_model is not None else self._default_model
-        with super().override(model=model_to_use, toolsets=self._toolsets, tools=[]):
+        with super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]):
             token = self._temporal_overrides_active.set(True)
+            selection_token = self._model_selection_var.set(selection or self._default_selection)
             try:
                 yield
             except PydanticSerializationError as e:
@@ -405,6 +346,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
                 ) from e
             finally:
                 self._temporal_overrides_active.reset(token)
+                self._model_selection_var.reset(selection_token)
 
     @overload
     async def run(
@@ -414,7 +356,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
-        model: AdditionalModelsT | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -434,7 +376,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
-        model: AdditionalModelsT | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -446,16 +388,15 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    # Intentionally narrowing the model parameter type for type-safe model selection.
-    # Inside workflows, only registered models (AdditionalModelsT) are valid.
-    async def run(  # type: ignore[override]
+    # Inside workflows, only registered names or provider strings are valid.
+    async def run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
-        model: AdditionalModelsT | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -509,15 +450,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT], Generic[AgentDepsT, O
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             )
 
-        # Select the appropriate model if in a workflow and model is specified
-        selected_model = None
+        selection = self._default_selection
         if workflow.in_workflow() and model is not None:
-            selected_model = self._select_model(model)
-            # When using a registered model in a workflow, we pass None to super().run()
-            # because the model is already set in the override context
+            selection = self._select_model(model)
             model = None
 
-        with self._temporal_overrides(selected_model):
+        with self._temporal_overrides(selection if workflow.in_workflow() else self._default_selection):
             return await super().run(
                 user_prompt,
                 output_type=output_type,

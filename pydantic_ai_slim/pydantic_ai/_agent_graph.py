@@ -26,6 +26,7 @@ from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._run_context import CURRENT_RUN_CONTEXT
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -447,25 +448,29 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        async with ctx.deps.model.request_stream(
-            message_history, model_settings, model_request_parameters, run_context
-        ) as streamed_response:
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            agent_stream = result.AgentStream[DepsT, T](
-                _raw_stream_response=streamed_response,
-                _output_schema=ctx.deps.output_schema,
-                _model_request_parameters=model_request_parameters,
-                _output_validators=ctx.deps.output_validators,
-                _run_ctx=build_run_context(ctx),
-                _usage_limits=ctx.deps.usage_limits,
-                _tool_manager=ctx.deps.tool_manager,
-            )
-            yield agent_stream
-            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-            # otherwise usage won't be properly counted:
-            async for _ in agent_stream:
-                pass
+        token = CURRENT_RUN_CONTEXT.set(run_context)
+        try:
+            async with ctx.deps.model.request_stream(
+                message_history, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                agent_stream = result.AgentStream[DepsT, T](
+                    _raw_stream_response=streamed_response,
+                    _output_schema=ctx.deps.output_schema,
+                    _model_request_parameters=model_request_parameters,
+                    _output_validators=ctx.deps.output_validators,
+                    _run_ctx=build_run_context(ctx),
+                    _usage_limits=ctx.deps.usage_limits,
+                    _tool_manager=ctx.deps.tool_manager,
+                )
+                yield agent_stream
+                # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+                # otherwise usage won't be properly counted:
+                async for _ in agent_stream:
+                    pass
+        finally:
+            CURRENT_RUN_CONTEXT.reset(token)
 
         model_response = streamed_response.get()
 
@@ -478,8 +483,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
-        model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        token = CURRENT_RUN_CONTEXT.set(run_context)
+        try:
+            model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        finally:
+            CURRENT_RUN_CONTEXT.reset(token)
         ctx.state.usage.requests += 1
 
         return self._finish_handling(ctx, model_response)

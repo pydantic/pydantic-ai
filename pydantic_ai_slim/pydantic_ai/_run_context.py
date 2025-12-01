@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Generic
 
@@ -71,3 +72,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return self.retry == self.max_retries
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
+    'pydantic_ai.current_run_context',
+    default=None,
+)
+"""Context variable storing the current [`RunContext`][pydantic_ai._run_context.RunContext]."""
