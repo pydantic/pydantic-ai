@@ -1,10 +1,12 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
+
+from pydantic_ai.messages import FinishReason
 
 from ..conftest import raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -12,19 +14,28 @@ from .mock_async_stream import MockAsyncStream
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
-    from xai_sdk.proto.v6 import chat_pb2
+    from xai_sdk.proto.v6 import chat_pb2, sample_pb2
 
-    MockResponse = chat_types.Response | Exception
-    # xai_sdk streaming returns tuples of (Response, chunk) where chunk type is not explicitly defined
-    MockResponseChunk = tuple[chat_types.Response, Any] | Exception
+
+def _get_proto_finish_reason(finish_reason: FinishReason) -> sample_pb2.FinishReason:
+    """Map pydantic-ai FinishReason to xAI proto FinishReason enum value."""
+    finish_reason_to_proto: dict[FinishReason, sample_pb2.FinishReason] = {
+        'stop': sample_pb2.FinishReason.REASON_STOP,
+        'length': sample_pb2.FinishReason.REASON_MAX_LEN,
+        'tool_call': sample_pb2.FinishReason.REASON_TOOL_CALLS,
+        'content_filter': sample_pb2.FinishReason.REASON_STOP,  # xAI doesn't have content_filter
+    }
+    return finish_reason_to_proto.get(finish_reason, sample_pb2.FinishReason.REASON_STOP)
 
 
 @dataclass
 class MockXai:
     """Mock for xAI SDK AsyncClient to simulate xAI API responses."""
 
-    responses: MockResponse | Sequence[MockResponse] | None = None
-    stream_data: Sequence[MockResponseChunk] | Sequence[Sequence[MockResponseChunk]] | None = None
+    responses: chat_types.Response | Sequence[chat_types.Response] | Exception | Sequence[Exception] | None = None
+    stream_data: (
+        Sequence[tuple[chat_types.Response, Any]] | Sequence[Sequence[tuple[chat_types.Response, Any]]] | None
+    ) = None
     index: int = 0
     chat_create_kwargs: list[dict[str, Any]] = field(default_factory=list)
     api_key: str = 'test-api-key'
@@ -41,7 +52,9 @@ class MockXai:
 
     @classmethod
     def create_mock(
-        cls, responses: MockResponse | Sequence[MockResponse], api_key: str = 'test-api-key'
+        cls,
+        responses: chat_types.Response | Sequence[chat_types.Response] | Exception | Sequence[Exception],
+        api_key: str = 'test-api-key',
     ) -> AsyncClient:
         """Create a mock AsyncClient for non-streaming responses."""
         return cast(AsyncClient, cls(responses=responses, api_key=api_key))
@@ -49,7 +62,7 @@ class MockXai:
     @classmethod
     def create_mock_stream(
         cls,
-        stream: Sequence[MockResponseChunk] | Sequence[Sequence[MockResponseChunk]],
+        stream: (Sequence[tuple[chat_types.Response, Any]] | Sequence[Sequence[tuple[chat_types.Response, Any]]]),
         api_key: str = 'test-api-key',
     ) -> AsyncClient:
         """Create a mock AsyncClient for streaming responses."""
@@ -75,8 +88,10 @@ class MockXai:
 class MockChatInstance:
     """Mock for the chat instance returned by client.chat.create()."""
 
-    responses: MockResponse | Sequence[MockResponse] | None = None
-    stream_data: Sequence[MockResponseChunk] | Sequence[Sequence[MockResponseChunk]] | None = None
+    responses: chat_types.Response | Sequence[chat_types.Response] | Exception | Sequence[Exception] | None = None
+    stream_data: (
+        Sequence[tuple[chat_types.Response, Any]] | Sequence[Sequence[tuple[chat_types.Response, Any]]] | None
+    ) = None
     index: int = 0
     parent: MockXai | None = None
 
@@ -85,18 +100,21 @@ class MockChatInstance:
         assert self.responses is not None, 'you can only use sample() if responses are provided'
 
         if isinstance(self.responses, Sequence):
+            if self.index >= len(self.responses):
+                raise IndexError(f'Mock response index {self.index} out of range (length: {len(self.responses)})')
             raise_if_exception(self.responses[self.index])
             response = cast(chat_types.Response, self.responses[self.index])
+            # Increment index for next call
+            self.index += 1
+            if self.parent:
+                self.parent.index = self.index
         else:
             raise_if_exception(self.responses)
             response = cast(chat_types.Response, self.responses)
 
-        if self.parent:
-            self.parent.index += 1
-
         return response
 
-    def stream(self) -> MockAsyncStream[MockResponseChunk]:
+    def stream(self) -> MockAsyncStream[tuple[chat_types.Response, Any]]:
         """Mock the stream() method for streaming responses."""
         assert self.stream_data is not None, 'you can only use stream() if stream_data is provided'
 
@@ -106,12 +124,12 @@ class MockChatInstance:
             first_item = self.stream_data[0]
             # If first item is a list (not a tuple), we have multiple streams
             if isinstance(first_item, list):
-                data = cast(list[MockResponseChunk], self.stream_data[self.index])
+                data = cast(list[tuple[chat_types.Response, Any]], self.stream_data[self.index])
             else:
                 # Single stream - use the data as is
-                data = cast(list[MockResponseChunk], self.stream_data)
+                data = cast(list[tuple[chat_types.Response, Any]], self.stream_data)
         else:
-            data = cast(list[MockResponseChunk], self.stream_data)
+            data = cast(list[tuple[chat_types.Response, Any]], self.stream_data)
 
         if self.parent:
             self.parent.index += 1
@@ -127,156 +145,91 @@ def get_mock_chat_create_kwargs(async_client: AsyncClient) -> list[dict[str, Any
         raise RuntimeError('Not a MockXai instance')
 
 
-@dataclass
-class MockXaiResponse:
-    """Mock Response object that mimics xai_sdk.chat.Response interface."""
-
-    id: str = 'grok-123'
-    content: str = ''
-    tool_calls: list[Any] = field(default_factory=list)
-    finish_reason: str = 'stop'
-    usage: Any | None = None  # Would be usage_pb2.SamplingUsage in real xai_sdk
-    reasoning_content: str = ''  # Human-readable reasoning trace
-    encrypted_content: str = ''  # Encrypted reasoning signature
-    created: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
-
-    # Note: The real xAI SDK usage object uses protobuf fields:
-    # - prompt_tokens (not input_tokens)
-    # - completion_tokens (not output_tokens)
-    # - reasoning_tokens
-    # - cached_prompt_text_tokens
+# =============================================================================
+# Proto Object Helpers
+# =============================================================================
+# These functions create actual xAI SDK proto objects (chat_pb2.*) and wrap them
+# in chat_types.Response. This ensures our mocks behave exactly like the real SDK.
 
 
-@dataclass
-class MockXaiToolCall:
-    """Mock ToolCall object that mimics chat_pb2.ToolCall interface."""
-
-    id: str
-    function: Any  # Would be chat_pb2.Function with name and arguments
-
-
-@dataclass
-class MockXaiFunction:
-    """Mock Function object for tool calls."""
-
-    name: str
-    arguments: dict[str, Any]
+def _build_response_with_outputs(
+    response_id: str,
+    outputs: list[chat_pb2.CompletionOutput],
+    usage: Any | None = None,
+) -> chat_types.Response:
+    """Build a Response from a list of CompletionOutput protos."""
+    proto = chat_pb2.GetChatCompletionResponse(id=response_id)
+    proto.outputs.extend(outputs)
+    if usage:
+        proto.usage.CopyFrom(usage)
+    proto.created.GetCurrentTime()
+    return chat_types.Response(proto, index=None)
 
 
 def create_response(
     content: str = '',
-    tool_calls: list[Any] | None = None,
-    finish_reason: str = 'stop',
+    tool_calls: list[chat_pb2.ToolCall] | None = None,
+    finish_reason: FinishReason = 'stop',
     usage: Any | None = None,
     reasoning_content: str = '',
     encrypted_content: str = '',
 ) -> chat_types.Response:
-    """Create a mock Response object for testing.
+    """Create a Response object for testing using actual xAI SDK proto objects.
 
-    Returns a MockXaiResponse that mimics the xai_sdk.chat.Response interface.
+    Args:
+        content: Text content of the response
+        tool_calls: List of chat_pb2.ToolCall objects (use create_tool_call() to create)
+        finish_reason: pydantic-ai FinishReason ('stop', 'length', 'tool_call', 'content_filter')
+        usage: Usage proto object (use create_usage() to create)
+        reasoning_content: Reasoning/thinking content
+        encrypted_content: Encrypted content signature
+
+    Returns:
+        A real chat_types.Response wrapping actual proto objects
     """
-    return cast(
-        chat_types.Response,
-        MockXaiResponse(
-            id='grok-123',
-            content=content,
-            tool_calls=tool_calls or [],
-            finish_reason=finish_reason,
-            usage=usage,
-            reasoning_content=reasoning_content,
-            encrypted_content=encrypted_content,
-        ),
+    # Create the message proto
+    message = chat_pb2.CompletionMessage(
+        content=content,
+        role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
     )
+    if tool_calls:
+        message.tool_calls.extend(tool_calls)
+
+    # Create the output proto
+    output = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=_get_proto_finish_reason(finish_reason),
+        message=message,
+    )
+
+    return _build_response_with_outputs('grok-123', [output], usage)
 
 
 def create_tool_call(
     id: str,
     name: str,
     arguments: dict[str, Any],
-) -> MockXaiToolCall:
-    """Create a mock ToolCall object for testing.
+) -> chat_pb2.ToolCall:
+    """Create a ToolCall proto object for testing (client-side tool).
 
-    Returns a MockXaiToolCall that mimics the chat_pb2.ToolCall interface.
+    Args:
+        id: Tool call ID
+        name: Function name
+        arguments: Function arguments (will be JSON-serialized)
+
+    Returns:
+        A chat_pb2.ToolCall proto object
     """
-    return MockXaiToolCall(
+    return chat_pb2.ToolCall(
         id=id,
-        function=MockXaiFunction(name=name, arguments=arguments),
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
+        function=chat_pb2.FunctionCall(
+            name=name,
+            arguments=json.dumps(arguments),
+        ),
     )
-
-
-@dataclass
-class MockXaiResponseChunk:
-    """Mock response chunk for streaming."""
-
-    content: str = ''
-    tool_calls: list[Any] = field(default_factory=list)
-
-
-def create_response_chunk(
-    content: str = '',
-    tool_calls: list[Any] | None = None,
-) -> MockXaiResponseChunk:
-    """Create a mock response chunk object for testing.
-
-    Returns a MockXaiResponseChunk for streaming responses.
-    """
-    return MockXaiResponseChunk(
-        content=content,
-        tool_calls=tool_calls or [],
-    )
-
-
-# Builtin Tool Support
-# ---------------------
-# The following classes and functions support testing xAI's built-in (server-side) tools:
-# - code_execution: Execute Python code server-side
-# - web_search: Search the web for information
-# - mcp_server: Connect to Model Context Protocol servers
-#
-# These tools are executed by xAI's infrastructure and return results that need to be
-# included in the mock response. Since xAI uses gRPC (not HTTP), we cannot use VCR
-# for recording. Instead, we hand-craft mocks similar to how Anthropic and Google
-# handle their builtin tools.
-#
-# See XAI_MOCKING_DESIGN.md for detailed rationale and comparison with other providers.
-
-
-@dataclass
-class MockXaiServerToolCall:
-    """Mock server-side tool call that mimics chat_pb2.ToolCall for builtin tools.
-
-    This represents a tool call for xAI's server-side tools (code_execution, web_search, etc.).
-    The key difference from client-side tools is the `type` field which determines how
-    the tool is handled by the xAI model integration.
-    """
-
-    id: str
-    # Mimics the protobuf enum value - needs to be non-zero for server-side tools
-    # From xai_sdk chat_pb2.ToolCallType:
-    #   0=INVALID, 1=CLIENT_SIDE_TOOL, 2=WEB_SEARCH_TOOL, 3=X_SEARCH_TOOL,
-    #   4=CODE_EXECUTION_TOOL, 5=COLLECTIONS_SEARCH_TOOL, 6=MCP_TOOL,
-    #   7=DOCUMENT_SEARCH_TOOL, 9=LOCATIONS_SEARCH_TOOL
-    type: chat_pb2.ToolCallType
-    function: Any  # MockXaiFunction with name and arguments
-    status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
-    error_message: str = ''
-
-    def WhichOneof(self, field: str) -> str | None:
-        """Mimic protobuf's WhichOneof method for compatibility with get_tool_call_type()."""
-        # The xAI SDK's get_tool_call_type checks which oneof field is set
-        # Return the type name based on the type value
-        type_names = {
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_INVALID: 'invalid',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL: 'client_side_tool',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL: 'web_search_tool',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL: 'x_search_tool',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL: 'code_execution_tool',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL: 'collections_search_tool',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL: 'mcp_tool',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_DOCUMENT_SEARCH_TOOL: 'document_search_tool',
-            chat_pb2.ToolCallType.TOOL_CALL_TYPE_LOCATIONS_SEARCH_TOOL: 'locations_search_tool',
-        }
-        return type_names.get(self.type, 'client_side_tool')
 
 
 def create_server_tool_call(
@@ -287,12 +240,12 @@ def create_server_tool_call(
     tool_type: chat_pb2.ToolCallType = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
     status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     error_message: str = '',
-) -> MockXaiServerToolCall:
-    """Create a mock server-side tool call.
+) -> chat_pb2.ToolCall:
+    """Create a server-side tool call proto object.
 
     Args:
         tool_name: Name of the builtin tool ('code_execution', 'web_search', etc.)
-        arguments: Arguments for the tool call
+        arguments: Arguments for the tool call (will be JSON-serialized)
         tool_call_id: Unique ID for this tool call
         tool_type: Protobuf enum value for tool type. Use chat_pb2.ToolCallType constants:
             - TOOL_CALL_TYPE_WEB_SEARCH_TOOL
@@ -302,7 +255,7 @@ def create_server_tool_call(
         error_message: Error message if the tool call failed.
 
     Returns:
-        MockXaiServerToolCall that will be recognized as a server-side tool
+        A chat_pb2.ToolCall proto object configured as a server-side tool
 
     Example:
         >>> tool_call = create_server_tool_call(
@@ -311,12 +264,224 @@ def create_server_tool_call(
         ...     tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
         ... )
     """
-    return MockXaiServerToolCall(
+    return chat_pb2.ToolCall(
         id=tool_call_id,
         type=tool_type,
-        function=MockXaiFunction(name=tool_name, arguments=arguments),
         status=status,
         error_message=error_message,
+        function=chat_pb2.FunctionCall(
+            name=tool_name,
+            arguments=json.dumps(arguments),
+        ),
+    )
+
+
+def create_stream_chunk(
+    content: str = '',
+    tool_calls: list[chat_pb2.ToolCall] | None = None,
+    reasoning_content: str = '',
+    encrypted_content: str = '',
+    finish_reason: FinishReason | None = None,
+    index: int = 0,
+) -> chat_types.Chunk:
+    """Create a streaming chunk using the actual xAI SDK Chunk wrapper.
+
+    This creates a real xAI SDK Chunk object that wraps the proto.
+    The Chunk class provides convenience properties like .content, .tool_calls.
+
+    Args:
+        content: Text content delta
+        tool_calls: List of tool calls in this chunk
+        reasoning_content: Reasoning content delta
+        encrypted_content: Encrypted content delta
+        finish_reason: Finish reason (only set on final chunk)
+        index: Output index (usually 0)
+
+    Returns:
+        A chat_types.Chunk object wrapping the proto
+    """
+    # Create the delta with incremental content
+    delta = chat_pb2.Delta(
+        content=content,
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
+        role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+    )
+    if tool_calls:
+        delta.tool_calls.extend(tool_calls)
+
+    # Create the output chunk
+    output_chunk = chat_pb2.CompletionOutputChunk(
+        index=index,
+        delta=delta,
+    )
+    if finish_reason:
+        output_chunk.finish_reason = _get_proto_finish_reason(finish_reason)
+
+    # Create the chunk proto
+    proto = chat_pb2.GetChatCompletionChunk(id='grok-123')
+    proto.outputs.append(output_chunk)
+    proto.created.GetCurrentTime()
+
+    # Wrap in Chunk class (like the real SDK does) for convenience properties
+    return chat_types.Chunk(proto, index=None)
+
+
+# =============================================================================
+# Builtin Tool Support
+# =============================================================================
+# The following functions support testing xAI's built-in (server-side) tools:
+# - code_execution: Execute Python code server-side
+# - web_search: Search the web for information
+# - mcp_server: Connect to Model Context Protocol servers
+#
+# These tools are executed by xAI's infrastructure and return results that need to be
+# included in the mock response. Since xAI uses gRPC (not HTTP), we cannot use VCR
+# for recording. Instead, we hand-craft mocks similar to how Anthropic and Google
+# handle their builtin tools.
+
+
+def _create_builtin_tool_return_content(
+    tool_type: chat_pb2.ToolCallType,
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    *,
+    output: str | None = None,
+    return_code: int = 0,
+    stderr: str = '',
+    results: list[dict[str, str]] | None = None,
+    result_content: dict[str, Any] | None = None,
+) -> dict[str, Any] | str:
+    """Create mock content for BuiltinToolReturnPart based on tool type.
+
+    Args:
+        tool_type: The type of builtin tool
+        tool_name: Name of the tool
+        tool_arguments: Arguments passed to the tool
+        output: For code_execution - stdout output
+        return_code: For code_execution - exit code
+        stderr: For code_execution - stderr output
+        results: For web_search - search results
+        result_content: For MCP - result content dict
+
+    Returns:
+        Content dict or string for the BuiltinToolReturnPart
+    """
+    if tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL:
+        return {
+            'output': output or f'Code execution result for: {tool_arguments.get("code", "")}',
+            'return_code': return_code,
+            'stderr': stderr,
+        }
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL:
+        return {
+            'status': 'completed',
+            'results': results or [],
+        }
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL:
+        return result_content or {
+            'result': {
+                'content': [{'type': 'text', 'text': f'MCP tool {tool_name} executed successfully'}],
+            },
+        }
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_DOCUMENT_SEARCH_TOOL:
+        return {
+            'documents': [
+                {
+                    'id': 'doc_1',
+                    'title': 'Sample Document',
+                    'content': 'Sample document content',
+                    'url': 'https://example.com/doc1',
+                }
+            ],
+        }
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL:
+        return {
+            'results': [
+                {
+                    'id': 'collection_1',
+                    'name': 'Sample Collection',
+                    'description': 'Sample collection description',
+                }
+            ],
+        }
+    else:
+        return {'status': 'completed'}
+
+
+def create_code_execution_responses(
+    code: str,
+    output: str,
+    *,
+    return_code: int = 0,
+    stderr: str = '',
+    text_content: str = '',
+    tool_call_id: str = 'code_exec_001',
+) -> chat_types.Response:
+    """Create a Response with code execution tool outputs.
+
+    Args:
+        code: The Python code that was executed
+        output: The stdout output from code execution
+        return_code: Exit code (0 = success)
+        stderr: Any stderr output
+        text_content: Text response from the model after code execution
+        tool_call_id: Unique ID for this tool call
+
+    Returns:
+        Response configured with outputs for code execution
+
+    Example:
+        >>> response = create_code_execution_responses(
+        ...     code='print(2 + 2)',
+        ...     output='4',
+        ...     text_content='The answer is 4.',
+        ... )
+    """
+    tool_call = create_server_tool_call(
+        tool_name='code_execution',
+        arguments={'code': code},
+        tool_call_id=tool_call_id,
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+    )
+
+    return_content = _create_builtin_tool_return_content(
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+        tool_name='code_execution',
+        tool_arguments={'code': code},
+        output=output,
+        return_code=return_code,
+        stderr=stderr,
+    )
+
+    # Output 0: Tool call
+    tool_call_message = chat_pb2.CompletionMessage(role=chat_pb2.MessageRole.ROLE_ASSISTANT)
+    tool_call_message.tool_calls.append(tool_call)
+    tool_call_output = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
+        message=tool_call_message,
+    )
+
+    # Output 1: Tool result + text content
+    if text_content:
+        response_content = text_content
+    else:
+        response_content = json.dumps(return_content) if isinstance(return_content, dict) else return_content
+
+    tool_result_output = chat_pb2.CompletionOutput(
+        index=1,
+        finish_reason=sample_pb2.FinishReason.REASON_STOP,
+        message=chat_pb2.CompletionMessage(
+            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+            content=response_content,
+        ),
+    )
+
+    return _build_response_with_outputs(
+        response_id=f'grok-{tool_call_id}',
+        outputs=[tool_call_output, tool_result_output],
     )
 
 
@@ -329,7 +494,7 @@ def create_code_execution_response(
     text_content: str = '',
     tool_call_id: str = 'code_exec_001',
 ) -> chat_types.Response:
-    """Create a mock response with code execution builtin tool.
+    """Create a Response with code execution builtin tool.
 
     This mimics xAI's server-side code execution tool that runs Python code
     in a sandboxed environment.
@@ -343,7 +508,7 @@ def create_code_execution_response(
         tool_call_id: Unique ID for this tool call
 
     Returns:
-        MockXaiResponse configured as a code execution response
+        Response configured as a code execution response
 
     Example:
         >>> response = create_code_execution_response(
@@ -352,7 +517,6 @@ def create_code_execution_response(
         ...     text_content='The answer is 4.',
         ... )
     """
-    # Create server-side tool call (type=TOOL_CALL_TYPE_CODE_EXECUTION_TOOL)
     tool_call = create_server_tool_call(
         tool_name='code_execution',
         arguments={'code': code},
@@ -361,45 +525,45 @@ def create_code_execution_response(
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
 
-    # If text_content is provided, use it as the response content (text response after tool execution)
-    # Otherwise, populate with tool result JSON for completed tools
-    import json
-
     if text_content:
-        # When text_content is provided, that's the model's text response
-        # The tool result will use the fallback {'status': 'completed'} in the model code
         response_content = text_content
     else:
-        # When no text_content, populate with tool result JSON
-        response_content = json.dumps(
-            {
-                'output': output,
-                'return_code': return_code,
-                'stderr': stderr,
-            }
+        return_content = _create_builtin_tool_return_content(
+            tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+            tool_name='code_execution',
+            tool_arguments={'code': code},
+            output=output,
+            return_code=return_code,
+            stderr=stderr,
         )
+        response_content = json.dumps(return_content) if isinstance(return_content, dict) else return_content
 
-    return cast(
-        chat_types.Response,
-        MockXaiResponse(
-            id=f'grok-{tool_call_id}',
-            content=response_content,
-            tool_calls=[tool_call],
-            finish_reason='stop',
-        ),
+    message = chat_pb2.CompletionMessage(
+        role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+        content=response_content,
+    )
+    message.tool_calls.append(tool_call)
+
+    output_proto = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=sample_pb2.FinishReason.REASON_STOP,
+        message=message,
+    )
+
+    return _build_response_with_outputs(
+        response_id=f'grok-{tool_call_id}',
+        outputs=[output_proto],
     )
 
 
-def create_web_search_response(
+def create_web_search_responses(
     query: str,
     results: list[dict[str, str]],
     *,
     text_content: str = '',
     tool_call_id: str = 'web_search_001',
 ) -> chat_types.Response:
-    """Create a mock response with web search builtin tool.
-
-    This mimics xAI's server-side web search tool.
+    """Create a Response with web search tool outputs.
 
     Args:
         query: The search query
@@ -408,14 +572,12 @@ def create_web_search_response(
         tool_call_id: Unique ID for this tool call
 
     Returns:
-        MockXaiResponse configured as a web search response
+        Response configured with outputs for web search
 
     Example:
-        >>> response = create_web_search_response(
+        >>> response = create_web_search_responses(
         ...     query='current weather',
-        ...     results=[
-        ...         {'title': 'Weather.com', 'url': 'https://...', 'snippet': 'Sunny, 75°F'},
-        ...     ],
+        ...     results=[{'title': 'Weather.com', 'url': 'https://...', 'snippet': 'Sunny, 75°F'}],
         ...     text_content='The weather is sunny and 75°F.',
         ... )
     """
@@ -427,45 +589,53 @@ def create_web_search_response(
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
 
-    # If text_content is provided, use it as the response content (text response after tool execution)
-    # Otherwise, populate with tool result JSON for completed tools
-    import json
+    return_content = _create_builtin_tool_return_content(
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
+        tool_name='web_search',
+        tool_arguments={'query': query},
+        results=results,
+    )
 
+    # Output 0: Tool call
+    tool_call_message = chat_pb2.CompletionMessage(role=chat_pb2.MessageRole.ROLE_ASSISTANT)
+    tool_call_message.tool_calls.append(tool_call)
+    tool_call_output = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
+        message=tool_call_message,
+    )
+
+    # Output 1: Tool result + text content
     if text_content:
-        # When text_content is provided, that's the model's text response
-        # The tool result will use the fallback {'status': 'completed'} in the model code
         response_content = text_content
     else:
-        # When no text_content, populate with tool result JSON
-        response_content = json.dumps(
-            {
-                'status': 'completed',
-                'results': results,
-            }
-        )
+        response_content = json.dumps(return_content) if isinstance(return_content, dict) else return_content
 
-    return cast(
-        chat_types.Response,
-        MockXaiResponse(
-            id=f'grok-{tool_call_id}',
+    tool_result_output = chat_pb2.CompletionOutput(
+        index=1,
+        finish_reason=sample_pb2.FinishReason.REASON_STOP,
+        message=chat_pb2.CompletionMessage(
+            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
             content=response_content,
-            tool_calls=[tool_call],
-            finish_reason='stop',
         ),
     )
 
+    return _build_response_with_outputs(
+        response_id=f'grok-{tool_call_id}',
+        outputs=[tool_call_output, tool_result_output],
+    )
 
-def create_mcp_server_response(
+
+def create_mcp_server_responses(
     server_id: str,
     tool_name: str,
     tool_input: dict[str, Any],
     *,
     text_content: str = '',
     tool_call_id: str = 'mcp_001',
+    result_content: dict[str, Any] | None = None,
 ) -> chat_types.Response:
-    """Create a mock response with MCP server builtin tool.
-
-    This mimics xAI's MCP (Model Context Protocol) server integration.
+    """Create a Response with MCP server tool outputs.
 
     Args:
         server_id: ID of the MCP server (e.g., 'linear', 'github')
@@ -473,12 +643,13 @@ def create_mcp_server_response(
         tool_input: Input parameters for the tool
         text_content: Text response from the model after tool execution
         tool_call_id: Unique ID for this tool call
+        result_content: Optional custom result content dict
 
     Returns:
-        MockXaiResponse configured as an MCP server response
+        Response configured with outputs for MCP server tool
 
     Example:
-        >>> response = create_mcp_server_response(
+        >>> response = create_mcp_server_responses(
         ...     server_id='linear',
         ...     tool_name='list_issues',
         ...     tool_input={'status': 'open'},
@@ -496,49 +667,58 @@ def create_mcp_server_response(
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
 
-    # If text_content is provided, use it as the response content (text response after tool execution)
-    # Otherwise, populate with tool result JSON for completed tools
-    import json
+    return_content = _create_builtin_tool_return_content(
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL,
+        tool_name=full_tool_name,
+        tool_arguments=tool_input,
+        result_content=result_content,
+    )
 
+    # Output 0: Tool call
+    tool_call_message = chat_pb2.CompletionMessage(role=chat_pb2.MessageRole.ROLE_ASSISTANT)
+    tool_call_message.tool_calls.append(tool_call)
+    tool_call_output = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
+        message=tool_call_message,
+    )
+
+    # Output 1: Tool result + text content
     if text_content:
-        # When text_content is provided, that's the model's text response
-        # The tool result will use the fallback {'status': 'completed'} in the model code
         response_content = text_content
     else:
-        # When no text_content, populate with tool result JSON
-        response_content = json.dumps(
-            {
-                'result': {
-                    'content': [{'type': 'text', 'text': f'MCP tool {full_tool_name} executed successfully'}],
-                },
-            }
-        )
+        response_content = json.dumps(return_content) if isinstance(return_content, dict) else return_content
 
-    return cast(
-        chat_types.Response,
-        MockXaiResponse(
-            id=f'grok-{tool_call_id}',
+    tool_result_output = chat_pb2.CompletionOutput(
+        index=1,
+        finish_reason=sample_pb2.FinishReason.REASON_STOP,
+        message=chat_pb2.CompletionMessage(
+            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
             content=response_content,
-            tool_calls=[tool_call],
-            finish_reason='stop',
         ),
+    )
+
+    return _build_response_with_outputs(
+        response_id=f'grok-{tool_call_id}',
+        outputs=[tool_call_output, tool_result_output],
     )
 
 
 def create_mixed_tools_response(
-    server_tools: list[MockXaiServerToolCall],
+    server_tools: list[chat_pb2.ToolCall],
     text_content: str = '',
 ) -> chat_types.Response:
     """Create a response with multiple server-side tool calls.
 
     Useful for testing scenarios where multiple builtin tools are called in sequence.
+    Creates two outputs: one for tool calls (REASON_TOOL_CALLS) and one for results (REASON_STOP).
 
     Args:
-        server_tools: List of server-side tool calls
+        server_tools: List of chat_pb2.ToolCall proto objects
         text_content: Text response after all tools are executed
 
     Returns:
-        MockXaiResponse with multiple builtin tool calls
+        Response with multiple builtin tool calls
 
     Example:
         >>> tools = [
@@ -549,14 +729,28 @@ def create_mixed_tools_response(
         ... ]
         >>> response = create_mixed_tools_response(tools, 'Bitcoin increased by 30%')
     """
-    return cast(
-        chat_types.Response,
-        MockXaiResponse(
-            id='grok-multi-tool',
+    # Output 0: Tool calls
+    tool_call_message = chat_pb2.CompletionMessage(role=chat_pb2.MessageRole.ROLE_ASSISTANT)
+    tool_call_message.tool_calls.extend(server_tools)
+    tool_call_output = chat_pb2.CompletionOutput(
+        index=0,
+        finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
+        message=tool_call_message,
+    )
+
+    # Output 1: Tool results + text content
+    tool_result_output = chat_pb2.CompletionOutput(
+        index=1,
+        finish_reason=sample_pb2.FinishReason.REASON_STOP,
+        message=chat_pb2.CompletionMessage(
+            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
             content=text_content,
-            tool_calls=server_tools,
-            finish_reason='stop',
         ),
+    )
+
+    return _build_response_with_outputs(
+        response_id='grok-multi-tool',
+        outputs=[tool_call_output, tool_result_output],
     )
 
 
@@ -575,8 +769,9 @@ def create_multi_turn_builtin_sequence(
         Sequence of responses suitable for MockXai.create_mock()
 
     Example:
+        >>> response1 = create_code_execution_responses(code='x = 2+2', output='4')
         >>> responses = create_multi_turn_builtin_sequence(
-        ...     create_code_execution_response(code='x = 2+2', output='4'),
+        ...     response1,
         ...     create_response(content='The calculation is complete.'),
         ... )
         >>> mock_client = MockXai.create_mock(responses)

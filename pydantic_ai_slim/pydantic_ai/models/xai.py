@@ -14,7 +14,7 @@ try:
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
-    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
+    from xai_sdk.proto.v6 import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
 except ImportError as _import_error:
     raise ImportError(
@@ -559,70 +559,132 @@ class XaiModel(Model):
         response_stream = chat.stream()
         yield await self._process_streamed_response(response_stream, model_request_parameters)
 
+    @staticmethod
+    def get_tool_result_content(content: str) -> dict[str, Any] | str:
+        """Extract tool result content from a content string.
+
+        Args:
+            content: The content string (may be JSON or plain text)
+
+        Returns:
+            Tool result content as dict (if JSON) or string, or fallback dict if no content
+        """
+        if content:
+            try:
+                # Try to parse as JSON first
+                return json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                # If not JSON, use as string
+                return content
+        # No content, return fallback
+        return {'status': 'completed'}
+
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
-        """Convert xAI SDK response to pydantic_ai ModelResponse."""
+        """Convert xAI SDK response to pydantic_ai ModelResponse.
+
+        Always uses response.proto.outputs, which works for both real xAI SDK Response
+        objects and our MockXaiResponse objects (which implement the same interface).
+        Properties like response.content, response.encrypted_content delegate to _get_output()
+        which reads from proto.outputs.
+        """
         parts: list[ModelResponsePart] = []
 
-        # Add reasoning/thinking content first if present
-        if response.reasoning_content or response.encrypted_content:
-            signature = response.encrypted_content or None
-            parts.append(
-                ThinkingPart(
-                    content=response.reasoning_content or '',  # Empty string if only encrypted
-                    signature=signature,
-                    provider_name=self.system if signature else None,
-                )
-            )
+        # Always use proto.outputs - Response interface ensures this works
+        outputs = response.proto.outputs
 
-        # Add tool calls (both client-side and server-side) first
-        # For server-side tools, these were executed before generating the final content
-        for tool_call in response.tool_calls:
-            # Try to determine if this is a server-side tool
-            # In real responses, we can use get_tool_call_type()
-            # In mock responses, we default to client-side tools
-            is_server_side_tool = False
-            try:
-                tool_type = get_tool_call_type(tool_call)
-                # If it's not a client-side tool, it's a server-side tool
-                is_server_side_tool = tool_type != 'client_side_tool'
-            except Exception:
-                # If we can't determine the type, treat as client-side
-                pass
+        # Process outputs (each output represents a step in the agentic flow)
+        # Track tool calls from previous outputs to match with results
+        pending_tool_calls: dict[str, tuple[Any, str]] = {}  # tool_call_id -> (tool_call, builtin_tool_name)
 
-            if is_server_side_tool:
-                # Server-side tools are executed by xAI, so we add both call and return parts
-                # The final result is in response.content
-                builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
+        for output in outputs:
+            message = output.message
+            # Add reasoning/thinking content if present
+            if message.reasoning_content or message.encrypted_content:
+                signature = message.encrypted_content or None
                 parts.append(
-                    BuiltinToolCallPart(
-                        tool_name=builtin_tool_name,
-                        args=tool_call.function.arguments,
-                        tool_call_id=tool_call.id,
-                        provider_name=self.system,
-                    )
-                )
-                # Always add the return part for server-side tools since they're already executed
-                parts.append(
-                    BuiltinToolReturnPart(
-                        tool_name=builtin_tool_name,
-                        content={'status': 'completed'},
-                        tool_call_id=tool_call.id,
-                        provider_name=self.system,
-                    )
-                )
-            else:
-                # Client-side tool call (or mock)
-                parts.append(
-                    ToolCallPart(
-                        tool_name=tool_call.function.name,
-                        args=tool_call.function.arguments,
-                        tool_call_id=tool_call.id,
+                    ThinkingPart(
+                        content=message.reasoning_content or '',
+                        signature=signature,
+                        provider_name=self.system if signature else None,
                     )
                 )
 
-        # Add text content after tool calls (for server-side tools, this is the final result)
-        if response.content:
-            parts.append(TextPart(content=response.content))
+            # Process tool calls in this output
+            for tool_call in message.tool_calls:
+                is_server_side_tool = False
+                try:
+                    tool_type = get_tool_call_type(tool_call)
+                    is_server_side_tool = tool_type != 'client_side_tool'
+                except Exception:
+                    pass
+
+                if is_server_side_tool:
+                    builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
+                    # For outputs format, tool calls appear in one output, results in the next
+                    # Compare against proto enum for tool_calls finish reason
+                    is_tool_call_output = (
+                        output.finish_reason == sample_pb2.FinishReason.REASON_TOOL_CALLS
+                        or str(output.finish_reason) == 'REASON_TOOL_CALLS'
+                    )
+                    if is_tool_call_output:
+                        # This is a tool call output - add call part and track for result matching
+                        parts.append(
+                            BuiltinToolCallPart(
+                                tool_name=builtin_tool_name,
+                                args=tool_call.function.arguments,
+                                tool_call_id=tool_call.id,
+                                provider_name=self.system,
+                            )
+                        )
+                        # Track this tool call to match with result in next output
+                        pending_tool_calls[tool_call.id] = (tool_call, builtin_tool_name)
+                    else:
+                        # This output has content - check if it's a tool result
+                        # Tool results appear when tool_call.status is COMPLETED
+                        if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+                            # Extract tool result from message.content
+                            tool_result_content = XaiModel.get_tool_result_content(message.content)
+                            parts.append(
+                                BuiltinToolReturnPart(
+                                    tool_name=builtin_tool_name,
+                                    content=tool_result_content,
+                                    tool_call_id=tool_call.id,
+                                    provider_name=self.system,
+                                )
+                            )
+                            # Remove from pending
+                            pending_tool_calls.pop(tool_call.id, None)
+                else:
+                    # Client-side tool call
+                    parts.append(
+                        ToolCallPart(
+                            tool_name=tool_call.function.name,
+                            args=tool_call.function.arguments,
+                            tool_call_id=tool_call.id,
+                        )
+                    )
+
+            # Check if this output has content and there are pending tool calls
+            # This happens when server-side tools complete and the model returns results
+            if pending_tool_calls:
+                # Process ALL pending tool calls with COMPLETED status
+                for tool_call_id, (tool_call, builtin_tool_name) in list(pending_tool_calls.items()):
+                    if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+                        # Server-side tool completed - add return part with default content
+                        parts.append(
+                            BuiltinToolReturnPart(
+                                tool_name=builtin_tool_name,
+                                content={'status': 'completed'},
+                                tool_call_id=tool_call_id,
+                                provider_name=self.system,
+                            )
+                        )
+                        pending_tool_calls.pop(tool_call_id)
+
+            # Add text content from this output
+            if message.content:
+                # Content is the model's text response - add as TextPart
+                parts.append(TextPart(content=message.content))
 
         # Convert usage with detailed token information
         usage = self.extract_usage(response)
@@ -963,20 +1025,7 @@ class XaiStreamedResponse(StreamedResponse):
             # These tools are already executed by xAI's infrastructure
             builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
             if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
-                # Get the tool result from response.content
-                # Try to parse as JSON if possible, otherwise use as string or dict
-                tool_result_content: dict[str, Any] | str
-                if response.content:
-                    try:
-                        # Try to parse as JSON first
-                        tool_result_content = json.loads(response.content)
-                    except (json.JSONDecodeError, TypeError):
-                        # If not JSON, use as string or wrap in a dict
-                        tool_result_content = response.content
-                else:
-                    # Fallback to status if no content available
-                    tool_result_content = {'status': 'completed'}
-
+                tool_result_content = XaiModel.get_tool_result_content(response.content)
                 return_part = BuiltinToolReturnPart(
                     tool_name=builtin_tool_name,
                     content=tool_result_content,

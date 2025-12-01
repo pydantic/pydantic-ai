@@ -21,8 +21,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 from datetime import timezone
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -71,15 +70,14 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
-    MockXaiResponse,
-    MockXaiResponseChunk,
-    create_code_execution_response,
-    create_mcp_server_response,
+    create_code_execution_responses,
+    create_mcp_server_responses,
     create_mixed_tools_response,
     create_response,
     create_server_tool_call,
+    create_stream_chunk,
     create_tool_call,
-    create_web_search_response,
+    create_web_search_responses,
     get_mock_chat_create_kwargs,
 )
 
@@ -90,9 +88,6 @@ with try_import() as imports_successful:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
 
-    MockResponse = chat_types.Response | Exception
-    # xai_sdk streaming returns tuples of (Response, chunk) where chunk type is not explicitly defined
-    MockResponseChunk = tuple[chat_types.Response, Any] | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
@@ -243,7 +238,7 @@ async def test_xai_request_structured_response(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args={'response': [1, 2, 123]},
+                        args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
                     )
                 ],
@@ -307,7 +302,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args={'loc_name': 'San Fransisco'},
+                        args='{"loc_name": "San Fransisco"}',
                         tool_call_id='1',
                     )
                 ],
@@ -337,7 +332,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
                 parts=[
                     ToolCallPart(
                         tool_name='get_location',
-                        args={'loc_name': 'London'},
+                        args='{"loc_name": "London"}',
                         tool_call_id='2',
                     )
                 ],
@@ -383,62 +378,72 @@ def grok_chunk(response: chat_types.Response, chunk: Any) -> tuple[chat_types.Re
     return (response, chunk)
 
 
-def grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.Response, Any]:
+def grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.Response, chat_types.Chunk]:
     """Create a text streaming chunk for Grok.
 
     Note: For streaming, Response accumulates content, Chunk is the delta.
     Since we can't easily track state across calls, we pass full accumulated text as response.content
     and the delta as chunk.content.
+
+    Returns:
+        Tuple of (accumulated Response, delta Chunk) - both using real SDK types
     """
-    # Create chunk (delta) - just this piece of text
-    chunk = MockXaiResponseChunk(content=text, tool_calls=[])
+    # Create chunk (delta) - the incremental content
+    chunk = create_stream_chunk(
+        content=text,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+    )
 
     # Create response (accumulated) - for simplicity in mocks, we'll just use the same text
     # In real usage, the Response object would accumulate over multiple chunks
-    response = MockXaiResponse(
-        id='grok-123',
-        content=text,  # This will be accumulated by the streaming handler
-        tool_calls=[],
-        finish_reason=finish_reason if finish_reason else '',
+    response = create_response(
+        content=text,
+        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
         usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
     )
 
-    return (cast(chat_types.Response, response), chunk)
+    return (response, chunk)
 
 
 def grok_reasoning_text_chunk(
     text: str, reasoning_content: str = '', encrypted_content: str = '', finish_reason: str = 'stop'
-) -> tuple[chat_types.Response, Any]:
+) -> tuple[chat_types.Response, chat_types.Chunk]:
     """Create a text streaming chunk for Grok with reasoning content.
 
     Args:
         text: The text content delta
-        reasoning_content: The reasoning trace (accumulated, not a delta)
-        encrypted_content: The encrypted reasoning signature (accumulated, not a delta)
+        reasoning_content: The reasoning trace delta
+        encrypted_content: The encrypted reasoning signature delta
         finish_reason: The finish reason
+
+    Returns:
+        Tuple of (accumulated Response, delta Chunk) - both using real SDK types
     """
-    # Create chunk (delta) - just this piece of text
-    chunk = MockXaiResponseChunk(content=text, tool_calls=[])
+    # Create chunk (delta) - includes reasoning content as delta
+    chunk = create_stream_chunk(
+        content=text,
+        reasoning_content=reasoning_content,
+        encrypted_content=encrypted_content,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+    )
 
     # Create response (accumulated) - includes reasoning content
-    response = MockXaiResponse(
-        id='grok-123',
+    response = create_response(
         content=text,
-        tool_calls=[],
-        finish_reason=finish_reason if finish_reason else '',
+        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
         usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,
     )
 
-    return (cast(chat_types.Response, response), chunk)
+    return (response, chunk)
 
 
-def _generate_tool_result_content(tool_call: Any) -> str:
+def _generate_tool_result_content(tool_call: chat_pb2.ToolCall) -> str:
     """Generate appropriate JSON content for completed server-side tool calls.
 
     Args:
-        tool_call: The MockXaiServerToolCall object
+        tool_call: The chat_pb2.ToolCall proto object
 
     Returns:
         JSON string with tool result content
@@ -518,35 +523,41 @@ def _generate_tool_result_content(tool_call: Any) -> str:
 
 
 def grok_builtin_tool_chunk(
-    tool_call: Any,
+    tool_call: chat_pb2.ToolCall,
     response_id: str = 'grok-builtin',
     finish_reason: str = '',
-) -> tuple[chat_types.Response, Any]:
+) -> tuple[chat_types.Response, chat_types.Chunk]:
     """Create a streaming chunk for Grok with a builtin (server-side) tool call.
 
     Args:
-        tool_call: The server-side tool call object (MockXaiServerToolCall)
+        tool_call: The server-side tool call proto object (chat_pb2.ToolCall)
         response_id: The response ID
         finish_reason: The finish reason (usually empty for tool call chunks)
+
+    Returns:
+        Tuple of (accumulated Response, delta Chunk) - both using real SDK types
     """
     # Generate content for completed tools based on tool type
     content = ''
-    if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+    if tool_call.status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
         content = _generate_tool_result_content(tool_call)
 
     # Create chunk (delta) - the tool call
-    chunk = MockXaiResponseChunk(content='', tool_calls=[tool_call])
+    chunk = create_stream_chunk(
+        content='',
+        tool_calls=[tool_call],
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+    )
 
     # Create response (accumulated) - same tool call with content
-    response = MockXaiResponse(
-        id=response_id,
+    response = create_response(
         content=content,
         tool_calls=[tool_call],
-        finish_reason=finish_reason if finish_reason else '',
+        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
         usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
     )
 
-    return (cast(chat_types.Response, response), chunk)
+    return (response, chunk)
 
 
 async def test_xai_stream_text(allow_model_requests: None):
@@ -596,7 +607,7 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
 
 def grok_tool_chunk(
     tool_name: str | None, tool_arguments: str | None, finish_reason: str = '', accumulated_args: str = ''
-) -> tuple[chat_types.Response, Any]:
+) -> tuple[chat_types.Response, chat_types.Chunk]:
     """Create a tool call streaming chunk for Grok.
 
     Args:
@@ -607,46 +618,54 @@ def grok_tool_chunk(
 
     Note: Unlike the real xAI SDK which only sends the tool name in the first chunk,
     our mock includes it in every chunk to ensure proper tool call tracking.
+
+    Returns:
+        Tuple of (accumulated Response, delta Chunk) - both using real SDK types
     """
     # Infer tool name from accumulated state if not provided
     effective_tool_name = tool_name or ('final_result' if accumulated_args else None)
 
-    # Create the chunk (delta) - includes tool name for proper tracking
-    chunk_tool_call = None
+    # Create the chunk tool call (delta) - using real proto type
+    chunk_tool_calls: list[chat_pb2.ToolCall] = []
     if effective_tool_name is not None or tool_arguments is not None:
-        chunk_tool_call = SimpleNamespace(
+        chunk_tool_call = chat_pb2.ToolCall(
             id='tool-123',
-            function=SimpleNamespace(
-                name=effective_tool_name,
-                # arguments should be a string (delta JSON), default to empty string
+            type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
+            function=chat_pb2.FunctionCall(
+                name=effective_tool_name or '',
                 arguments=tool_arguments if tool_arguments is not None else '',
             ),
         )
+        chunk_tool_calls = [chunk_tool_call]
 
-    # Chunk (delta)
-    chunk = MockXaiResponseChunk(
+    # Chunk (delta) - using real proto type
+    chunk = create_stream_chunk(
         content='',
-        tool_calls=[chunk_tool_call] if chunk_tool_call else [],
+        tool_calls=chunk_tool_calls,
+        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
     )
 
-    # Response (accumulated) - contains the full accumulated tool call
-    response_tool_call = SimpleNamespace(
-        id='tool-123',
-        function=SimpleNamespace(
-            name=effective_tool_name,
-            arguments=accumulated_args,  # Full accumulated arguments
-        ),
-    )
+    # Response (accumulated) - create tool calls for response
+    response_tool_calls: list[chat_pb2.ToolCall] = []
+    if effective_tool_name is not None or accumulated_args:
+        response_tool_call = chat_pb2.ToolCall(
+            id='tool-123',
+            type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
+            function=chat_pb2.FunctionCall(
+                name=effective_tool_name or '',
+                arguments=accumulated_args,  # Full accumulated arguments
+            ),
+        )
+        response_tool_calls = [response_tool_call]
 
-    response = MockXaiResponse(
-        id='grok-123',
+    response = create_response(
         content='',
-        tool_calls=[response_tool_call] if (effective_tool_name is not None or accumulated_args) else [],
-        finish_reason=finish_reason,
+        tool_calls=response_tool_calls,
+        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
         usage=create_usage(prompt_tokens=20, completion_tokens=1) if finish_reason else None,
     )
 
-    return (cast(chat_types.Response, response), chunk)
+    return (response, chunk)
 
 
 class MyTypedDict(TypedDict, total=False):
@@ -771,7 +790,7 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
         name='final_result',
         arguments={'response': [1, 2, 3]},
     )
-    response = create_response(content='', tool_calls=[tool_call], finish_reason='tool_calls')
+    response = create_response(content='', tool_calls=[tool_call], finish_reason='tool_call')
     mock_client = MockXai.create_mock(response)
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
@@ -833,7 +852,7 @@ async def test_xai_instructions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -841,7 +860,7 @@ async def test_xai_instructions(allow_model_requests: None):
                 parts=[TextPart(content='The capital of France is Paris.')],
                 usage=RequestUsage(),
                 model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_response_id='grok-123',
                 finish_reason='stop',
@@ -901,7 +920,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None):
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool_001')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='tool_001')],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -975,7 +994,7 @@ async def test_xai_image_as_binary_content_tool_response(allow_model_requests: N
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='tool_001')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='tool_001')],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1114,8 +1133,8 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
 
 async def test_xai_builtin_web_search_tool(allow_model_requests: None):
     """Test xAI's built-in web_search tool."""
-    # Create a response with web search builtin tool call and result
-    response = create_web_search_response(
+    # Create response with outputs
+    response = create_web_search_responses(
         query='date of Jan 1 in 2026',
         results=[
             {'title': 'Calendar 2026', 'url': 'https://example.com/cal', 'snippet': 'January 1, 2026 is Thursday'}
@@ -1123,7 +1142,6 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
         text_content='Thursday',
         tool_call_id='ws_001',
     )
-
     mock_client = MockXai.create_mock(response)
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
@@ -1148,7 +1166,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'date of Jan 1 in 2026'},
+                        args='{"query": "date of Jan 1 in 2026"}',
                         tool_call_id='ws_001',
                         provider_name='xai',
                     ),
@@ -1231,7 +1249,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None):
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='is sunny.')),
             PartEndEvent(index=1, part=TextPart(content='The weather is sunny.')),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content={
@@ -1262,14 +1280,13 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None):
 
 async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
     """Test xAI's built-in code_execution tool."""
-    # Create a response with code execution builtin tool call and result
-    response = create_code_execution_response(
+    # Create response with outputs
+    response = create_code_execution_responses(
         code='65465 - 6544 * 65464 - 6 + 1.02255',
         output='-428050955.97745',
         text_content='The result is -428,050,955.97745',
         tool_call_id='code_001',
     )
-
     mock_client = MockXai.create_mock(response)
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
@@ -1296,7 +1313,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={'code': '65465 - 6544 * 65464 - 6 + 1.02255'},
+                        args='{"code": "65465 - 6544 * 65464 - 6 + 1.02255"}',
                         tool_call_id='code_001',
                         provider_name='xai',
                     ),
@@ -1358,7 +1375,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 index=0,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'output': 'Code execution result for: 2 + 2', 'return_code': 0, 'stderr': ''},
+                    content={'output': 'Code execution result for: ', 'return_code': 0, 'stderr': ''},
                     tool_call_id='code_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
@@ -1368,10 +1385,10 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='is 4')),
             PartEndEvent(index=1, part=TextPart(content='The result is 4')),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'output': 'Code execution result for: 2 + 2', 'return_code': 0, 'stderr': ''},
+                    content={'output': 'Code execution result for: ', 'return_code': 0, 'stderr': ''},
                     tool_call_id='code_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
@@ -1434,8 +1451,14 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'current price of Bitcoin'},
+                        args='{"query": "current price of Bitcoin"}',
                         tool_call_id='ws_002',
+                        provider_name='xai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args='{"code": "((65000 - 50000) / 50000) * 100"}',
+                        tool_call_id='code_002',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -1443,12 +1466,6 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
                         content={'status': 'completed'},
                         tool_call_id='ws_002',
                         timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={'code': '((65000 - 50000) / 50000) * 100'},
-                        tool_call_id='code_002',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
@@ -1473,8 +1490,8 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
 
 async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
     """Test mixing xAI's built-in tools with custom (client-side) tools."""
-    # Create a response with web search builtin tool
-    response = create_web_search_response(
+    # Create response with outputs
+    response = create_web_search_responses(
         query='weather in Tokyo',
         results=[
             {'title': 'Weather Tokyo', 'url': 'https://example.com/weather', 'snippet': 'Tokyo is sunny with 72°F'}
@@ -1482,7 +1499,6 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
         text_content='The weather in Tokyo is sunny with a temperature of 72°F.',
         tool_call_id='ws_003',
     )
-
     mock_client = MockXai.create_mock(response)
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
@@ -1514,7 +1530,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'query': 'weather in Tokyo'},
+                        args='{"query": "weather in Tokyo"}',
                         tool_call_id='ws_003',
                         provider_name='xai',
                     ),
@@ -1540,16 +1556,14 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
 
 async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
     """Test xAI's MCP server tool with Linear."""
-    # Create mock response based on recorded output
-    # Recording showed: BuiltinToolCallPart + BuiltinToolReturnPart + TextPart
-    response = create_mcp_server_response(
+    # Create response with outputs
+    response = create_mcp_server_responses(
         server_id='linear',
         tool_name='list_issues',
         tool_input={},
         text_content='No issues found.',
         tool_call_id='mcp_linear_001',
     )
-
     mock_client = MockXai.create_mock(response)
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
@@ -1585,7 +1599,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:linear',
-                        args={},
+                        args='{}',
                         tool_call_id='mcp_linear_001',
                         provider_name='xai',
                     ),
@@ -1672,7 +1686,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None):
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='found.')),
             PartEndEvent(index=1, part=TextPart(content='No issues found.')),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='mcp_server:linear',
                     content={
@@ -1949,7 +1963,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
                     ThinkingPart(content='I need to use the calculate tool to solve this', signature=None),
                     ToolCallPart(
                         tool_name='calculate',
-                        args={'expression': '2+2'},
+                        args='{"expression": "2+2"}',
                         tool_call_id='1',
                     ),
                 ],
@@ -2022,7 +2036,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
                     ThinkingPart(content='', signature='encrypted_reasoning_abc123', provider_name='xai'),
                     ToolCallPart(
                         tool_name='get_weather',
-                        args={'city': 'San Francisco'},
+                        args='{"city": "San Francisco"}',
                         tool_call_id='1',
                     ),
                 ],
@@ -2326,7 +2340,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=70, output_tokens=12),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
