@@ -1,14 +1,14 @@
 ## Requirements
 
-Please ensure that [Docker](https://docs.docker.com/desktop/) is installed and running on the host machine. To configure your IDE and MCP servers, mount your own `.vscode/` or `.cursor/` folders by uncommenting the `mounts` section in `devcontainer.json`.
+Please ensure that [Docker](https://docs.docker.com/desktop/) is installed and running on the host machine. To configure your IDE and MCP servers, mount your own `.vscode/` or `.cursor/` folders by uncommenting the `mounts` section in `devcontainer.json`. To set your API keys, please copy a valid `.env` file based on `.env.example` into the container by uncommenting the `initializeCommand` in `devcontainer.json`.
 
 ## Overview
 
 The dev container is built using a hybrid approach: the `Dockerfile` provides low-level customization, while `devcontainer.json` is used for fine-tuning and IDE integration. Minor changes to `devcontainer.json` do not require a full rebuild of the entire image, which speeds up the development workflow.
 
-1. The `Dockerfile` is based on Microsoft's Debian-style [Bookworm image for Python 3.12](https://hub.docker.com/r/microsoft/devcontainers-python). It configures a non-root `vscode` user, sets `/workspaces/pydantic-ai` as the working directory, and installs essential system dependencies along with `uv`.
+1. The `Dockerfile` is based on Microsoft's Debian-style [Trixie image for Python 3.12](https://hub.docker.com/r/microsoft/devcontainers-python). It configures a non-root `vscode` user, sets `/workspaces/pydantic-ai` as the working directory, and installs essential system dependencies along with `uv`.
 
-2. The `devcontainer.json` is based on Microsoft's [dev container template](https://github.com/devcontainers/templates/tree/main/src/python) for Python 3. It installs additional development tools via `features`, sets important environment variables, and runs `uv sync`. The container does not enforce any specific IDE configuration; developers are encouraged to mount their own `.vscode/` or `.cursor/` folders externally. Note that the Ollama instance runs on the host machine for performance reasons. Please ensure that [Ollama](https://ollama.com/download) is installed and running on the host.
+2. The `devcontainer.json` is based on Microsoft's [dev container template](https://github.com/devcontainers/templates/tree/main/src/python) for Python 3. It installs additional development tools via `features`, sets important environment variables, and runs `uv sync`. The container does not enforce any specific IDE configuration; developers are encouraged to mount their own `.vscode/` or `.cursor/` folders externally. To set your API keys, please uncomment the `initializeCommand` in `devcontainer.json` and copy a valid `.env` file into the container. Note that the Ollama instance runs on the host machine for performance reasons. Please ensure that [Ollama](https://ollama.com/download) is installed and running on the host.
 
 ## Building and testing the container locally
 
