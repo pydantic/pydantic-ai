@@ -359,7 +359,7 @@ class XaiModel(Model):
             msg = chat_types.chat_pb2.Message(role=chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT)
 
         if reasoning_texts:
-            msg.reasoning_content = '\n\n'.join(reasoning_texts)
+            msg.reasoning_content = ''.join(reasoning_texts)
         if tool_calls:
             msg.tool_calls.extend(tool_calls)
 
