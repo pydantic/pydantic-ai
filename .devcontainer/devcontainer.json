@@ -63,10 +63,11 @@
   "postCreateCommand": [
     "bash",
     "-c",
-    "uv tool install pre-commit && uv sync --frozen --all-extras --all-packages --group lint --group docs"
+    "uv tool install pre-commit && make install"
   ],
   //"postStartCommand": "",
   // Configure tool-specific properties.
+  // Please keep minimal. For further customizations, use .vscode and .cursor in the "mounts" section.
   "customizations": {
     "vscode": {
       "settings": {
