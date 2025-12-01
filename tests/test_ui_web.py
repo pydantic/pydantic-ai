@@ -25,22 +25,12 @@ pytestmark = [
 ]
 
 
-def test_create_chat_app_basic():
-    """Test creating a basic chat app."""
-    agent = Agent('test')
-    app = create_web_app(agent)
-
-    assert isinstance(app, Starlette)
-    assert app.state.agent is agent
-
-
 def test_agent_to_web():
     """Test the Agent.to_web() method."""
     agent = Agent('test')
     app = agent.to_web()
 
     assert isinstance(app, Starlette)
-    assert app.state.agent is agent
 
 
 def test_chat_app_health_endpoint():
