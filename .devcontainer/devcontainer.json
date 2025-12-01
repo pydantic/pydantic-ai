@@ -49,10 +49,10 @@
   "containerEnv": {
     "OLLAMA_HOST": "http://host.docker.internal:11434", // Connect to Ollama instance running on host machine.
     "COLUMNS": "150",
-    "CI": "true",
-    "LOGFIRE_INSPECT_ARGUMENTS": "0",
+    "CI": "false",
+    "LOGFIRE_INSPECT_ARGUMENTS": "1",
     "CMAKE_ARGS": "-DGGML_NATIVE=OFF", // Switch off native architecture optimization! Building llama-cpp-python on Apple Silicon fails otherwise.
-    "UV_FROZEN": "1",
+    "UV_FROZEN": "0",
     "UV_LINK_MODE": "copy",
     "UV_COMPILE_BYTECODE": "1", // uv will compile .py files to .pyc files. Speeds up startup time.
     "PYTHONUNBUFFERED": "1" // Ensure stdout and stderr are unbuffered.
@@ -94,7 +94,7 @@
         "tamasfe.even-better-toml"
       ]
     }
-  },
+  }
   // Uncomment to copy .env file into the container.
   // "initializeCommand": "cp ../my-env/.env ./.env",
   // Uncomment to mount .vscode and .cursor directories from other repositories or directories.
