@@ -58,7 +58,7 @@ def _run_web_command(  # noqa: C901
         agent_path: Agent path in 'module:variable' format. If None, creates generic agent.
         host: Host to bind the server to.
         port: Port to bind the server to.
-        models: List of model strings (e.g., ['openai:gpt-5', 'claude-sonnet-4-5']).
+        models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']).
         tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution']).
         instructions: System instructions for generic agent.
         mcp: Path to JSON file with MCP server configurations.
