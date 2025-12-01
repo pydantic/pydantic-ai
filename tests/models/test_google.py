@@ -4277,7 +4277,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         BuiltinToolCallPart(
                             tool_name='file_search',
                             args={'query': 'Capital of France'},
-                            tool_call_id='pyd_ai_1b406cebdd1a41b097d3af5d012935c9',
+                            tool_call_id=IsStr(),
                             provider_name='google-gla',
                         ),
                         TextPart(content='The capital of France is Paris. The city is well-known for its'),
@@ -4288,8 +4288,8 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                                     'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
                                 }
                             ],
-                            tool_call_id='pyd_ai_1b406cebdd1a41b097d3af5d012935c9',
-                            timestamp=datetime.datetime(2025, 11, 28, 21, 53, 54, 202959, tzinfo=datetime.timezone.utc),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
                             provider_name='google-gla',
                         ),
                         TextPart(content=' famous landmarks, including the Eiffel Tower.'),
@@ -4322,7 +4322,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     part=BuiltinToolCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
-                        tool_call_id='pyd_ai_1b406cebdd1a41b097d3af5d012935c9',
+                        tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
                 ),
@@ -4331,7 +4331,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     part=BuiltinToolCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
-                        tool_call_id='pyd_ai_1b406cebdd1a41b097d3af5d012935c9',
+                        tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
                     next_part_kind='text',
@@ -4353,8 +4353,8 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         content=[
                             {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
                         ],
-                        tool_call_id='pyd_ai_1b406cebdd1a41b097d3af5d012935c9',
-                        timestamp=datetime.datetime(2025, 11, 28, 21, 53, 54, 202959, tzinfo=datetime.timezone.utc),
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
                     previous_part_kind='text',
@@ -4365,22 +4365,22 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     previous_part_kind='builtin-tool-return',
                 ),
                 PartEndEvent(index=3, part=TextPart(content=' famous landmarks, including the Eiffel Tower.')),
-                BuiltinToolCallEvent(
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                     part=BuiltinToolCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
-                        tool_call_id='pyd_ai_1b406cebdd1a41b097d3af5d012935c9',
+                        tool_call_id=IsStr(),
                         provider_name='google-gla',
                     )
                 ),
-                BuiltinToolResultEvent(
+                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content=[
                             {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
                         ],
-                        tool_call_id='pyd_ai_1b406cebdd1a41b097d3af5d012935c9',
-                        timestamp=datetime.datetime(2025, 11, 28, 21, 53, 54, 202959, tzinfo=datetime.timezone.utc),
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
                         provider_name='google-gla',
                     )
                 ),
