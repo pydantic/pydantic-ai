@@ -82,17 +82,20 @@ class XaiModelSettings(ModelSettings, total=False):
     See [xAI SDK documentation](https://docs.x.ai/docs) for more details on these parameters.
     """
 
-    logprobs: bool
+    xai_logprobs: bool
     """Whether to return log probabilities of the output tokens or not."""
 
-    top_logprobs: int
+    xai_top_logprobs: int
     """An integer between 0 and 20 specifying the number of most likely tokens to return at each position."""
 
-    store_messages: bool
+    xai_user: str
+    """A unique identifier representing your end-user, which can help xAI to monitor and detect abuse."""
+
+    xai_store_messages: bool
     """Whether to store messages on xAI's servers for conversation continuity."""
 
-    user: str
-    """A unique identifier representing your end-user, which can help xAI to monitor and detect abuse."""
+    xai_previous_response_id: str
+    """The ID of the previous response to continue the conversation."""
 
     xai_include_encrypted_content: bool
     """Whether to include the encrypted content in the response.
@@ -783,7 +786,8 @@ class XaiModel(Model):
     def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
         """Map pydantic_ai ModelSettings to xAI SDK parameters."""
         # Mapping of pydantic_ai setting keys to xAI SDK parameter names
-        # Most keys are the same, but 'stop' maps to 'stop_sequences'
+        # Most defauult keys are the same, but 'stop' maps to 'stop_sequences'
+        # Xai specific keys are prefixed with 'xai_'
         setting_mapping = {
             'temperature': 'temperature',
             'top_p': 'top_p',
@@ -792,12 +796,11 @@ class XaiModel(Model):
             'parallel_tool_calls': 'parallel_tool_calls',
             'presence_penalty': 'presence_penalty',
             'frequency_penalty': 'frequency_penalty',
-            'logprobs': 'logprobs',
-            'top_logprobs': 'top_logprobs',
-            'reasoning_effort': 'reasoning_effort',
-            'store_messages': 'store_messages',
-            'previous_response_id': 'previous_response_id',
-            'user': 'user',
+            'logprobs': 'xai_logprobs',
+            'top_logprobs': 'xai_top_logprobs',
+            'user': 'xai_user',
+            'store_messages': 'xai_store_messages',
+            'previous_response_id': 'xai_previous_response_id',
         }
 
         # Build the settings dict, only including keys that are present in the input
