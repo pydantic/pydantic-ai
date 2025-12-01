@@ -267,8 +267,17 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
-    (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
+    to enforce `input_tokens_limit` ahead of time. This may incur additional overhead
+    (from calling the model's `count_tokens` method before making the actual request) and is disabled by default.
+
+    Supported by:
+    
+    - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (only for OpenAI models)
+    - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] (excluding Bedrock client)
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel]
+    - [`BedrockModel`][pydantic_ai.models.bedrock.BedrockModel] (including Anthropic models)
+    """
 
     @property
     @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
