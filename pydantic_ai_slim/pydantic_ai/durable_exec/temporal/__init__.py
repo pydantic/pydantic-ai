@@ -137,7 +137,9 @@ class AgentPlugin(SimplePlugin):
     """
 
     def __init__(self, agent: TemporalAgent[Any, Any], activity_deps: Any = None):
-        if activity_deps is not None and agent.name is not None:
+        if activity_deps is not None:
+            # TemporalAgent validates that name is set at construction
+            assert agent.name is not None
             register_activity_deps(agent.name, activity_deps)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
