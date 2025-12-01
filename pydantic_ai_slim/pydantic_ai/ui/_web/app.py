@@ -32,14 +32,14 @@ def _resolve_models(
     models: ModelsParam,
     builtin_tools: list[AbstractBuiltinTool] | None,
 ) -> list[ModelInfo]:
-    """Convert models parameter to list of AIModel objects.
+    """Convert models parameter to list of ModelInfo objects.
 
     Args:
         models: Model names/instances or dict mapping labels to models
         builtin_tools: Available builtin tools to check model support
 
     Returns:
-        List of AIModel objects with resolved model IDs, display names, and supported tools
+        List of ModelInfo objects with resolved model IDs, display names, and supported tools
     """
     if models is None:
         return []
