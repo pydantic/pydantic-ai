@@ -47,9 +47,8 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_custom_reasoning_field='reasoning_content',
-            # DeepSeek recommends against sending back unchanged reasoning parts in requests.
-            # The following is for compatibility with existing behavior. May want to change later.
-            openai_chat_send_back_thinking_parts='thinking_tags',
+            # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
+            openai_chat_send_back_thinking_parts='custom_field',
         ).update(profile)
 
     @overload
