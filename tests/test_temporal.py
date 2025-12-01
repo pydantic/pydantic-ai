@@ -2809,15 +2809,15 @@ def test_temporal_agent_provider_factory_uses_run_context(monkeypatch: MonkeyPat
             self._client = None
 
         @property
-        def name(self) -> str:
+        def name(self) -> str:  # pragma: no cover
             return 'dummy'
 
         @property
-        def base_url(self) -> str:
+        def base_url(self) -> str:  # pragma: no cover
             return 'https://example.com'
 
         @property
-        def client(self) -> None:
+        def client(self) -> None:  # pragma: no cover
             return None
 
     def provider_factory(
@@ -2867,3 +2867,212 @@ def test_temporal_agent_provider_factory_uses_run_context(monkeypatch: MonkeyPat
     assert provider_run_ctx is not None
     assert provider_run_ctx.run_id == 'run-123'
     assert provider_calls[0][2] == {'api_key': 'secret'}
+
+
+async def test_temporal_agent_empty_model_name_validation():
+    """Test that empty or whitespace-only model names raise UserError."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='empty_name_test')
+
+    with pytest.raises(UserError, match='Model names must be non-empty strings'):
+        TemporalAgent(
+            agent,
+            name='empty_name_test',
+            additional_models={'   ': TestModel()},
+        )
+
+
+async def test_temporal_agent_select_model_none():
+    """Test that _select_model(None) returns the default selection."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='select_none_test')
+    temporal_agent = TemporalAgent(agent, name='select_none_test')
+
+    selection = temporal_agent._select_model(None)  # pyright: ignore[reportPrivateUsage]
+    assert selection == temporal_agent._default_selection  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_agent_select_model_default_string():
+    """Test that _select_model('default') returns the default selection."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='select_default_test')
+    temporal_agent = TemporalAgent(agent, name='select_default_test')
+
+    selection = temporal_agent._select_model('default')  # pyright: ignore[reportPrivateUsage]
+    assert selection == temporal_agent._default_selection  # pyright: ignore[reportPrivateUsage]
+
+
+def test_temporal_model_current_selection_no_var():
+    """Test _current_selection when _model_selection_var is None."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='current_selection_no_var')
+    temporal_agent = TemporalAgent(agent, name='current_selection_no_var')
+
+    # Access the temporal model directly
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+    # Ensure _model_selection_var is None (default state)
+    temporal_model._model_selection_var = None  # pyright: ignore[reportPrivateUsage]
+
+    selection = temporal_model._current_selection()  # pyright: ignore[reportPrivateUsage]
+    assert selection.model_key == 'default'
+    assert selection.model_name is None
+
+
+def test_temporal_model_current_selection_empty_selection():
+    """Test _current_selection when selection has both keys as None."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='current_selection_empty')
+    temporal_agent = TemporalAgent(agent, name='current_selection_empty')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+    # Set up a selection var with empty selection
+    from contextvars import ContextVar
+
+    from pydantic_ai.durable_exec.temporal._model import ModelSelection
+
+    selection_var: ContextVar[ModelSelection] = ContextVar('model_selection')
+    selection_var.set(ModelSelection(model_key=None, model_name=None))
+    temporal_model._model_selection_var = selection_var  # pyright: ignore[reportPrivateUsage]
+
+    selection = temporal_model._current_selection()  # pyright: ignore[reportPrivateUsage]
+    assert selection.model_key == 'default'
+    assert selection.model_name is None
+
+
+def test_temporal_model_resolve_model_string_map(monkeypatch: MonkeyPatch):
+    """Test _resolve_model when model_key is in _model_string_map."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='resolve_string_map')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='resolve_string_map',
+        additional_models=['openai:gpt-4o'],
+    )
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    # Mock infer_model to return a test model
+    def mock_infer_model(model_name: str, **kwargs: Any) -> TestModel:
+        return TestModel()
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
+
+    params = SimpleNamespace(
+        model_key='openai:gpt-4o',
+        model_name=None,
+        serialized_run_context=None,
+    )
+
+    model = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(model, TestModel)
+
+
+def test_temporal_model_resolve_model_unregistered_key():
+    """Test _resolve_model raises error for unregistered model key."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='resolve_unregistered')
+    temporal_agent = TemporalAgent(agent, name='resolve_unregistered')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    params = SimpleNamespace(
+        model_key='unknown_model',
+        model_name=None,
+        serialized_run_context=None,
+    )
+
+    with pytest.raises(UserError, match='Model "unknown_model" is not registered'):
+        temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_temporal_model_infer_model_no_provider_factory(monkeypatch: MonkeyPatch):
+    """Test _infer_model falls back to models.infer_model when no provider_factory."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='infer_no_factory')
+    temporal_agent = TemporalAgent(agent, name='infer_no_factory')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    # Mock infer_model to return a test model
+    infer_calls: list[str] = []
+
+    def mock_infer_model(model_name: str, **kwargs: Any) -> TestModel:
+        infer_calls.append(model_name)
+        # Should not have provider_factory kwarg
+        assert 'provider_factory' not in kwargs
+        return TestModel()
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
+
+    params = SimpleNamespace(
+        model_key=None,
+        model_name=None,
+        serialized_run_context=None,
+    )
+
+    temporal_model._infer_model('test:model', params, None)  # pyright: ignore[reportPrivateUsage]
+    assert infer_calls == ['test:model']
+
+
+def test_temporal_model_infer_model_no_serialized_context(monkeypatch: MonkeyPatch):
+    """Test _infer_model when serialized_run_context is None."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='infer_no_context')
+
+    provider_calls: list[tuple[str, Any, Any]] = []
+
+    def mock_provider_factory(
+        provider_name: str,
+        run_context: RunContext[Any] | None,
+        deps: Any | None,
+    ) -> Provider[Any]:
+        provider_calls.append((provider_name, run_context, deps))
+        # Return a mock provider
+
+        class MockProvider(Provider[None]):
+            def __init__(self) -> None:
+                self._client = None
+
+            @property
+            def name(self) -> str:  # pragma: no cover
+                return 'mock'
+
+            @property
+            def base_url(self) -> str:  # pragma: no cover
+                return 'https://example.com'
+
+            @property
+            def client(self) -> None:  # pragma: no cover
+                return None
+
+        return MockProvider()
+
+    temporal_agent = TemporalAgent(
+        agent,
+        name='infer_no_context',
+        provider_factory=mock_provider_factory,
+    )
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    def mock_infer_model(model_name: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:
+        # Call the provider factory to exercise the branch
+        provider_factory('test_provider')
+        return TestModel()
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
+
+    params = SimpleNamespace(
+        model_key=None,
+        model_name=None,
+        serialized_run_context=None,  # No serialized context
+    )
+
+    temporal_model._infer_model('test:model', params, {'key': 'value'})  # pyright: ignore[reportPrivateUsage]
+
+    # The provider factory should have been called with None for run_context
+    # because serialized_run_context was None
+    assert len(provider_calls) == 1
+    assert provider_calls[0][0] == 'test_provider'
+    assert provider_calls[0][1] is None  # run_context should be None
+    assert provider_calls[0][2] == {'key': 'value'}  # deps passed through

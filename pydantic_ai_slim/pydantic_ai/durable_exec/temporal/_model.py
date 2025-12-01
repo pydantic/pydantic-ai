@@ -122,7 +122,7 @@ class TemporalModel(WrapperModel):
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
 
-            if params.serialized_run_context is None:
+            if params.serialized_run_context is None:  # pragma: no cover
                 raise UserError('Serialized run context is required for Temporal streaming activities.')
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             model_for_request = self._resolve_model(params, deps)
