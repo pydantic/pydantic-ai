@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Literal
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import BaseModel
+from pytest import MonkeyPatch
 
 from pydantic_ai import (
     Agent,
@@ -46,6 +48,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -72,7 +75,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
-    from pydantic_ai.durable_exec.temporal._model import TemporalModel, _RequestParams
+    from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -107,7 +110,7 @@ with workflow.unsafe.imports_passed_through():
     # Workaround for a race condition when running `logfire.info` inside an activity with attributes to serialize and pandas importable:
     # AttributeError: partially initialized module 'pandas' has no attribute '_pandas_parser_CAPI' (most likely due to a circular import)
     try:
-        import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+        import pandas  # pyright: ignore[reportMissingImports,reportUnusedImport] # noqa: F401
     except ImportError:  # pragma: lax no cover
         pass
 
@@ -127,6 +130,11 @@ pytestmark = [
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
 http_client = cached_async_http_client(provider='temporal')
+
+
+def _temporal_activity_name(activity: Callable[..., Any]) -> str | None:
+    definition = getattr(activity, '__temporal_activity_definition', None)
+    return getattr(definition, 'name', None)
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -1384,7 +1392,7 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
 class SimpleAgentWorkflowWithRunModel:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, model=model)  # type: ignore[arg-type]
+        result = await simple_temporal_agent.run(prompt, model=model)
         return result.output  # pragma: no cover
 
 
@@ -2526,8 +2534,9 @@ async def test_temporal_agent_multi_model_registration():
     assert temporal_agent._registered_model_names == {}  # pyright: ignore[reportPrivateUsage]
 
     activity_names = {
-        a.__temporal_activity_definition.name
-        for a in temporal_agent.temporal_activities  # type: ignore[attr-defined]
+        name
+        for activity in temporal_agent.temporal_activities
+        if (name := _temporal_activity_name(activity)) is not None
     }
     assert 'agent__multi_model_test__model_request' in activity_names
     assert 'agent__multi_model_test__model_request_stream' in activity_names
@@ -2666,7 +2675,11 @@ async def test_temporal_agent_multi_model_backward_compatibility():
     assert temporal_agent.model.wrapped == test_model
 
     # Activity names should only include the default request/stream pair
-    activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}  # type: ignore[attr-defined]
+    activity_names = {
+        name
+        for activity in temporal_agent.temporal_activities
+        if (name := _temporal_activity_name(activity)) is not None
+    }
     assert 'agent__backward_compat_test__model_request' in activity_names
     assert 'agent__backward_compat_test__model_request_stream' in activity_names
 
@@ -2743,7 +2756,7 @@ async def test_temporal_agent_model_without_model_name():
         TemporalAgent(
             agent,
             name='no_model_name_test',
-            additional_models=[test_model2],
+            additional_models=cast(Any, [test_model2]),
         )
 
 
@@ -2785,19 +2798,35 @@ async def test_temporal_agent_disallows_model_instances_in_selection():
         temporal_agent._select_model(TestModel())  # pyright: ignore[reportPrivateUsage]
 
 
-def test_temporal_agent_provider_factory_uses_run_context(monkeypatch):
+def test_temporal_agent_provider_factory_uses_run_context(monkeypatch: MonkeyPatch) -> None:
     """Ensure provider_factory receives both run context data and deps."""
     base_model = TestModel()
     agent = Agent(base_model, name='provider_factory_test')
     provider_calls: list[tuple[str, RunContext[dict[str, str]] | None, dict[str, str] | None]] = []
 
+    class DummyProvider(Provider[None]):
+        def __init__(self) -> None:
+            self._client = None
+
+        @property
+        def name(self) -> str:
+            return 'dummy'
+
+        @property
+        def base_url(self) -> str:
+            return 'https://example.com'
+
+        @property
+        def client(self) -> None:
+            return None
+
     def provider_factory(
         provider_name: str,
         run_context: RunContext[dict[str, str]] | None,
         deps: dict[str, str] | None,
-    ) -> object:
+    ) -> Provider[Any]:
         provider_calls.append((provider_name, run_context, deps))
-        return object()
+        return DummyProvider()
 
     temporal_agent = TemporalAgent(
         agent,
@@ -2812,7 +2841,7 @@ def test_temporal_agent_provider_factory_uses_run_context(monkeypatch):
         run_id='run-123',
     )
     serialized_ctx = TemporalRunContext.serialize_run_context(run_ctx)
-    params = _RequestParams(
+    params: Any = SimpleNamespace(
         messages=[],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
@@ -2822,9 +2851,10 @@ def test_temporal_agent_provider_factory_uses_run_context(monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def fake_infer_model(model_spec: str, provider_factory):
+    def fake_infer_model(model_spec: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:
         captured['model_spec'] = model_spec
-        provider_factory('openai')
+        provider_instance = provider_factory('openai')
+        assert isinstance(provider_instance, Provider)
         return TestModel()
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', fake_infer_model)
@@ -2833,6 +2863,7 @@ def test_temporal_agent_provider_factory_uses_run_context(monkeypatch):
 
     assert captured['model_spec'] == 'openai:gpt-4o'
     assert provider_calls[0][0] == 'openai'
-    assert provider_calls[0][1] is not None
-    assert provider_calls[0][1].run_id == 'run-123'  # type: ignore[union-attr]
+    provider_run_ctx = provider_calls[0][1]
+    assert provider_run_ctx is not None
+    assert provider_run_ctx.run_id == 'run-123'
     assert provider_calls[0][2] == {'api_key': 'secret'}
