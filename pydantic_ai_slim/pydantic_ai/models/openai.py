@@ -1521,8 +1521,7 @@ class OpenAIResponsesModel(Model):
         - Sends `content` back as `summary` text
         - Sends `provider_details['raw_content']` back as `content` items (for gpt-oss raw CoT)
 
-        Raw CoT is sent back to improve model performance in multi-turn conversations,
-        as recommended by the OpenAI Cookbook for gpt-oss models.
+        Raw CoT is sent back to improve model performance in multi-turn conversations.
         """
         profile = OpenAIModelProfile.from_profile(self.profile)
         send_item_ids = model_settings.get(
@@ -2341,10 +2340,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
 
 def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
-    """Create a callback that updates raw_content in provider_details.
+    """Create a callback that updates `provider_details['raw_content']`.
 
     This is used for streaming raw CoT from gpt-oss models. The callback pattern keeps
-    raw_content logic in OpenAI code while the parts manager stays provider-agnostic.
+    `raw_content` logic in OpenAI code while the parts manager stays provider-agnostic.
     """
 
     def update_provider_details(existing: dict[str, Any] | None) -> dict[str, Any]:

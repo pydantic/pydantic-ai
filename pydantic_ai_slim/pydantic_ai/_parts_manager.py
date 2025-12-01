@@ -221,7 +221,7 @@ class ModelResponsePartsManager:
             signature: An optional signature for the thinking content.
             provider_name: An optional provider name for the thinking part.
             provider_details: Either a dict of provider-specific details, or a callable that takes
-                the existing part's provider_details and returns the updated details. Callables
+                the existing part's `provider_details` and returns the updated details. Callables
                 allow provider-specific update logic without the parts manager knowing the details.
 
         Yields:
