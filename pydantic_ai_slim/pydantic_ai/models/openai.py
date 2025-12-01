@@ -8,7 +8,8 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Se
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from functools import cached_property
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from pydantic_core import to_json
@@ -462,15 +463,23 @@ class OpenAIChatModel(Model):
         """The model provider."""
         return self._provider.name
 
-    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model can handle.
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool})
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
 
         WebSearchTool is only supported if openai_chat_supports_web_search is True.
         """
-        openai_profile = OpenAIModelProfile.from_profile(profile)
-        if openai_profile.openai_chat_supports_web_search:
-            return frozenset({WebSearchTool})
-        return frozenset()
+        _profile = super().profile
+        openai_profile = OpenAIModelProfile.from_profile(_profile)
+        if not openai_profile.openai_chat_supports_web_search:
+            new_tools = _profile.supported_builtin_tools - {WebSearchTool}
+            _profile = replace(_profile, supported_builtin_tools=new_tools)
+        return _profile
 
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
@@ -1152,7 +1161,8 @@ class OpenAIResponsesModel(Model):
         """The model provider."""
         return self._provider.name
 
-    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, ImageGenerationTool})
 

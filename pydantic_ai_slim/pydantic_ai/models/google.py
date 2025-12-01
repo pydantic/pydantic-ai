@@ -37,7 +37,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
@@ -230,7 +230,8 @@ class GoogleModel(Model):
         """The model provider."""
         return self._provider.name
 
-    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, ImageGenerationTool})
 

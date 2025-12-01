@@ -201,7 +201,8 @@ class FunctionModel(Model):
         """The system / model provider."""
         return self._system
 
-    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """FunctionModel supports all builtin tools for testing flexibility."""
         from ..builtin_tools import get_builtin_tool_types
 

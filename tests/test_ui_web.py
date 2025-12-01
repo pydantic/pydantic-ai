@@ -169,22 +169,6 @@ def test_chat_app_index_caching():
         assert response2.status_code == 200
 
 
-def test_get_agent_missing():
-    """Test that _get_agent raises RuntimeError when agent is not configured."""
-    from pydantic_ai.ui._web.api import _get_agent  # pyright: ignore[reportPrivateUsage]
-
-    app = Starlette()
-
-    class FakeRequest:
-        def __init__(self, app: Starlette):
-            self.app = app
-
-    request = FakeRequest(app)
-
-    with pytest.raises(RuntimeError, match='No agent configured'):
-        _get_agent(request)  # pyright: ignore[reportArgumentType]
-
-
 @pytest.mark.anyio
 async def test_post_chat_endpoint():
     """Test the POST /api/chat endpoint."""

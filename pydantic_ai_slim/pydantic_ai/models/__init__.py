@@ -717,11 +717,9 @@ class Model(ABC):
         """Human-friendly display label for the model."""
         return _format_model_label(self.model_name)
 
-    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model can handle.
-
-        Args:
-            profile: The resolved model profile (passed to avoid circular dependency with self.profile)
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model class can handle.
 
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.
@@ -744,7 +742,7 @@ class Model(ABC):
             _profile = DEFAULT_PROFILE
 
         # Compute intersection: profile's allowed tools & model's implemented tools
-        model_supported = self.supported_builtin_tools(_profile)
+        model_supported = self.__class__.supported_builtin_tools()
         profile_supported = _profile.supported_builtin_tools
         effective_tools = profile_supported & model_supported
 

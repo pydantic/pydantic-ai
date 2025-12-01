@@ -127,9 +127,13 @@ def create_web_app(
 
     app = Starlette()
 
-    app.state.agent = agent
-
-    add_api_routes(app, models=resolved_models, builtin_tools=builtin_tools, toolsets=toolsets)
+    add_api_routes(
+        app,
+        agent=agent,  # pyright: ignore[reportArgumentType]
+        models=resolved_models,
+        builtin_tools=builtin_tools,
+        toolsets=toolsets,
+    )
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
