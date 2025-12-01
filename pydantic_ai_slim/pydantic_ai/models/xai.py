@@ -88,14 +88,53 @@ class XaiModelSettings(ModelSettings, total=False):
     top_logprobs: int
     """An integer between 0 and 20 specifying the number of most likely tokens to return at each position."""
 
-    use_encrypted_content: bool
-    """Whether to use encrypted content for reasoning continuity."""
-
     store_messages: bool
     """Whether to store messages on xAI's servers for conversation continuity."""
 
     user: str
     """A unique identifier representing your end-user, which can help xAI to monitor and detect abuse."""
+
+    xai_include_encrypted_content: bool
+    """Whether to include the encrypted content in the response.
+
+    Corresponds to the `use_encrypted_content` value of the model settings in the Responses API.
+    """
+
+    xai_include_code_execution_outputs: bool
+    """Whether to include the code execution results in the response.
+
+    Corresponds to the `code_interpreter_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_web_search_outputs: bool
+    """Whether to include the web search results in the response.
+
+    Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_x_search_outputs: bool
+    """Whether to include the x search results in the response.
+
+    Corresponds to the `x_search_call.action.sources` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_document_search_outputs: bool
+    """Whether to include the document search results in the response.
+
+    Corresponds to the `document_search_call.action.sources` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_collections_search_outputs: bool
+    """Whether to include the collections search results in the response.
+
+    Corresponds to the `collections_search_call.action.sources` value of the `include` parameter in the Responses API.
+    """
+
+    xai_include_mcp_outputs: bool
+    """Whether to include the MCP results in the response.
+
+    Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
+    """
 
 
 class XaiModel(Model):
@@ -396,7 +435,7 @@ class XaiModel(Model):
     async def _create_chat(
         self,
         messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
+        model_settings: XaiModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> Any:
         """Create an xAI chat instance with common setup for both request and stream.
@@ -420,12 +459,10 @@ class XaiModel(Model):
         tools_param = tools if tools else None
 
         # Set tool_choice based on whether tools are available and text output is allowed
+        profile = GrokModelProfile.from_profile(self.profile)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif (
-            not model_request_parameters.allow_text_output
-            and GrokModelProfile.from_profile(self.profile).grok_supports_tool_choice_required
-        ):
+        elif not model_request_parameters.allow_text_output and profile.grok_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -437,14 +474,30 @@ class XaiModel(Model):
             assert output_object is not None
             response_format = self._map_json_schema(output_object)
         elif (
-            model_request_parameters.output_mode == 'prompted'
-            and not tools
-            and self.profile.supports_json_object_output
+            model_request_parameters.output_mode == 'prompted' and not tools and profile.supports_json_object_output
         ):  # pragma: no branch
             response_format = self._map_json_object()
 
         # Map model settings to xAI SDK parameters
         xai_settings = self._map_model_settings(model_settings)
+
+        # Populate use_encrycpted_content and include based on model settings
+        include: list[chat_pb2.IncludeOption] = []
+        use_encrypted_content = False
+        if profile.grok_supports_encrypted_reasoning_content and model_settings.get('xai_include_encrypted_content'):
+            use_encrypted_content = True
+        if model_settings.get('xai_include_code_execution_outputs'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
+        if model_settings.get('xai_include_web_search_outputs'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_x_search_outputs'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_document_search_outputs'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_DOCUMENT_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_collections_search_outputs'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_mcp_outputs'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
         # Create and return chat instance
         return self._provider.client.chat.create(
@@ -453,6 +506,8 @@ class XaiModel(Model):
             tools=tools_param,
             tool_choice=tool_choice,
             response_format=response_format,
+            use_encrypted_content=use_encrypted_content,
+            include=include,
             **xai_settings,
         )
 
@@ -469,7 +524,7 @@ class XaiModel(Model):
             model_request_parameters,
         )
 
-        chat = await self._create_chat(messages, model_settings, model_request_parameters)
+        chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
         response = await chat.sample()
         return self._process_response(response)
 
@@ -488,7 +543,7 @@ class XaiModel(Model):
             model_request_parameters,
         )
 
-        chat = await self._create_chat(messages, model_settings, model_request_parameters)
+        chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
         response_stream = chat.stream()
         yield await self._process_streamed_response(response_stream, model_request_parameters)
 
@@ -725,13 +780,10 @@ class XaiModel(Model):
         return chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)
 
     @staticmethod
-    def _map_model_settings(model_settings: ModelSettings | None) -> dict[str, Any]:
+    def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
         """Map pydantic_ai ModelSettings to xAI SDK parameters."""
-        if not model_settings:
-            return {}
-
         # Mapping of pydantic_ai setting keys to xAI SDK parameter names
-        # Most keys are the same, but 'stop_sequences' maps to 'stop'
+        # Most keys are the same, but 'stop' maps to 'stop_sequences'
         setting_mapping = {
             'temperature': 'temperature',
             'top_p': 'top_p',
@@ -743,8 +795,8 @@ class XaiModel(Model):
             'logprobs': 'logprobs',
             'top_logprobs': 'top_logprobs',
             'reasoning_effort': 'reasoning_effort',
-            'use_encrypted_content': 'use_encrypted_content',
             'store_messages': 'store_messages',
+            'previous_response_id': 'previous_response_id',
             'user': 'user',
         }
 
@@ -879,7 +931,9 @@ class XaiStreamedResponse(StreamedResponse):
             if event is not None:
                 yield event
 
-    def _handle_single_tool_call(self, tool_call: chat_types.chat_pb2.ToolCall) -> Iterator[ModelResponseStreamEvent]:
+    def _handle_single_tool_call(
+        self, tool_call: chat_types.chat_pb2.ToolCall, response: chat_types.Response
+    ) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single tool call, routing to server-side or client-side handler."""
         if not tool_call.function.name:
             return
@@ -896,22 +950,36 @@ class XaiStreamedResponse(StreamedResponse):
             # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
             # These tools are already executed by xAI's infrastructure
             builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
-            call_part = BuiltinToolCallPart(
-                tool_name=builtin_tool_name,
-                args=tool_call.function.arguments,
-                tool_call_id=tool_call.id,
-                provider_name=self.system,
-            )
-            yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
+            if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+                # Get the tool result from response.content
+                # Try to parse as JSON if possible, otherwise use as string or dict
+                tool_result_content: dict[str, Any] | str
+                if response.content:
+                    try:
+                        # Try to parse as JSON first
+                        tool_result_content = json.loads(response.content)
+                    except (json.JSONDecodeError, TypeError):
+                        # If not JSON, use as string or wrap in a dict
+                        tool_result_content = response.content
+                else:
+                    # Fallback to status if no content available
+                    tool_result_content = {'status': 'completed'}
 
-            # Immediately yield the return part since the tool was already executed
-            return_part = BuiltinToolReturnPart(
-                tool_name=builtin_tool_name,
-                content={'status': 'completed'},
-                tool_call_id=tool_call.id,
-                provider_name=self.system,
-            )
-            yield self._parts_manager.handle_part(vendor_part_id=f'{tool_call.id}_return', part=return_part)
+                return_part = BuiltinToolReturnPart(
+                    tool_name=builtin_tool_name,
+                    content=tool_result_content,
+                    tool_call_id=tool_call.id,
+                    provider_name=self.system,
+                )
+                yield self._parts_manager.handle_part(vendor_part_id=f'{tool_call.id}_return', part=return_part)
+            else:
+                call_part = BuiltinToolCallPart(
+                    tool_name=builtin_tool_name,
+                    args=tool_call.function.arguments,
+                    tool_call_id=tool_call.id,
+                    provider_name=self.system,
+                )
+                yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
         else:
             # Client-side tools - use standard handler
             yield self._parts_manager.handle_tool_call_part(
@@ -927,7 +995,7 @@ class XaiStreamedResponse(StreamedResponse):
             return
 
         for tool_call in response.tool_calls:
-            yield from self._handle_single_tool_call(tool_call)
+            yield from self._handle_single_tool_call(tool_call, response)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate over streaming events from xAI SDK."""

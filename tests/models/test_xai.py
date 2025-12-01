@@ -14,8 +14,6 @@ For builtin tool tests, we use simplified mocks that verify:
 We DO NOT mock the actual server-side tool execution (tool calls and results from xAI's infrastructure)
 because that would require complex protobuf mocking that doesn't add significant test value. Instead,
 we verify the wiring and keep a few live integration tests for smoke testing.
-
-See XAI_MOCKING_DESIGN.md for detailed rationale and comparison with other providers.
 """
 
 from __future__ import annotations as _annotations
@@ -61,7 +59,6 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -437,6 +434,89 @@ def grok_reasoning_text_chunk(
     return (cast(chat_types.Response, response), chunk)
 
 
+def _generate_tool_result_content(tool_call: Any) -> str:
+    """Generate appropriate JSON content for completed server-side tool calls.
+
+    Args:
+        tool_call: The MockXaiServerToolCall object
+
+    Returns:
+        JSON string with tool result content
+    """
+    tool_name = tool_call.function.name
+    tool_type = tool_call.type
+
+    # Code execution tool
+    if tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL:
+        code = ''
+        if isinstance(tool_call.function.arguments, dict):
+            code = str(tool_call.function.arguments.get('code', ''))  # type: ignore[arg-type]
+        return json.dumps(
+            {
+                'output': f'Code execution result for: {code}',
+                'return_code': 0,
+                'stderr': '',
+            }
+        )
+
+    # MCP tool
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL:
+        return json.dumps(
+            {
+                'result': {
+                    'content': [{'type': 'text', 'text': f'MCP tool {tool_name} executed successfully'}],
+                },
+            }
+        )
+
+    # Document search tool
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_DOCUMENT_SEARCH_TOOL:
+        return json.dumps(
+            {
+                'documents': [
+                    {
+                        'id': 'doc_1',
+                        'title': 'Sample Document',
+                        'content': 'Sample document content',
+                        'url': 'https://example.com/doc1',
+                    }
+                ],
+            }
+        )
+
+    # Collections search tool
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL:
+        return json.dumps(
+            {
+                'results': [
+                    {
+                        'id': 'collection_1',
+                        'name': 'Sample Collection',
+                        'description': 'Sample collection description',
+                    }
+                ],
+            }
+        )
+
+    # Web search tool (results are typically in text_content, but we can add a status)
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL:
+        return json.dumps(
+            {
+                'status': 'completed',
+                'results': [
+                    {
+                        'title': 'Sample Search Result',
+                        'url': 'https://example.com',
+                        'snippet': 'Sample search result snippet',
+                    }
+                ],
+            }
+        )
+
+    # Default: return a simple status
+    return json.dumps({'status': 'completed'})
+
+
 def grok_builtin_tool_chunk(
     tool_call: Any,
     response_id: str = 'grok-builtin',
@@ -449,13 +529,18 @@ def grok_builtin_tool_chunk(
         response_id: The response ID
         finish_reason: The finish reason (usually empty for tool call chunks)
     """
+    # Generate content for completed tools based on tool type
+    content = ''
+    if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+        content = _generate_tool_result_content(tool_call)
+
     # Create chunk (delta) - the tool call
     chunk = MockXaiResponseChunk(content='', tool_calls=[tool_call])
 
-    # Create response (accumulated) - same tool call
+    # Create response (accumulated) - same tool call with content
     response = MockXaiResponse(
         id=response_id,
-        content='',
+        content=content,
         tool_calls=[tool_call],
         finish_reason=finish_reason if finish_reason else '',
         usage=create_usage(prompt_tokens=2, completion_tokens=1) if finish_reason else None,
@@ -1125,50 +1210,40 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None):
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'weather San Francisco'},
-                    tool_call_id='ws_stream_001',
-                    provider_name='xai',
-                ),
-            ),
-            PartEndEvent(
-                index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'weather San Francisco'},
-                    tool_call_id='ws_stream_001',
-                    provider_name='xai',
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed'},
+                    content={
+                        'status': 'completed',
+                        'results': [
+                            {
+                                'title': 'Sample Search Result',
+                                'url': 'https://example.com',
+                                'snippet': 'Sample search result snippet',
+                            }
+                        ],
+                    },
                     tool_call_id='ws_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
-                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content='The weather '), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=1, part=TextPart(content='The weather '), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='is sunny.')),
-            PartEndEvent(index=2, part=TextPart(content='The weather is sunny.')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'weather San Francisco'},
-                    tool_call_id='ws_stream_001',
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='is sunny.')),
+            PartEndEvent(index=1, part=TextPart(content='The weather is sunny.')),
+            BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed'},
+                    content={
+                        'status': 'completed',
+                        'results': [
+                            {
+                                'title': 'Sample Search Result',
+                                'url': 'https://example.com',
+                                'snippet': 'Sample search result snippet',
+                            }
+                        ],
+                    },
                     tool_call_id='ws_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
@@ -1281,50 +1356,22 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': '2 + 2'},
-                    tool_call_id='code_stream_001',
-                    provider_name='xai',
-                ),
-            ),
-            PartEndEvent(
-                index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': '2 + 2'},
-                    tool_call_id='code_stream_001',
-                    provider_name='xai',
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'output': 'Code execution result for: 2 + 2', 'return_code': 0, 'stderr': ''},
                     tool_call_id='code_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
-                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content='The result '), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=1, part=TextPart(content='The result '), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='is 4')),
-            PartEndEvent(index=2, part=TextPart(content='The result is 4')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': '2 + 2'},
-                    tool_call_id='code_stream_001',
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='is 4')),
+            PartEndEvent(index=1, part=TextPart(content='The result is 4')),
+            BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'status': 'completed'},
+                    content={'output': 'Code execution result for: 2 + 2', 'return_code': 0, 'stderr': ''},
                     tool_call_id='code_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
@@ -1609,41 +1656,30 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None):
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:linear', args={}, tool_call_id='mcp_stream_001', provider_name='xai'
-                ),
-            ),
-            PartEndEvent(
-                index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:linear', args={}, tool_call_id='mcp_stream_001', provider_name='xai'
-                ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='mcp_server:linear',
-                    content={'status': 'completed'},
+                    content={
+                        'result': {
+                            'content': [{'type': 'text', 'text': 'MCP tool linear.list_issues executed successfully'}]
+                        }
+                    },
                     tool_call_id='mcp_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                 ),
-                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content='No issues '), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(index=1, part=TextPart(content='No issues '), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='found.')),
-            PartEndEvent(index=2, part=TextPart(content='No issues found.')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:linear', args={}, tool_call_id='mcp_stream_001', provider_name='xai'
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='found.')),
+            PartEndEvent(index=1, part=TextPart(content='No issues found.')),
+            BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='mcp_server:linear',
-                    content={'status': 'completed'},
+                    content={
+                        'result': {
+                            'content': [{'type': 'text', 'text': 'MCP tool linear.list_issues executed successfully'}]
+                        }
+                    },
                     tool_call_id='mcp_stream_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',

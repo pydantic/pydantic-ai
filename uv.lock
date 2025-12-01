@@ -5762,7 +5762,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'outlines-transformers'", specifier = ">=4.0.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "vllm", marker = "(python_full_version < '3.12' and platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'outlines-vllm-offline')" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.4.0" },
+    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.4.1" },
 ]
 provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "tavily", "temporal", "ui", "vertexai", "xai"]
 
@@ -8637,7 +8637,7 @@ wheels = [
 
 [[package]]
 name = "xai-sdk"
-version = "1.4.0"
+version = "1.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -8648,9 +8648,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/cf/c9ccc20bd419f4fce088cd3e1778fb6b3420526ff4599c2bf6caf1427e99/xai_sdk-1.4.0.tar.gz", hash = "sha256:90e6e0b929395816a8474a332e6d996fbd7c56c3e9922b3894d14ef90b4adc37", size = 314502, upload-time = "2025-11-07T23:55:07.722Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/ce/84195adc91503152f81ca3a32ec41d245238b50a1afbe7e2def9cd83bbe8/xai_sdk-1.4.1.tar.gz", hash = "sha256:127c437853e3eb1794f3f2963400613a91cb1056eb8ab61de351c87a3e6520fc", size = 326414, upload-time = "2025-11-26T23:43:02.624Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/e5/8cbdd56008e8194880151f151db62b1b2331d51de8f8e788b91524279611/xai_sdk-1.4.0-py3-none-any.whl", hash = "sha256:2635d661995ef1424fd5b5de6a9b7d6a11bad49a34afb19b04a330c40d90e0d1", size = 185691, upload-time = "2025-11-07T23:55:06.168Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/03/e4d27650365c5d386166864f67dea0b1c9f02295dba42472a2f7c7d90676/xai_sdk-1.4.1-py3-none-any.whl", hash = "sha256:0aae3c44978f5ec4e73a44edf62f06b96d1d670f1ae30baec4eca05f20cab9ee", size = 191941, upload-time = "2025-11-26T23:43:01.057Z" },
 ]
 
 [[package]]

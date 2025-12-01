@@ -258,6 +258,8 @@ class MockXaiServerToolCall:
     #   7=DOCUMENT_SEARCH_TOOL, 9=LOCATIONS_SEARCH_TOOL
     type: chat_pb2.ToolCallType
     function: Any  # MockXaiFunction with name and arguments
+    status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED
+    error_message: str = ''
 
     def WhichOneof(self, field: str) -> str | None:
         """Mimic protobuf's WhichOneof method for compatibility with get_tool_call_type()."""
@@ -283,6 +285,8 @@ def create_server_tool_call(
     *,
     tool_call_id: str = 'server_tool_001',
     tool_type: chat_pb2.ToolCallType = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
+    status: chat_pb2.ToolCallStatus = chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+    error_message: str = '',
 ) -> MockXaiServerToolCall:
     """Create a mock server-side tool call.
 
@@ -294,6 +298,8 @@ def create_server_tool_call(
             - TOOL_CALL_TYPE_WEB_SEARCH_TOOL
             - TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
             - TOOL_CALL_TYPE_MCP_TOOL
+        status: Status of the tool call. Defaults to TOOL_CALL_STATUS_COMPLETED.
+        error_message: Error message if the tool call failed.
 
     Returns:
         MockXaiServerToolCall that will be recognized as a server-side tool
@@ -309,6 +315,8 @@ def create_server_tool_call(
         id=tool_call_id,
         type=tool_type,
         function=MockXaiFunction(name=tool_name, arguments=arguments),
+        status=status,
+        error_message=error_message,
     )
 
 
@@ -350,13 +358,32 @@ def create_code_execution_response(
         arguments={'code': code},
         tool_call_id=tool_call_id,
         tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
+
+    # If text_content is provided, use it as the response content (text response after tool execution)
+    # Otherwise, populate with tool result JSON for completed tools
+    import json
+
+    if text_content:
+        # When text_content is provided, that's the model's text response
+        # The tool result will use the fallback {'status': 'completed'} in the model code
+        response_content = text_content
+    else:
+        # When no text_content, populate with tool result JSON
+        response_content = json.dumps(
+            {
+                'output': output,
+                'return_code': return_code,
+                'stderr': stderr,
+            }
+        )
 
     return cast(
         chat_types.Response,
         MockXaiResponse(
             id=f'grok-{tool_call_id}',
-            content=text_content,
+            content=response_content,
             tool_calls=[tool_call],
             finish_reason='stop',
         ),
@@ -397,13 +424,31 @@ def create_web_search_response(
         arguments={'query': query},
         tool_call_id=tool_call_id,
         tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
+
+    # If text_content is provided, use it as the response content (text response after tool execution)
+    # Otherwise, populate with tool result JSON for completed tools
+    import json
+
+    if text_content:
+        # When text_content is provided, that's the model's text response
+        # The tool result will use the fallback {'status': 'completed'} in the model code
+        response_content = text_content
+    else:
+        # When no text_content, populate with tool result JSON
+        response_content = json.dumps(
+            {
+                'status': 'completed',
+                'results': results,
+            }
+        )
 
     return cast(
         chat_types.Response,
         MockXaiResponse(
             id=f'grok-{tool_call_id}',
-            content=text_content,
+            content=response_content,
             tool_calls=[tool_call],
             finish_reason='stop',
         ),
@@ -448,13 +493,32 @@ def create_mcp_server_response(
         arguments=tool_input,
         tool_call_id=tool_call_id,
         tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
+
+    # If text_content is provided, use it as the response content (text response after tool execution)
+    # Otherwise, populate with tool result JSON for completed tools
+    import json
+
+    if text_content:
+        # When text_content is provided, that's the model's text response
+        # The tool result will use the fallback {'status': 'completed'} in the model code
+        response_content = text_content
+    else:
+        # When no text_content, populate with tool result JSON
+        response_content = json.dumps(
+            {
+                'result': {
+                    'content': [{'type': 'text', 'text': f'MCP tool {full_tool_name} executed successfully'}],
+                },
+            }
+        )
 
     return cast(
         chat_types.Response,
         MockXaiResponse(
             id=f'grok-{tool_call_id}',
-            content=text_content,
+            content=response_content,
             tool_calls=[tool_call],
             finish_reason='stop',
         ),
