@@ -3091,3 +3091,114 @@ def test_temporal_model_infer_model_no_serialized_context(monkeypatch: MonkeyPat
     assert provider_calls[0][0] == 'test_provider'
     assert provider_calls[0][1] is None  # run_context should be None
     assert provider_calls[0][2] == {'key': 'value'}  # deps passed through
+
+
+def test_temporal_model_resolve_model_by_model_name(monkeypatch: MonkeyPatch):
+    """Test _resolve_model when model_name is set (but model_key is not)."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='resolve_by_name')
+    temporal_agent = TemporalAgent(agent, name='resolve_by_name')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    infer_calls: list[str] = []
+
+    def mock_infer_model(model_name: str, **kwargs: Any) -> TestModel:
+        infer_calls.append(model_name)
+        return TestModel()
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
+
+    # model_key is None, but model_name is set - should call _infer_model
+    params = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_key=None,
+        model_name='openai:gpt-4o',
+    )
+
+    result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(result, TestModel)
+    assert infer_calls == ['openai:gpt-4o']
+
+
+def test_temporal_model_resolve_model_fallback_to_wrapped():
+    """Test _resolve_model returns wrapped model when no model_key or model_name."""
+    test_model = TestModel(custom_output_text='wrapped model response')
+    agent = Agent(test_model, name='resolve_fallback')
+    temporal_agent = TemporalAgent(agent, name='resolve_fallback')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    # Both model_key and model_name are None - should return wrapped model
+    params = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_key=None,
+        model_name=None,
+    )
+
+    result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
+    # Should return the wrapped model (the original test_model)
+    assert result is test_model
+
+
+def test_temporal_model_request_with_run_context(monkeypatch: MonkeyPatch):
+    """Test that request() serializes run_context when it's available (lines 161-165)."""
+    from pydantic_ai._run_context import CURRENT_RUN_CONTEXT
+
+    test_model = TestModel()
+    agent: Agent[dict[str, str], str] = Agent(test_model, name='request_with_context', deps_type=dict[str, str])
+    temporal_agent: TemporalAgent[dict[str, str], str] = TemporalAgent(agent, name='request_with_context')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    # Track what gets passed to execute_activity
+    activity_calls: list[tuple[Any, ...]] = []
+
+    async def mock_execute_activity(activity: Any, args: list[Any], **kwargs: Any) -> ModelResponse:
+        activity_calls.append((activity, args, kwargs))
+        return ModelResponse(parts=[TextPart(content='test response')])
+
+    # Mock workflow.in_workflow() to return True
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', lambda: True)
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.workflow.execute_activity', mock_execute_activity)
+
+    # Create a run context with deps
+    run_context = RunContext(
+        deps={'api_key': 'test_key'},
+        model=test_model,
+        usage=RunUsage(),
+        prompt='test prompt',
+        run_id='test-run-id',
+    )
+
+    # Set the current run context
+    token = CURRENT_RUN_CONTEXT.set(run_context)
+    try:
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(
+            temporal_model.request(
+                messages=[],
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            )
+        )
+
+        # Verify execute_activity was called
+        assert len(activity_calls) == 1
+        _, args, _ = activity_calls[0]
+        params = args[0]
+        deps = args[1]
+
+        # The run context should have been serialized (line 162)
+        assert params.serialized_run_context is not None
+        # The deps should have been extracted (line 163)
+        assert deps == {'api_key': 'test_key'}
+    finally:
+        CURRENT_RUN_CONTEXT.reset(token)
