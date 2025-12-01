@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
@@ -102,29 +102,8 @@ ModelProviders = Literal[
 ]
 
 
-def gateway_provider_to_model_names() -> Mapping[ModelProviders, object]:
-    """Get the gateway model name for a given provider.
-
-    Args:
-        provider: The provider to get the model name for.
-    """
-    from pydantic_ai.models.anthropic import AnthropicModelName
-    from pydantic_ai.models.bedrock import BedrockModelName
-    from pydantic_ai.models.google import GoogleModelName
-    from pydantic_ai.models.groq import GroqModelName
-    from pydantic_ai.models.openai import OpenAIModelName
-
-    return {
-        'openai': OpenAIModelName,
-        'groq': GroqModelName,
-        'anthropic': AnthropicModelName,
-        'bedrock': BedrockModelName,
-        'google-vertex': GoogleModelName,
-    }
-
-
-# These are only API formats, but we still support them for convenience.
-ApiFormatProviders = Literal[
+# These are only API flavors, we support them for convenience.
+APIFlavor = Literal[
     'openai-chat',
     'openai-responses',
     'chat',
@@ -133,7 +112,7 @@ ApiFormatProviders = Literal[
     'gemini',
 ]
 
-UpstreamProvider = ModelProviders | ApiFormatProviders
+UpstreamProvider = ModelProviders | APIFlavor
 
 
 def gateway_provider(
