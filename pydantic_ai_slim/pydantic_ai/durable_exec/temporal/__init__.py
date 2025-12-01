@@ -14,7 +14,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 from ...exceptions import UserError
 from ._agent import TemporalAgent
 from ._logfire import LogfirePlugin
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, get_activity_deps, register_activity_deps
 from ._toolset import TemporalWrapperToolset
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'get_activity_deps',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
@@ -93,9 +94,51 @@ class PydanticAIPlugin(SimplePlugin):
 
 
 class AgentPlugin(SimplePlugin):
-    """Temporal worker plugin for a specific Pydantic AI agent."""
+    """Temporal worker plugin for a specific Pydantic AI agent.
 
-    def __init__(self, agent: TemporalAgent[Any, Any]):
+    Args:
+        agent: The TemporalAgent to register activities for.
+        activity_deps: Optional non-serializable dependencies that will be available
+            inside activities via [`get_activity_deps()`][pydantic_ai.durable_exec.temporal.get_activity_deps].
+            This is useful for injecting database clients, Temporal clients, or other
+            resources that should be initialized once at worker startup.
+
+    Example:
+    ```python
+    from dataclasses import dataclass
+    from temporalio.client import Client
+    from temporalio.worker import Worker
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, get_activity_deps
+
+    @dataclass
+    class ActivityDeps:
+        temporal_client: Client
+        db_pool: DatabasePool
+
+    # At worker startup:
+    activity_deps = ActivityDeps(
+        temporal_client=temporal_client,
+        db_pool=get_db_pool(),
+    )
+
+    worker = Worker(
+        temporal_client,
+        task_queue='my-queue',
+        workflows=[MyWorkflow],
+        plugins=[AgentPlugin(agent=temporal_agent, activity_deps=activity_deps)],
+    )
+
+    # In a tool:
+    @agent.tool
+    async def my_tool(ctx: RunContext[MyDeps]) -> str:
+        activity_deps = get_activity_deps()
+        return await activity_deps.db_pool.fetch("...")
+    ```
+    """
+
+    def __init__(self, agent: TemporalAgent[Any, Any], activity_deps: Any = None):
+        if activity_deps is not None and agent.name is not None:
+            register_activity_deps(agent.name, activity_deps)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=agent.temporal_activities,

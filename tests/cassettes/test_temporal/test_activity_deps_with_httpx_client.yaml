@@ -1,0 +1,57 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '351'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use the tool to check the connection
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Tool that uses an httpx client from activity deps.
+          name: tool_using_httpx_client
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '262'
+      content-type:
+      - application/json; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: invalid_api_key
+        message: 'Incorrect API key provided: mock-api-key. You can find your API key at https://platform.openai.com/account/api-keys.'
+        param: null
+        type: invalid_request_error
+    status:
+      code: 401
+      message: Unauthorized
+version: 1

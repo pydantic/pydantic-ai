@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Literal
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -2356,3 +2357,210 @@ async def test_beta_graph_parallel_execution_in_workflow(client: Client):
         # Results can be in any order due to parallel execution
         # 10 * 2 = 20, 10 * 3 = 30, 10 * 4 = 40
         assert sorted(output) == [20, 30, 40]
+
+
+# ============================================================================
+# Activity Dependency Injection Tests
+# ============================================================================
+
+
+@dataclass
+class ActivityDepsWithHttpx:
+    """Activity-level dependencies with a real httpx client (non-serializable)."""
+
+    http_client: httpx.AsyncClient
+    connection_string: str
+
+
+# Track httpx client usage to verify it works in activities
+httpx_client_used: list[bool] = []
+
+
+async def tool_using_httpx_client(ctx: RunContext[None]) -> str:
+    """Tool that uses an httpx client from activity deps."""
+    from pydantic_ai.durable_exec.temporal import get_activity_deps
+
+    activity_deps = get_activity_deps()
+    if activity_deps is None:
+        return 'no_activity_deps'
+
+    # Verify we have an actual httpx.AsyncClient
+    assert isinstance(activity_deps.http_client, httpx.AsyncClient)
+    httpx_client_used.append(True)
+
+    # Return the connection string to prove we accessed the deps
+    return f'connection={activity_deps.connection_string}'
+
+
+# Use TestModel for activity deps tests to avoid VCR cassette requirements
+# call_tools tells TestModel to actually call the tool
+httpx_test_model = TestModel(call_tools=['tool_using_httpx_client'])
+
+httpx_activity_deps_agent = Agent(
+    httpx_test_model,
+    name='httpx_activity_deps_agent',
+    tools=[tool_using_httpx_client],
+)
+
+httpx_temporal_agent = TemporalAgent(
+    httpx_activity_deps_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class HttpxActivityDepsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await httpx_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_activity_deps_with_httpx_client(client: Client):
+    """Test that a real httpx.AsyncClient works as activity deps (non-serializable)."""
+    from pydantic_ai.durable_exec.temporal._run_context import unregister_activity_deps
+
+    httpx_client_used.clear()
+
+    # Create an actual httpx client - this is NOT serializable by Pydantic/Temporal
+    async with httpx.AsyncClient() as http_client:
+        activity_deps = ActivityDepsWithHttpx(
+            http_client=http_client,
+            connection_string='redis://localhost:6379',
+        )
+
+        try:
+            async with Worker(
+                client,
+                task_queue=TASK_QUEUE,
+                workflows=[HttpxActivityDepsWorkflow],
+                plugins=[AgentPlugin(httpx_temporal_agent, activity_deps=activity_deps)],
+            ):
+                output = await client.execute_workflow(
+                    HttpxActivityDepsWorkflow.run,
+                    args=['Use the tool to check the connection'],
+                    id=HttpxActivityDepsWorkflow.__name__,
+                    task_queue=TASK_QUEUE,
+                )
+
+                # Verify the tool accessed the httpx client and returned the connection string
+                assert 'redis://localhost:6379' in output
+                # Verify the httpx client was actually accessed
+                assert httpx_client_used == [True]
+        finally:
+            unregister_activity_deps('httpx_activity_deps_agent')
+            httpx_client_used.clear()
+
+
+def test_httpx_client_is_not_pydantic_serializable():
+    """Verify that httpx.AsyncClient cannot be used as a Pydantic field (confirming our test is meaningful)."""
+    from pydantic import BaseModel
+
+    # Attempting to create a Pydantic model with httpx.AsyncClient as a field type
+    # should fail because httpx.AsyncClient is not a valid Pydantic type
+    with pytest.raises(Exception):  # PydanticSchemaGenerationError
+
+        class ModelWithHttpClient(BaseModel):  # pyright: ignore[reportUnusedClass]
+            client: httpx.AsyncClient
+
+
+def test_get_activity_deps_returns_none_outside_activity():
+    """Test that get_activity_deps() returns None when called outside an activity."""
+    from pydantic_ai.durable_exec.temporal import get_activity_deps
+
+    # Outside of activity context, should return None
+    assert get_activity_deps() is None
+
+
+def test_temporal_run_context_activity_deps_property():
+    """Test that TemporalRunContext.activity_deps property returns None outside activity."""
+    from pydantic_ai.durable_exec.temporal import get_activity_deps
+    from pydantic_ai.durable_exec.temporal._run_context import register_activity_deps, unregister_activity_deps
+
+    # Outside activity, should return None
+    ctx = TemporalRunContext(deps=None, run_id='test', retries={})
+    assert ctx.activity_deps is None
+    assert get_activity_deps() is None
+
+    # Even with deps registered, still None because we're not in an activity
+    register_activity_deps('test_agent', {'test': 'value'})
+    try:
+        assert ctx.activity_deps is None
+        assert get_activity_deps() is None
+    finally:
+        unregister_activity_deps('test_agent')
+
+
+# Test multiple agents with different activity deps
+httpx_test_model_2 = TestModel(call_tools=['tool_using_httpx_client'])
+
+httpx_activity_deps_agent_2 = Agent(
+    httpx_test_model_2,
+    name='httpx_activity_deps_agent_2',
+    tools=[tool_using_httpx_client],
+)
+
+httpx_temporal_agent_2 = TemporalAgent(
+    httpx_activity_deps_agent_2,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class HttpxActivityDepsWorkflow2:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await httpx_temporal_agent_2.run(prompt)
+        return result.output
+
+
+async def test_multiple_agents_different_activity_deps(client: Client):
+    """Test that different agents can have different activity deps."""
+    from pydantic_ai.durable_exec.temporal._run_context import unregister_activity_deps
+
+    httpx_client_used.clear()
+
+    async with httpx.AsyncClient() as http_client_1, httpx.AsyncClient() as http_client_2:
+        activity_deps_1 = ActivityDepsWithHttpx(
+            http_client=http_client_1,
+            connection_string='postgres://db1',
+        )
+        activity_deps_2 = ActivityDepsWithHttpx(
+            http_client=http_client_2,
+            connection_string='postgres://db2',
+        )
+
+        try:
+            async with Worker(
+                client,
+                task_queue=TASK_QUEUE,
+                workflows=[HttpxActivityDepsWorkflow, HttpxActivityDepsWorkflow2],
+                plugins=[
+                    AgentPlugin(httpx_temporal_agent, activity_deps=activity_deps_1),
+                    AgentPlugin(httpx_temporal_agent_2, activity_deps=activity_deps_2),
+                ],
+            ):
+                # Run first workflow
+                output1 = await client.execute_workflow(
+                    HttpxActivityDepsWorkflow.run,
+                    args=['Use the tool'],
+                    id=f'{HttpxActivityDepsWorkflow.__name__}_multi',
+                    task_queue=TASK_QUEUE,
+                )
+                assert 'postgres://db1' in output1
+
+                # Run second workflow
+                output2 = await client.execute_workflow(
+                    HttpxActivityDepsWorkflow2.run,
+                    args=['Use the tool'],
+                    id=f'{HttpxActivityDepsWorkflow2.__name__}_multi',
+                    task_queue=TASK_QUEUE,
+                )
+                assert 'postgres://db2' in output2
+
+                # Both tools should have used their respective httpx clients
+                assert len(httpx_client_used) == 2
+        finally:
+            unregister_activity_deps('httpx_activity_deps_agent')
+            unregister_activity_deps('httpx_activity_deps_agent_2')
+            httpx_client_used.clear()

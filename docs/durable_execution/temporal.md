@@ -175,6 +175,77 @@ To account for these limitations, tool functions and the [event stream handler](
 Specifically, only the `deps`, `run_id`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
 
+### Activity-Level Dependencies
+
+In addition to the serializable `deps` object, you may need to inject non-serializable dependencies into activities — such as database connections, API clients, or Temporal clients. These can be registered at worker startup via the [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin]'s `activity_deps` parameter.
+
+This follows the common Temporal pattern of initializing activity classes with dependencies:
+
+```python {title="activity_deps.py" test="skip"}
+from dataclasses import dataclass
+
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.durable_exec.temporal import (
+    AgentPlugin,
+    PydanticAIPlugin,
+    TemporalAgent,
+    get_activity_deps,
+)
+
+
+@dataclass
+class ActivityDeps:
+    """Non-serializable dependencies available in activities."""
+
+    temporal_client: Client
+    db_pool: object  # Your database pool
+
+
+agent = Agent(
+    'openai:gpt-5',
+    name='my_agent',
+)
+
+
+@agent.tool
+async def query_database(ctx: RunContext[None], query: str) -> str:
+    """Tool that uses activity-level dependencies."""
+    activity_deps = get_activity_deps()  # (1)!
+    # Or access via ctx.activity_deps when ctx is a TemporalRunContext
+    return await activity_deps.db_pool.fetch(query)
+
+
+temporal_agent = TemporalAgent(agent)
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+
+    # Create activity deps at worker startup
+    activity_deps = ActivityDeps(
+        temporal_client=client,
+        db_pool=get_db_pool(),  # Your database pool initialization
+    )
+
+    async with Worker(
+        client,
+        task_queue='my-queue',
+        workflows=[...],
+        plugins=[
+            AgentPlugin(temporal_agent, activity_deps=activity_deps),  # (2)!
+        ],
+    ):
+        ...
+```
+
+1. Use [`get_activity_deps()`][pydantic_ai.durable_exec.temporal.get_activity_deps] to retrieve the activity dependencies registered for the current agent. This must be called from within a Temporal activity.
+2. Pass `activity_deps` to [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register the dependencies at worker startup.
+
+Activity dependencies are keyed by agent name, so different agents can have different dependencies when using multiple agents in the same worker.
+
 ### Streaming
 
 Because Temporal activities cannot stream output directly to the activity call site, [`Agent.run_stream()`][pydantic_ai.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.Agent.iter] are not supported.
