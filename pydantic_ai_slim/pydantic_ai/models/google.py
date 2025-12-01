@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -363,18 +364,85 @@ class GoogleModel(Model):
                     )
         return tools or None
 
-    def _get_tool_config(
-        self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
+    def _get_tool_config(  # noqa: C901
+        self,
+        model_request_parameters: ModelRequestParameters,
+        tools: list[ToolDict] | None,
+        model_settings: GoogleModelSettings,
     ) -> ToolConfigDict | None:
-        if not model_request_parameters.allow_text_output and tools:
-            names: list[str] = []
+        if not tools:
+            return None
+
+        user_tool_choice = model_settings.get('tool_choice')
+
+        # Handle explicit user-provided tool_choice
+        if user_tool_choice is not None:
+            if user_tool_choice == 'none':
+                # If output tools exist, we can't truly disable all tools
+                if model_request_parameters.output_tools:
+                    warnings.warn(
+                        "tool_choice='none' is set but output tools are required for structured output. "
+                        'The output tools will remain available. Consider using native or prompted output modes '
+                        "if you need tool_choice='none' with structured output.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    # Allow only output tools
+                    output_tool_names = [t.name for t in model_request_parameters.output_tools]
+                    return ToolConfigDict(
+                        function_calling_config=FunctionCallingConfigDict(
+                            mode=FunctionCallingConfigMode.ANY,
+                            allowed_function_names=output_tool_names,
+                        )
+                    )
+                return ToolConfigDict(
+                    function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.NONE)
+                )
+
+            if user_tool_choice == 'auto':
+                return ToolConfigDict(
+                    function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.AUTO)
+                )
+
+            if user_tool_choice == 'required':
+                # Get all tool names
+                names: list[str] = []
+                for tool in tools:
+                    for function_declaration in tool.get('function_declarations') or []:
+                        if name := function_declaration.get('name'):
+                            names.append(name)
+                return ToolConfigDict(
+                    function_calling_config=FunctionCallingConfigDict(
+                        mode=FunctionCallingConfigMode.ANY,
+                        allowed_function_names=names,
+                    )
+                )
+
+            if isinstance(user_tool_choice, list):
+                # Validate tool names exist in function_tools
+                function_tool_names = {t.name for t in model_request_parameters.function_tools}
+                invalid_names = set(user_tool_choice) - function_tool_names
+                if invalid_names:
+                    raise UserError(
+                        f'Invalid tool names in tool_choice: {invalid_names}. '
+                        f'Available function tools: {function_tool_names or "none"}'
+                    )
+                return ToolConfigDict(
+                    function_calling_config=FunctionCallingConfigDict(
+                        mode=FunctionCallingConfigMode.ANY,
+                        allowed_function_names=list(user_tool_choice),
+                    )
+                )
+
+        # Default behavior: infer from allow_text_output
+        if not model_request_parameters.allow_text_output:
+            names = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
-                    if name := function_declaration.get('name'):  # pragma: no branch
+                    if name := function_declaration.get('name'):
                         names.append(name)
             return _tool_config(names)
-        else:
-            return None
+        return None
 
     @overload
     async def _generate_content(
@@ -440,7 +508,7 @@ class GoogleModel(Model):
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
 
-        tool_config = self._get_tool_config(model_request_parameters, tools)
+        tool_config = self._get_tool_config(model_request_parameters, tools, model_settings)
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities = [Modality.TEXT.value]

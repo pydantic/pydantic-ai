@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
+import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -429,7 +430,7 @@ class BedrockConverseModel(Model):
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters)
+        tool_config = self._map_tool_config(model_request_parameters, model_settings)
         if tool_config:
             params['toolConfig'] = tool_config
 
@@ -485,16 +486,64 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
+    def _map_tool_config(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: BedrockModelSettings | None,
+    ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
         if not tools:
             return None
 
+        user_tool_choice = model_settings.get('tool_choice') if model_settings else None
         tool_choice: ToolChoiceTypeDef
-        if not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}
+
+        # Handle explicit user-provided tool_choice
+        if user_tool_choice is not None:
+            if user_tool_choice == 'none':
+                # Bedrock doesn't support 'none', fall back to 'auto' with warning
+                warnings.warn(
+                    "Bedrock does not support tool_choice='none'. Falling back to 'auto'.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'auto': {}}
+
+            elif user_tool_choice == 'auto':
+                tool_choice = {'auto': {}}
+
+            elif user_tool_choice == 'required':
+                tool_choice = {'any': {}}
+
+            elif isinstance(user_tool_choice, list):
+                # Validate tool names exist in function_tools
+                function_tool_names = {t.name for t in model_request_parameters.function_tools}
+                invalid_names = set(user_tool_choice) - function_tool_names
+                if invalid_names:
+                    raise UserError(
+                        f'Invalid tool names in tool_choice: {invalid_names}. '
+                        f'Available function tools: {function_tool_names or "none"}'
+                    )
+
+                if len(user_tool_choice) == 1:
+                    tool_choice = {'tool': {'name': user_tool_choice[0]}}
+                else:
+                    # Bedrock only supports single tool choice, fall back to any
+                    warnings.warn(
+                        'Bedrock only supports forcing a single tool. '
+                        "Falling back to 'any' (required) for multiple tools.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    tool_choice = {'any': {}}
+            else:
+                tool_choice = {'auto': {}}
         else:
-            tool_choice = {'auto': {}}
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                tool_choice = {'any': {}}
+            else:
+                tool_choice = {'auto': {}}
 
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
         if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:

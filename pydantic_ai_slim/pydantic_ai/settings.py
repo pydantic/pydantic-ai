@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
 
@@ -86,6 +88,33 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    """
+
+    tool_choice: Literal['none', 'required', 'auto'] | list[str] | None
+    """Control which function tools the model can use.
+
+    This setting only affects function tools registered on the agent, not output tools
+    used for structured output.
+
+    * `None` (default): Automatically determined based on output configuration
+    * `'auto'`: Model decides whether to use function tools
+    * `'required'`: Model must use one of the available function tools
+    * `'none'`: Model cannot use function tools (output tools remain available if needed)
+    * `list[str]`: Model must use one of the specified function tools (validated against registered tools)
+
+    If the agent has a structured output type that requires an output tool and `tool_choice='none'`
+    is set, the output tool will still be available and a warning will be logged. Consider using
+    native or prompted output modes if you need `tool_choice='none'` with structured output.
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic (note: `'required'` and specific tools not supported with thinking/extended thinking)
+    * Gemini
+    * Groq
+    * Mistral
+    * HuggingFace
+    * Bedrock (note: `'none'` not supported, will fall back to `'auto'` with a warning)
     """
 
     seed: int

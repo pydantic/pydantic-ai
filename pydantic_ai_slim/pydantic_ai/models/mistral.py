@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -233,7 +234,7 @@ class MistralModel(Model):
                 messages=self._map_messages(messages, model_request_parameters),
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tool_choice=self._get_tool_choice(model_request_parameters, model_settings),
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 temperature=model_settings.get('temperature', UNSET),
@@ -273,7 +274,7 @@ class MistralModel(Model):
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tool_choice=self._get_tool_choice(model_request_parameters, model_settings),
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -312,7 +313,11 @@ class MistralModel(Model):
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
-    def _get_tool_choice(self, model_request_parameters: ModelRequestParameters) -> MistralToolChoiceEnum | None:
+    def _get_tool_choice(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: MistralModelSettings,
+    ) -> MistralToolChoiceEnum | None:
         """Get tool choice for the model.
 
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -322,10 +327,52 @@ class MistralModel(Model):
         """
         if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
             return None
-        elif not model_request_parameters.allow_text_output:
+
+        user_tool_choice = model_settings.get('tool_choice')
+
+        # Handle explicit user-provided tool_choice
+        if user_tool_choice is not None:
+            if user_tool_choice == 'none':
+                # If output tools exist, we can't truly disable all tools
+                if model_request_parameters.output_tools:
+                    warnings.warn(
+                        "tool_choice='none' is set but output tools are required for structured output. "
+                        'The output tools will remain available. Consider using native or prompted output modes '
+                        "if you need tool_choice='none' with structured output.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    return 'required'
+                return 'none'
+
+            if user_tool_choice == 'auto':
+                return 'auto'
+
+            if user_tool_choice == 'required':
+                return 'required'
+
+            # Handle list of specific tool names
+            if isinstance(user_tool_choice, list):
+                # Validate tool names exist in function_tools
+                function_tool_names = {t.name for t in model_request_parameters.function_tools}
+                invalid_names = set(user_tool_choice) - function_tool_names
+                if invalid_names:
+                    raise UserError(
+                        f'Invalid tool names in tool_choice: {invalid_names}. '
+                        f'Available function tools: {function_tool_names or "none"}'
+                    )
+                # Mistral doesn't support forcing specific tools, fall back to required
+                warnings.warn(
+                    "Mistral does not support forcing specific tools. Falling back to 'required'.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                return 'required'
+
+        # Default behavior: infer from allow_text_output
+        if not model_request_parameters.allow_text_output:
             return 'required'
-        else:
-            return 'auto'
+        return 'auto'
 
     def _map_function_and_output_tools_definition(
         self, model_request_parameters: ModelRequestParameters

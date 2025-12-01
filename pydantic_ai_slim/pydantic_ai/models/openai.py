@@ -52,7 +52,16 @@ from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (
+    Model,
+    ModelRequestParameters,
+    ResolvedToolChoice,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+    resolve_tool_choice,
+)
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
@@ -67,6 +76,8 @@ try:
         chat_completion_chunk,
         chat_completion_token_logprob,
     )
+    from openai.types.chat.chat_completion_allowed_tool_choice_param import ChatCompletionAllowedToolChoiceParam
+    from openai.types.chat.chat_completion_allowed_tools_param import ChatCompletionAllowedToolsParam
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
@@ -75,16 +86,21 @@ try:
     from openai.types.chat.chat_completion_message_function_tool_call_param import (
         ChatCompletionMessageFunctionToolCallParam,
     )
+    from openai.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
+    from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses.response_create_params import ToolChoice as ResponsesToolChoice
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_reasoning_item_param import Summary
     from openai.types.responses.response_status import ResponseStatus
+    from openai.types.responses.tool_choice_allowed_param import ToolChoiceAllowedParam
+    from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -493,15 +509,7 @@ class OpenAIChatModel(Model):
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif (
-            not model_request_parameters.allow_text_output
-            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
-        ):
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tool_choice = self._get_tool_choice(tools, model_settings, model_request_parameters)
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -690,6 +698,85 @@ class OpenAIChatModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    def _get_tool_choice(
+        self,
+        tools: list[chat.ChatCompletionToolParam],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ChatCompletionToolChoiceOptionParam | None:
+        user_tool_choice = model_settings.get('tool_choice')
+
+        if not tools:
+            return None
+
+        # Handle explicit user-provided tool_choice
+        if user_tool_choice is not None:
+            if user_tool_choice == 'none':
+                # If output tools exist, we can't truly disable all tools
+                if model_request_parameters.output_tools:
+                    warnings.warn(
+                        "tool_choice='none' is set but output tools are required for structured output. "
+                        'The output tools will remain available. Consider using native or prompted output modes '
+                        "if you need tool_choice='none' with structured output.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    # Allow only output tools
+                    output_tool_names = [t.name for t in model_request_parameters.output_tools]
+                    if len(output_tool_names) == 1:
+                        return ChatCompletionNamedToolChoiceParam(
+                            type='function',
+                            function={'name': output_tool_names[0]},
+                        )
+                    else:
+                        return ChatCompletionAllowedToolChoiceParam(
+                            type='allowed_tools',
+                            allowed_tools=ChatCompletionAllowedToolsParam(
+                                mode='required' if not model_request_parameters.allow_text_output else 'auto',
+                                tools=[{'type': 'function', 'function': {'name': n}} for n in output_tool_names],
+                            ),
+                        )
+                return 'none'
+
+            if user_tool_choice == 'auto':
+                return 'auto'
+
+            if user_tool_choice == 'required':
+                return 'required'
+
+            # Handle list of specific tool names
+            if isinstance(user_tool_choice, list):
+                # Validate tool names exist in function_tools
+                function_tool_names = {t.name for t in model_request_parameters.function_tools}
+                invalid_names = set(user_tool_choice) - function_tool_names
+                if invalid_names:
+                    raise UserError(
+                        f'Invalid tool names in tool_choice: {invalid_names}. '
+                        f'Available function tools: {function_tool_names or "none"}'
+                    )
+
+                if len(user_tool_choice) == 1:
+                    return ChatCompletionNamedToolChoiceParam(
+                        type='function',
+                        function={'name': user_tool_choice[0]},
+                    )
+                else:
+                    return ChatCompletionAllowedToolChoiceParam(
+                        type='allowed_tools',
+                        allowed_tools=ChatCompletionAllowedToolsParam(
+                            mode='required' if not model_request_parameters.allow_text_output else 'auto',
+                            tools=[{'type': 'function', 'function': {'name': n}} for n in user_tool_choice],
+                        ),
+                    )
+
+        # Default behavior: infer from allow_text_output
+        if (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
+            return 'required'
+        return 'auto'
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
@@ -1272,7 +1359,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(  # noqa: C901
+    async def _responses_create(
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
@@ -1285,12 +1372,7 @@ class OpenAIResponsesModel(Model):
             + self._get_tools(model_request_parameters)
         )
         profile = OpenAIModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tool_choice = self._get_responses_tool_choice(tools, model_settings, model_request_parameters)
 
         previous_response_id = model_settings.get('openai_previous_response_id')
         if previous_response_id == 'auto':
@@ -1400,6 +1482,73 @@ class OpenAIResponsesModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    def _get_responses_tool_choice(
+        self,
+        tools: list[responses.ToolParam],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ResponsesToolChoice | None:
+        user_tool_choice = model_settings.get('tool_choice')
+        profile = OpenAIModelProfile.from_profile(self.profile)
+
+        if not tools:
+            return None
+
+        # Handle explicit user-provided tool_choice
+        if user_tool_choice is not None:
+            if user_tool_choice == 'none':
+                # If output tools exist, we can't truly disable all tools
+                if model_request_parameters.output_tools:
+                    warnings.warn(
+                        "tool_choice='none' is set but output tools are required for structured output. "
+                        'The output tools will remain available. Consider using native or prompted output modes '
+                        "if you need tool_choice='none' with structured output.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    # Allow only output tools
+                    output_tool_names = [t.name for t in model_request_parameters.output_tools]
+                    if len(output_tool_names) == 1:
+                        return ToolChoiceFunctionParam(type='function', name=output_tool_names[0])
+                    else:
+                        return ToolChoiceAllowedParam(
+                            type='allowed_tools',
+                            mode='required' if not model_request_parameters.allow_text_output else 'auto',
+                            tools=[{'type': 'function', 'name': n} for n in output_tool_names],
+                        )
+                return 'none'
+
+            if user_tool_choice == 'auto':
+                return 'auto'
+
+            if user_tool_choice == 'required':
+                return 'required'
+
+            # Handle list of specific tool names
+            if isinstance(user_tool_choice, list):
+                # Validate tool names exist in function_tools
+                function_tool_names = {t.name for t in model_request_parameters.function_tools}
+                invalid_names = set(user_tool_choice) - function_tool_names
+                if invalid_names:
+                    raise UserError(
+                        f'Invalid tool names in tool_choice: {invalid_names}. '
+                        f'Available function tools: {function_tool_names or "none"}'
+                    )
+
+                if len(user_tool_choice) == 1:
+                    return ToolChoiceFunctionParam(type='function', name=user_tool_choice[0])
+                else:
+                    return ToolChoiceAllowedParam(
+                        type='allowed_tools',
+                        mode='required' if not model_request_parameters.allow_text_output else 'auto',
+                        tools=[{'type': 'function', 'name': n} for n in user_tool_choice],
+                    )
+
+        # Default behavior: infer from allow_text_output
+        if not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
+            return 'required'
+        return 'auto'
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []

@@ -7742,3 +7742,141 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     assert usage2.cache_read_tokens > 0
     assert usage2.cache_write_tokens > 0
     assert usage2.output_tokens > 0
+
+
+# Tests for tool_choice ModelSettings
+
+
+@pytest.mark.parametrize(
+    'tool_choice,expected_type',
+    [
+        pytest.param('none', 'none', id='none'),
+        pytest.param('auto', 'auto', id='auto'),
+        pytest.param('required', 'any', id='required-maps-to-any'),
+    ],
+)
+async def test_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected_type: str) -> None:
+    """Test that tool_choice string values are correctly mapped to Anthropic's format."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': tool_choice})  # type: ignore
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice']['type'] == expected_type
+
+
+async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
+    """Test tool_choice with a single specific tool name maps to Anthropic's 'tool' type."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def tool_a(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': ['tool_a']})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice'] == {'type': 'tool', 'name': 'tool_a'}
+
+
+async def test_tool_choice_multiple_tools_falls_back_to_any(allow_model_requests: None) -> None:
+    """Test tool_choice with multiple tools falls back to 'any' with warning (Anthropic limitation)."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def tool_a(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match='Anthropic only supports forcing a single tool'):
+        await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice']['type'] == 'any'
+
+
+async def test_tool_choice_invalid_tool_name(allow_model_requests: None) -> None:
+    """Test that invalid tool names in tool_choice raise UserError."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
+        await agent.run('hello', model_settings={'tool_choice': ['nonexistent_tool']})
+
+
+async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
+    """Test that tool_choice='none' with output tools emits a warning and preserves output tools."""
+
+    class Location(BaseModel):
+        city: str
+        country: str
+
+    c = completion_message(
+        [BetaToolUseBlock(id='1', type='tool_use', name='final_result', input={'city': 'Paris', 'country': 'France'})],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, output_type=Location)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
+        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    assert result.output == Location(city='Paris', country='France')
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    # Output tool should be preserved (single output tool -> 'tool' type)
+    assert kwargs['tool_choice'] == {'type': 'tool', 'name': 'final_result'}
+
+
+async def test_tool_choice_required_with_thinking_falls_back_to_auto(allow_model_requests: None) -> None:
+    """Test that tool_choice='required' with thinking mode falls back to 'auto' with warning."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match="tool_choice='required' is not supported with Anthropic thinking mode"):
+        await agent.run(
+            'hello',
+            model_settings={
+                'tool_choice': 'required',
+                'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1000},
+            },  # type: ignore
+        )
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice']['type'] == 'auto'

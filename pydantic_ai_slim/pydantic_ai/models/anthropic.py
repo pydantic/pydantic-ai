@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -640,18 +641,96 @@ class AnthropicModel(Model):
     ) -> BetaToolChoiceParam | None:
         if not tools:
             return None
-        else:
-            tool_choice: BetaToolChoiceParam
 
+        user_tool_choice = model_settings.get('tool_choice')
+        thinking_enabled = model_settings.get('anthropic_thinking') is not None
+        tool_choice: BetaToolChoiceParam
+
+        # Handle explicit user-provided tool_choice
+        if user_tool_choice is not None:
+            if user_tool_choice == 'none':
+                # If output tools exist, we can't truly disable all tools
+                if model_request_parameters.output_tools:
+                    warnings.warn(
+                        "tool_choice='none' is set but output tools are required for structured output. "
+                        'The output tools will remain available. Consider using native or prompted output modes '
+                        "if you need tool_choice='none' with structured output.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    # Allow only output tools (Anthropic only supports one tool at a time)
+                    output_tool_names = [t.name for t in model_request_parameters.output_tools]
+                    if len(output_tool_names) == 1:
+                        tool_choice = {'type': 'tool', 'name': output_tool_names[0]}
+                    else:
+                        # Multiple output tools - fall back to 'auto' and warn
+                        warnings.warn(
+                            'Anthropic only supports forcing a single tool. '
+                            "Falling back to 'auto' for multiple output tools.",
+                            UserWarning,
+                            stacklevel=6,
+                        )
+                        tool_choice = {'type': 'auto'}
+                else:
+                    tool_choice = {'type': 'none'}
+
+            elif user_tool_choice == 'auto':
+                tool_choice = {'type': 'auto'}
+
+            elif user_tool_choice == 'required':
+                if thinking_enabled:
+                    warnings.warn(
+                        "tool_choice='required' is not supported with Anthropic thinking mode. Falling back to 'auto'.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    tool_choice = {'type': 'auto'}
+                else:
+                    tool_choice = {'type': 'any'}
+
+            elif isinstance(user_tool_choice, list):
+                # Validate tool names exist in function_tools
+                function_tool_names = {t.name for t in model_request_parameters.function_tools}
+                invalid_names = set(user_tool_choice) - function_tool_names
+                if invalid_names:
+                    raise UserError(
+                        f'Invalid tool names in tool_choice: {invalid_names}. '
+                        f'Available function tools: {function_tool_names or "none"}'
+                    )
+
+                if thinking_enabled:
+                    warnings.warn(
+                        "Forcing specific tools is not supported with Anthropic thinking mode. Falling back to 'auto'.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    tool_choice = {'type': 'auto'}
+                elif len(user_tool_choice) == 1:
+                    tool_choice = {'type': 'tool', 'name': user_tool_choice[0]}
+                else:
+                    # Anthropic only supports one tool at a time
+                    warnings.warn(
+                        'Anthropic only supports forcing a single tool. '
+                        "Falling back to 'any' (required) for multiple tools.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    tool_choice = {'type': 'any'}
+            else:
+                tool_choice = {'type': 'auto'}
+
+        else:
+            # Default behavior: infer from allow_text_output
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
 
-            if 'parallel_tool_calls' in model_settings:
-                tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']
+        if 'parallel_tool_calls' in model_settings and tool_choice.get('type') != 'none':
+            # only `BetaToolChoiceNoneParam` doesn't have this field
+            tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']  # pyright: ignore[reportGeneralTypeIssues]
 
-            return tool_choice
+        return tool_choice
 
     async def _map_message(  # noqa: C901
         self,
