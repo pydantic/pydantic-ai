@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
+from pydantic import TypeAdapter
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
@@ -18,6 +19,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, Instru
 
 from .. import (
     _agent_graph,
+    _function_schema,
     _output,
     _system_prompt,
     _utils,
@@ -956,10 +958,49 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
 
-    def output_json_schema(self, output_type: OutputSpec[RunOutputDataT] | None = None) -> JsonSchema:
+    def output_json_schema(self, output_type: OutputSpec[OutputDataT] | None = None) -> JsonSchema:
         """The output JSON schema."""
-        output_schema = self._prepare_output_schema(output_type)
-        return output_schema.json_schema
+        if output_type is None:
+            output_type = self.output_type
+
+        # call this first to force output_type to an iterable
+        output_type = list(_output._flatten_output_spec(output_type))
+
+        # flatten special outputs
+        for i, _ in enumerate(output_type):
+            if isinstance(_, _output.NativeOutput):
+                output_type[i] = _output._flatten_output_spec(_.outputs)
+            if isinstance(_, _output.PromptedOutput):
+                output_type[i] = _output._flatten_output_spec(_.outputs)
+            if isinstance(_, _output.ToolOutput):
+                output_type[i] = _output._flatten_output_spec(_.output)
+
+        # final flattening
+        output_type = _output._flatten_output_spec(output_type)
+
+        json_schemas: list[JsonSchema] = []
+        for _ in output_type:
+            if inspect.isfunction(_) or inspect.ismethod(_):
+                function_schema = _function_schema.function_schema(_, GenerateToolJsonSchema)
+                json_schema = function_schema.json_schema
+                json_schema['description'] = function_schema.description
+            elif isinstance(_, _messages.BinaryImage):
+                json_schema = TypeAdapter(_).json_schema(mode='serialization')
+                json_schema = {k: v for k, v in json_schema['properties'].items() if k in ['data', 'media_type']}
+            else:
+                json_schema = TypeAdapter(_).json_schema(mode='serialization')
+
+            if json_schema not in json_schemas:
+                json_schemas.append(json_schema)
+
+        if len(json_schemas) == 1:
+            return json_schemas[0]
+        else:
+            json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
+            json_schema: JsonSchema = {'anyOf': json_schemas}
+            if all_defs:
+                json_schema['$defs'] = all_defs
+            return json_schema
 
     @overload
     def output_validator(

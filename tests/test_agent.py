@@ -5251,7 +5251,7 @@ async def test_wrapper_agent():
     assert wrapper_agent.output_json_schema() == snapshot(
         {
             'type': 'object',
-            'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}},
+            'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'string'}},
             'title': 'Foo',
             'required': ['a', 'b'],
         }
