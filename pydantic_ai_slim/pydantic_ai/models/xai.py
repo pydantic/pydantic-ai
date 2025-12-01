@@ -350,11 +350,11 @@ class XaiModel(Model):
 
         # Simple text-only message
         if texts and not (reasoning_texts or tool_calls):
-            return assistant('\n\n'.join(texts))
+            return assistant(''.join(texts))
 
         # Message with reasoning and/or tool calls
         if texts:
-            msg = assistant('\n\n'.join(texts))
+            msg = assistant(''.join(texts))
         else:
             msg = chat_types.chat_pb2.Message(role=chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT)
 
