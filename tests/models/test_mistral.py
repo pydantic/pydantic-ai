@@ -1901,13 +1901,13 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='utZJMAZN4')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='9v45XkLNV')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='fce6d16a4e5940edb24ae16dd0369947',
+                provider_response_id='b3b0e536e2784e489cbd42eb0a62fc0b',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1915,13 +1915,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
-                        tool_call_id='utZJMAZN4',
+                        content='See file 241a70',
+                        tool_call_id='9v45XkLNV',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
+                            'This is file 241a70:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
@@ -1932,15 +1932,15 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi. Kiwis are small, brown, oval-shaped fruits with a bright green flesh inside that is dotted with tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
+                        content='The image shows a kiwi fruit that has been cut in half. Kiwis are known for their bright green flesh with tiny black seeds and a unique texture. They have a sweet and tangy flavor.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=2931, output_tokens=70),
+                usage=RequestUsage(input_tokens=1542, output_tokens=43),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='26e7de193646460e8904f8e604a60dc1',
+                provider_response_id='c01b0e4a6a7a44f2ae0eb5a16af91f28',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

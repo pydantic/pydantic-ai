@@ -63,7 +63,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1196,29 +1196,26 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=74, details={'thoughts_tokens': 64, 'text_prompt_tokens': 33}
+                    input_tokens=33, output_tokens=163, details={'thoughts_tokens': 153, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
+                provider_response_id='9XokabCHON6UmtkP-8DnoQM',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
+                        content='See file 241a70',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
-                            BinaryContent(
-                                data=IsBytes(),
-                                media_type='image/png',
-                            ),
+                            'This is file 241a70:',
+                            image_content,
                         ],
                         timestamp=IsDatetime(),
                     ),
@@ -1227,37 +1224,28 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='6'),
                     TextPart(
                         content="""\
- 1c8566
-The image shows a **kiwi** fruit that has been sliced in half.
+- **Main subject**: A cross-section of a kiwi fruit.
+- **Shape**: Round.
+- **Outer layer**: Fuzzy brown skin visible around the circumference.
+- **Flesh color**: Bright green.
+- **Center**: A white oval core.
+- **Seeds**: Small black seeds arranged in a radial pattern around the white core.
+- **Texture**: The flesh appears juicy and fibrous, with radiating lines extending from the center to the edge.
+- **Background**: Plain white.
+- **Lighting**: Bright and even, highlighting the texture and moisture of the fruit.
 
-You can see:
-*   The **bright green flesh**.
-*   The ring of tiny **black seeds**.
-*   The **white core** in the center.
-*   The fuzzy **brown skin** around the outside.
-
-It's positioned against a plain white background.\
 """
                     ),
                     TextPart(
-                        content="""\
-The fruit in the image is a **kiwi** (specifically, a sliced green kiwifruit).
-
-You can clearly identify it by its signature features:
-*   **Green flesh** with a radial pattern.
-*   A ring of small **black seeds**.
-*   A cream-colored **white core** in the center.
-*   Fuzzy **brown skin** visible on the exterior edge.\
-"""
+                        content='Based on the image provided, the fruit is a **kiwi**. It shows a cross-section with the characteristic bright green flesh, small black seeds arranged around a white center, and brown fuzzy skin on the outside.'
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1185,
-                    output_tokens=552,
-                    details={'thoughts_tokens': 381, 'image_prompt_tokens': 1107, 'text_prompt_tokens': 78},
+                    input_tokens=1166,
+                    output_tokens=313,
+                    details={'thoughts_tokens': 146, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
