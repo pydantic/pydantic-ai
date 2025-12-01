@@ -9,7 +9,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicJsonSchemaTransformer, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
@@ -124,7 +124,7 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
     anthropic_model_profile_mock.assert_called_with('claude-3.5-sonnet')
     assert anthropic_profile is not None
-    assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert anthropic_profile.json_schema_transformer == AnthropicJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')

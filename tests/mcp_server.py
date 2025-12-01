@@ -127,7 +127,7 @@ async def get_product_name_link() -> ResourceLink:
     annotations=Annotations(audience=['user', 'assistant'], priority=0.5),
 )
 async def product_name_resource() -> str:
-    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text()
+    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text(encoding='utf-8')
 
 
 @mcp.resource('resource://greeting/{name}', mime_type='text/plain')
