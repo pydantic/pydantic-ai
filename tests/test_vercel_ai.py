@@ -2292,6 +2292,61 @@ Fix the errors and try again.\
     )
 
 
+async def test_adapter_dump_messages_with_retry_no_tool_name():
+    """Test dumping messages with retry prompts without tool_name (e.g., output validation errors)."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Give me a number')]),
+        ModelResponse(parts=[TextPart(content='Not a valid number')]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content='Output validation failed: expected integer',
+                    # No tool_name - this is an output validation error, not a tool error
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Give me a number', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Not a valid number', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'text',
+                        'text': """\
+Validation feedback:
+Output validation failed: expected integer
+
+Fix the errors and try again.\
+""",
+                        'state': 'done',
+                        'provider_metadata': None,
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_adapter_dump_messages_consecutive_text():
     """Test that consecutive text parts are concatenated correctly."""
     messages = [
