@@ -1514,9 +1514,9 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
-        """Map pydantic_ai messages to OpenAI Responses API input format.
+        """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
-        For ThinkingParts, this method:
+        For `ThinkingParts`, this method:
         - Sends `signature` back as `encrypted_content` (for official OpenAI reasoning)
         - Sends `content` back as `summary` text
         - Sends `provider_details['raw_content']` back as `content` items (for gpt-oss raw CoT)
