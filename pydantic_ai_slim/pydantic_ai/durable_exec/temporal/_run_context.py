@@ -11,9 +11,6 @@ from pydantic_ai.tools import RunContext
 AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
-ActivityDepsT = TypeVar('ActivityDepsT', default=None)
-"""Type variable for activity-level dependencies."""
-
 # Registry for activity-level dependencies, keyed by agent name.
 # These are set at worker startup via AgentPlugin and are not serialized.
 _activity_deps_registry: dict[str, Any] = {}
@@ -45,12 +42,10 @@ def get_activity_deps() -> Any:
     if not activity.in_activity():
         return None
 
+    # Activity names follow the pattern: agent__{agent_name}__...
     activity_type = activity.info().activity_type
-    # Activity names follow the pattern: agent__{agent_name}__{activity_type}
-    # e.g., "agent__myagent__model_request" or "agent__myagent__toolset__mytoolset__call_tool"
-    parts = activity_type.split('__')
-    if len(parts) >= 2 and parts[0] == 'agent':
-        agent_name = parts[1]
+    if activity_type.startswith('agent__'):
+        agent_name = activity_type.split('__', 2)[1]
         return _activity_deps_registry.get(agent_name)
     return None
 
