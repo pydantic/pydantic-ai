@@ -1398,7 +1398,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Model OpenAIChatModel instance is not registered with this TemporalAgent. Available models: default. To use this model, add it to the `additional_models` parameter when creating the TemporalAgent.'
+                'Model instances cannot be selected at runtime inside a Temporal workflow. Register the model via the mapping form of `additional_models` and reference it by name.'
             ),
         ):
             await client.execute_workflow(
@@ -2620,7 +2620,7 @@ async def test_temporal_agent_multi_model_unregistered_error(allow_model_request
     ):
         with workflow_raises(
             UserError,
-            'Model instances cannot be selected at runtime inside a Temporal workflow.',
+            'Model instances cannot be selected at runtime inside a Temporal workflow. Register the model via the mapping form of `additional_models` and reference it by name.',
         ):
             await client.execute_workflow(
                 MultiModelWorkflowUnregistered.run,

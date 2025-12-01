@@ -116,6 +116,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = event_stream_handler
         self.run_context_type = run_context_type
 
+        if self.name is None:
+            raise UserError(
+                "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
+            )
+
         wrapped_model = wrapped.model
         if not isinstance(wrapped_model, Model):
             raise UserError(
@@ -146,11 +151,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_activity_config = model_activity_config or {}
         toolset_activity_config = toolset_activity_config or {}
         tool_activity_config = tool_activity_config or {}
-
-        if self.name is None:
-            raise UserError(
-                "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
-            )
 
         activity_name_prefix = f'agent__{self.name}'
 
