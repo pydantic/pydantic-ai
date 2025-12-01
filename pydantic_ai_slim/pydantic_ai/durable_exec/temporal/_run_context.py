@@ -30,13 +30,13 @@ def get_activity_deps() -> Any:
         or `None` if no dependencies were registered.
 
     Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     from pydantic_ai.durable_exec.temporal import get_activity_deps
 
     @agent.tool
     async def my_tool(ctx: RunContext[MyDeps]) -> str:
         activity_deps = get_activity_deps()
-        return await activity_deps.db_pool.fetch("...")
+        return await activity_deps.db_pool.fetch('...')
     ```
     """
     if not activity.in_activity():
@@ -115,11 +115,11 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             or `None` if no dependencies were registered or not in an activity.
 
         Example:
-        ```python
+        ```python {test="skip" lint="skip"}
         @agent.tool
         async def my_tool(ctx: RunContext[MyDeps]) -> str:
             # Access activity deps via the context
-            return await ctx.activity_deps.db_pool.fetch("...")
+            return await ctx.activity_deps.db_pool.fetch('...')
         ```
         """
         return get_activity_deps()

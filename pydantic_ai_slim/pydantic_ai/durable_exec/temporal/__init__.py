@@ -104,7 +104,7 @@ class AgentPlugin(SimplePlugin):
             resources that should be initialized once at worker startup.
 
     Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     from dataclasses import dataclass
     from temporalio.client import Client
     from temporalio.worker import Worker
@@ -132,7 +132,7 @@ class AgentPlugin(SimplePlugin):
     @agent.tool
     async def my_tool(ctx: RunContext[MyDeps]) -> str:
         activity_deps = get_activity_deps()
-        return await activity_deps.db_pool.fetch("...")
+        return await activity_deps.db_pool.fetch('...')
     ```
     """
 

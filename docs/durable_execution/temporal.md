@@ -181,7 +181,7 @@ In addition to the serializable `deps` object, you may need to inject non-serial
 
 This follows the common Temporal pattern of initializing activity classes with dependencies:
 
-```python {title="activity_deps.py" test="skip"}
+```python {title="activity_deps.py" test="skip" lint="skip"}
 from dataclasses import dataclass
 
 from temporalio.client import Client
