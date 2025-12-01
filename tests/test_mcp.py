@@ -1529,10 +1529,9 @@ def test_map_from_mcp_params_model_response():
 def test_map_from_pai_messages_with_binary_content():
     """Test that map_from_pai_messages correctly converts image and audio content to MCP format.
 
-    Note: BinaryContent.data is base64-encoded bytes (e.g., base64.b64encode(b'raw')).
+    Note: `data` in this case are base64-encoded bytes (e.g., base64.b64encode(b'raw')).
     map_from_pai_messages decodes this to get the base64 string for MCP.
     """
-    # BinaryContent.data is base64-encoded bytes
     image_data = base64.b64encode(b'raw_image_bytes')
     audio_data = base64.b64encode(b'raw_audio_bytes')
 

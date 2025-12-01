@@ -87,7 +87,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                             if isinstance(chunk, str):
                                 add_msg('user', mcp_types.TextContent(type='text', text=chunk))
                             elif isinstance(chunk, messages.BinaryContent):
-                                # `BinaryContent.data` are base64-encoded bytes.
+                                # `chunk.data` in this case are base64-encoded bytes.
                                 base64_data = base64.b64decode(chunk.data).decode()
                                 if chunk.is_image:
                                     add_msg(
