@@ -75,7 +75,10 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
-    from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._model import (
+        TemporalModel,
+        _RequestParams,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -2957,10 +2960,13 @@ def test_temporal_model_resolve_model_string_map(monkeypatch: MonkeyPatch):
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
 
-    params = SimpleNamespace(
+    params = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
         model_key='openai:gpt-4o',
         model_name=None,
-        serialized_run_context=None,
     )
 
     model = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
@@ -2975,10 +2981,13 @@ def test_temporal_model_resolve_model_unregistered_key():
 
     temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
 
-    params = SimpleNamespace(
+    params = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
         model_key='unknown_model',
         model_name=None,
-        serialized_run_context=None,
     )
 
     with pytest.raises(UserError, match='Model "unknown_model" is not registered'):
@@ -3004,10 +3013,13 @@ def test_temporal_model_infer_model_no_provider_factory(monkeypatch: MonkeyPatch
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
 
-    params = SimpleNamespace(
+    params = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
         model_key=None,
         model_name=None,
-        serialized_run_context=None,
     )
 
     temporal_model._infer_model('test:model', params, None)  # pyright: ignore[reportPrivateUsage]
@@ -3062,10 +3074,13 @@ def test_temporal_model_infer_model_no_serialized_context(monkeypatch: MonkeyPat
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
 
-    params = SimpleNamespace(
+    params = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,  # No serialized context
         model_key=None,
         model_name=None,
-        serialized_run_context=None,  # No serialized context
     )
 
     temporal_model._infer_model('test:model', params, {'key': 'value'})  # pyright: ignore[reportPrivateUsage]
