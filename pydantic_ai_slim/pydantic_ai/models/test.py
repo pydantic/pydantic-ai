@@ -30,7 +30,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -158,7 +158,8 @@ class TestModel(Model):
         """The model provider."""
         return self._system
 
-    def supported_builtin_tools(self, profile: ModelProfile) -> frozenset[type[AbstractBuiltinTool]]:
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """TestModel supports all builtin tools for testing flexibility."""
         from ..builtin_tools import get_builtin_tool_types
 

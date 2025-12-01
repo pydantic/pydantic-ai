@@ -23,14 +23,6 @@ class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
     builtin_tools: list[str]
 
 
-def _get_agent(request: Request) -> Agent:
-    """Get the agent from app state."""
-    agent = getattr(request.app.state, 'agent', None)
-    if agent is None:
-        raise RuntimeError('No agent configured. Server must be started with a valid agent.')
-    return agent
-
-
 class BuiltinToolInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
     """Serializable info about a builtin tool for frontend config."""
 
@@ -56,6 +48,7 @@ class _ChatRequestExtra(BaseModel, extra='ignore', alias_generator=to_camel):
 
 def add_api_routes(
     app: Starlette,
+    agent: Agent,
     models: list[ModelInfo] | None = None,
     builtin_tools: list[AbstractBuiltinTool] | None = None,
     toolsets: Sequence[AbstractToolset[Any]] | None = None,
@@ -64,6 +57,7 @@ def add_api_routes(
 
     Args:
         app: The Starlette app to add routes to.
+        agent: Agent instance.
         models: Optional list of AI models. If not provided, the UI will have no model options.
         builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
         toolsets: Optional list of toolsets (e.g., MCP servers). These provide additional tools.
@@ -92,7 +86,6 @@ def add_api_routes(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
-        agent = _get_agent(request)
         adapter = await VercelAIAdapter.from_request(request, agent=agent)
         extra_data = _ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
 
