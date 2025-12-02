@@ -33,7 +33,7 @@ __all__ = [
 import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]
 
 try:
-    import anyio._backends._trio  # pyright: ignore[reportUnusedImport]  # noqa F401
+    import anyio._backends._trio  # pyright: ignore[reportUnusedImport]  # noqa: F401
 except ImportError:
     pass
 
