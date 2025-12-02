@@ -2422,7 +2422,6 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 UserPromptPart(content='How goes it?'),
             ],
             instructions='Original instructions',
-            timestamp=IsDatetime(),
         ),
     ]
 
@@ -2480,7 +2479,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
         return 'Test response'
 
     message_history = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')]),
     ]
 
@@ -2494,8 +2493,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                         content='Hello',
                         timestamp=IsDatetime(),
                     )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
+                ]
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')],
@@ -2535,7 +2533,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
     agent = Agent(FunctionModel(simple_response))
 
     message_history = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')]),
     ]
 
@@ -2553,7 +2551,7 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
     agent = Agent(FunctionModel(simple_response))
 
     message_history = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[TextPart('world')]),
     ]
 
@@ -2566,8 +2564,7 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
                         content='Hello',
                         timestamp=IsDatetime(),
                     )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -2590,15 +2587,15 @@ async def test_message_history_ending_on_model_response_with_instructions():
     )
 
     message_history = [
-        ModelRequest(parts=[UserPromptPart(content='Hi, my name is James')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hi, my name is James')]),
         ModelResponse(parts=[TextPart(content='Nice to meet you, James.')]),
-        ModelRequest(parts=[UserPromptPart(content='I like cars')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='I like cars')]),
         ModelResponse(parts=[TextPart(content='I like them too. Sport cars?')]),
-        ModelRequest(parts=[UserPromptPart(content='No, cars in general.')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='No, cars in general.')]),
         ModelResponse(parts=[TextPart(content='Awesome. Which one do you like most?')]),
-        ModelRequest(parts=[UserPromptPart(content='Fiat 126p')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Fiat 126p')]),
         ModelResponse(parts=[TextPart(content="That's an old one, isn't it?")]),
-        ModelRequest(parts=[UserPromptPart(content='Yes, it is. My parents had one.')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Yes, it is. My parents had one.')]),
         ModelResponse(parts=[TextPart(content='Cool. Was it fast?')]),
     ]
 
@@ -4474,9 +4471,7 @@ def test_dynamic_system_prompt_no_changes():
     result1 = agent.run_sync('Hello')
 
     # Create ModelRequest with non-dynamic SystemPromptPart (no dynamic_ref)
-    manual_request = ModelRequest(
-        parts=[SystemPromptPart(content='Static'), UserPromptPart(content='Manual')], timestamp=IsDatetime()
-    )
+    manual_request = ModelRequest(parts=[SystemPromptPart(content='Static'), UserPromptPart(content='Manual')])
 
     # Mix dynamic and non-dynamic messages to trigger branch coverage
     result2 = agent.run_sync('Second call', message_history=result1.all_messages() + [manual_request])
@@ -5017,15 +5012,12 @@ def test_instructions_with_message_history():
     agent = Agent('test', instructions='You are a helpful assistant.')
     result = agent.run_sync(
         'Hello',
-        message_history=[
-            ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant')], timestamp=IsDatetime())
-        ],
+        message_history=[ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant')])],
     )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[SystemPromptPart(content='You are a helpful assistant', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[SystemPromptPart(content='You are a helpful assistant', timestamp=IsNow(tz=timezone.utc))]
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
@@ -6395,9 +6387,7 @@ async def test_hitl_tool_approval():
 async def test_run_with_deferred_tool_results_errors():
     agent = Agent('test')
 
-    message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])], timestamp=IsDatetime())
-    ]
+    message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])])]
 
     with pytest.raises(
         UserError,
@@ -6410,7 +6400,7 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
     message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[TextPart(content='Hello to you too!')]),
     ]
 
@@ -6425,7 +6415,7 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
     message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='say_hello')]),
     ]
 
@@ -6447,7 +6437,7 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
     message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
             parts=[
                 ToolCallPart(tool_name='run_me', tool_call_id='run_me'),
@@ -6459,8 +6449,7 @@ async def test_run_with_deferred_tool_results_errors():
             parts=[
                 ToolReturnPart(tool_name='run_me', tool_call_id='run_me', content='Success'),
                 RetryPromptPart(tool_name='run_me_too', tool_call_id='run_me_too', content='Failure'),
-            ],
-            timestamp=IsDatetime(),
+            ]
         ),
     ]
 
@@ -6608,7 +6597,7 @@ async def test_consecutive_model_responses_in_history():
         )
 
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello...')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello...')]),
         ModelResponse(parts=[TextPart(content='...world!')]),
         ModelResponse(parts=[TextPart(content='Anything else I can help with?')]),
     ]
@@ -6625,8 +6614,7 @@ async def test_consecutive_model_responses_in_history():
                         content='Hello...',
                         timestamp=IsDatetime(),
                     )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='...world!'), TextPart(content='Anything else I can help with?')],
@@ -6682,8 +6670,7 @@ async def test_consecutive_model_responses_in_history():
                         content='Hello...',
                         timestamp=IsDatetime(),
                     )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='...world!'), TextPart(content='Anything else I can help with?')],
@@ -7132,7 +7119,7 @@ async def test_run_with_unapproved_tool_call_in_history():
         print('File deleted.')  # pragma: no cover
 
     messages = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
     ]
 
@@ -7152,7 +7139,7 @@ async def test_message_history():
 
     async with agent.iter(
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+            ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ],
     ) as run:
         async for _ in run:

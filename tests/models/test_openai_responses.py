@@ -51,7 +51,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -287,7 +287,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -333,7 +333,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         timestamp=IsDatetime(),
                     ),
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -385,7 +385,7 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -426,7 +426,7 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     ),
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -584,7 +584,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -752,7 +752,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -794,7 +794,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -859,7 +859,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -934,7 +934,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1010,7 +1010,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1093,7 +1093,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1317,7 +1317,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1462,7 +1462,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1496,7 +1496,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1530,7 +1530,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -1562,7 +1562,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1596,7 +1596,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1651,7 +1651,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1685,7 +1685,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1742,7 +1742,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1776,7 +1776,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1829,7 +1829,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1863,7 +1863,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1920,7 +1920,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1954,7 +1954,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2016,7 +2016,6 @@ async def test_openai_previous_response_id_auto_mode(allow_model_requests: None,
                     content='The first secret key is sesame',
                 ),
             ],
-            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2032,7 +2031,6 @@ async def test_openai_previous_response_id_auto_mode(allow_model_requests: None,
                     content='The second secret key is olives',
                 ),
             ],
-            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2060,7 +2058,6 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
                     content='The first secret key is sesame',
                 ),
             ],
-            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2076,7 +2073,6 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
                     content='what is the first secret key?',
                 ),
             ],
-            timestamp=IsDatetime(),
         ),
     ]
 
@@ -2085,10 +2081,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
     assert not previous_response_id
     assert messages == snapshot(
         [
-            ModelRequest(
-                parts=[UserPromptPart(content='The first secret key is sesame', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-            ),
+            ModelRequest(parts=[UserPromptPart(content='The first secret key is sesame', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='Open sesame! What would you like to unlock?')],
                 usage=RequestUsage(),
@@ -2097,10 +2090,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
                 provider_name='anthropic',
                 provider_response_id='msg_01XUQuedGz9gusk4xZm4gWJj',
             ),
-            ModelRequest(
-                parts=[UserPromptPart(content='what is the first secret key?', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-            ),
+            ModelRequest(parts=[UserPromptPart(content='what is the first secret key?', timestamp=IsDatetime())]),
         ]
     )
 
@@ -2114,7 +2104,6 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
                     content='The first secret key is sesame',
                 ),
             ],
-            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2130,7 +2119,6 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
                     content='The second secret key is olives',
                 ),
             ],
-            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2146,7 +2134,6 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
                     content='what is the first secret key?',
                 ),
             ],
-            timestamp=IsDatetime(),
         ),
     ]
 
@@ -2155,10 +2142,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     assert previous_response_id == 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b'
     assert messages == snapshot(
         [
-            ModelRequest(
-                parts=[UserPromptPart(content='what is the first secret key?', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-            ),
+            ModelRequest(parts=[UserPromptPart(content='what is the first secret key?', timestamp=IsDatetime())]),
         ]
     )
 
@@ -2191,7 +2175,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2223,7 +2207,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2273,7 +2257,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2330,7 +2314,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2382,7 +2366,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2440,7 +2424,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2522,7 +2506,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
                 run_id=IsStr(),
             ),
@@ -2567,7 +2551,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
                 run_id=IsStr(),
             ),
@@ -2624,7 +2608,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2700,7 +2684,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2768,7 +2752,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2826,7 +2810,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2879,7 +2863,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2955,7 +2939,7 @@ If you intended different grouping with parentheses, let me know.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3014,7 +2998,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3839,7 +3823,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3873,7 +3857,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3958,7 +3942,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4058,7 +4042,7 @@ plt.show()\r
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4240,7 +4224,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5733,7 +5717,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5810,7 +5794,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5909,7 +5893,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6094,7 +6078,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6156,7 +6140,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6267,7 +6251,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6327,7 +6311,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6367,7 +6351,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6393,7 +6377,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6471,7 +6455,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6555,7 +6539,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6595,7 +6579,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6667,7 +6651,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6775,7 +6759,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6846,8 +6830,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 UserPromptPart(
                     content='What is the largest city in the user country?',
                 )
-            ],
-            timestamp=IsDatetime(),
+            ]
         ),
         ModelResponse(
             parts=[
@@ -6869,8 +6852,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                     content='Mexico',
                     tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
                 )
-            ],
-            timestamp=IsDatetime(),
+            ]
         ),
     ]
 
@@ -6885,7 +6867,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -6925,7 +6907,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -6961,7 +6943,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -7110,7 +7092,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -7192,7 +7174,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -7587,7 +7569,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 parts=[
                     UserPromptPart(content='What do I have on my Google Calendar for today?', timestamp=IsDatetime())
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),

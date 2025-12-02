@@ -1001,7 +1001,7 @@ class ModelRequest:
 
     _: KW_ONLY
 
-    timestamp: datetime
+    timestamp: datetime | None = None
     """The timestamp when the request was sent to the model."""
 
     instructions: str | None = None
