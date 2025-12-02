@@ -3211,8 +3211,8 @@ async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow
         'foobar',
         provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
         profile=OpenAIModelProfile(
-            openai_chat_custom_reasoning_field='reasoning_content',
-            openai_chat_send_back_thinking_parts='thinking_tags',
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='tags',
         ),
     )
     settings = ModelSettings()
@@ -3240,8 +3240,8 @@ async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_
         'foobar',
         provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
         profile=OpenAIModelProfile(
-            openai_chat_custom_reasoning_field='reasoning_content',
-            openai_chat_send_back_thinking_parts='custom_field',
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
         ),
     )
     settings = ModelSettings()
@@ -3260,7 +3260,7 @@ async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: N
         'foobar',
         provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
         profile=OpenAIModelProfile(
-            openai_chat_custom_reasoning_field='reasoning_content',
+            openai_chat_thinking_field='reasoning_content',
             openai_chat_send_back_thinking_parts=False,
         ),
     )
@@ -3279,7 +3279,7 @@ async def test_openai_reasoning_in_thinking_tags(allow_model_requests: None):
     m = OpenAIChatModel(
         'foobar',
         provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
-        profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='thinking_tags'),
+        profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='tags'),
     )
     settings = ModelSettings()
     params = ModelRequestParameters()

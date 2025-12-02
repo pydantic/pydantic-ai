@@ -20,25 +20,26 @@ class OpenAIModelProfile(ModelProfile):
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    openai_chat_custom_reasoning_field: str | None = None
-    """Non-standard field name used by some providers for model reasoning content in Chat Completions API responses.
+    openai_chat_thinking_field: str | None = None
+    """Non-standard field name used by some providers for model thinking content in Chat Completions API responses.
 
-    Plenty of providers use custom field names for reasoning content. Ollama and newer versions of vLLM use `reasoning`,
+    Plenty of providers use custom field names for thinking content. Ollama and newer versions of vLLM use `reasoning`,
     while DeepSeek, older vLLM and some others use `reasoning_content`.
 
-    Notice that the reasoning field configured here is currently limited to `str` type content.
+    Notice that the thinking field configured here is currently limited to `str` type content.
 
-    If `openai_chat_send_back_thinking_parts` is set to `'custom_field'`, this field must be set to a non-None value."""
+    If `openai_chat_send_back_thinking_parts` is set to `'field'`, this field must be set to a non-None value."""
 
-    openai_chat_send_back_thinking_parts: Literal['thinking_tags', 'custom_field', False] = 'thinking_tags'
-    """Whether the model includes reasoning content in requests.
+    openai_chat_send_back_thinking_parts: Literal['tags', 'field', False] = 'tags'
+    """Whether the model includes thinking content in requests.
 
     This can be:
-    * `'thinking_tags'` (default): The reasoning content is included in the main `content` field, enclosed within thinking tags.
-    * `'custom_field'`: The reasoning content is included in a separate field specified by `openai_chat_custom_reasoning_field`.
-    * `False`: No reasoning content is sent in the request.
+    * `'tags'` (default): The thinking content is included in the main `content` field, enclosed within thinking tags as
+    specified in `thinking_tags` profile option.
+    * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
+    * `False`: No thinking content is sent in the request.
 
-    Defaults to `'thinking_tags'` for compatibility reasons."""
+    Defaults to `'thinking_tags'` for backward compatibility reasons."""
 
     openai_supports_strict_tool_definition: bool = True
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
@@ -79,10 +80,10 @@ class OpenAIModelProfile(ModelProfile):
                 'Use `openai_unsupported_model_settings` instead.',
                 DeprecationWarning,
             )
-        if self.openai_chat_send_back_thinking_parts == 'custom_field' and not self.openai_chat_custom_reasoning_field:
+        if self.openai_chat_send_back_thinking_parts == 'field' and not self.openai_chat_thinking_field:
             raise UserError(
-                'If `openai_chat_include_reasoning_in_request` is "custom_field", '
-                '`openai_chat_custom_reasoning_field` must be set to a non-None value.'
+                'If `openai_chat_send_back_thinking_parts` is "field", '
+                '`openai_chat_thinking_field` must be set to a non-None value.'
             )
 
 
