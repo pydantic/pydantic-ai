@@ -431,6 +431,11 @@ class AnthropicModel(Model):
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
 
+        # Check if any tools use input_examples (advanced tool use feature)
+        has_input_examples = any(tool.get('input_examples') for tool in tools)
+        if has_input_examples:
+            betas.add('advanced-tool-use-2025-11-20')
+
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
@@ -1041,6 +1046,8 @@ class AnthropicModel(Model):
         }
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
+        if f.input_examples:
+            tool_param['input_examples'] = f.input_examples
         return tool_param
 
     @staticmethod

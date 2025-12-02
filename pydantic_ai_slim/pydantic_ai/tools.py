@@ -262,6 +262,7 @@ class Tool(Generic[ToolAgentDepsT]):
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    input_examples: list[dict[str, Any]] | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -285,6 +286,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        input_examples: list[dict[str, Any]] | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -341,6 +343,8 @@ class Tool(Generic[ToolAgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            input_examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.input_examples`][pydantic_ai.tools.ToolDefinition.input_examples] for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -362,6 +366,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.input_examples = input_examples
 
     @classmethod
     def from_schema(
@@ -418,6 +423,7 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=self.sequential,
             metadata=self.metadata,
             kind='unapproved' if self.requires_approval else 'function',
+            input_examples=self.input_examples,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -501,6 +507,18 @@ class ToolDefinition:
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
     For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
+    """
+
+    input_examples: list[dict[str, Any]] | None = None
+    """Example inputs demonstrating correct tool usage patterns.
+
+    Provide 1-5 realistic examples showing parameter conventions, optional field patterns,
+    nested structures, and API-specific conventions. Each example must validate against
+    the tool's `parameters_json_schema`.
+
+    Supported by:
+
+    * [Anthropic](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-use-examples)
     """
 
     @property

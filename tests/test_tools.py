@@ -150,6 +150,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -184,6 +185,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -226,6 +228,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -268,6 +271,7 @@ def test_google_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -308,6 +312,7 @@ def test_sphinx_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -354,6 +359,7 @@ def test_numpy_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -388,6 +394,7 @@ def test_only_returns_type():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -413,6 +420,7 @@ def test_docstring_unknown():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -456,6 +464,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -492,6 +501,7 @@ def test_takes_just_model():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -537,6 +547,7 @@ def test_takes_model_and_int():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -902,6 +913,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 
@@ -974,6 +986,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'input_examples': None,
             },
             {
                 'description': None,
@@ -989,6 +1002,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'input_examples': None,
             },
         ]
     )
@@ -1077,6 +1091,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'input_examples': None,
             },
             {
                 'description': None,
@@ -1090,6 +1105,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'input_examples': None,
             },
         ]
     )
@@ -1127,6 +1143,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'input_examples': None,
         }
     )
 

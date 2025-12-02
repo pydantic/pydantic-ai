@@ -119,6 +119,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        input_examples: list[dict[str, Any]] | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -137,6 +138,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        input_examples: list[dict[str, Any]] | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -193,6 +195,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            input_examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.input_examples`][pydantic_ai.tools.ToolDefinition.input_examples] for more info.
         """
 
         def tool_decorator(
@@ -213,6 +217,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                input_examples=input_examples,
             )
             return func_
 
@@ -233,6 +238,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        input_examples: list[dict[str, Any]] | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -267,6 +273,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            input_examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.input_examples`][pydantic_ai.tools.ToolDefinition.input_examples] for more info.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -295,6 +303,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            input_examples=input_examples,
         )
         self.add_tool(tool)
 
