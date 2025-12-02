@@ -105,6 +105,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .grok import GrokProvider
 
         return GrokProvider
+    elif provider == 'xai':
+        from .xai import XaiProvider
+
+        return XaiProvider
     elif provider == 'moonshotai':
         from .moonshotai import MoonshotAIProvider
 

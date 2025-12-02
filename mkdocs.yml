@@ -29,6 +29,7 @@ nav:
           - models/openai.md
           - models/anthropic.md
           - models/google.md
+          - models/xai.md
           - models/bedrock.md
           - models/cohere.md
           - models/groq.md
