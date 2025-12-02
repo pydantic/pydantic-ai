@@ -7880,3 +7880,63 @@ async def test_tool_choice_required_with_thinking_falls_back_to_auto(allow_model
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
     assert kwargs['tool_choice']['type'] == 'auto'
+
+
+async def test_tool_choice_specific_with_thinking_falls_back_to_auto(allow_model_requests: None) -> None:
+    """Test that specific tool_choice with thinking mode falls back to 'auto' with warning."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match='Forcing specific tools is not supported with Anthropic thinking mode'):
+        await agent.run(
+            'hello',
+            model_settings={
+                'tool_choice': ['my_tool'],
+                'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1000},
+            },  # type: ignore
+        )
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice']['type'] == 'auto'
+
+
+async def test_tool_choice_none_with_multiple_output_tools_falls_back_to_auto(allow_model_requests: None) -> None:
+    """Test that tool_choice='none' with multiple output tools falls back to 'auto' with warning."""
+    import warnings as warn_module
+
+    class LocationA(BaseModel):
+        city: str
+
+    class LocationB(BaseModel):
+        country: str
+
+    c = completion_message(
+        [BetaToolUseBlock(id='1', type='tool_use', name='final_result_LocationA', input={'city': 'Paris'})],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, LocationA | LocationB] = Agent(m, output_type=[LocationA, LocationB])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    # Expect two warnings: one from resolve_tool_choice about output tools, one from Anthropic about multiple tools
+    with warn_module.catch_warnings(record=True) as w:
+        warn_module.simplefilter('always')
+        await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+        # Check that we got the Anthropic-specific warning about multiple tools
+        warning_messages = [str(warning.message) for warning in w]
+        assert any("tool_choice='none' is set but output tools are required" in msg for msg in warning_messages)
+        assert any('Anthropic only supports forcing a single tool' in msg for msg in warning_messages)
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice']['type'] == 'auto'

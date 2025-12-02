@@ -43,7 +43,15 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+    resolve_tool_choice,
+)
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -642,28 +650,18 @@ class AnthropicModel(Model):
         if not tools:
             return None
 
-        user_tool_choice = model_settings.get('tool_choice')
         thinking_enabled = model_settings.get('anthropic_thinking') is not None
         tool_choice: BetaToolChoiceParam
 
-        # Handle explicit user-provided tool_choice
-        if user_tool_choice is not None:
-            if user_tool_choice == 'none':
-                # If output tools exist, we can't truly disable all tools
-                if model_request_parameters.output_tools:
-                    warnings.warn(
-                        "tool_choice='none' is set but output tools are required for structured output. "
-                        'The output tools will remain available. Consider using native or prompted output modes '
-                        "if you need tool_choice='none' with structured output.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    # Allow only output tools (Anthropic only supports one tool at a time)
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is not None:
+            if resolved.mode == 'none':
+                if resolved.output_tools_fallback:
                     output_tool_names = [t.name for t in model_request_parameters.output_tools]
                     if len(output_tool_names) == 1:
                         tool_choice = {'type': 'tool', 'name': output_tool_names[0]}
                     else:
-                        # Multiple output tools - fall back to 'auto' and warn
                         warnings.warn(
                             'Anthropic only supports forcing a single tool. '
                             "Falling back to 'auto' for multiple output tools.",
@@ -674,10 +672,10 @@ class AnthropicModel(Model):
                 else:
                     tool_choice = {'type': 'none'}
 
-            elif user_tool_choice == 'auto':
+            elif resolved.mode == 'auto':
                 tool_choice = {'type': 'auto'}
 
-            elif user_tool_choice == 'required':
+            elif resolved.mode == 'required':
                 if thinking_enabled:
                     warnings.warn(
                         "tool_choice='required' is not supported with Anthropic thinking mode. Falling back to 'auto'.",
@@ -688,16 +686,7 @@ class AnthropicModel(Model):
                 else:
                     tool_choice = {'type': 'any'}
 
-            elif isinstance(user_tool_choice, list):
-                # Validate tool names exist in function_tools
-                function_tool_names = {t.name for t in model_request_parameters.function_tools}
-                invalid_names = set(user_tool_choice) - function_tool_names
-                if invalid_names:
-                    raise UserError(
-                        f'Invalid tool names in tool_choice: {invalid_names}. '
-                        f'Available function tools: {function_tool_names or "none"}'
-                    )
-
+            elif resolved.mode == 'specific' and resolved.tool_names:
                 if thinking_enabled:
                     warnings.warn(
                         "Forcing specific tools is not supported with Anthropic thinking mode. Falling back to 'auto'.",
@@ -705,10 +694,9 @@ class AnthropicModel(Model):
                         stacklevel=6,
                     )
                     tool_choice = {'type': 'auto'}
-                elif len(user_tool_choice) == 1:
-                    tool_choice = {'type': 'tool', 'name': user_tool_choice[0]}
+                elif len(resolved.tool_names) == 1:
+                    tool_choice = {'type': 'tool', 'name': resolved.tool_names[0]}
                 else:
-                    # Anthropic only supports one tool at a time
                     warnings.warn(
                         'Anthropic only supports forcing a single tool. '
                         "Falling back to 'any' (required) for multiple tools.",

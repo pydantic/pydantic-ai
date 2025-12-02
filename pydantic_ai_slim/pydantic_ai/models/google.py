@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -50,6 +49,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    resolve_tool_choice,
 )
 
 try:
@@ -364,7 +364,7 @@ class GoogleModel(Model):
                     )
         return tools or None
 
-    def _get_tool_config(  # noqa: C901
+    def _get_tool_config(
         self,
         model_request_parameters: ModelRequestParameters,
         tools: list[ToolDict] | None,
@@ -373,21 +373,11 @@ class GoogleModel(Model):
         if not tools:
             return None
 
-        user_tool_choice = model_settings.get('tool_choice')
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
 
-        # Handle explicit user-provided tool_choice
-        if user_tool_choice is not None:
-            if user_tool_choice == 'none':
-                # If output tools exist, we can't truly disable all tools
-                if model_request_parameters.output_tools:
-                    warnings.warn(
-                        "tool_choice='none' is set but output tools are required for structured output. "
-                        'The output tools will remain available. Consider using native or prompted output modes '
-                        "if you need tool_choice='none' with structured output.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    # Allow only output tools
+        if resolved is not None:
+            if resolved.mode == 'none':
+                if resolved.output_tools_fallback:
                     output_tool_names = [t.name for t in model_request_parameters.output_tools]
                     return ToolConfigDict(
                         function_calling_config=FunctionCallingConfigDict(
@@ -399,13 +389,12 @@ class GoogleModel(Model):
                     function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.NONE)
                 )
 
-            if user_tool_choice == 'auto':
+            if resolved.mode == 'auto':
                 return ToolConfigDict(
                     function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.AUTO)
                 )
 
-            if user_tool_choice == 'required':
-                # Get all tool names
+            if resolved.mode == 'required':
                 names: list[str] = []
                 for tool in tools:
                     for function_declaration in tool.get('function_declarations') or []:
@@ -418,19 +407,11 @@ class GoogleModel(Model):
                     )
                 )
 
-            if isinstance(user_tool_choice, list):
-                # Validate tool names exist in function_tools
-                function_tool_names = {t.name for t in model_request_parameters.function_tools}
-                invalid_names = set(user_tool_choice) - function_tool_names
-                if invalid_names:
-                    raise UserError(
-                        f'Invalid tool names in tool_choice: {invalid_names}. '
-                        f'Available function tools: {function_tool_names or "none"}'
-                    )
+            if resolved.mode == 'specific' and resolved.tool_names:
                 return ToolConfigDict(
                     function_calling_config=FunctionCallingConfigDict(
                         mode=FunctionCallingConfigMode.ANY,
-                        allowed_function_names=list(user_tool_choice),
+                        allowed_function_names=resolved.tool_names,
                     )
                 )
 

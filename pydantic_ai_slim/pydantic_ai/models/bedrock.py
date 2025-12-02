@@ -42,7 +42,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item, resolve_tool_choice
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -495,13 +495,11 @@ class BedrockConverseModel(Model):
         if not tools:
             return None
 
-        user_tool_choice = model_settings.get('tool_choice') if model_settings else None
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
         tool_choice: ToolChoiceTypeDef
 
-        # Handle explicit user-provided tool_choice
-        if user_tool_choice is not None:
-            if user_tool_choice == 'none':
-                # Bedrock doesn't support 'none', fall back to 'auto' with warning
+        if resolved is not None:
+            if resolved.mode == 'none':
                 warnings.warn(
                     "Bedrock does not support tool_choice='none'. Falling back to 'auto'.",
                     UserWarning,
@@ -509,26 +507,16 @@ class BedrockConverseModel(Model):
                 )
                 tool_choice = {'auto': {}}
 
-            elif user_tool_choice == 'auto':
+            elif resolved.mode == 'auto':
                 tool_choice = {'auto': {}}
 
-            elif user_tool_choice == 'required':
+            elif resolved.mode == 'required':
                 tool_choice = {'any': {}}
 
-            elif isinstance(user_tool_choice, list):
-                # Validate tool names exist in function_tools
-                function_tool_names = {t.name for t in model_request_parameters.function_tools}
-                invalid_names = set(user_tool_choice) - function_tool_names
-                if invalid_names:
-                    raise UserError(
-                        f'Invalid tool names in tool_choice: {invalid_names}. '
-                        f'Available function tools: {function_tool_names or "none"}'
-                    )
-
-                if len(user_tool_choice) == 1:
-                    tool_choice = {'tool': {'name': user_tool_choice[0]}}
+            elif resolved.mode == 'specific' and resolved.tool_names:
+                if len(resolved.tool_names) == 1:
+                    tool_choice = {'tool': {'name': resolved.tool_names[0]}}
                 else:
-                    # Bedrock only supports single tool choice, fall back to any
                     warnings.warn(
                         'Bedrock only supports forcing a single tool. '
                         "Falling back to 'any' (required) for multiple tools.",

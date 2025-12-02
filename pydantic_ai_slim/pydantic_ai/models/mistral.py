@@ -48,6 +48,7 @@ from . import (
     StreamedResponse,
     check_allow_model_requests,
     get_user_agent,
+    resolve_tool_choice,
 )
 
 try:
@@ -328,40 +329,21 @@ class MistralModel(Model):
         if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
             return None
 
-        user_tool_choice = model_settings.get('tool_choice')
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
 
-        # Handle explicit user-provided tool_choice
-        if user_tool_choice is not None:
-            if user_tool_choice == 'none':
-                # If output tools exist, we can't truly disable all tools
-                if model_request_parameters.output_tools:
-                    warnings.warn(
-                        "tool_choice='none' is set but output tools are required for structured output. "
-                        'The output tools will remain available. Consider using native or prompted output modes '
-                        "if you need tool_choice='none' with structured output.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
+        if resolved is not None:
+            if resolved.mode == 'none':
+                if resolved.output_tools_fallback:
                     return 'required'
                 return 'none'
 
-            if user_tool_choice == 'auto':
+            if resolved.mode == 'auto':
                 return 'auto'
 
-            if user_tool_choice == 'required':
+            if resolved.mode == 'required':
                 return 'required'
 
-            # Handle list of specific tool names
-            if isinstance(user_tool_choice, list):
-                # Validate tool names exist in function_tools
-                function_tool_names = {t.name for t in model_request_parameters.function_tools}
-                invalid_names = set(user_tool_choice) - function_tool_names
-                if invalid_names:
-                    raise UserError(
-                        f'Invalid tool names in tool_choice: {invalid_names}. '
-                        f'Available function tools: {function_tool_names or "none"}'
-                    )
-                # Mistral doesn't support forcing specific tools, fall back to required
+            if resolved.mode == 'specific':
                 warnings.warn(
                     "Mistral does not support forcing specific tools. Falling back to 'required'.",
                     UserWarning,

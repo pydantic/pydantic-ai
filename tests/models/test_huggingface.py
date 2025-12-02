@@ -12,7 +12,10 @@ import aiohttp
 import pytest
 from huggingface_hub import (
     AsyncInferenceClient,
+    ChatCompletionInputFunctionName,
     ChatCompletionInputMessage,
+    ChatCompletionInputTool,
+    ChatCompletionInputToolChoiceClass,
     ChatCompletionOutput,
     ChatCompletionOutputComplete,
     ChatCompletionOutputFunctionDefinition,
@@ -50,12 +53,13 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError, UserError
-from pydantic_ai.models.huggingface import HuggingFaceModel
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
 from pydantic_ai.providers.huggingface import HuggingFaceProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
@@ -1026,3 +1030,154 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out
     assert msg['role'] == 'user'
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
+
+
+# tool_choice tests
+
+
+@pytest.mark.parametrize(
+    'tool_choice,expected',
+    [
+        pytest.param('none', 'none', id='none'),
+        pytest.param('auto', 'auto', id='auto'),
+        pytest.param('required', 'required', id='required'),
+    ],
+)
+def test_tool_choice_string_values(tool_choice: str, expected: str) -> None:
+    """Test that tool_choice string values are correctly passed through."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+    tools: list[ChatCompletionInputTool] = [
+        ChatCompletionInputTool(type='function', function={'name': 'my_tool', 'description': 'Test tool'})  # pyright: ignore[reportCallIssue]
+    ]
+
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
+    )
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    settings: HuggingFaceModelSettings = {'tool_choice': tool_choice}  # type: ignore[assignment]
+    result = model._get_tool_choice(tools, settings, mrp)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == expected
+
+
+def test_tool_choice_specific_tool_single() -> None:
+    """Test tool_choice with a single specific tool name."""
+    tool_a = ToolDefinition(
+        name='tool_a',
+        description='Test tool A',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    tool_b = ToolDefinition(
+        name='tool_b',
+        description='Test tool B',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
+    )
+    tools: list[ChatCompletionInputTool] = [
+        ChatCompletionInputTool(type='function', function={'name': 'tool_a', 'description': 'Test tool A'}),  # pyright: ignore[reportCallIssue]
+        ChatCompletionInputTool(type='function', function={'name': 'tool_b', 'description': 'Test tool B'}),  # pyright: ignore[reportCallIssue]
+    ]
+
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
+    )
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    settings: HuggingFaceModelSettings = {'tool_choice': ['tool_a']}
+    result = model._get_tool_choice(tools, settings, mrp)  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(result, ChatCompletionInputToolChoiceClass)
+    assert result.function == ChatCompletionInputFunctionName(name='tool_a')  # type: ignore[call-arg]
+
+
+def test_tool_choice_multiple_tools_falls_back_to_required() -> None:
+    """Test that multiple tools in tool_choice falls back to 'required' with warning."""
+    tool_a = ToolDefinition(
+        name='tool_a',
+        description='Test tool A',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    tool_b = ToolDefinition(
+        name='tool_b',
+        description='Test tool B',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
+    )
+    tools: list[ChatCompletionInputTool] = [
+        ChatCompletionInputTool(type='function', function={'name': 'tool_a', 'description': 'Test tool A'}),  # pyright: ignore[reportCallIssue]
+        ChatCompletionInputTool(type='function', function={'name': 'tool_b', 'description': 'Test tool B'}),  # pyright: ignore[reportCallIssue]
+    ]
+
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
+    )
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    settings: HuggingFaceModelSettings = {'tool_choice': ['tool_a', 'tool_b']}
+
+    with pytest.warns(UserWarning, match='HuggingFace only supports forcing a single tool'):
+        result = model._get_tool_choice(tools, settings, mrp)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == 'required'
+
+
+def test_tool_choice_invalid_tool_name() -> None:
+    """Test that invalid tool names raise UserError."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+    tools: list[ChatCompletionInputTool] = [
+        ChatCompletionInputTool(type='function', function={'name': 'my_tool', 'description': 'Test tool'})  # pyright: ignore[reportCallIssue]
+    ]
+
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
+    )
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    settings: HuggingFaceModelSettings = {'tool_choice': ['nonexistent_tool']}
+
+    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
+        model._get_tool_choice(tools, settings, mrp)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_tool_choice_none_with_output_tools_warns() -> None:
+    """Test that tool_choice='none' with output tools warns and allows output tools."""
+    func_tool = ToolDefinition(
+        name='func_tool',
+        description='Function tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool = ToolDefinition(
+        name='output_tool',
+        description='Output tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[func_tool], allow_text_output=False, output_tools=[output_tool]
+    )
+    tools: list[ChatCompletionInputTool] = [
+        ChatCompletionInputTool(type='function', function={'name': 'func_tool', 'description': 'Function tool'}),  # pyright: ignore[reportCallIssue]
+        ChatCompletionInputTool(type='function', function={'name': 'output_tool', 'description': 'Output tool'}),  # pyright: ignore[reportCallIssue]
+    ]
+
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
+    )
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    settings: HuggingFaceModelSettings = {'tool_choice': 'none'}
+
+    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
+        result = model._get_tool_choice(tools, settings, mrp)  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(result, ChatCompletionInputToolChoiceClass)
+    assert result.function == ChatCompletionInputFunctionName(name='output_tool')  # type: ignore[call-arg]

@@ -47,6 +47,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     check_allow_model_requests,
+    resolve_tool_choice,
 )
 
 try:
@@ -325,53 +326,32 @@ class HuggingFaceModel(Model):
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None:
-        user_tool_choice = model_settings.get('tool_choice')
-
         if not tools:
             return None
 
-        # Handle explicit user-provided tool_choice
-        if user_tool_choice is not None:
-            if user_tool_choice == 'none':
-                # If output tools exist, we can't truly disable all tools
-                if model_request_parameters.output_tools:
-                    warnings.warn(
-                        "tool_choice='none' is set but output tools are required for structured output. "
-                        'The output tools will remain available. Consider using native or prompted output modes '
-                        "if you need tool_choice='none' with structured output.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    # Allow only output tools (force first one)
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is not None:
+            if resolved.mode == 'none':
+                if resolved.output_tools_fallback:
                     output_tool_names = [t.name for t in model_request_parameters.output_tools]
                     return ChatCompletionInputToolChoiceClass(
                         function=ChatCompletionInputFunctionName(name=output_tool_names[0])  # pyright: ignore[reportCallIssue]
                     )
                 return 'none'
 
-            if user_tool_choice == 'auto':
+            if resolved.mode == 'auto':
                 return 'auto'
 
-            if user_tool_choice == 'required':
+            if resolved.mode == 'required':
                 return 'required'
 
-            # Handle list of specific tool names
-            if isinstance(user_tool_choice, list):
-                # Validate tool names exist in function_tools
-                function_tool_names = {t.name for t in model_request_parameters.function_tools}
-                invalid_names = set(user_tool_choice) - function_tool_names
-                if invalid_names:
-                    raise UserError(
-                        f'Invalid tool names in tool_choice: {invalid_names}. '
-                        f'Available function tools: {function_tool_names or "none"}'
-                    )
-
-                if len(user_tool_choice) == 1:
+            if resolved.mode == 'specific' and resolved.tool_names:
+                if len(resolved.tool_names) == 1:
                     return ChatCompletionInputToolChoiceClass(
-                        function=ChatCompletionInputFunctionName(name=user_tool_choice[0])  # pyright: ignore[reportCallIssue]
+                        function=ChatCompletionInputFunctionName(name=resolved.tool_names[0])  # pyright: ignore[reportCallIssue]
                     )
                 else:
-                    # HuggingFace only supports single tool choice, fall back to required
                     warnings.warn(
                         'HuggingFace only supports forcing a single tool. '
                         "Falling back to 'required' for multiple tools.",
