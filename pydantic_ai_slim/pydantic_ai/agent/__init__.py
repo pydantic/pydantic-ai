@@ -984,6 +984,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 function_schema = _function_schema.function_schema(_, GenerateToolJsonSchema)
                 json_schema = function_schema.json_schema
                 json_schema['description'] = function_schema.description
+            elif isinstance(_, _output.TextOutput):
+                json_schema = TypeAdapter(str).json_schema(mode='serialization')
             else:
                 json_schema = TypeAdapter(_).json_schema(mode='serialization')
 

@@ -9,6 +9,7 @@ from pydantic_ai import (
     NativeOutput,
     PromptedOutput,
     StructuredDict,
+    TextOutput,
     ToolOutput,
 )
 
@@ -27,6 +28,28 @@ class Foo(BaseModel):
 async def test_text_output_json_schema():
     agent = Agent('test')
     assert agent.output_json_schema() == snapshot({'type': 'string'})
+
+    def func(x: str) -> str:
+        return x
+
+    agent = Agent('test', output_type=TextOutput(func))
+    assert agent.output_json_schema() == snapshot({'type': 'string'})
+
+
+async def test_function_output_json_schema():
+    def func(x: int) -> int:
+        return x
+
+    agent = Agent('test', output_type=[func])
+    assert agent.output_json_schema() == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'x': {'type': 'integer'}},
+            'required': ['x'],
+            'type': 'object',
+            'description': None,
+        }
+    )
 
 
 async def test_auto_output_json_schema():
