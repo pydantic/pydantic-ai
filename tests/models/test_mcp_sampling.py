@@ -128,7 +128,8 @@ def test_assistant_text_history_complex():
                     content=['a string', BinaryContent(data=base64.b64encode(b'data'), media_type='image/jpeg')]
                 ),
                 SystemPromptPart(content='system content'),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[TextPart(content='text content')],
