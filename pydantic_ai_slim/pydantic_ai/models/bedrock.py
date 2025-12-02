@@ -615,7 +615,7 @@ class BedrockConverseModel(Model):
             last_message = cast(dict[str, Any], current_message)
 
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt.insert(0, {'text': instructions})
+            system_prompt.append({'text': instructions})
 
         return system_prompt, processed_messages
 
