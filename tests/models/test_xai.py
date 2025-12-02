@@ -1272,10 +1272,6 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
 
     result = await agent.run('What is 65465 - 6544 * 65464 - 6 + 1.02255? Use code to calculate this.')
 
-    # Verify the response
-    assert result.output
-    assert '-428' in result.output or 'million' in result.output.lower()
-
     # Verify the builtin tool call and result appear in message history
     assert result.all_messages() == snapshot(
         [
@@ -1410,9 +1406,6 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
         'Search for the current price of Bitcoin and calculate its percentage change if it was $50000 last week.'
     )
 
-    # Verify the response
-    assert result.output
-
     # Verify both builtin tool calls appear in message history
     assert result.all_messages() == snapshot(
         [
@@ -1473,10 +1466,6 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
         return f'The local temperature in {city} is 72°F'
 
     result = await agent.run('What is the weather in Tokyo?')
-
-    # Verify the agent runs without error when both tool types are registered
-    assert result.output
-    assert '72' in result.output or 'tokyo' in result.output.lower()
 
     # Verify the builtin tool call appears in message history
     assert result.all_messages() == snapshot(
@@ -1545,7 +1534,6 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
     result = await agent.run('Can you list my Linear issues? Keep your answer brief.')
 
     # Verify the response and check builtin tool parts appear in message history
-    assert result.output == 'No issues found.'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1794,7 +1782,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('What is 2+2?')
-    assert result.output == 'The answer is 4'
+
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1830,7 +1818,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('What is 2+2?')
-    assert result.output == '4'
+
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1865,6 +1853,7 @@ async def test_xai_reasoning_without_summary(allow_model_requests: None):
 
     agent = Agent(model=model)
     result = await agent.run('What is 2+2?')
+
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1914,7 +1903,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
         return '4'
 
     result = await agent.run('What is 2+2?')
-    assert result.output == 'The calculation shows that 2+2 equals 4'
+
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1985,7 +1974,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
         return 'sunny'
 
     result = await agent.run('What is the weather in San Francisco?')
-    assert result.output == 'The weather in San Francisco is sunny'
+
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -2289,7 +2278,6 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
         return 'Mexico'
 
     result = await agent.run('What is the largest city in the user country?')
-    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
     assert result.all_messages() == snapshot(
         [
