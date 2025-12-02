@@ -649,11 +649,11 @@ class CachePoint:
     """Type identifier, this is available on all parts as a discriminator."""
 
     ttl: Literal['5m', '1h'] = '5m'
-    """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour). Automatically omitted for Bedrock.
+    """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour).
 
     Supported by:
 
-    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
