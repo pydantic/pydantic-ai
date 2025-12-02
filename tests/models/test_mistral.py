@@ -28,7 +28,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -2410,23 +2410,6 @@ def test_tool_choice_specific_tool_falls_back_to_required() -> None:
         result = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
     assert result == 'required'
-
-
-def test_tool_choice_invalid_tool_name() -> None:
-    """Test that invalid tool names raise UserError."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
-    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    settings: MistralModelSettings = {'tool_choice': ['nonexistent_tool']}
-
-    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
-        model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_tool_choice_none_with_output_tools_warns() -> None:

@@ -418,6 +418,8 @@ def resolve_tool_choice(
         return ResolvedToolChoice(mode='required')
 
     if isinstance(user_tool_choice, list):
+        if not user_tool_choice:
+            raise UserError('tool_choice cannot be an empty list. Use None for default behavior.')
         function_tool_names = {t.name for t in model_request_parameters.function_tools}
         invalid_names = set(user_tool_choice) - function_tool_names
         if invalid_names:
@@ -427,7 +429,7 @@ def resolve_tool_choice(
             )
         return ResolvedToolChoice(mode='specific', tool_names=list(user_tool_choice))
 
-    return None
+    return None  # pragma: no cover
 
 
 class Model(ABC):

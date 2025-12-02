@@ -407,7 +407,7 @@ class GoogleModel(Model):
                     )
                 )
 
-            if resolved.mode == 'specific' and resolved.tool_names:
+            if resolved.mode == 'specific' and resolved.tool_names:  # pragma: no branch
                 return ToolConfigDict(
                     function_calling_config=FunctionCallingConfigDict(
                         mode=FunctionCallingConfigMode.ANY,

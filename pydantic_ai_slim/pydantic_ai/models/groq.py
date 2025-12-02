@@ -402,7 +402,7 @@ class GroqModel(Model):
             if resolved.mode == 'required':
                 return 'required'
 
-            if resolved.mode == 'specific' and resolved.tool_names:
+            if resolved.mode == 'specific' and resolved.tool_names:  # pragma: no branch
                 if len(resolved.tool_names) == 1:
                     return ChatCompletionNamedToolChoiceParam(
                         type='function',

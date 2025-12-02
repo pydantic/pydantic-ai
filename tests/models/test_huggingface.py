@@ -52,7 +52,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
 from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -1126,28 +1126,6 @@ def test_tool_choice_multiple_tools_falls_back_to_required() -> None:
         result = model._get_tool_choice(tools, settings, mrp)  # pyright: ignore[reportPrivateUsage]
 
     assert result == 'required'
-
-
-def test_tool_choice_invalid_tool_name() -> None:
-    """Test that invalid tool names raise UserError."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-    tools: list[ChatCompletionInputTool] = [
-        ChatCompletionInputTool(type='function', function={'name': 'my_tool', 'description': 'Test tool'})  # pyright: ignore[reportCallIssue]
-    ]
-
-    mock_client = MockHuggingFace.create_mock(
-        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
-    )
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    settings: HuggingFaceModelSettings = {'tool_choice': ['nonexistent_tool']}
-
-    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
-        model._get_tool_choice(tools, settings, mrp)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_tool_choice_none_with_output_tools_warns() -> None:

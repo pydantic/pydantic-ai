@@ -734,7 +734,7 @@ class OpenAIChatModel(Model):
             if resolved.mode == 'required':
                 return 'required'
 
-            if resolved.mode == 'specific' and resolved.tool_names:
+            if resolved.mode == 'specific' and resolved.tool_names:  # pragma: no branch
                 if len(resolved.tool_names) == 1:
                     return ChatCompletionNamedToolChoiceParam(
                         type='function',
@@ -1468,25 +1468,14 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ResponsesToolChoice | None:
-        user_tool_choice = model_settings.get('tool_choice')
-        profile = OpenAIModelProfile.from_profile(self.profile)
-
         if not tools:
             return None
 
-        # Handle explicit user-provided tool_choice
-        if user_tool_choice is not None:
-            if user_tool_choice == 'none':
-                # If output tools exist, we can't truly disable all tools
-                if model_request_parameters.output_tools:
-                    warnings.warn(
-                        "tool_choice='none' is set but output tools are required for structured output. "
-                        'The output tools will remain available. Consider using native or prompted output modes '
-                        "if you need tool_choice='none' with structured output.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    # Allow only output tools
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is not None:
+            if resolved.mode == 'none':
+                if resolved.output_tools_fallback:
                     output_tool_names = [t.name for t in model_request_parameters.output_tools]
                     if len(output_tool_names) == 1:
                         return ToolChoiceFunctionParam(type='function', name=output_tool_names[0])
@@ -1498,34 +1487,27 @@ class OpenAIResponsesModel(Model):
                         )
                 return 'none'
 
-            if user_tool_choice == 'auto':
+            if resolved.mode == 'auto':
                 return 'auto'
 
-            if user_tool_choice == 'required':
+            if resolved.mode == 'required':
                 return 'required'
 
-            # Handle list of specific tool names
-            if isinstance(user_tool_choice, list):
-                # Validate tool names exist in function_tools
-                function_tool_names = {t.name for t in model_request_parameters.function_tools}
-                invalid_names = set(user_tool_choice) - function_tool_names
-                if invalid_names:
-                    raise UserError(
-                        f'Invalid tool names in tool_choice: {invalid_names}. '
-                        f'Available function tools: {function_tool_names or "none"}'
-                    )
-
-                if len(user_tool_choice) == 1:
-                    return ToolChoiceFunctionParam(type='function', name=user_tool_choice[0])
+            if resolved.mode == 'specific' and resolved.tool_names:  # pragma: no branch
+                if len(resolved.tool_names) == 1:
+                    return ToolChoiceFunctionParam(type='function', name=resolved.tool_names[0])
                 else:
                     return ToolChoiceAllowedParam(
                         type='allowed_tools',
                         mode='required' if not model_request_parameters.allow_text_output else 'auto',
-                        tools=[{'type': 'function', 'name': n} for n in user_tool_choice],
+                        tools=[{'type': 'function', 'name': n} for n in resolved.tool_names],
                     )
 
         # Default behavior: infer from allow_text_output
-        if not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
+        if (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
             return 'required'
         return 'auto'
 

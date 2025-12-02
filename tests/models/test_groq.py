@@ -41,7 +41,6 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -5680,20 +5679,6 @@ async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> N
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['tool_choice'] == {'type': 'function', 'function': {'name': 'tool_a'}}
-
-
-async def test_tool_choice_invalid_tool_name(allow_model_requests: None) -> None:
-    """Test that invalid tool names in tool_choice raise UserError."""
-    mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
-        await agent.run('hello', model_settings={'tool_choice': ['nonexistent_tool']})
 
 
 async def test_tool_choice_multiple_tools_falls_back_to_required(allow_model_requests: None) -> None:

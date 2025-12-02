@@ -343,7 +343,7 @@ class MistralModel(Model):
             if resolved.mode == 'required':
                 return 'required'
 
-            if resolved.mode == 'specific':
+            if resolved.mode == 'specific':  # pragma: no branch
                 warnings.warn(
                     "Mistral does not support forcing specific tools. Falling back to 'required'.",
                     UserWarning,

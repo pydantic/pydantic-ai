@@ -686,7 +686,8 @@ class AnthropicModel(Model):
                 else:
                     tool_choice = {'type': 'any'}
 
-            elif resolved.mode == 'specific' and resolved.tool_names:
+            elif resolved.mode == 'specific':
+                assert resolved.tool_names  # Guaranteed non-empty by resolve_tool_choice()
                 if thinking_enabled:
                     warnings.warn(
                         "Forcing specific tools is not supported with Anthropic thinking mode. Falling back to 'auto'.",
@@ -705,7 +706,7 @@ class AnthropicModel(Model):
                     )
                     tool_choice = {'type': 'any'}
             else:
-                tool_choice = {'type': 'auto'}
+                assert_never(resolved.mode)
 
         else:
             # Default behavior: infer from allow_text_output

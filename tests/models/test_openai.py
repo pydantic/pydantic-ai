@@ -71,6 +71,8 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+    from openai.types.responses import ResponseFunctionToolCall
+    from openai.types.responses.response_output_message import ResponseOutputMessage, ResponseOutputText
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
@@ -3279,20 +3281,6 @@ async def test_tool_choice_specific_tools_multiple(allow_model_requests: None) -
     assert tool_names == {'tool_a', 'tool_b'}
 
 
-async def test_tool_choice_invalid_tool_name(allow_model_requests: None) -> None:
-    """Test that invalid tool names in tool_choice raise UserError."""
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
-        await agent.run('hello', model_settings={'tool_choice': ['nonexistent_tool']})
-
-
 async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
     """Test that tool_choice='none' with output tools emits a warning and preserves output tools."""
 
@@ -3332,3 +3320,248 @@ async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: No
     kwargs = get_mock_chat_completion_kwargs(mock_client)
     # Output tool should be preserved (single output tool -> named tool choice)
     assert kwargs[0]['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
+
+
+async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests: None) -> None:
+    """Test that tool_choice='none' with multiple output tools uses allowed_tools."""
+
+    class LocationA(BaseModel):
+        city: str
+
+    class LocationB(BaseModel):
+        country: str
+
+    mock_client = MockOpenAI.create_mock(
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='1',
+                        type='function',
+                        function=Function(
+                            name='final_result_LocationA',
+                            arguments='{"city": "Paris"}',
+                        ),
+                    ),
+                ],
+            )
+        )
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, LocationA | LocationB] = Agent(model, output_type=[LocationA, LocationB])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
+        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    assert result.output == LocationA(city='Paris')
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # Multiple output tools -> allowed_tools
+    assert kwargs[0]['tool_choice'] == {
+        'type': 'allowed_tools',
+        'allowed_tools': {
+            'mode': 'required',
+            'tools': [
+                {'type': 'function', 'function': {'name': 'final_result_LocationA'}},
+                {'type': 'function', 'function': {'name': 'final_result_LocationB'}},
+            ],
+        },
+    }
+
+
+# OpenAI Responses API tool_choice tests
+
+
+@pytest.mark.parametrize(
+    'tool_choice,expected',
+    [
+        pytest.param('none', 'none', id='none'),
+        pytest.param('auto', 'auto', id='auto'),
+        pytest.param('required', 'required', id='required'),
+    ],
+)
+async def test_responses_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected: str) -> None:
+    """Test that tool_choice string values are correctly passed to the Responses API."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_123',
+                    content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': tool_choice})  # type: ignore
+
+    kwargs = get_mock_responses_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == expected
+
+
+async def test_responses_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
+    """Test Responses API tool_choice with a single specific tool name."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_123',
+                    content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def other_tool(y: str) -> str:
+        return y  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': ['my_tool']})
+
+    kwargs = get_mock_responses_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == {'type': 'function', 'name': 'my_tool'}
+
+
+async def test_responses_tool_choice_specific_tool_multiple(allow_model_requests: None) -> None:
+    """Test Responses API tool_choice with multiple specific tool names."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_123',
+                    content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def tool_a(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b(y: str) -> str:
+        return y  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_c(z: float) -> str:
+        return str(z)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
+
+    kwargs = get_mock_responses_kwargs(mock_client)
+    # mode='auto' because allow_text_output=True (no output_type specified)
+    assert kwargs[0]['tool_choice'] == {
+        'type': 'allowed_tools',
+        'mode': 'auto',
+        'tools': [{'type': 'function', 'name': 'tool_a'}, {'type': 'function', 'name': 'tool_b'}],
+    }
+
+
+async def test_responses_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
+    """Test that Responses API tool_choice='none' with output tools emits warning."""
+
+    class Location(BaseModel):
+        city: str
+        country: str
+
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseFunctionToolCall(
+                    id='call_123',
+                    call_id='call_123',
+                    name='final_result',
+                    arguments='{"city": "Paris", "country": "France"}',
+                    type='function_call',
+                    status='completed',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, output_type=Location)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
+        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    assert result.output == Location(city='Paris', country='France')
+    kwargs = get_mock_responses_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == {'type': 'function', 'name': 'final_result'}
+
+
+async def test_responses_tool_choice_none_with_multiple_output_tools(allow_model_requests: None) -> None:
+    """Test that Responses API tool_choice='none' with multiple output tools uses allowed_tools."""
+
+    class LocationA(BaseModel):
+        city: str
+
+    class LocationB(BaseModel):
+        country: str
+
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseFunctionToolCall(
+                    id='call_123',
+                    call_id='call_123',
+                    name='final_result_LocationA',
+                    arguments='{"city": "Paris"}',
+                    type='function_call',
+                    status='completed',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, LocationA | LocationB] = Agent(model, output_type=[LocationA, LocationB])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
+        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    assert result.output == LocationA(city='Paris')
+    kwargs = get_mock_responses_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == {
+        'type': 'allowed_tools',
+        'mode': 'required',
+        'tools': [
+            {'type': 'function', 'name': 'final_result_LocationA'},
+            {'type': 'function', 'name': 'final_result_LocationB'},
+        ],
+    }

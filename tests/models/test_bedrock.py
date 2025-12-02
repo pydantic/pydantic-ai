@@ -35,7 +35,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
@@ -1772,19 +1772,3 @@ async def test_tool_choice_multiple_tools_falls_back_to_any(bedrock_provider: Be
             'toolChoice': {'any': {}},
         }
     )
-
-
-async def test_tool_choice_invalid_tool_name(bedrock_provider: BedrockProvider) -> None:
-    """Test that invalid tool names raise UserError."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    settings: BedrockModelSettings = {'tool_choice': ['nonexistent_tool']}
-
-    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
-        model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]

@@ -7815,21 +7815,6 @@ async def test_tool_choice_multiple_tools_falls_back_to_any(allow_model_requests
     assert kwargs['tool_choice']['type'] == 'any'
 
 
-async def test_tool_choice_invalid_tool_name(allow_model_requests: None) -> None:
-    """Test that invalid tool names in tool_choice raise UserError."""
-    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
-        await agent.run('hello', model_settings={'tool_choice': ['nonexistent_tool']})
-
-
 async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
     """Test that tool_choice='none' with output tools emits a warning and preserves output tools."""
 

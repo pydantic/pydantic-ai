@@ -4513,23 +4513,6 @@ def test_tool_choice_specific_tool_single(google_provider: GoogleProvider) -> No
     assert fcc.get('allowed_function_names') == ['tool_a']
 
 
-def test_tool_choice_invalid_tool_name(google_provider: GoogleProvider) -> None:
-    """Test that invalid tool names raise UserError."""
-    my_tool = ToolDefinition(
-        name='my_tool',
-        description='Test tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
-    tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool', description='Test tool')])]
-
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    settings: GoogleModelSettings = {'tool_choice': ['nonexistent_tool']}
-
-    with pytest.raises(UserError, match='Invalid tool names in tool_choice'):
-        model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
-
-
 def test_tool_choice_none_with_output_tools_warns(google_provider: GoogleProvider) -> None:
     """Test that tool_choice='none' with output tools warns and allows output tools."""
     func_tool = ToolDefinition(

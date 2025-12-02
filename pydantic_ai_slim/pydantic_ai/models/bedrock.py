@@ -513,7 +513,8 @@ class BedrockConverseModel(Model):
             elif resolved.mode == 'required':
                 tool_choice = {'any': {}}
 
-            elif resolved.mode == 'specific' and resolved.tool_names:
+            elif resolved.mode == 'specific':
+                assert resolved.tool_names  # Guaranteed non-empty by resolve_tool_choice()
                 if len(resolved.tool_names) == 1:
                     tool_choice = {'tool': {'name': resolved.tool_names[0]}}
                 else:
@@ -525,7 +526,7 @@ class BedrockConverseModel(Model):
                     )
                     tool_choice = {'any': {}}
             else:
-                tool_choice = {'auto': {}}
+                assert_never(resolved.mode)
         else:
             # Default behavior: infer from allow_text_output
             if not model_request_parameters.allow_text_output:
