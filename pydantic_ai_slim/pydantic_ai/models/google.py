@@ -398,7 +398,7 @@ class GoogleModel(Model):
                 names: list[str] = []
                 for tool in tools:
                     for function_declaration in tool.get('function_declarations') or []:
-                        if name := function_declaration.get('name'):
+                        if name := function_declaration.get('name'):  # pragma: no branch
                             names.append(name)
                 return ToolConfigDict(
                     function_calling_config=FunctionCallingConfigDict(
@@ -420,7 +420,7 @@ class GoogleModel(Model):
             names = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
-                    if name := function_declaration.get('name'):
+                    if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
             return _tool_config(names)
         return None
