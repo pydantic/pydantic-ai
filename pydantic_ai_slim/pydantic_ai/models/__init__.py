@@ -367,7 +367,6 @@ class ResolvedToolChoice:
     """True if we need to fall back to output tools only (when 'none' was requested but output tools exist)."""
 
 
-# Warning message used when tool_choice='none' conflicts with output tools
 _TOOL_CHOICE_NONE_WITH_OUTPUT_TOOLS_WARNING = (
     "tool_choice='none' is set but output tools are required for structured output. "
     'The output tools will remain available. Consider using native or prompted output modes '

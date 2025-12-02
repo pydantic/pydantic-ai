@@ -7744,9 +7744,6 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     assert usage2.output_tokens > 0
 
 
-# Tests for tool_choice ModelSettings
-
-
 @pytest.mark.parametrize(
     'tool_choice,expected_type',
     [
@@ -7756,7 +7753,7 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     ],
 )
 async def test_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected_type: str) -> None:
-    """Test that tool_choice string values are correctly mapped to Anthropic's format."""
+    """Ensure Anthropic string values map to the expected schema."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -7773,7 +7770,7 @@ async def test_tool_choice_string_values(allow_model_requests: None, tool_choice
 
 
 async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
-    """Test tool_choice with a single specific tool name maps to Anthropic's 'tool' type."""
+    """Single Anthropic tools should emit the 'tool' choice payload."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -7794,7 +7791,7 @@ async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> N
 
 
 async def test_tool_choice_multiple_tools_falls_back_to_any(allow_model_requests: None) -> None:
-    """Test tool_choice with multiple tools falls back to 'any' with warning (Anthropic limitation)."""
+    """Multiple specific tools fall back to 'any' with a warning."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -7812,11 +7809,11 @@ async def test_tool_choice_multiple_tools_falls_back_to_any(allow_model_requests
         await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    assert kwargs['tool_choice']['type'] == 'any'
+    assert kwargs['tool_choice'] == snapshot({'type': 'any'})
 
 
 async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
-    """Test that tool_choice='none' with output tools emits a warning and preserves output tools."""
+    """Structured output must remain available even with tool_choice='none'."""
 
     class Location(BaseModel):
         city: str
@@ -7837,14 +7834,13 @@ async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: No
     with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
         result = await agent.run('hello', model_settings={'tool_choice': 'none'})
 
-    assert result.output == Location(city='Paris', country='France')
+    assert result.output == snapshot(Location(city='Paris', country='France'))
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    # Output tool should be preserved (single output tool -> 'tool' type)
-    assert kwargs['tool_choice'] == {'type': 'tool', 'name': 'final_result'}
+    assert kwargs['tool_choice'] == snapshot({'type': 'tool', 'name': 'final_result'})
 
 
 async def test_tool_choice_required_with_thinking_falls_back_to_auto(allow_model_requests: None) -> None:
-    """Test that tool_choice='required' with thinking mode falls back to 'auto' with warning."""
+    """Thinking mode overrides 'required' to 'auto'."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -7868,7 +7864,7 @@ async def test_tool_choice_required_with_thinking_falls_back_to_auto(allow_model
 
 
 async def test_tool_choice_specific_with_thinking_falls_back_to_auto(allow_model_requests: None) -> None:
-    """Test that specific tool_choice with thinking mode falls back to 'auto' with warning."""
+    """Specific tool forcing is incompatible with thinking mode."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -7892,7 +7888,7 @@ async def test_tool_choice_specific_with_thinking_falls_back_to_auto(allow_model
 
 
 async def test_tool_choice_none_with_multiple_output_tools_falls_back_to_auto(allow_model_requests: None) -> None:
-    """Test that tool_choice='none' with multiple output tools falls back to 'auto' with warning."""
+    """Multiple output tools force a fallback to 'auto'."""
     import warnings as warn_module
 
     class LocationA(BaseModel):
@@ -7913,15 +7909,17 @@ async def test_tool_choice_none_with_multiple_output_tools_falls_back_to_auto(al
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    # Expect two warnings: one from resolve_tool_choice about output tools, one from Anthropic about multiple tools
     with warn_module.catch_warnings(record=True) as w:
         warn_module.simplefilter('always')
         await agent.run('hello', model_settings={'tool_choice': 'none'})
 
-        # Check that we got the Anthropic-specific warning about multiple tools
-        warning_messages = [str(warning.message) for warning in w]
-        assert any("tool_choice='none' is set but output tools are required" in msg for msg in warning_messages)
-        assert any('Anthropic only supports forcing a single tool' in msg for msg in warning_messages)
+        warning_messages = {str(warning.message) for warning in w}
+        assert {
+            "tool_choice='none' is set but output tools are required for structured output. "
+            'The output tools will remain available. Consider using native or prompted output modes '
+            "if you need tool_choice='none' with structured output.",
+            "Anthropic only supports forcing a single tool. Falling back to 'auto' for multiple output tools.",
+        } <= warning_messages
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
     assert kwargs['tool_choice']['type'] == 'auto'

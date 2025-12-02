@@ -3185,10 +3185,9 @@ async def test_cache_point_filtering(allow_model_requests: None):
     msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert msg == snapshot(
+        {'role': 'user', 'content': [{'text': 'text before', 'type': 'text'}, {'text': 'text after', 'type': 'text'}]}
+    )
 
 
 async def test_cache_point_filtering_responses_model():
@@ -3199,13 +3198,12 @@ async def test_cache_point_filtering_responses_model():
     )
 
     # CachePoint should be filtered out, only text content should remain
-    assert msg['role'] == 'user'
-    assert len(msg['content']) == 2
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
-
-
-# Tests for tool_choice ModelSettings
+    assert msg == snapshot(
+        {
+            'role': 'user',
+            'content': [{'text': 'text before', 'type': 'input_text'}, {'text': 'text after', 'type': 'input_text'}],
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -3217,7 +3215,7 @@ async def test_cache_point_filtering_responses_model():
     ],
 )
 async def test_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected: str) -> None:
-    """Test that tool_choice string values are correctly passed to the API."""
+    """Ensure Chat tool_choice strings flow through unchanged."""
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model)
@@ -3233,7 +3231,7 @@ async def test_tool_choice_string_values(allow_model_requests: None, tool_choice
 
 
 async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
-    """Test tool_choice with a single specific tool name."""
+    """Force the Chat API to call a specific tool."""
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model)
@@ -3253,7 +3251,7 @@ async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> N
 
 
 async def test_tool_choice_specific_tools_multiple(allow_model_requests: None) -> None:
-    """Test tool_choice with multiple specific tool names."""
+    """Multiple Chat tools should produce an allowed_tools payload."""
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model)
@@ -3273,16 +3271,22 @@ async def test_tool_choice_specific_tools_multiple(allow_model_requests: None) -
     await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)
-    tool_choice = kwargs[0]['tool_choice']
-    assert tool_choice['type'] == 'allowed_tools'
-    assert tool_choice['allowed_tools']['mode'] == 'auto'
-    assert len(tool_choice['allowed_tools']['tools']) == 2
-    tool_names = {t['function']['name'] for t in tool_choice['allowed_tools']['tools']}
-    assert tool_names == {'tool_a', 'tool_b'}
+    assert kwargs[0]['tool_choice'] == snapshot(
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'auto',
+                'tools': [
+                    {'type': 'function', 'function': {'name': 'tool_a'}},
+                    {'type': 'function', 'function': {'name': 'tool_b'}},
+                ],
+            },
+        }
+    )
 
 
 async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
-    """Test that tool_choice='none' with output tools emits a warning and preserves output tools."""
+    """Structured output tools persist even with tool_choice='none'."""
 
     class Location(BaseModel):
         city: str
@@ -3318,12 +3322,11 @@ async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: No
 
     assert result.output == Location(city='Paris', country='France')
     kwargs = get_mock_chat_completion_kwargs(mock_client)
-    # Output tool should be preserved (single output tool -> named tool choice)
     assert kwargs[0]['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
 
 
 async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests: None) -> None:
-    """Test that tool_choice='none' with multiple output tools uses allowed_tools."""
+    """Multiple output tools fall back to allowed_tools when forcing 'none'."""
 
     class LocationA(BaseModel):
         city: str
@@ -3361,7 +3364,6 @@ async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests:
 
     assert result.output == LocationA(city='Paris')
     kwargs = get_mock_chat_completion_kwargs(mock_client)
-    # Multiple output tools -> allowed_tools
     assert kwargs[0]['tool_choice'] == {
         'type': 'allowed_tools',
         'allowed_tools': {
@@ -3374,9 +3376,6 @@ async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests:
     }
 
 
-# OpenAI Responses API tool_choice tests
-
-
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
@@ -3386,7 +3385,7 @@ async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests:
     ],
 )
 async def test_responses_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected: str) -> None:
-    """Test that tool_choice string values are correctly passed to the Responses API."""
+    """Ensure Responses tool_choice strings pass through untouched."""
     mock_client = MockOpenAIResponses.create_mock(
         response_message(
             [
@@ -3414,7 +3413,7 @@ async def test_responses_tool_choice_string_values(allow_model_requests: None, t
 
 
 async def test_responses_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
-    """Test Responses API tool_choice with a single specific tool name."""
+    """Force a single tool when using the Responses API."""
     mock_client = MockOpenAIResponses.create_mock(
         response_message(
             [
@@ -3446,7 +3445,7 @@ async def test_responses_tool_choice_specific_tool_single(allow_model_requests: 
 
 
 async def test_responses_tool_choice_specific_tool_multiple(allow_model_requests: None) -> None:
-    """Test Responses API tool_choice with multiple specific tool names."""
+    """Multiple Responses tools rely on the allowed_tools payload."""
     mock_client = MockOpenAIResponses.create_mock(
         response_message(
             [
@@ -3478,7 +3477,6 @@ async def test_responses_tool_choice_specific_tool_multiple(allow_model_requests
     await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
 
     kwargs = get_mock_responses_kwargs(mock_client)
-    # mode='auto' because allow_text_output=True (no output_type specified)
     assert kwargs[0]['tool_choice'] == {
         'type': 'allowed_tools',
         'mode': 'auto',
@@ -3487,7 +3485,7 @@ async def test_responses_tool_choice_specific_tool_multiple(allow_model_requests
 
 
 async def test_responses_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
-    """Test that Responses API tool_choice='none' with output tools emits warning."""
+    """tool_choice='none' cannot disable required Responses output tools."""
 
     class Location(BaseModel):
         city: str
@@ -3523,7 +3521,7 @@ async def test_responses_tool_choice_none_with_output_tools_warns(allow_model_re
 
 
 async def test_responses_tool_choice_none_with_multiple_output_tools(allow_model_requests: None) -> None:
-    """Test that Responses API tool_choice='none' with multiple output tools uses allowed_tools."""
+    """Multiple Responses output tools still use allowed_tools when forced to 'none'."""
 
     class LocationA(BaseModel):
         city: str

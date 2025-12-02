@@ -1,4 +1,4 @@
-"""Tests for the centralized resolve_tool_choice() function.
+"""Tests for the centralized `resolve_tool_choice()` function.
 
 These tests cover the common logic shared across all providers:
 - String value resolution ('none', 'auto', 'required')
@@ -27,7 +27,7 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def make_tool(name: str) -> ToolDefinition:
-    """Create a simple tool definition for testing."""
+    """Return a minimal `ToolDefinition` used throughout the tests."""
     return ToolDefinition(
         name=name,
         description=f'Tool {name}',
@@ -36,23 +36,23 @@ def make_tool(name: str) -> ToolDefinition:
 
 
 class TestResolveToolChoiceNone:
-    """Tests for when tool_choice is not set."""
+    """Cases where `tool_choice` is unset in the settings."""
 
     def test_none_model_settings_returns_none(self) -> None:
-        """When model_settings is None, resolve_tool_choice returns None."""
+        """`resolve_tool_choice` returns None when `model_settings` is None."""
         params = ModelRequestParameters()
         result = resolve_tool_choice(None, params)
         assert result is None
 
     def test_empty_model_settings_returns_none(self) -> None:
-        """When model_settings is empty, resolve_tool_choice returns None."""
+        """Empty `model_settings` dict should also yield None."""
         params = ModelRequestParameters()
         settings: ModelSettings = {}
         result = resolve_tool_choice(settings, params)
         assert result is None
 
     def test_tool_choice_not_set_returns_none(self) -> None:
-        """When tool_choice is not in model_settings, resolve_tool_choice returns None."""
+        """`tool_choice` missing from settings keeps provider defaults."""
         params = ModelRequestParameters()
         settings: ModelSettings = {'temperature': 0.5}
         result = resolve_tool_choice(settings, params)
@@ -60,7 +60,7 @@ class TestResolveToolChoiceNone:
 
 
 class TestResolveToolChoiceStringValues:
-    """Tests for string tool_choice values."""
+    """String-valued `tool_choice` entries."""
 
     @pytest.mark.parametrize(
         'tool_choice,expected',
@@ -71,7 +71,7 @@ class TestResolveToolChoiceStringValues:
         ],
     )
     def test_string_values(self, tool_choice: str, expected: ResolvedToolChoice) -> None:
-        """Test that string values are correctly resolved."""
+        """Valid string entries map directly to their resolved form."""
         params = ModelRequestParameters(function_tools=[make_tool('my_tool')])
         settings: ModelSettings = {'tool_choice': tool_choice}  # type: ignore
         result = resolve_tool_choice(settings, params)
@@ -79,24 +79,24 @@ class TestResolveToolChoiceStringValues:
 
 
 class TestResolveToolChoiceSpecificTools:
-    """Tests for list[str] tool_choice values."""
+    """List-based tool_choice entries."""
 
     def test_single_valid_tool(self) -> None:
-        """Test tool_choice with a single valid tool name."""
+        """Single tool names remain in the returned result."""
         params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')])
         settings: ModelSettings = {'tool_choice': ['tool_a']}
         result = resolve_tool_choice(settings, params)
         assert result == snapshot(ResolvedToolChoice(mode='specific', tool_names=['tool_a']))
 
     def test_multiple_valid_tools(self) -> None:
-        """Test tool_choice with multiple valid tool names."""
+        """Multiple valid names stay in insertion order."""
         params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b'), make_tool('tool_c')])
         settings: ModelSettings = {'tool_choice': ['tool_a', 'tool_b']}
         result = resolve_tool_choice(settings, params)
         assert result == snapshot(ResolvedToolChoice(mode='specific', tool_names=['tool_a', 'tool_b']))
 
     def test_invalid_tool_name_raises_user_error(self) -> None:
-        """Test that invalid tool names raise UserError."""
+        """Unknown names raise a UserError."""
         params = ModelRequestParameters(function_tools=[make_tool('my_tool')])
         settings: ModelSettings = {'tool_choice': ['nonexistent_tool']}
 
@@ -104,7 +104,7 @@ class TestResolveToolChoiceSpecificTools:
             resolve_tool_choice(settings, params)
 
     def test_mixed_valid_and_invalid_tools(self) -> None:
-        """Test that mix of valid and invalid tool names raises error."""
+        """Mixed valid/invalid names still raise."""
         params = ModelRequestParameters(function_tools=[make_tool('valid_tool')])
         settings: ModelSettings = {'tool_choice': ['valid_tool', 'invalid_tool']}
 
@@ -112,7 +112,7 @@ class TestResolveToolChoiceSpecificTools:
             resolve_tool_choice(settings, params)
 
     def test_no_function_tools_available(self) -> None:
-        """Test error when specifying tools but none are registered."""
+        """Requesting specific tools without registered ones errors."""
         params = ModelRequestParameters()
         settings: ModelSettings = {'tool_choice': ['some_tool']}
 
@@ -120,7 +120,7 @@ class TestResolveToolChoiceSpecificTools:
             resolve_tool_choice(settings, params)
 
     def test_empty_list_raises_user_error(self) -> None:
-        """Test tool_choice=[] raises UserError."""
+        """Empty lists are not allowed."""
         params = ModelRequestParameters(function_tools=[make_tool('my_tool')])
         settings: ModelSettings = {'tool_choice': []}
 
@@ -129,10 +129,10 @@ class TestResolveToolChoiceSpecificTools:
 
 
 class TestResolveToolChoiceOutputToolsWarning:
-    """Tests for tool_choice='none' with output tools."""
+    """Safety checks when `tool_choice='none'` conflicts with output tools."""
 
     def test_none_with_output_tools_warns(self) -> None:
-        """Test that tool_choice='none' with output tools emits warning and sets fallback."""
+        """`tool_choice='none'` issues a warning when output tools exist."""
         output_tool = make_tool('final_result')
         params = ModelRequestParameters(output_tools=[output_tool])
         settings: ModelSettings = {'tool_choice': 'none'}
@@ -143,7 +143,7 @@ class TestResolveToolChoiceOutputToolsWarning:
         assert result == snapshot(ResolvedToolChoice(mode='none', output_tools_fallback=True))
 
     def test_none_without_output_tools_no_warning(self) -> None:
-        """Test that tool_choice='none' without output tools does not warn."""
+        """No warning when `tool_choice='none'` and no output tools exist."""
         params = ModelRequestParameters(function_tools=[make_tool('my_tool')])
         settings: ModelSettings = {'tool_choice': 'none'}
 

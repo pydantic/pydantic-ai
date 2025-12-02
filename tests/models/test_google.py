@@ -4431,18 +4431,8 @@ def test_google_missing_tool_call_thought_signature():
     )
 
 
-# tool_choice tests
-
-
-@pytest.mark.parametrize(
-    'tool_choice,expected_mode',
-    [
-        pytest.param('none', FunctionCallingConfigMode.NONE, id='none'),
-        pytest.param('auto', FunctionCallingConfigMode.AUTO, id='auto'),
-    ],
-)
-def test_tool_choice_string_values(google_provider: GoogleProvider, tool_choice: str, expected_mode: str) -> None:
-    """Test that tool_choice string values are correctly mapped to Google's FunctionCallingConfigMode."""
+def test_tool_choice_string_value_none(google_provider: GoogleProvider) -> None:
+    """Test that tool_choice='none' maps to FunctionCallingConfigMode.NONE."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -4451,14 +4441,32 @@ def test_tool_choice_string_values(google_provider: GoogleProvider, tool_choice:
     mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
     tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool', description='Test tool')])]
 
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    settings: GoogleModelSettings = {'tool_choice': tool_choice}  # type: ignore[assignment]
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'none'}
     result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
 
     assert result is not None
     fcc = result.get('function_calling_config')
-    assert fcc is not None
-    assert fcc.get('mode') == expected_mode
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.NONE})
+
+
+def test_tool_choice_string_value_auto(google_provider: GoogleProvider) -> None:
+    """Test that tool_choice='auto' maps to FunctionCallingConfigMode.AUTO."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+    tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool', description='Test tool')])]
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'auto'}
+    result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    fcc = result.get('function_calling_config')
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.AUTO})
 
 
 def test_tool_choice_required_maps_to_any(google_provider: GoogleProvider) -> None:
@@ -4471,19 +4479,17 @@ def test_tool_choice_required_maps_to_any(google_provider: GoogleProvider) -> No
     mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
     tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool', description='Test tool')])]
 
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     settings: GoogleModelSettings = {'tool_choice': 'required'}
     result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
 
     assert result is not None
     fcc = result.get('function_calling_config')
-    assert fcc is not None
-    assert fcc.get('mode') == FunctionCallingConfigMode.ANY
-    assert fcc.get('allowed_function_names') == ['my_tool']
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['my_tool']})
 
 
 def test_tool_choice_specific_tool_single(google_provider: GoogleProvider) -> None:
-    """Test tool_choice with a single specific tool name."""
+    """Specific tool names become allowed_function_names."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -4502,19 +4508,17 @@ def test_tool_choice_specific_tool_single(google_provider: GoogleProvider) -> No
         ToolDict(function_declarations=[FunctionDeclarationDict(name='tool_b', description='Test tool B')]),
     ]
 
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     settings: GoogleModelSettings = {'tool_choice': ['tool_a']}
     result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
 
     assert result is not None
     fcc = result.get('function_calling_config')
-    assert fcc is not None
-    assert fcc.get('mode') == FunctionCallingConfigMode.ANY
-    assert fcc.get('allowed_function_names') == ['tool_a']
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['tool_a']})
 
 
 def test_tool_choice_none_with_output_tools_warns(google_provider: GoogleProvider) -> None:
-    """Test that tool_choice='none' with output tools warns and allows output tools."""
+    """tool_choice='none' still allows the required output tool."""
     func_tool = ToolDefinition(
         name='func_tool',
         description='Function tool',
@@ -4533,7 +4537,7 @@ def test_tool_choice_none_with_output_tools_warns(google_provider: GoogleProvide
         ToolDict(function_declarations=[FunctionDeclarationDict(name='output_tool', description='Output tool')]),
     ]
 
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     settings: GoogleModelSettings = {'tool_choice': 'none'}
 
     with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
@@ -4541,6 +4545,4 @@ def test_tool_choice_none_with_output_tools_warns(google_provider: GoogleProvide
 
     assert result is not None
     fcc = result.get('function_calling_config')
-    assert fcc is not None
-    assert fcc.get('mode') == FunctionCallingConfigMode.ANY
-    assert fcc.get('allowed_function_names') == ['output_tool']
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['output_tool']})

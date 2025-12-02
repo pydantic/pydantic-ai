@@ -2365,9 +2365,6 @@ If you're in a country where cars drive on the left (like the UK or Japan), reme
     )
 
 
-# tool_choice tests
-
-
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
@@ -2377,7 +2374,7 @@ If you're in a country where cars drive on the left (like the UK or Japan), reme
     ],
 )
 def test_tool_choice_string_values(tool_choice: str, expected: str) -> None:
-    """Test that tool_choice string values are correctly passed through."""
+    """Ensure Mistral string values pass through untouched."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -2394,7 +2391,7 @@ def test_tool_choice_string_values(tool_choice: str, expected: str) -> None:
 
 
 def test_tool_choice_specific_tool_falls_back_to_required() -> None:
-    """Test that specific tool falls back to 'required' with warning since Mistral doesn't support it."""
+    """Specific tool forcing is unsupported and falls back to required."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -2413,7 +2410,7 @@ def test_tool_choice_specific_tool_falls_back_to_required() -> None:
 
 
 def test_tool_choice_none_with_output_tools_warns() -> None:
-    """Test that tool_choice='none' with output tools warns and returns 'required'."""
+    """tool_choice='none' still forces required when output tools exist."""
     func_tool = ToolDefinition(
         name='func_tool',
         description='Function tool',

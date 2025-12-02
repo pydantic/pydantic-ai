@@ -1626,9 +1626,6 @@ async def test_cache_point_filtering():
     assert messages[0]['role'] == 'user'
 
 
-# tool_choice tests
-
-
 @pytest.mark.parametrize(
     'tool_choice,expected_tool_choice',
     [
@@ -1639,7 +1636,7 @@ async def test_cache_point_filtering():
 async def test_tool_choice_string_values(
     bedrock_provider: BedrockProvider, tool_choice: str, expected_tool_choice: dict[str, Any]
 ) -> None:
-    """Test that tool_choice string values are correctly mapped."""
+    """Ensure simple string tool_choice values map to Bedrock's schema."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -1656,7 +1653,7 @@ async def test_tool_choice_string_values(
 
 
 async def test_tool_choice_none_falls_back_to_auto(bedrock_provider: BedrockProvider) -> None:
-    """Test that tool_choice='none' falls back to 'auto' with warning since Bedrock doesn't support it."""
+    """Bedrock lacks 'none' support, so we fall back to auto with a warning."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -1687,7 +1684,7 @@ async def test_tool_choice_none_falls_back_to_auto(bedrock_provider: BedrockProv
 
 
 async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvider) -> None:
-    """Test tool_choice with a single specific tool name."""
+    """Single tool names should emit the {tool: {name}} payload."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -1730,7 +1727,7 @@ async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvide
 
 
 async def test_tool_choice_multiple_tools_falls_back_to_any(bedrock_provider: BedrockProvider) -> None:
-    """Test that multiple tools in tool_choice falls back to 'any' with warning."""
+    """Multiple tool names fall back to the 'any' configuration."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',

@@ -924,9 +924,10 @@ class AnthropicModel(Model):
             system_prompt_parts.insert(0, instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
+        ttl: Literal['5m', '1h']
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
         if anthropic_messages and (cache_messages := model_settings.get('anthropic_cache_messages')):
-            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
+            ttl = '5m' if cache_messages is True else cache_messages
             m = anthropic_messages[-1]
             content = m['content']
             if isinstance(content, str):
@@ -946,7 +947,7 @@ class AnthropicModel(Model):
         # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
         if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
             # If True, use '5m'; otherwise use the specified ttl value
-            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+            ttl = '5m' if cache_instructions is True else cache_instructions
             system_prompt_blocks = [
                 BetaTextBlockParam(
                     type='text',

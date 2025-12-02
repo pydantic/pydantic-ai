@@ -1032,9 +1032,6 @@ async def test_cache_point_filtering():
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
 
 
-# tool_choice tests
-
-
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
@@ -1044,7 +1041,7 @@ async def test_cache_point_filtering():
     ],
 )
 def test_tool_choice_string_values(tool_choice: str, expected: str) -> None:
-    """Test that tool_choice string values are correctly passed through."""
+    """Ensure HuggingFace string values pass through unchanged."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -1066,7 +1063,7 @@ def test_tool_choice_string_values(tool_choice: str, expected: str) -> None:
 
 
 def test_tool_choice_specific_tool_single() -> None:
-    """Test tool_choice with a single specific tool name."""
+    """Single tool entries should use ChatCompletionInputToolChoiceClass."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -1097,7 +1094,7 @@ def test_tool_choice_specific_tool_single() -> None:
 
 
 def test_tool_choice_multiple_tools_falls_back_to_required() -> None:
-    """Test that multiple tools in tool_choice falls back to 'required' with warning."""
+    """Multiple specific tools fall back to 'required'."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -1129,7 +1126,7 @@ def test_tool_choice_multiple_tools_falls_back_to_required() -> None:
 
 
 def test_tool_choice_none_with_output_tools_warns() -> None:
-    """Test that tool_choice='none' with output tools warns and allows output tools."""
+    """tool_choice='none' should not disable mandatory output tools."""
     func_tool = ToolDefinition(
         name='func_tool',
         description='Function tool',

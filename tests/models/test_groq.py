@@ -5634,9 +5634,6 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
     )
 
 
-# Tests for tool_choice ModelSettings
-
-
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
@@ -5646,7 +5643,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
     ],
 )
 async def test_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected: str) -> None:
-    """Test that tool_choice string values are correctly passed to the API."""
+    """Ensure Groq string values are forwarded unchanged."""
     mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
     agent = Agent(m)
@@ -5662,7 +5659,7 @@ async def test_tool_choice_string_values(allow_model_requests: None, tool_choice
 
 
 async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
-    """Test tool_choice with a single specific tool name."""
+    """Single tool choices should use the named tool payload."""
     mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
     agent = Agent(m)
@@ -5682,7 +5679,7 @@ async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> N
 
 
 async def test_tool_choice_multiple_tools_falls_back_to_required(allow_model_requests: None) -> None:
-    """Test that multiple tools in tool_choice falls back to 'required' with warning."""
+    """Multiple specific tools fall back to 'required'."""
     mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
     agent = Agent(m)
@@ -5703,7 +5700,7 @@ async def test_tool_choice_multiple_tools_falls_back_to_required(allow_model_req
 
 
 async def test_tool_choice_none_with_output_tools(allow_model_requests: None) -> None:
-    """Test that tool_choice='none' with output tools warns and uses output tool."""
+    """tool_choice='none' still allows output tools to execute."""
 
     class MyOutput(BaseModel):
         result: str
@@ -5737,5 +5734,4 @@ async def test_tool_choice_none_with_output_tools(allow_model_requests: None) ->
         await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # When tool_choice='none' but output tools exist, it should force the output tool
     assert kwargs['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
