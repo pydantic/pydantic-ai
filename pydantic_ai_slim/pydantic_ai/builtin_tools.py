@@ -18,6 +18,7 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'ToolSearchTool',
 )
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -393,6 +394,32 @@ class MCPServerTool(AbstractBuiltinTool):
     @property
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
+
+
+@dataclass(kw_only=True)
+class ToolSearchTool(AbstractBuiltinTool):
+    """A builtin tool that enables dynamic tool discovery without loading all definitions upfront.
+
+    Instead of consuming tokens on many tool definitions, the model searches for relevant tools
+    on-demand. Only matching tools get expanded into full definitions in the model's context.
+
+    You should mark tools with `defer_loading=True` to make them discoverable on-demand while
+    keeping critical tools always loaded (with `defer_loading=False`).
+
+    Supported by:
+
+    * [Anthropic](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-search-tool)
+    """
+
+    search_type: Literal['regex', 'bm25'] | None = None
+    """The type of search to use for tool discovery. If None, uses the provider's default.
+
+    - `'regex'`: Constructs regex patterns (for Anthropic: Python `re.search()`). Case-sensitive by default.
+    - `'bm25'`: Uses natural language queries with semantic matching across tool metadata.
+    """
+
+    kind: str = 'tool_search'
+    """The kind of tool."""
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:

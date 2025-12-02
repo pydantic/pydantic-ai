@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -114,6 +114,9 @@ try:
         BetaToolParam,
         BetaToolResultBlockParam,
         BetaToolUnionParam,
+        BetaToolSearchToolBm25_20251119Param,
+        BetaToolSearchToolRegex20251119Param,
+        BetaToolSearchToolResultBlock,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
         BetaWebFetchTool20250910Param,
@@ -574,6 +577,22 @@ class AnthropicModel(Model):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+
+        # Check if any tools use defer_loading and auto-add ToolSearchTool if needed
+        has_defer_loading = any(
+            tool_def.defer_loading for tool_def in model_request_parameters.tool_defs.values()
+        )
+        has_tool_search = any(isinstance(tool, ToolSearchTool) for tool in model_request_parameters.builtin_tools)
+        if has_defer_loading and not has_tool_search:
+            # Auto-add ToolSearchTool with default (regex) when defer_loading is used
+            tools.append(
+                BetaToolSearchToolRegex20251119Param(
+                    name='tool_search_tool_regex',
+                    type='tool_search_tool_regex_20251119',
+                )
+            )
+            beta_features.add('advanced-tool-use-2025-11-20')
+
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
@@ -626,6 +645,23 @@ class AnthropicModel(Model):
                     mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
                 mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.add('mcp-client-2025-04-04')
+            elif isinstance(tool, ToolSearchTool):  # pragma: no branch
+                if tool.search_type == 'bm25':
+                    tools.append(
+                        BetaToolSearchToolBm25_20251119Param(
+                            name='tool_search_tool_bm25',
+                            type='tool_search_tool_bm25_20251119',
+                        )
+                    )
+                else:
+                    # Default to regex if search_type is None or 'regex'
+                    tools.append(
+                        BetaToolSearchToolRegex20251119Param(
+                            name='tool_search_tool_regex',
+                            type='tool_search_tool_regex_20251119',
+                        )
+                    )
+                beta_features.add('advanced-tool-use-2025-11-20')
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
@@ -1041,6 +1077,8 @@ class AnthropicModel(Model):
         }
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
+        if f.defer_loading:
+            tool_param['defer_loading'] = True
         return tool_param
 
     @staticmethod

@@ -119,6 +119,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -137,6 +138,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -193,6 +195,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            defer_loading: Whether to defer loading this tool until discovered via tool search. Defaults to False.
+                See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] for more info.
         """
 
         def tool_decorator(
@@ -213,6 +217,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                defer_loading=defer_loading,
             )
             return func_
 
@@ -233,6 +238,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -267,6 +273,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            defer_loading: Whether to defer loading this tool until discovered via tool search. Defaults to False.
+                See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] for more info.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -295,6 +303,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            defer_loading=defer_loading or False,
         )
         self.add_tool(tool)
 
