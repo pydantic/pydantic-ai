@@ -963,7 +963,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type = self.output_type
 
         # forces output_type to an iterable
-        output_type = list(_flatten_output_spec(output_type))
+        output_type = _flatten_output_spec(output_type)
 
         flat_output_type: list[OutputSpec[OutputDataT | RunOutputDataT] | type[str]] = []
         for output_spec in output_type:
@@ -975,18 +975,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 flat_output_type.append(str)
             elif isinstance(output_spec, _output.ToolOutput):
                 flat_output_type += _flatten_output_spec(output_spec.output)
+            elif inspect.isfunction(output_spec) or inspect.ismethod(output_spec):
+                return_annotation = inspect.signature(output_spec).return_annotation
+                flat_output_type += _flatten_output_spec(return_annotation)
             else:
                 flat_output_type.append(output_spec)
 
         json_schemas: list[JsonSchema] = []
         for output_spec in flat_output_type:
-            if inspect.isfunction(output_spec) or inspect.ismethod(output_spec):
-                json_schema = TypeAdapter(inspect.signature(output_spec).return_annotation).json_schema(
-                    mode='serialization'
-                )
-            else:
-                json_schema = TypeAdapter(output_spec).json_schema(mode='serialization')
-
+            json_schema = TypeAdapter(output_spec).json_schema(mode='serialization')
             if json_schema not in json_schemas:
                 json_schemas.append(json_schema)
 
