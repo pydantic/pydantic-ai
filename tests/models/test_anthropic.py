@@ -2680,7 +2680,7 @@ async def test_anthropic_model_empty_message_on_history(allow_model_requests: No
     result = await agent.run(
         'I need a potato!',
         message_history=[
-            ModelRequest(parts=[], instructions='You are a helpful assistant.', kind='request'),
+            ModelRequest(parts=[], instructions='You are a helpful assistant.', kind='request', timestamp=IsDatetime()),
             ModelResponse(parts=[TextPart(content='Hello, how can I help you?')], kind='response'),
         ],
     )
@@ -4893,7 +4893,7 @@ async def test_anthropic_web_fetch_tool_message_replay():
 
     # Create message history with BuiltinToolCallPart and BuiltinToolReturnPart
     messages = [
-        ModelRequest(parts=[UserPromptPart(content='Test')]),
+        ModelRequest(parts=[UserPromptPart(content='Test')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
                 BuiltinToolCallPart(
@@ -6366,14 +6366,16 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
     # Test _map_message with empty string in user prompt
     messages_empty_string: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
+        ModelRequest(parts=[UserPromptPart(content='')], kind='request', timestamp=IsDatetime()),
     ]
     _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot([])  # Empty content should be filtered out
 
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
+        ModelRequest(
+            parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request', timestamp=IsDatetime()
+        ),
     ]
     _, anthropic_messages = await model._map_message(messages_mixed_content, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot(
@@ -6382,9 +6384,9 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
     # Test _map_message with empty assistant response
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[SystemPromptPart(content='You are helpful')], kind='request'),
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful')], kind='request', timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
-        ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
+        ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request', timestamp=IsDatetime()),
     ]
     _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     # The empty assistant message should be filtered out

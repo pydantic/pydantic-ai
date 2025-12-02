@@ -321,7 +321,6 @@ class GroqModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = _utils.now_utc()
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.reasoning is not None:
@@ -349,7 +348,7 @@ class GroqModel(Model):
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            timestamp=timestamp,
+            timestamp=_utils.now_utc(),
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self.base_url,
@@ -373,7 +372,6 @@ class GroqModel(Model):
             _response=peekable_response,
             _model_name=first_chunk.model,
             _model_profile=self.profile,
-            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_timestamp=first_chunk.created,
@@ -528,10 +526,10 @@ class GroqStreamedResponse(StreamedResponse):
     _model_name: GroqModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
     _provider_timestamp: int | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:

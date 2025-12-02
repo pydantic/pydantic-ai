@@ -899,7 +899,7 @@ async def test_thinking_part_in_history(allow_model_requests: None):
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(model)
     messages = [
-        ModelRequest(parts=[UserPromptPart(content='request')]),
+        ModelRequest(parts=[UserPromptPart(content='request')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
                 TextPart(content='text 1'),

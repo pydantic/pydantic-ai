@@ -533,6 +533,7 @@ def test_model_messages_type_adapter_preserves_run_id():
             parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
             run_id='run-123',
             metadata={'key': 'value'},
+            timestamp=IsDatetime(),
         ),
         ModelResponse(parts=[TextPart(content='Hello!')], run_id='run-123', metadata={'key': 'value'}),
     ]

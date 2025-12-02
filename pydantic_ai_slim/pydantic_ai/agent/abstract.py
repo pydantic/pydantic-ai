@@ -585,7 +585,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 # For backwards compatibility, append a new ModelRequest using the tool returns and retries
                                 if parts:
-                                    messages.append(_messages.ModelRequest(parts, run_id=graph_ctx.state.run_id))
+                                    messages.append(
+                                        _messages.ModelRequest(
+                                            parts, run_id=graph_ctx.state.run_id, timestamp=_utils.now_utc()
+                                        )
+                                    )
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 

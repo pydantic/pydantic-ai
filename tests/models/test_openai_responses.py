@@ -2016,6 +2016,7 @@ async def test_openai_previous_response_id_auto_mode(allow_model_requests: None,
                     content='The first secret key is sesame',
                 ),
             ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2031,6 +2032,7 @@ async def test_openai_previous_response_id_auto_mode(allow_model_requests: None,
                     content='The second secret key is olives',
                 ),
             ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2058,6 +2060,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
                     content='The first secret key is sesame',
                 ),
             ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2073,6 +2076,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
                     content='what is the first secret key?',
                 ),
             ],
+            timestamp=IsDatetime(),
         ),
     ]
 
@@ -2110,6 +2114,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
                     content='The first secret key is sesame',
                 ),
             ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2125,6 +2130,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
                     content='The second secret key is olives',
                 ),
             ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -2140,6 +2146,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
                     content='what is the first secret key?',
                 ),
             ],
+            timestamp=IsDatetime(),
         ),
     ]
 
@@ -6839,7 +6846,8 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 UserPromptPart(
                     content='What is the largest city in the user country?',
                 )
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -6861,7 +6869,8 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                     content='Mexico',
                     tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
                 )
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
 

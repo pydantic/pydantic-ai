@@ -824,9 +824,14 @@ async def test_bedrock_multiple_documents_in_history(
     result = await agent.run(
         'What is in the documents?',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='foo bar')]),
-            ModelRequest(parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])],
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='foo bar 2')]),
         ],
     )
@@ -1353,16 +1358,17 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     now = datetime.datetime.now()
     # Create a ModelRequest with 3 consecutive ToolReturnParts
     req = [
-        ModelRequest(parts=[UserPromptPart(content=['Hello'])]),
+        ModelRequest(parts=[UserPromptPart(content=['Hello'])], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart(content='Hi')]),
-        ModelRequest(parts=[UserPromptPart(content=['How are you?'])]),
+        ModelRequest(parts=[UserPromptPart(content=['How are you?'])], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart(content='Cloudy')]),
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='tool1', content='result1', tool_call_id='id1', timestamp=now),
                 ToolReturnPart(tool_name='tool2', content='result2', tool_call_id='id2', timestamp=now),
                 ToolReturnPart(tool_name='tool3', content='result3', tool_call_id='id3', timestamp=now),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
 
@@ -1483,7 +1489,8 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='tool1', content={'foo': 'bar'}, tool_call_id='id1', timestamp=now),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
 

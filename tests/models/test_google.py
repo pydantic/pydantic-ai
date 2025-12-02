@@ -982,9 +982,14 @@ async def test_google_model_multiple_documents_in_history(
     result = await agent.run(
         'What is in the documents?',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='foo bar')]),
-            ModelRequest(parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])],
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='foo bar 2')]),
         ],
     )
@@ -1926,7 +1931,7 @@ async def test_google_model_empty_assistant_response(allow_model_requests: None,
     result = await agent.run(
         'Was your previous response empty?',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content='Hi')]),
+            ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
             ModelResponse(parts=[TextPart(content='')]),
         ],
     )
@@ -4371,7 +4376,7 @@ async def test_google_api_non_http_error(
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
     message_history = [
-        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
         ModelResponse(parts=[]),
     ]
 

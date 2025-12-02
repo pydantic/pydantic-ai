@@ -401,7 +401,6 @@ class MistralModel(Model):
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
             _model_name=first_chunk.data.model,
-            _timestamp=_now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.data.created,
@@ -610,10 +609,11 @@ class MistralStreamedResponse(StreamedResponse):
 
     _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
     _provider_timestamp: int | None = None
+    _timestamp: datetime = field(default_factory=_now_utc)
+
     _delta_content: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:

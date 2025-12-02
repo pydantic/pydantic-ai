@@ -8,8 +8,8 @@ from __future__ import annotations
 import io
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from typing_extensions import assert_never
@@ -507,6 +507,7 @@ class OutlinesModel(Model):
             parts=cast(
                 list[ModelResponsePart], split_content_into_text_and_thinking(response, self.profile.thinking_tags)
             ),
+            timestamp=_utils.now_utc(),
         )
 
     async def _process_streamed_response(
@@ -518,13 +519,11 @@ class OutlinesModel(Model):
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        timestamp = datetime.now(tz=timezone.utc)
         return OutlinesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=timestamp,
             _provider_name='outlines',
         )
 
@@ -544,9 +543,9 @@ class OutlinesStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[str]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for content in self._response:

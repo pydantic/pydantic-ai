@@ -1001,7 +1001,7 @@ class ModelRequest:
 
     _: KW_ONLY
 
-    timestamp: datetime = field(default_factory=_now_utc)
+    timestamp: datetime
     """The timestamp when the request was sent to the model."""
 
     instructions: str | None = None
@@ -1019,7 +1019,7 @@ class ModelRequest:
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
-        return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions)
+        return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions, timestamp=_now_utc())
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

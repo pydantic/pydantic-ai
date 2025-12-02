@@ -716,7 +716,6 @@ class OpenAIChatModel(Model):
             _model_name=model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=_now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.created,
@@ -1310,7 +1309,6 @@ class OpenAIResponsesModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.response.model,
             _response=peekable_response,
-            _timestamp=_now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             # type of created_at is float but it's actually a Unix timestamp in seconds
@@ -1923,10 +1921,10 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
     _provider_timestamp: int | None = None
+    _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._validate_response():
@@ -2087,10 +2085,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _response: AsyncIterable[responses.ResponseStreamEvent]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
     _provider_timestamp: int | None = None
+    _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:

@@ -320,7 +320,6 @@ class HuggingFaceModel(Model):
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=_now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_timestamp=first_chunk.created,
@@ -470,10 +469,10 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
     _provider_timestamp: int | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:

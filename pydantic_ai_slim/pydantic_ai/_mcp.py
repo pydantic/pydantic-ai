@@ -4,7 +4,7 @@ import base64
 from collections.abc import Sequence
 from typing import Literal
 
-from . import exceptions, messages
+from . import _utils, exceptions, messages
 
 try:
     from mcp import types as mcp_types
@@ -44,7 +44,7 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
             # role is assistant
             # if there are any request parts, add a request message wrapping them
             if request_parts:
-                pai_messages.append(messages.ModelRequest(parts=request_parts))
+                pai_messages.append(messages.ModelRequest(parts=request_parts, timestamp=_utils.now_utc()))
                 request_parts = []
 
             response_parts.append(map_from_sampling_content(content))
@@ -52,7 +52,7 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
     if response_parts:
         pai_messages.append(messages.ModelResponse(parts=response_parts))
     if request_parts:
-        pai_messages.append(messages.ModelRequest(parts=request_parts))
+        pai_messages.append(messages.ModelRequest(parts=request_parts, timestamp=_utils.now_utc()))
     return pai_messages
 
 
