@@ -30,7 +30,7 @@ async def test_text_output_json_schema():
     assert agent.output_json_schema() == snapshot({'type': 'string'})
 
     def func(x: str) -> str:
-        return x
+        return x  # pragma: no cover
 
     agent = Agent('test', output_type=TextOutput(func))
     assert agent.output_json_schema() == snapshot({'type': 'string'})
@@ -38,7 +38,7 @@ async def test_text_output_json_schema():
 
 async def test_function_output_json_schema():
     def func(x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     agent = Agent('test', output_type=[func])
     assert agent.output_json_schema() == snapshot({'type': 'integer'})
@@ -136,6 +136,35 @@ async def test_native_output_json_schema():
     )
     assert agent.output_json_schema() == snapshot({'type': 'boolean'})
 
+    agent = Agent(
+        'test',
+        output_type=NativeOutput([bool, Foo]),
+    )
+    assert agent.output_json_schema() == snapshot(
+        {
+            'anyOf': [
+                {'type': 'boolean'},
+                {
+                    'properties': {
+                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'title': 'A', 'type': 'array'},
+                        'b': {'title': 'B', 'type': 'integer'},
+                    },
+                    'required': ['a', 'b'],
+                    'title': 'Foo',
+                    'type': 'object',
+                },
+            ],
+            '$defs': {
+                'Bar': {
+                    'properties': {'answer': {'title': 'Answer', 'type': 'string'}},
+                    'required': ['answer'],
+                    'title': 'Bar',
+                    'type': 'object',
+                }
+            },
+        }
+    )
+
 
 async def test_prompted_output_json_schema():
     agent = Agent(
@@ -143,6 +172,35 @@ async def test_prompted_output_json_schema():
         output_type=PromptedOutput([bool]),
     )
     assert agent.output_json_schema() == snapshot({'type': 'boolean'})
+
+    agent = Agent(
+        'test',
+        output_type=PromptedOutput([bool, Foo]),
+    )
+    assert agent.output_json_schema() == snapshot(
+        {
+            'anyOf': [
+                {'type': 'boolean'},
+                {
+                    'properties': {
+                        'a': {'items': {'$ref': '#/$defs/Bar'}, 'title': 'A', 'type': 'array'},
+                        'b': {'title': 'B', 'type': 'integer'},
+                    },
+                    'required': ['a', 'b'],
+                    'title': 'Foo',
+                    'type': 'object',
+                },
+            ],
+            '$defs': {
+                'Bar': {
+                    'properties': {'answer': {'title': 'Answer', 'type': 'string'}},
+                    'required': ['answer'],
+                    'title': 'Bar',
+                    'type': 'object',
+                }
+            },
+        }
+    )
 
 
 async def test_custom_output_json_schema():
