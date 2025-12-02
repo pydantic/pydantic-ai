@@ -37,7 +37,7 @@ from .._agent_graph import (
     capture_run_messages,
 )
 from .._json_schema import JsonSchema
-from .._output import OutputToolset
+from .._output import OutputToolset, _flatten_output_spec  # pyright: ignore[reportPrivateUsage]
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
@@ -958,25 +958,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
 
-    def output_json_schema(self, output_type: OutputSpec[OutputDataT] | None = None) -> JsonSchema:
+    def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         """The output JSON schema."""
         if output_type is None:
             output_type = self.output_type
 
         # call this first to force output_type to an iterable
-        output_type = list(_output._flatten_output_spec(output_type))
+        output_type = list(_flatten_output_spec(output_type))
 
         # flatten special outputs
         for i, _ in enumerate(output_type):
             if isinstance(_, _output.NativeOutput):
-                output_type[i] = _output._flatten_output_spec(_.outputs)
+                output_type[i] = _flatten_output_spec(_.outputs)
             if isinstance(_, _output.PromptedOutput):
-                output_type[i] = _output._flatten_output_spec(_.outputs)
+                output_type[i] = _flatten_output_spec(_.outputs)
             if isinstance(_, _output.ToolOutput):
-                output_type[i] = _output._flatten_output_spec(_.output)
+                output_type[i] = _flatten_output_spec(_.output)
 
         # final flattening
-        output_type = _output._flatten_output_spec(output_type)
+        output_type = _flatten_output_spec(output_type)
 
         json_schemas: list[JsonSchema] = []
         for _ in output_type:
@@ -984,9 +984,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 function_schema = _function_schema.function_schema(_, GenerateToolJsonSchema)
                 json_schema = function_schema.json_schema
                 json_schema['description'] = function_schema.description
-            elif isinstance(_, _messages.BinaryImage):
-                json_schema = TypeAdapter(_).json_schema(mode='serialization')
-                json_schema = {k: v for k, v in json_schema['properties'].items() if k in ['data', 'media_type']}
             else:
                 json_schema = TypeAdapter(_).json_schema(mode='serialization')
 
