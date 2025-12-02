@@ -57,7 +57,7 @@ print(result.output)
 4. `result.output` will be a boolean indicating if the square is a winner. Pydantic performs the output validation, and it'll be typed as a `bool` since its type is derived from the `output_type` generic parameter of the agent.
 
 !!! tip "Agents are designed for reuse, like FastAPI Apps"
-    Agents can be instantiated once as a module global and reused throughout your application, similar to a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter], or be created dynamically by a factory function like `get_agent('agent-type')`, whichever you prefer.
+    You can instantiate one agent and use it globally throughout your application, as you would a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter], or dynamically create as many agents as you want. Both are valid and supported ways to use agents.
 
 ## Running Agents
 
