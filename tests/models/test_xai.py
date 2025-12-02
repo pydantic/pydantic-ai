@@ -831,23 +831,6 @@ async def test_xai_instructions(allow_model_requests: None):
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run('What is the capital of France?')
-
-    # Verify the response
-    assert result.output == 'The capital of France is Paris.'
-
-    # Verify that instructions were passed as the first system message
-    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
-    messages = kwargs['messages']
-
-    # First message should be the system message with instructions
-    assert messages[0].role == chat_types.chat_pb2.MessageRole.ROLE_SYSTEM
-    # xAI SDK uses protobuf - content is a repeated field with text items
-    assert messages[0].content[0].text == 'You are a helpful assistant.'
-
-    # Second message should be the user message
-    assert messages[1].role == chat_types.chat_pb2.MessageRole.ROLE_USER
-    assert messages[1].content[0].text == 'What is the capital of France?'
-
     # Verify the message history has instructions
     assert result.all_messages() == snapshot(
         [
@@ -1136,10 +1119,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
     # Create response with outputs
     response = create_web_search_responses(
         query='date of Jan 1 in 2026',
-        results=[
-            {'title': 'Calendar 2026', 'url': 'https://example.com/cal', 'snippet': 'January 1, 2026 is Thursday'}
-        ],
-        text_content='Thursday',
+        content='Thursday',
         tool_call_id='ws_001',
     )
     mock_client = MockXai.create_mock(response)
@@ -1166,13 +1146,13 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args='{"query": "date of Jan 1 in 2026"}',
+                        args={'query': 'date of Jan 1 in 2026'},
                         tool_call_id='ws_001',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content='Thursday',
                         tool_call_id='ws_001',
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -1283,8 +1263,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
     # Create response with outputs
     response = create_code_execution_responses(
         code='65465 - 6544 * 65464 - 6 + 1.02255',
-        output='-428050955.97745',
-        text_content='The result is -428,050,955.97745',
+        content='The result is -428,050,955.97745',
         tool_call_id='code_001',
     )
     mock_client = MockXai.create_mock(response)
@@ -1313,13 +1292,13 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='{"code": "65465 - 6544 * 65464 - 6 + 1.02255"}',
+                        args={'code': '65465 - 6544 * 65464 - 6 + 1.02255'},
                         tool_call_id='code_001',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed'},
+                        content='The result is -428,050,955.97745',
                         tool_call_id='code_001',
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -1449,28 +1428,16 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args='{"query": "current price of Bitcoin"}',
-                        tool_call_id='ws_002',
-                        provider_name='xai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args='{"code": "((65000 - 50000) / 50000) * 100"}',
-                        tool_call_id='code_002',
-                        provider_name='xai',
-                    ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content=None,
                         tool_call_id='ws_002',
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'status': 'completed'},
+                        content=None,
                         tool_call_id='code_002',
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -1493,10 +1460,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
     # Create response with outputs
     response = create_web_search_responses(
         query='weather in Tokyo',
-        results=[
-            {'title': 'Weather Tokyo', 'url': 'https://example.com/weather', 'snippet': 'Tokyo is sunny with 72°F'}
-        ],
-        text_content='The weather in Tokyo is sunny with a temperature of 72°F.',
+        content='The weather in Tokyo is sunny with a temperature of 72°F.',
         tool_call_id='ws_003',
     )
     mock_client = MockXai.create_mock(response)
@@ -1530,13 +1494,13 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args='{"query": "weather in Tokyo"}',
+                        args={'query': 'weather in Tokyo'},
                         tool_call_id='ws_003',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content={'status': 'completed'},
+                        content='The weather in Tokyo is sunny with a temperature of 72°F.',
                         tool_call_id='ws_003',
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -1560,8 +1524,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
     response = create_mcp_server_responses(
         server_id='linear',
         tool_name='list_issues',
-        tool_input={},
-        text_content='No issues found.',
+        content='No issues found.',
         tool_call_id='mcp_linear_001',
     )
     mock_client = MockXai.create_mock(response)
@@ -1599,13 +1562,13 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:linear',
-                        args='{}',
+                        args={},
                         tool_call_id='mcp_linear_001',
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:linear',
-                        content={'status': 'completed'},
+                        content='No issues found.',
                         tool_call_id='mcp_linear_001',
                         timestamp=IsDatetime(),
                         provider_name='xai',

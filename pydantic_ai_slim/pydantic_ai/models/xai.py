@@ -14,7 +14,7 @@ try:
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
-    from xai_sdk.proto.v6 import chat_pb2, sample_pb2, usage_pb2
+    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
 except ImportError as _import_error:
     raise ImportError(
@@ -493,7 +493,7 @@ class XaiModel(Model):
         # Map model settings to xAI SDK parameters
         xai_settings = self._map_model_settings(model_settings)
 
-        # Populate use_encrycpted_content and include based on model settings
+        # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
         use_encrypted_content = False
         if profile.grok_supports_encrypted_reasoning_content and model_settings.get('xai_include_encrypted_content'):
@@ -560,44 +560,52 @@ class XaiModel(Model):
         yield await self._process_streamed_response(response_stream, model_request_parameters)
 
     @staticmethod
-    def get_tool_result_content(content: str) -> dict[str, Any] | str:
+    def get_tool_result_content(content: str) -> dict[str, Any] | str | None:
         """Extract tool result content from a content string.
 
         Args:
             content: The content string (may be JSON or plain text)
 
         Returns:
-            Tool result content as dict (if JSON) or string, or fallback dict if no content
+            Tool result content as dict (if JSON), string, or None if no content
         """
         if content:
             try:
-                # Try to parse as JSON first
                 return json.loads(content)
             except (json.JSONDecodeError, TypeError):
-                # If not JSON, use as string
                 return content
-        # No content, return fallback
-        return {'status': 'completed'}
+        return None
+
+    @staticmethod
+    def parse_tool_args(arguments: str) -> dict[str, Any]:
+        """Parse tool call arguments from JSON string to dict.
+
+        Args:
+            arguments: JSON string of tool arguments
+
+        Returns:
+            Parsed arguments as dict, or empty dict if parsing fails
+        """
+        try:
+            return json.loads(arguments)
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse.
 
-        Always uses response.proto.outputs, which works for both real xAI SDK Response
-        objects and our MockXaiResponse objects (which implement the same interface).
-        Properties like response.content, response.encrypted_content delegate to _get_output()
-        which reads from proto.outputs.
+        Processes response.proto.outputs to extract:
+        - ThinkingPart: For reasoning/thinking content
+        - BuiltinToolCallPart + BuiltinToolReturnPart: For server-side (builtin) tool calls
+        - ToolCallPart: For client-side tool calls
+        - TextPart: For text content
         """
         parts: list[ModelResponsePart] = []
-
-        # Always use proto.outputs - Response interface ensures this works
         outputs = response.proto.outputs
-
-        # Process outputs (each output represents a step in the agentic flow)
-        # Track tool calls from previous outputs to match with results
-        pending_tool_calls: dict[str, tuple[Any, str]] = {}  # tool_call_id -> (tool_call, builtin_tool_name)
 
         for output in outputs:
             message = output.message
+
             # Add reasoning/thinking content if present
             if message.reasoning_content or message.encrypted_content:
                 signature = message.encrypted_content or None
@@ -619,41 +627,29 @@ class XaiModel(Model):
                     pass
 
                 if is_server_side_tool:
+                    # Server-side (builtin) tools
                     builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
-                    # For outputs format, tool calls appear in one output, results in the next
-                    # Compare against proto enum for tool_calls finish reason
-                    is_tool_call_output = (
-                        output.finish_reason == sample_pb2.FinishReason.REASON_TOOL_CALLS
-                        or str(output.finish_reason) == 'REASON_TOOL_CALLS'
-                    )
-                    if is_tool_call_output:
-                        # This is a tool call output - add call part and track for result matching
+                    if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+                        # Tool completed - add return part with result
+                        tool_result_content = XaiModel.get_tool_result_content(message.content)
                         parts.append(
-                            BuiltinToolCallPart(
+                            BuiltinToolReturnPart(
                                 tool_name=builtin_tool_name,
-                                args=tool_call.function.arguments,
+                                content=tool_result_content,
                                 tool_call_id=tool_call.id,
                                 provider_name=self.system,
                             )
                         )
-                        # Track this tool call to match with result in next output
-                        pending_tool_calls[tool_call.id] = (tool_call, builtin_tool_name)
                     else:
-                        # This output has content - check if it's a tool result
-                        # Tool results appear when tool_call.status is COMPLETED
-                        if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
-                            # Extract tool result from message.content
-                            tool_result_content = XaiModel.get_tool_result_content(message.content)
-                            parts.append(
-                                BuiltinToolReturnPart(
-                                    tool_name=builtin_tool_name,
-                                    content=tool_result_content,
-                                    tool_call_id=tool_call.id,
-                                    provider_name=self.system,
-                                )
+                        # Tool in progress - add call part
+                        parts.append(
+                            BuiltinToolCallPart(
+                                tool_name=builtin_tool_name,
+                                args=self.parse_tool_args(tool_call.function.arguments),
+                                tool_call_id=tool_call.id,
+                                provider_name=self.system,
                             )
-                            # Remove from pending
-                            pending_tool_calls.pop(tool_call.id, None)
+                        )
                 else:
                     # Client-side tool call
                     parts.append(
@@ -664,26 +660,8 @@ class XaiModel(Model):
                         )
                     )
 
-            # Check if this output has content and there are pending tool calls
-            # This happens when server-side tools complete and the model returns results
-            if pending_tool_calls:
-                # Process ALL pending tool calls with COMPLETED status
-                for tool_call_id, (tool_call, builtin_tool_name) in list(pending_tool_calls.items()):
-                    if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
-                        # Server-side tool completed - add return part with default content
-                        parts.append(
-                            BuiltinToolReturnPart(
-                                tool_name=builtin_tool_name,
-                                content={'status': 'completed'},
-                                tool_call_id=tool_call_id,
-                                provider_name=self.system,
-                            )
-                        )
-                        pending_tool_calls.pop(tool_call_id)
-
             # Add text content from this output
             if message.content:
-                # Content is the model's text response - add as TextPart
                 parts.append(TextPart(content=message.content))
 
         # Convert usage with detailed token information
@@ -792,24 +770,12 @@ class XaiModel(Model):
         elif tool_type == 'code_execution_tool':
             return CodeExecutionTool.kind
         elif tool_type == 'mcp_tool':
-            # For MCP tools, prepend 'mcp_server:' and use server label
-            # The function name is in format "server_label.tool_name" from xAI
-            # We want to return "mcp_server:server_label" to match other providers
-            # Extract just the server label (everything before the first dot)
+            # Extract server label from "server_label.tool_name" format
             function_name = tool_call.function.name
-            if '.' in function_name:
-                server_label = function_name.split('.', 1)[0]
-            else:
-                server_label = function_name
+            server_label = function_name.split('.', 1)[0] if '.' in function_name else function_name
             return f'{MCPServerTool.kind}:{server_label}'
-        elif tool_type == 'x_search_tool':
-            # X search not currently supported in PydanticAI, use function name as fallback
-            return tool_call.function.name
-        elif tool_type == 'collections_search_tool':
-            # Collections search not currently supported in PydanticAI, use function name as fallback
-            return tool_call.function.name
         else:
-            # Fallback to function name for unknown types
+            # x_search, collections_search, or unknown - use function name
             return tool_call.function.name
 
     @staticmethod
@@ -822,27 +788,20 @@ class XaiModel(Model):
         Returns:
             The PydanticAI tool name (e.g., 'web_search', 'code_execution').
         """
-        if server_side_tool == usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH:
-            return WebSearchTool.kind
-        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION:
-            return CodeExecutionTool.kind
-        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_MCP:
-            return MCPServerTool.kind
-        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_X_SEARCH:
-            return 'x_search'  # Not yet supported in PydanticAI
-        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH:
-            return 'collections_search'  # Not yet supported in PydanticAI
-        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE:
-            return 'view_image'  # Not yet supported in PydanticAI
-        elif server_side_tool == usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO:
-            return 'view_x_video'  # Not yet supported in PydanticAI
-        else:
-            return 'unknown'
+        mapping = {
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH: WebSearchTool.kind,
+            usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION: CodeExecutionTool.kind,
+            usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
+            usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: 'x_search',
+            usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: 'collections_search',
+            usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
+            usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
+        }
+        return mapping.get(server_side_tool, 'unknown')
 
     @staticmethod
     def _map_json_schema(o: OutputObjectDefinition) -> chat_pb2.ResponseFormat:
         """Convert OutputObjectDefinition to xAI ResponseFormat protobuf object."""
-        # xAI uses a simpler ResponseFormat structure with format_type and schema (as JSON string)
         return chat_pb2.ResponseFormat(
             format_type=chat_pb2.FORMAT_TYPE_JSON_SCHEMA,
             schema=json.dumps(o.json_schema),
@@ -857,7 +816,7 @@ class XaiModel(Model):
     def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
         """Map pydantic_ai ModelSettings to xAI SDK parameters."""
         # Mapping of pydantic_ai setting keys to xAI SDK parameter names
-        # Most defauult keys are the same, but 'stop' maps to 'stop_sequences'
+        # Most default keys are the same, but 'stop' maps to 'stop_sequences'
         # Xai specific keys are prefixed with 'xai_'
         setting_mapping = {
             'temperature': 'temperature',
@@ -960,16 +919,7 @@ class XaiStreamedResponse(StreamedResponse):
 
         # Handle finish reason
         if response.finish_reason:
-            finish_reason_map = {
-                'stop': 'stop',
-                'length': 'length',
-                'content_filter': 'content_filter',
-                'max_output_tokens': 'length',
-                'cancelled': 'error',
-                'failed': 'error',
-            }
-            mapped_reason = finish_reason_map.get(response.finish_reason, 'stop')
-            self.finish_reason = cast(FinishReason, mapped_reason)
+            self.finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
 
     def _handle_reasoning_content(
         self, response: chat_types.Response, reasoning_handled: bool
@@ -1021,10 +971,11 @@ class XaiStreamedResponse(StreamedResponse):
             pass  # Treat as client-side if we can't determine
 
         if is_server_side_tool:
-            # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
-            # These tools are already executed by xAI's infrastructure
+            # Server-side (builtin) tools - API returns in order: in progress, then completed
             builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
+
             if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
+                # Tool completed - emit return part with result
                 tool_result_content = XaiModel.get_tool_result_content(response.content)
                 return_part = BuiltinToolReturnPart(
                     tool_name=builtin_tool_name,
@@ -1034,9 +985,10 @@ class XaiStreamedResponse(StreamedResponse):
                 )
                 yield self._parts_manager.handle_part(vendor_part_id=f'{tool_call.id}_return', part=return_part)
             else:
+                # Tool in progress - emit call part
                 call_part = BuiltinToolCallPart(
                     tool_name=builtin_tool_name,
-                    args=tool_call.function.arguments,
+                    args=XaiModel.parse_tool_args(tool_call.function.arguments),
                     tool_call_id=tool_call.id,
                     provider_name=self.system,
                 )
