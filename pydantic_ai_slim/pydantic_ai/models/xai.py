@@ -594,11 +594,11 @@ class XaiModel(Model):
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse.
 
-        Processes response.proto.outputs to extract:
+        Processes response.proto.outputs to extract (in order):
         - ThinkingPart: For reasoning/thinking content
-        - BuiltinToolCallPart + BuiltinToolReturnPart: For server-side (builtin) tool calls
-        - ToolCallPart: For client-side tool calls
         - TextPart: For text content
+        - ToolCallPart: For client-side tool calls
+        - BuiltinToolCallPart + BuiltinToolReturnPart: For server-side (builtin) tool calls
         """
         parts: list[ModelResponsePart] = []
         outputs = response.proto.outputs
@@ -616,6 +616,10 @@ class XaiModel(Model):
                         provider_name=self.system if signature else None,
                     )
                 )
+
+            # Add text content before tool calls (consistent with OpenAI)
+            if message.content:
+                parts.append(TextPart(content=message.content))
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
@@ -659,10 +663,6 @@ class XaiModel(Model):
                             tool_call_id=tool_call.id,
                         )
                     )
-
-            # Add text content from this output
-            if message.content:
-                parts.append(TextPart(content=message.content))
 
         # Convert usage with detailed token information
         usage = self.extract_usage(response)

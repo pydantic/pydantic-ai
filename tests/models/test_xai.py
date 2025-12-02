@@ -1150,6 +1150,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
                         tool_call_id='ws_001',
                         provider_name='xai',
                     ),
+                    TextPart(content='Thursday'),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content='Thursday',
@@ -1157,7 +1158,6 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Thursday'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
@@ -1292,6 +1292,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                         tool_call_id='code_001',
                         provider_name='xai',
                     ),
+                    TextPart(content='The result is -428,050,955.97745'),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content='The result is -428,050,955.97745',
@@ -1299,7 +1300,6 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='The result is -428,050,955.97745'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
@@ -1487,6 +1487,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
                         tool_call_id='ws_003',
                         provider_name='xai',
                     ),
+                    TextPart(content='The weather in Tokyo is sunny with a temperature of 72°F.'),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content='The weather in Tokyo is sunny with a temperature of 72°F.',
@@ -1494,7 +1495,6 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='The weather in Tokyo is sunny with a temperature of 72°F.'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
@@ -1554,6 +1554,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                         tool_call_id='mcp_linear_001',
                         provider_name='xai',
                     ),
+                    TextPart(content='No issues found.'),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:linear',
                         content='No issues found.',
@@ -1561,7 +1562,6 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='No issues found.'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
