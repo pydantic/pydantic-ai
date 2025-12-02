@@ -46,6 +46,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
+            supports_json_object_output=True,
             openai_chat_thinking_field='reasoning_content',
             # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
             openai_chat_send_back_thinking_parts='field',
