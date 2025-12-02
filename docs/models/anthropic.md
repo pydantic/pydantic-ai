@@ -87,6 +87,9 @@ Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-wit
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache All Messages**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache all messages
 
+!!! note "Amazon Bedrock"
+    When using `AsyncAnthropicBedrock`, the TTL parameter is automatically omitted from all cache control settings (including `CachePoint`, `anthropic_cache_instructions`, `anthropic_cache_tool_definitions`, and `anthropic_cache_messages`) because Bedrock doesn't support explicit TTL.
+
 ### Example 1: Automatic Message Caching
 
 Use `anthropic_cache_messages` to automatically cache all messages up to and including the newest user message:
