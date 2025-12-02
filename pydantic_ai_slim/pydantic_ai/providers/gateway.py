@@ -93,7 +93,7 @@ def gateway_provider(
 ) -> Provider[Any]: ...
 
 
-ModelProviders = Literal[
+ModelProvider = Literal[
     'openai',
     'groq',
     'anthropic',
@@ -112,7 +112,7 @@ APIFlavor = Literal[
     'gemini',
 ]
 
-UpstreamProvider = ModelProviders | APIFlavor
+UpstreamProvider = ModelProvider | APIFlavor
 
 
 def gateway_provider(

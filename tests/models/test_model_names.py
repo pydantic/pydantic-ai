@@ -8,7 +8,7 @@ import pytest
 from typing_extensions import TypedDict
 
 from pydantic_ai.models import KnownModelName
-from pydantic_ai.providers.gateway import ModelProviders
+from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
 
@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
+    from pydantic_ai.providers.deepseek import DeepSeekModelName
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
@@ -54,7 +55,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'anthropic': AnthropicModelName,
     'bedrock': BedrockModelName,
     'cohere': CohereModelName,
-    'deepseek': Literal['deepseek-chat', 'deepseek-reasoner'],
+    'deepseek': DeepSeekModelName,
     'google-gla': GoogleModelName,
     'google-vertex': GoogleModelName,
     'grok': GrokModelName,
@@ -85,7 +86,7 @@ def test_known_model_names():  # pragma: lax no cover
     heroku_names = get_heroku_model_names()
     gateway_names = [
         f'gateway/{provider}:{model_name}'
-        for provider in ModelProviders.__args__
+        for provider in GatewayModelProvider.__args__
         for model_name in get_model_names(_PROVIDER_TO_MODEL_NAMES[provider])
     ]
 
