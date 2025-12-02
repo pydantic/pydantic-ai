@@ -167,7 +167,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
-    """Whether to add `cache_control` to the last tool definition.
+    """Whether to add `cache_control` to the last tool definition. Automatically omitted for Bedrock.
 
     When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing Anthropic to cache tool definitions and reduce costs.
@@ -176,7 +176,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_instructions: bool | Literal['5m', '1h']
-    """Whether to add `cache_control` to the last system prompt block.
+    """Whether to add `cache_control` to the last system prompt block. Automatically omitted for Bedrock.
 
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
@@ -185,7 +185,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_messages: bool | Literal['5m', '1h']
-    """Convenience setting to enable caching for the last user message.
+    """Convenience setting to enable caching for the last user message. Automatically omitted for Bedrock.
 
     When enabled, this automatically adds a cache point to the last content block
     in the final user message, which is useful for caching conversation history
@@ -565,7 +565,7 @@ class AnthropicModel(Model):
             # If True, use '5m'; otherwise use the specified ttl value
             ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = tools[-1]
-            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+            last_tool['cache_control'] = self._build_cache_control(ttl)
 
         return tools
 
@@ -867,7 +867,7 @@ class AnthropicModel(Model):
                     BetaTextBlockParam(
                         text=content,
                         type='text',
-                        cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
+                        cache_control=self._build_cache_control(ttl),
                     )
                 ]
             else:
@@ -883,7 +883,7 @@ class AnthropicModel(Model):
                 BetaTextBlockParam(
                     type='text',
                     text=system_prompt,
-                    cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
+                    cache_control=self._build_cache_control(ttl),
                 )
             ]
             return system_prompt_blocks, anthropic_messages
@@ -959,11 +959,31 @@ class AnthropicModel(Model):
                         # Exceeded limit, remove this cache point
                         del block_dict['cache_control']
 
-    @staticmethod
-    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m') -> None:
+    def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
+        """Build cache control dict, automatically omitting TTL for Bedrock clients.
+
+        Args:
+            ttl: The cache time-to-live ('5m' or '1h'). Ignored for Bedrock clients.
+
+        Returns:
+            A cache control dict suitable for the current client type.
+        """
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            # Bedrock doesn't support TTL, use cast to satisfy type checker
+            return cast(BetaCacheControlEphemeralParam, {'type': 'ephemeral'})
+        return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+
+    def _add_cache_control_to_last_param(
+        self, params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m'
+    ) -> None:
         """Add cache control to the last content block param.
 
         See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+
+        Args:
+            params: List of content block params to modify.
+            ttl: The cache time-to-live ('5m' or '1h'). This is automatically ignored for
+                 Bedrock clients, which don't support explicit TTL parameters.
         """
         if not params:
             raise UserError(
@@ -981,7 +1001,7 @@ class AnthropicModel(Model):
             raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
 
         # Add cache_control to the last param
-        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
+        last_param['cache_control'] = self._build_cache_control(ttl)
 
     @staticmethod
     async def _map_user_prompt(
