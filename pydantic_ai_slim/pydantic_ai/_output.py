@@ -353,9 +353,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         if len(other_outputs) > 0:
             return AutoOutputSchema(
-                processor=cls._build_processor(
-                    outputs=other_outputs, name=name, description=description, strict=strict
-                ),
+                processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 toolset=toolset,
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
