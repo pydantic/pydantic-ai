@@ -962,29 +962,30 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if output_type is None:
             output_type = self.output_type
 
-        # call this first to force output_type to an iterable
+        # forces output_type to an iterable
         output_type = list(_flatten_output_spec(output_type))
 
-        # flatten special outputs
-        for i, _ in enumerate(output_type):
-            if isinstance(_, _output.NativeOutput):
-                output_type[i] = _flatten_output_spec(_.outputs)
-            if isinstance(_, _output.PromptedOutput):
-                output_type[i] = _flatten_output_spec(_.outputs)
-            if isinstance(_, _output.ToolOutput):
-                output_type[i] = _flatten_output_spec(_.output)
-
-        # final flattening
-        output_type = _flatten_output_spec(output_type)
+        flat_output_type: list[OutputSpec[OutputDataT | RunOutputDataT] | type[str]] = []
+        for output_spec in output_type:
+            if isinstance(output_spec, _output.NativeOutput):
+                flat_output_type += _flatten_output_spec(output_spec.outputs)
+            elif isinstance(output_spec, _output.PromptedOutput):
+                flat_output_type += _flatten_output_spec(output_spec.outputs)
+            elif isinstance(output_spec, _output.TextOutput):
+                flat_output_type.append(str)
+            elif isinstance(output_spec, _output.ToolOutput):
+                flat_output_type += _flatten_output_spec(output_spec.output)
+            else:
+                flat_output_type.append(output_spec)
 
         json_schemas: list[JsonSchema] = []
-        for _ in output_type:
-            if inspect.isfunction(_) or inspect.ismethod(_):
-                json_schema = TypeAdapter(inspect.signature(_).return_annotation).json_schema(mode='serialization')
-            elif isinstance(_, _output.TextOutput):
-                json_schema = TypeAdapter(str).json_schema(mode='serialization')
+        for output_spec in flat_output_type:
+            if inspect.isfunction(output_spec) or inspect.ismethod(output_spec):
+                json_schema = TypeAdapter(inspect.signature(output_spec).return_annotation).json_schema(
+                    mode='serialization'
+                )
             else:
-                json_schema = TypeAdapter(_).json_schema(mode='serialization')
+                json_schema = TypeAdapter(output_spec).json_schema(mode='serialization')
 
             if json_schema not in json_schemas:
                 json_schemas.append(json_schema)
