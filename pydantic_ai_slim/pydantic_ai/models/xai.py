@@ -336,7 +336,7 @@ class XaiModel(Model):
         if not isinstance(item.content, dict):
             return
 
-        content = cast(dict[str, Any], item.content)
+        content = cast(dict[str, Any], item.content)  # pyright: ignore[reportUnknownMemberType]
         status = content.get('status')
 
         # Update status if it failed or has an error
