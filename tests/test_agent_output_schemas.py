@@ -41,15 +41,7 @@ async def test_function_output_json_schema():
         return x
 
     agent = Agent('test', output_type=[func])
-    assert agent.output_json_schema() == snapshot(
-        {
-            'additionalProperties': False,
-            'properties': {'x': {'type': 'integer'}},
-            'required': ['x'],
-            'type': 'object',
-            'description': None,
-        }
-    )
+    assert agent.output_json_schema() == snapshot({'type': 'integer'})
 
 
 async def test_auto_output_json_schema():

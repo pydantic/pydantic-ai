@@ -19,7 +19,6 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, Instru
 
 from .. import (
     _agent_graph,
-    _function_schema,
     _output,
     _system_prompt,
     _utils,
@@ -981,9 +980,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         json_schemas: list[JsonSchema] = []
         for _ in output_type:
             if inspect.isfunction(_) or inspect.ismethod(_):
-                function_schema = _function_schema.function_schema(_, GenerateToolJsonSchema)
-                json_schema = function_schema.json_schema
-                json_schema['description'] = function_schema.description
+                json_schema = TypeAdapter(inspect.signature(_).return_annotation).json_schema(mode='serialization')
             elif isinstance(_, _output.TextOutput):
                 json_schema = TypeAdapter(str).json_schema(mode='serialization')
             else:
