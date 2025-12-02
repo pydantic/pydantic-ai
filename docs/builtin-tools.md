@@ -28,7 +28,13 @@ This is particularly useful for tools like [`WebSearchTool`][pydantic_ai.builtin
 
 ```python {title="dynamic_builtin_tool.py"}
 from dataclasses import dataclass
-from pydantic_ai import Agent, RunContext, WebSearchTool, WebSearchUserLocation
+
+from pydantic_ai import (
+    Agent,
+    RunContext,
+    WebSearchTool,
+    WebSearchUserLocation,
+)
 
 @dataclass
 class UserContext:
