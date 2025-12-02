@@ -220,7 +220,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
-        unknown_tool_retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
@@ -255,7 +254,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
-            unknown_tool_retries: Maximum number of times to retry after an unknown tool is proposed.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
@@ -321,7 +319,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
-        self._max_unknown_tool_retries = unknown_tool_retries
+        self._max_unknown_tool_retries = retries
 
         self._validation_context = validation_context
 
