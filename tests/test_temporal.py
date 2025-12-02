@@ -3147,13 +3147,11 @@ def test_temporal_model_resolve_model_fallback_to_wrapped():
     assert result is test_model
 
 
-def test_temporal_model_request_with_run_context(monkeypatch: MonkeyPatch):
-    """Test that request() serializes run_context when it's available (lines 161-165)."""
-    from pydantic_ai._run_context import CURRENT_RUN_CONTEXT
-
+def test_temporal_model_request_without_run_context(monkeypatch: MonkeyPatch):
+    """Test request() when run_context is None (covers branch 161->165)."""
     test_model = TestModel()
-    agent: Agent[dict[str, str], str] = Agent(test_model, name='request_with_context', deps_type=dict[str, str])
-    temporal_agent: TemporalAgent[dict[str, str], str] = TemporalAgent(agent, name='request_with_context')
+    agent = Agent[None, str](test_model, name='request_no_context')
+    temporal_agent = TemporalAgent[None, str](agent, name='request_no_context')
 
     temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
 
@@ -3164,41 +3162,24 @@ def test_temporal_model_request_with_run_context(monkeypatch: MonkeyPatch):
         activity_calls.append((activity, args, kwargs))
         return ModelResponse(parts=[TextPart(content='test response')])
 
-    # Mock workflow.in_workflow() to return True
+    # Mock workflow.in_workflow() to return True, but don't set CURRENT_RUN_CONTEXT
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', lambda: True)
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.workflow.execute_activity', mock_execute_activity)
 
-    # Create a run context with deps
-    run_context = RunContext(
-        deps={'api_key': 'test_key'},
-        model=test_model,
-        usage=RunUsage(),
-        prompt='test prompt',
-        run_id='test-run-id',
+    asyncio.get_event_loop().run_until_complete(
+        temporal_model.request(
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
     )
 
-    # Set the current run context
-    token = CURRENT_RUN_CONTEXT.set(run_context)
-    try:
-        import asyncio
+    # Verify execute_activity was called
+    assert len(activity_calls) == 1
+    _, args, _ = activity_calls[0]
+    params = args[0]
+    deps = args[1]
 
-        asyncio.get_event_loop().run_until_complete(
-            temporal_model.request(
-                messages=[],
-                model_settings=None,
-                model_request_parameters=ModelRequestParameters(),
-            )
-        )
-
-        # Verify execute_activity was called
-        assert len(activity_calls) == 1
-        _, args, _ = activity_calls[0]
-        params = args[0]
-        deps = args[1]
-
-        # The run context should have been serialized (line 162)
-        assert params.serialized_run_context is not None
-        # The deps should have been extracted (line 163)
-        assert deps == {'api_key': 'test_key'}
-    finally:
-        CURRENT_RUN_CONTEXT.reset(token)
+    assert params.serialized_run_context is None
+    # deps should also be None
+    assert deps is None
