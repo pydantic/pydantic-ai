@@ -233,7 +233,8 @@ class XaiModel(Model):
         """Map ModelResponse parts to an xAI assistant message."""
         # Collect content from response parts
         texts: list[str] = []
-        reasoning_texts: list[str] = []
+        reasoning_contents: list[str] = []
+        encrypted_contents: list[str] = []
         tool_calls: list[chat_types.chat_pb2.ToolCall] = []
 
         # Track builtin tool calls to update their status with corresponding return parts
@@ -246,7 +247,10 @@ class XaiModel(Model):
                 texts.append(item.content)
             elif isinstance(item, ThinkingPart):
                 # xAI models (grok) support reasoning_content directly
-                reasoning_texts.append(item.content)
+                if item.content:
+                    reasoning_contents.append(item.content)
+                if item.signature:
+                    encrypted_contents.append(item.signature)
             elif isinstance(item, ToolCallPart):
                 tool_calls.append(self._map_tool_call(item))
             elif isinstance(item, BuiltinToolCallPart):
@@ -271,8 +275,8 @@ class XaiModel(Model):
             else:
                 assert_never(item)
 
-        # Create assistant message with content, reasoning_content, and tool_calls
-        return self._build_assistant_message(texts, reasoning_texts, tool_calls)
+        # Create assistant message with content, reasoning_contents, encrypted_contents and tool_calls
+        return self._build_assistant_message(texts, reasoning_contents, encrypted_contents, tool_calls)
 
     def _map_tool_call(self, tool_call_part: ToolCallPart) -> chat_types.chat_pb2.ToolCall:
         """Map a ToolCallPart to an xAI SDK ToolCall."""
@@ -353,28 +357,22 @@ class XaiModel(Model):
     def _build_assistant_message(
         self,
         texts: list[str],
-        reasoning_texts: list[str],
+        reasoning_contents: list[str],
+        encrypted_contents: list[str],
         tool_calls: list[chat_types.chat_pb2.ToolCall],
     ) -> chat_types.chat_pb2.Message | None:
         """Build an assistant message from collected parts."""
-        if not (texts or reasoning_texts or tool_calls):
+        if not (texts or reasoning_contents or encrypted_contents or tool_calls):
             return None
 
-        # Simple text-only message
-        if texts and not (reasoning_texts or tool_calls):
-            return assistant(''.join(texts))
-
-        # Message with reasoning and/or tool calls
-        if texts:
-            msg = assistant(''.join(texts))
-        else:
-            msg = chat_types.chat_pb2.Message(role=chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT)
-
-        if reasoning_texts:
-            msg.reasoning_content = ''.join(reasoning_texts)
+        # Use assistant() helper to properly construct content, then add other fields
+        msg = assistant(''.join(texts))
+        if reasoning_contents:
+            msg.reasoning_content = ''.join(reasoning_contents)
+        if encrypted_contents:
+            msg.encrypted_content = ''.join(encrypted_contents)
         if tool_calls:
             msg.tool_calls.extend(tool_calls)
-
         return msg
 
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
