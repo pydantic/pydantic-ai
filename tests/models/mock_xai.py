@@ -270,7 +270,7 @@ def create_stream_chunk(
 # =============================================================================
 
 
-def _get_tool_content(
+def _get_example_tool_output(
     tool_type: chat_pb2.ToolCallType,
     content: ToolCallOutputType | None = None,
 ) -> ToolCallOutputType:
@@ -280,7 +280,7 @@ def _get_tool_content(
     if tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL:
         return {'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''}
     elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL:
-        return ''  # Web search has no content currently
+        return {}  # Web search has no content currently, in future will return inline citations
     elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL:
         return [
             {
@@ -294,7 +294,7 @@ def _get_tool_content(
             }
         ]
     else:
-        return {'status': 'completed'}
+        return {}
 
 
 def _create_builtin_tool_response(
@@ -360,7 +360,7 @@ def create_code_execution_responses(
         ... )
     """
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
-    actual_content = _get_tool_content(tool_type, content)
+    actual_content = _get_example_tool_output(tool_type, content)
     return _create_builtin_tool_response(
         tool_name='code_execution',
         arguments={'code': code},
@@ -382,7 +382,7 @@ def create_web_search_responses(
         >>> response = create_web_search_responses(query='date of Jan 1 in 2026', content='Thursday')
     """
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL
-    actual_content = _get_tool_content(tool_type, content)
+    actual_content = _get_example_tool_output(tool_type, content)
     return _create_builtin_tool_response(
         tool_name='web_search',
         arguments={'query': query},
@@ -409,7 +409,7 @@ def create_mcp_server_responses(
     """
     full_tool_name = f'{server_id}.{tool_name}'
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL
-    actual_content = _get_tool_content(tool_type, content)
+    actual_content = _get_example_tool_output(tool_type, content)
     return _create_builtin_tool_response(
         tool_name=full_tool_name,
         arguments=tool_input or {},
