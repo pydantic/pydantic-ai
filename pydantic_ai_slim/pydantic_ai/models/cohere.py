@@ -235,6 +235,9 @@ class CohereModel(Model):
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
         cohere_messages: list[ChatMessageV2] = []
+        system_prompt_count = sum(
+            1 for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, SystemPromptPart)
+        )
         for message in messages:
             if isinstance(message, ModelRequest):
                 cohere_messages.extend(self._map_user_message(message))
@@ -272,7 +275,7 @@ class CohereModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
+            cohere_messages.insert(system_prompt_count, SystemChatMessageV2(role='system', content=instructions))
         return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:

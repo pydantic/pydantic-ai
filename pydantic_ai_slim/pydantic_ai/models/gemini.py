@@ -365,7 +365,7 @@ class GeminiModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            sys_prompt_parts.insert(0, _GeminiTextPart(text=instructions))
+            sys_prompt_parts.append(_GeminiTextPart(text=instructions))
         return sys_prompt_parts, contents
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[_GeminiPartUnion]:
