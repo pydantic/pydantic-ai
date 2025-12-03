@@ -835,9 +835,8 @@ async def process_tool_calls(  # noqa: C901
 
     # First, we handle output tool calls
     for call in tool_calls_by_kind['output']:
-        # In case we got two tool calls with the same ID.
-        # This handles the case where `final_result` is passed into `process_tool_calls`
-        # from `Agent.run_stream` when streaming has already produced a final result.
+        # `final_result` can be passed into `process_tool_calls` from `Agent.run_stream`
+        # when streaming and there's already a final result
         if final_result and final_result.tool_call_id == call.tool_call_id:
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
@@ -878,7 +877,7 @@ async def process_tool_calls(  # noqa: C901
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
-                    raise e  # pragma: lax no cover
+                    raise e
             except ToolRetryError as e:
                 # If we already have a valid final result, don't increment retries for invalid output tools
                 # This allows the run to succeed if at least one output tool returned a valid result
@@ -897,7 +896,7 @@ async def process_tool_calls(  # noqa: C901
                 )
                 output_parts.append(part)
 
-                # Even in exhaustive mode, use the first output tool's result as the final result
+                # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
                 if not final_result:
                     final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
