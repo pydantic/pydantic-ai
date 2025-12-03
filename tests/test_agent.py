@@ -13,7 +13,7 @@ import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter, field_validator
-from pydantic_core import to_json
+from pydantic_core import ErrorDetails, to_json
 from typing_extensions import Self
 
 from pydantic_ai import (
@@ -1943,12 +1943,12 @@ def test_native_output():
                 parts=[
                     RetryPromptPart(
                         content=[
-                            {
-                                'type': 'missing',
-                                'loc': ('country',),
-                                'msg': 'Field required',
-                                'input': {'city': 'Mexico City'},
-                            }
+                            ErrorDetails(
+                                type='missing',
+                                loc=('country',),
+                                msg='Field required',
+                                input={'city': 'Mexico City'},
+                            ),
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -3765,7 +3765,12 @@ class TestMultipleToolCalls:
             [
                 RetryPromptPart(
                     content=[
-                        {'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad_value': 'first'}}
+                        ErrorDetails(
+                            type='missing',
+                            loc=('value',),
+                            msg='Field required',
+                            input={'bad_value': 'first'},
+                        ),
                     ],
                     tool_name='final_result',
                     tool_call_id='first',
