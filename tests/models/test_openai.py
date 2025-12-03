@@ -38,6 +38,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import PromptContentFilterError, ResponseContentFilterError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -3296,3 +3297,55 @@ response\
 """,
         }
     )
+
+
+def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
+        )
+    )
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(PromptContentFilterError) as exc_info:
+        agent.run_sync('bad prompt')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == 'gpt-4o'
+    assert 'Prompt content filtered' in str(exc_info.value)
+
+
+async def test_openai_response_filter_error_sync(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(content='partial', role='assistant'),
+    )
+    # Simulate content filter finish reason
+    c.choices[0].finish_reason = 'content_filter'
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ResponseContentFilterError) as exc_info:
+        await agent.run('hello')
+
+    # assertion: matches the mock's default model name
+    assert exc_info.value.model_name == 'gpt-4o-123'
+    assert 'Content filter triggered' in str(exc_info.value)
+
+
+async def test_openai_response_filter_error_stream(allow_model_requests: None):
+    stream = [text_chunk('hello'), text_chunk('', finish_reason='content_filter')]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ResponseContentFilterError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_text():
+                pass
+
+    assert exc_info.value.model_name == 'gpt-4o-123'
+    assert 'Content filter triggered' in str(exc_info.value)

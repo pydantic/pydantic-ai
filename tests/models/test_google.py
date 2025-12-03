@@ -51,7 +51,13 @@ from pydantic_ai.builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRetry,
+    ResponseContentFilterError,
+    UserError,
+)
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -67,6 +73,7 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        Candidate,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
@@ -982,7 +989,8 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    with pytest.raises(UnexpectedModelBehavior, match="Content filter 'SAFETY' triggered"):
+    # Changed expected exception from UnexpectedModelBehavior to ResponseContentFilterError
+    with pytest.raises(ResponseContentFilterError, match="Content filter 'SAFETY' triggered"):
         await agent.run('Tell me a joke about a Brazilians.')
 
 
@@ -4425,3 +4433,51 @@ def test_google_missing_tool_call_thought_signature():
             ],
         }
     )
+
+
+async def test_google_response_filter_error_sync(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+
+    candidate = Candidate(
+        finish_reason=GoogleFinishReason.SAFETY, content=None, grounding_metadata=None, url_context_metadata=None
+    )
+
+    response = GenerateContentResponse(candidates=[candidate], model_version='gemini-1.5-flash')
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ResponseContentFilterError) as exc_info:
+        await agent.run('bad content')
+
+    assert exc_info.value.model_name == 'gemini-1.5-flash'
+    assert 'Content filter' in str(exc_info.value)
+
+
+async def test_google_response_filter_error_stream(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+
+    candidate = Candidate(
+        finish_reason=GoogleFinishReason.SAFETY, content=None, grounding_metadata=None, url_context_metadata=None
+    )
+
+    chunk = GenerateContentResponse(candidates=[candidate], model_version='gemini-1.5-flash')
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ResponseContentFilterError) as exc_info:
+        async with agent.run_stream('bad content') as result:
+            async for _ in result.stream_text():
+                pass
+
+    assert exc_info.value.model_name == 'gemini-1.5-flash'
+    assert 'Content filter' in str(exc_info.value)

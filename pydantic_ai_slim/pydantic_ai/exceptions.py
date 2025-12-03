@@ -24,6 +24,9 @@ __all__ = (
     'UsageLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ContentFilterError',
+    'PromptContentFilterError',
+    'ResponseContentFilterError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
@@ -177,6 +180,28 @@ class ModelHTTPError(ModelAPIError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
+
+
+class ContentFilterError(ModelAPIError):
+    """Raised when content filtering is triggered by the model provider."""
+
+
+class PromptContentFilterError(ContentFilterError, ModelHTTPError):
+    """Raised when the prompt triggers a content filter."""
+
+    def __init__(self, status_code: int, model_name: str, body: object | None = None):
+        self.status_code = status_code
+        self.body = body
+        message = f'Prompt content filtered, status_code: {status_code}, model_name: {model_name}'
+        ModelAPIError.__init__(self, model_name, message)
+
+
+class ResponseContentFilterError(ContentFilterError):
+    """Raised when the generated response triggers a content filter."""
+
+    def __init__(self, message: str, model_name: str, body: object | None = None):
+        self.body = body
+        super().__init__(model_name, message)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

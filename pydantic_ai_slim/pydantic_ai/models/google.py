@@ -14,7 +14,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, ResponseContentFilterError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -495,8 +495,10 @@ class GoogleModel(Model):
 
         if candidate.content is None or candidate.content.parts is None:
             if finish_reason == 'content_filter' and raw_finish_reason:
-                raise UnexpectedModelBehavior(
-                    f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
+                raise ResponseContentFilterError(
+                    f'Content filter {raw_finish_reason.value!r} triggered',
+                    model_name=response.model_version or self._model_name,
+                    body=response.model_dump_json(),
                 )
             parts = []  # pragma: no cover
         else:
@@ -697,9 +699,11 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
             if candidate.content is None or candidate.content.parts is None:
-                if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
-                    raise UnexpectedModelBehavior(
-                        f'Content filter {raw_finish_reason.value!r} triggered', chunk.model_dump_json()
+                if self.finish_reason == 'content_filter' and raw_finish_reason:
+                    raise ResponseContentFilterError(
+                        f'Content filter {raw_finish_reason.value!r} triggered',
+                        model_name=self.model_name,
+                        body=chunk.model_dump_json(),
                     )
                 else:  # pragma: no cover
                     continue

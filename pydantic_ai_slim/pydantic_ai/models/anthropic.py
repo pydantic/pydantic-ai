@@ -14,7 +14,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, ResponseContentFilterError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -526,6 +526,12 @@ class AnthropicModel(Model):
         if raw_finish_reason := response.stop_reason:  # pragma: no branch
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+            if finish_reason == 'content_filter':
+                raise ResponseContentFilterError(
+                    f'Content filter triggered for model {response.model}',
+                    model_name=response.model,
+                    body=response.model_dump(),
+                )
 
         return ModelResponse(
             parts=items,
@@ -1241,6 +1247,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                     self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    if self.finish_reason == 'content_filter':
+                        raise ResponseContentFilterError(
+                            f'Content filter triggered for model {self.model_name}',
+                            model_name=self.model_name,
+                        )
 
             elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                 if isinstance(current_block, BetaMCPToolUseBlock):
