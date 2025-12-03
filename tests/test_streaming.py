@@ -1660,6 +1660,12 @@ class TestMultipleToolCalls:
         )
 
     async def test_early_strategy_with_external_tool_call(self):
+        """Test that early strategy handles external tool calls correctly.
+
+        NOTE: In streaming mode, deferred tools become the final result.
+        This differs from sync mode where output tools are prioritized.
+        See https://github.com/pydantic/pydantic-ai/issues/3636 for details.
+        """
         tool_called: list[str] = []
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
