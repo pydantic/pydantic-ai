@@ -2857,6 +2857,27 @@ def test_temporal_model_using_model_context_manager():
     assert temporal_model._current_selection() is None  # pyright: ignore[reportPrivateUsage]
 
 
+def test_temporal_model_using_model_resets_on_exception():
+    """Test using_model context manager resets selection even when exception is raised."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='using_model_exception_test')
+    temporal_agent = TemporalAgent(agent, name='using_model_exception_test')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    # Default is None
+    assert temporal_model._current_selection() is None  # pyright: ignore[reportPrivateUsage]
+
+    # Exception inside using_model should still reset selection
+    with pytest.raises(ValueError, match='test error'):
+        with temporal_model.using_model('openai:gpt-4o'):
+            assert temporal_model._current_selection() == 'openai:gpt-4o'  # pyright: ignore[reportPrivateUsage]
+            raise ValueError('test error')
+
+    # After exception, selection should still be reset to None
+    assert temporal_model._current_selection() is None  # pyright: ignore[reportPrivateUsage]
+
+
 def test_temporal_model_resolve_model_uses_model_instances(monkeypatch: MonkeyPatch):
     """Test _resolve_model uses model_instances when key matches."""
     test_model = TestModel()
@@ -3029,6 +3050,77 @@ def test_temporal_model_resolve_model_fallback_to_wrapped():
     result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
     # Should return the wrapped model (the original test_model)
     assert result is test_model
+
+
+def test_temporal_model_resolve_model_reinfers_default_with_provider_factory(monkeypatch: MonkeyPatch):
+    """Test _resolve_model re-infers the default model when provider_factory is set."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='resolve_reinfer_default')
+
+    provider_calls: list[tuple[str, Any, Any]] = []
+
+    def mock_provider_factory(
+        provider_name: str,
+        run_context: RunContext[Any] | None,
+        deps: Any | None,
+    ) -> Provider[Any]:
+        provider_calls.append((provider_name, run_context, deps))
+
+        class MockProvider(Provider[None]):
+            def __init__(self) -> None:
+                self._client = None
+
+            @property
+            def name(self) -> str:  # pragma: no cover
+                return 'mock'
+
+            @property
+            def base_url(self) -> str:  # pragma: no cover
+                return 'https://example.com'
+
+            @property
+            def client(self) -> None:  # pragma: no cover
+                return None
+
+        return MockProvider()
+
+    temporal_agent = TemporalAgent(
+        agent,
+        name='resolve_reinfer_default',
+        provider_factory=mock_provider_factory,
+    )
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    # Verify the default model spec was stored
+    assert temporal_model._default_model_spec == 'test:test'  # pyright: ignore[reportPrivateUsage]
+
+    infer_calls: list[str] = []
+
+    def mock_infer_model(model_name: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:
+        infer_calls.append(model_name)
+        # Call the provider factory to verify it's wired correctly
+        provider_factory('test')
+        return TestModel()
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
+
+    # model_selection is None - should re-infer using _default_model_spec
+    params = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_selection=None,
+    )
+
+    result = temporal_model._resolve_model(params, {'key': 'value'})  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(result, TestModel)
+    # Should have called infer_model with the default model spec
+    assert infer_calls == ['test:test']
+    # Provider factory should have been called
+    assert len(provider_calls) == 1
+    assert provider_calls[0][0] == 'test'
 
 
 def test_temporal_model_request_without_run_context(monkeypatch: MonkeyPatch):

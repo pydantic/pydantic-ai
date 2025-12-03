@@ -92,6 +92,10 @@ class TemporalModel(WrapperModel):
         self._model_selection_var: ContextVar[str | None] = ContextVar('_temporal_model_selection', default=None)
         self._model_instances = dict(model_instances or {})
         self._provider_factory = provider_factory
+        # Store the model spec so we can re-infer with provider_factory if needed
+        self._default_model_spec: str | None = None
+        if provider_factory is not None:
+            self._default_model_spec = f'{model.system}:{model.model_name}'
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any) -> ModelResponse:
@@ -233,6 +237,9 @@ class TemporalModel(WrapperModel):
     def _resolve_model(self, params: _RequestParams, deps: Any | None) -> Model:
         selection = params.model_selection
         if selection is None:
+            # Re-infer the default model if provider_factory is set
+            if self._default_model_spec is not None:
+                return self._infer_model(self._default_model_spec, params, deps)
             return self.wrapped
 
         if selection in self._model_instances:
