@@ -173,3 +173,40 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+
+def test_openrouter_google_json_schema_transformer():
+    """Test _OpenRouterGoogleJsonSchemaTransformer covers all transformation cases."""
+    schema = {
+        '$schema': 'http://json-schema.org/draft-07/schema#',
+        'title': 'TestSchema',
+        'type': 'object',
+        'properties': {
+            'status': {'const': 'active'},
+            'category': {'oneOf': [{'type': 'string'}, {'type': 'integer'}]},
+            'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
+            'date': {'type': 'string', 'format': 'date'},
+        },
+    }
+
+    transformer = _OpenRouterGoogleJsonSchemaTransformer(schema)
+    result = transformer.walk()
+
+    # const -> enum conversion (line 59)
+    assert result['properties']['status'] == {'enum': ['active'], 'type': 'string'}
+
+    # oneOf -> anyOf conversion (line 68)
+    assert 'anyOf' in result['properties']['category']
+    assert 'oneOf' not in result['properties']['category']
+
+    # format -> description with existing description (lines 73-75)
+    assert result['properties']['email']['description'] == 'User email (format: email)'
+    assert 'format' not in result['properties']['email']
+
+    # format -> description without existing description (lines 76-77)
+    assert result['properties']['date']['description'] == 'Format: date'
+    assert 'format' not in result['properties']['date']
+
+    # Removed fields
+    assert '$schema' not in result
+    assert 'title' not in result
