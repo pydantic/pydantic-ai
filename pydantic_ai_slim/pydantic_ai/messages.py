@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import mimetypes
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -25,6 +26,26 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+
+# Register manually MIME types that are not in the standard library
+# Document types
+mimetypes.add_type('text/markdown', '.mdx')
+mimetypes.add_type('text/x-asciidoc', '.asciidoc')
+
+# Video types
+mimetypes.add_type('video/3gpp', '.three_gp')
+mimetypes.add_type('video/x-flv', '.flv')
+mimetypes.add_type('video/x-matroska', '.mkv')
+mimetypes.add_type('video/x-ms-wmv', '.wmv')
+
+# Audio types
+mimetypes.add_type('audio/flac', '.flac')
+mimetypes.add_type('audio/mpeg', '.mp3')
+mimetypes.add_type('audio/ogg', '.oga')
+# override stdlib mimetypes that use x- prefix with standard types
+mimetypes.add_type('audio/aac', '.aac')
+mimetypes.add_type('audio/aiff', '.aiff')
+mimetypes.add_type('audio/wav', '.wav')
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -227,39 +248,27 @@ class VideoUrl(FileUrl):
         )
         self.kind = kind
 
-    def _infer_media_type(self) -> VideoMediaType:
+    def _infer_media_type(self) -> str:
         """Return the media type of the video, based on the url."""
-        path = urlparse(self.url).path
-        if path.endswith('.mkv'):
-            return 'video/x-matroska'
-        elif path.endswith('.mov'):
-            return 'video/quicktime'
-        elif path.endswith('.mp4'):
-            return 'video/mp4'
-        elif path.endswith('.webm'):
-            return 'video/webm'
-        elif path.endswith('.flv'):
-            return 'video/x-flv'
-        elif path.endswith(('.mpeg', '.mpg')):
-            return 'video/mpeg'
-        elif path.endswith('.wmv'):
-            return 'video/x-ms-wmv'
-        elif path.endswith('.three_gp'):
-            return 'video/3gpp'
         # Assume that YouTube videos are mp4 because there would be no extension
         # to infer from. This should not be a problem, as Gemini disregards media
         # type for YouTube URLs.
-        elif self.is_youtube:
+        if self.is_youtube:
             return 'video/mp4'
-        else:
+
+        mime_type, _ = guess_type(self.url)
+        if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
             )
+        return mime_type
 
     @property
     def is_youtube(self) -> bool:
         """True if the URL has a YouTube domain."""
-        return self.url.startswith(('https://youtu.be/', 'https://youtube.com/', 'https://www.youtube.com/'))
+        parsed = urlparse(self.url)
+        hostname = parsed.hostname or ''
+        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
 
     @property
     def format(self) -> VideoFormat:
@@ -304,29 +313,18 @@ class AudioUrl(FileUrl):
         )
         self.kind = kind
 
-    def _infer_media_type(self) -> AudioMediaType:
+    def _infer_media_type(self) -> str:
         """Return the media type of the audio file, based on the url.
 
         References:
         - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
         """
-        path = urlparse(self.url).path
-        if path.endswith('.mp3'):
-            return 'audio/mpeg'
-        if path.endswith('.wav'):
-            return 'audio/wav'
-        if path.endswith('.flac'):
-            return 'audio/flac'
-        if path.endswith('.oga'):
-            return 'audio/ogg'
-        if path.endswith('.aiff'):
-            return 'audio/aiff'
-        if path.endswith('.aac'):
-            return 'audio/aac'
-
-        raise ValueError(
-            f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
-        )
+        mime_type, _ = guess_type(self.url)
+        if mime_type is None:
+            raise ValueError(
+                f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
+        return mime_type
 
     @property
     def format(self) -> AudioFormat:
@@ -368,21 +366,14 @@ class ImageUrl(FileUrl):
         )
         self.kind = kind
 
-    def _infer_media_type(self) -> ImageMediaType:
+    def _infer_media_type(self) -> str:
         """Return the media type of the image, based on the url."""
-        path = urlparse(self.url).path
-        if path.endswith(('.jpg', '.jpeg')):
-            return 'image/jpeg'
-        elif path.endswith('.png'):
-            return 'image/png'
-        elif path.endswith('.gif'):
-            return 'image/gif'
-        elif path.endswith('.webp'):
-            return 'image/webp'
-        else:
+        mime_type, _ = guess_type(self.url)
+        if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from image URL: {self.url}. Explicitly provide a `media_type` instead.'
             )
+        return mime_type
 
     @property
     def format(self) -> ImageFormat:
@@ -429,33 +420,12 @@ class DocumentUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
-        # Common document types are hardcoded here as mime-type support for these
-        # extensions varies across operating systems.
-        if self.url.endswith(('.md', '.mdx', '.markdown')):
-            return 'text/markdown'
-        elif self.url.endswith('.asciidoc'):
-            return 'text/x-asciidoc'
-        elif self.url.endswith('.txt'):
-            return 'text/plain'
-        elif self.url.endswith('.pdf'):
-            return 'application/pdf'
-        elif self.url.endswith('.rtf'):
-            return 'application/rtf'
-        elif self.url.endswith('.doc'):
-            return 'application/msword'
-        elif self.url.endswith('.docx'):
-            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        elif self.url.endswith('.xls'):
-            return 'application/vnd.ms-excel'
-        elif self.url.endswith('.xlsx'):
-            return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-
-        type_, _ = guess_type(self.url)
-        if type_ is None:
+        mime_type, _ = guess_type(self.url)
+        if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
             )
-        return type_
+        return mime_type
 
     @property
     def format(self) -> DocumentFormat:
