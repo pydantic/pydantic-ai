@@ -134,7 +134,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
