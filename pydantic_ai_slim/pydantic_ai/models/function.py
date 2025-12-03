@@ -204,9 +204,9 @@ class FunctionModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """FunctionModel supports all builtin tools for testing flexibility."""
-        from ..builtin_tools import BUILTIN_TOOL_TYPES, DEPRECATED_BUILTIN_TOOL_TYPES
+        from ..builtin_tools import get_builtin_tool_types
 
-        return frozenset(cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_TYPES)
+        return get_builtin_tool_types()
 
 
 @dataclass(frozen=True, kw_only=True)

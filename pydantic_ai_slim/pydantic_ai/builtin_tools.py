@@ -436,7 +436,7 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.kind
 
 
-# This function exists primarily as a clean default_factory for ModelProfile.supported_builtin_tools
+# used in a couple places
 def get_builtin_tool_types() -> frozenset[type[AbstractBuiltinTool]]:
     """Get the set of all builtin tool types (excluding deprecated tools)."""
     return frozenset(cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_TYPES)

@@ -556,6 +556,27 @@ def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, 
     assert 'You are a helpful assistant' in agent._instructions
 
 
+def test_run_web_command_agent_with_instructions(
+    mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
+):
+    """Test run_web_command passes instructions to create_web_app when agent is provided."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    result = run_web_command(agent_path='test_module:custom_agent', instructions='Always respond in Spanish')
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    # Verify instructions were passed to create_web_app
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs['instructions'] == 'Always respond in Spanish'
+
+
 def test_run_web_command_agent_load_failure(capfd: CaptureFixture[str]):
     """Test run_web_command returns error when agent path is invalid."""
 

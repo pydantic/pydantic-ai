@@ -41,7 +41,9 @@ def run_web_command(  # noqa: C901
         port: Port to bind the server to.
         models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']).
         tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution']).
-        instructions: System instructions for generic agent.
+        instructions: System instructions. For generic agent (no agent_path), these become
+            the agent's instructions. With an agent, these are passed as extra instructions
+            to each run.
         mcp: Path to JSON file with MCP server configurations.
     """
     console = Console()
@@ -100,11 +102,16 @@ def run_web_command(  # noqa: C901
             console.print(f'[red]Error: {e}[/red]')
             return 1
 
+    # For generic agent, instructions are already in the agent.
+    # For provided agent, pass instructions as extra instructions for each run.
+    run_instructions = instructions if agent_path else None
+
     app = create_web_app(
         agent,
         models=models,
         builtin_tools=all_tool_instances or None,
         toolsets=mcp_servers or None,
+        instructions=run_instructions,
     )
 
     agent_desc = agent_path if agent_path else 'generic agent'
