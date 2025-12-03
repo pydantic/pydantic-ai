@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -14,7 +15,7 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import GoogleModelProfile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -32,7 +33,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
+class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
     """Legacy Google JSON schema transformer for OpenRouter compatibility.
 
     OpenRouter's compatibility layer doesn't fully support modern JSON Schema features
@@ -78,22 +79,16 @@ class OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
         return schema
 
 
-def openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
+def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model accessed via OpenRouter.
 
     Uses the legacy transformer to maintain compatibility with OpenRouter's
     translation layer, which doesn't fully support modern JSON Schema features.
     """
-    is_image_model = 'image' in model_name
-    is_3_or_newer = 'gemini-3' in model_name
-    return GoogleModelProfile(
-        json_schema_transformer=OpenRouterGoogleJsonSchemaTransformer,
-        supports_image_output=is_image_model,
-        supports_json_schema_output=is_3_or_newer or not is_image_model,
-        supports_json_object_output=is_3_or_newer or not is_image_model,
-        supports_tools=not is_image_model,
-        google_supports_native_output_with_builtin_tools=is_3_or_newer,
-    )
+    profile = google_model_profile(model_name)
+    if profile is None:
+        return None
+    return replace(profile, json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer)
 
 
 class OpenRouterProvider(Provider[AsyncOpenAI]):
@@ -113,7 +108,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile = {
-            'google': openrouter_google_model_profile,
+            'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
             'anthropic': anthropic_model_profile,
             'mistralai': mistral_model_profile,

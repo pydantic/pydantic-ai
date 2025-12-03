@@ -12,7 +12,7 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import AnthropicJsonSchemaTransformer, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -26,7 +26,10 @@ with try_import() as imports_successful:
     import openai
 
     from pydantic_ai.models.openrouter import OpenRouterModel
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.openrouter import (
+        OpenRouterProvider,
+        _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 pytestmark = [
@@ -109,12 +112,12 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
     google_profile = provider.model_profile('google/gemma-3n-e4b-it:free')
     google_model_profile_mock.assert_called_with('gemma-3n-e4b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
     openai_profile = provider.model_profile('openai/o1-mini')
     openai_model_profile_mock.assert_called_with('o1-mini')
