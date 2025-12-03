@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
@@ -23,6 +23,7 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext as _RunContext
     from .models.instrumented import InstrumentationSettings
 
 
@@ -932,8 +933,13 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    pre_compiled: str | None = None
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
+        if self.pre_compiled:
+            return self.pre_compiled
+
         if isinstance(self.content, str):
             if self.tool_name is None:
                 description = f'Validation feedback:\n{self.content}'
@@ -1896,3 +1902,38 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
+
+
+@dataclass
+class PromptTemplates:
+    """Templates for specific message parts that Pydantic AI injects.
+
+    Each template can be either:
+    - A static string: Simple replacement for the default message
+    - A callable: Dynamic formatting based on RunContext
+    """
+
+    retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    """Template for RetryPromptPart messages when injecting retry instructions."""
+
+    tool_final_result: str | Callable[[ToolReturnPart, Any[Any]], str] | None = None
+
+    def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
+        if isinstance(message, ToolReturnPart):
+            if not self.tool_final_result:
+                return
+            # Apply tool return template
+            if isinstance(self.tool_final_result, str):
+                message.content = self.tool_final_result
+                return
+            
+            message.content = self.tool_final_result(message, ctx)
+        elif isinstance(message, RetryPromptPart):
+            if not self.retry_prompt:
+                return ''
+            # Apply RetryPromptPart
+            if isinstance(self.retry_prompt, str):
+                message.pre_compiled = self.retry_prompt
+                return
+            message.pre_compiled = self.retry_prompt(message, ctx)
+            

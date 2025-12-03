@@ -58,6 +58,7 @@ from pydantic_ai._output import (
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from pydantic_ai.messages import PromptTemplates
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -283,6 +284,100 @@ def test_result_pydantic_model_validation_error():
 ```
 
 Fix the errors and try again.""")
+
+
+def test_result_pydantic_model_validation_error_prompt_templates():
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args_json = '{"a": 1, "b": "foo"}'
+        else:
+            args_json = '{"a": 1, "b": "bar"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    class Bar(BaseModel):
+        a: int
+        b: str
+
+        @field_validator('b')
+        def check_b(cls, v: str) -> str:
+            if v == 'foo':
+                raise ValueError('must not be foo')
+            return v
+
+    prompt_templates = PromptTemplates(retry_prompt=lambda msg, _: f'IMPORTANT: {msg.content}')
+
+    agent = Agent(FunctionModel(return_model), output_type=Bar, prompt_templates=prompt_templates)
+
+    print('\nAgent prompt templates', agent.prompt_templates)
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Bar)
+    assert result.output.model_dump() == snapshot({'a': 1, 'b': 'bar'})
+    messages_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result.all_messages()]
+    assert messages_part_kinds == snapshot(
+        [
+            ('request', ['user-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['retry-prompt']),
+            ('response', ['tool-call']),
+            ('request', ['tool-return']),
+        ]
+    )
+
+    user_retry = result.all_messages()[2]
+    assert isinstance(user_retry, ModelRequest)
+    retry_prompt = user_retry.parts[0]
+    assert isinstance(retry_prompt, RetryPromptPart)
+    print('\n Retry Prompt ', retry_prompt)
+    assert retry_prompt.model_response() == snapshot(
+        "IMPORTANT: [{'type': 'value_error', 'loc': ('b',), 'msg': 'Value error, must not be foo', 'input': 'foo'}]"
+    )
+
+
+def test_tool_return_prompt_templates():
+    class Output(BaseModel):
+        value: str
+
+    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        final_tool = info.output_tools[0].name
+        return ModelResponse(
+            parts=[
+                ToolCallPart(final_tool, {'value': 'first'}),
+                ToolCallPart(final_tool, {'value': 'second'}),
+                ToolCallPart('regular_tool', {'x': 1}),
+            ]
+        )
+
+    prompt_templates = PromptTemplates(
+        tool_final_result='FINISHED',
+        tool_output_not_used=lambda part, _: f'SKIPPED OUTPUT {part.tool_name}',
+        tool_not_executed=lambda part, _: f'SKIPPED TOOL {part.tool_name}',
+    )
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Output,
+        end_strategy='early',
+        prompt_templates=prompt_templates,
+    )
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:  # pragma: no cover
+        return x
+
+    result = agent.run_sync('prompt template test')
+    assert result.output.value == 'first'
+
+    final_request = result.new_messages()[-1]
+    assert isinstance(final_request, ModelRequest)
+    tool_returns = [part for part in final_request.parts if isinstance(part, ToolReturnPart)]
+    assert [part.content for part in tool_returns] == [
+        'FINISHED',
+        'SKIPPED OUTPUT final_result',
+        'SKIPPED TOOL regular_tool',
+    ]
 
 
 def test_output_validator():

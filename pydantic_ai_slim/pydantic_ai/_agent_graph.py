@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Final, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
@@ -137,6 +137,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
+    prompt_templates: _messages.PromptTemplates | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -494,6 +495,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
 
+        prompt_templates = ctx.deps.prompt_templates
+        if prompt_templates:
+            _apply_prompt_templates(message_history, prompt_templates, run_context)
+
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
@@ -848,6 +853,15 @@ async def process_tool_calls(  # noqa: C901
             kind = 'unknown'
         tool_calls_by_kind[kind].append(call)
 
+    prompt_templates = ctx.deps.prompt_templates
+    run_context: RunContext[DepsT] | None = None
+    if prompt_templates:
+        run_context = build_run_context(ctx)
+
+    def apply_prompt_template(part: _messages.ToolReturnPart) -> None:
+        if prompt_templates and run_context is not None:
+            prompt_templates.apply_template(part, run_context)
+
     # First, we handle output tool calls
     for call in tool_calls_by_kind['output']:
         if final_result:
@@ -856,14 +870,18 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
+                    prompt_template_type='final_result',
                 )
+                apply_prompt_template(part)
             else:
                 yield _messages.FunctionToolCallEvent(call)
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content='Output tool not used - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
+                    prompt_template_type='output_tool_not_used',
                 )
+                apply_prompt_template(part)
                 yield _messages.FunctionToolResultEvent(part)
 
             output_parts.append(part)
@@ -887,21 +905,24 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
+                    prompt_template_type='final_result',
                 )
                 output_parts.append(part)
+                apply_prompt_template(part)
                 final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
     if final_result and ctx.deps.end_strategy == 'early':
         for call in tool_calls_by_kind['function']:
-            output_parts.append(
-                _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Tool not executed - a final result was already processed.',
-                    tool_call_id=call.tool_call_id,
-                )
+            part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content='Tool not executed - a final result was already processed.',
+                tool_call_id=call.tool_call_id,
+                prompt_template_type='tool_not_executed',
             )
+            apply_prompt_template(part)
+            output_parts.append(part)
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
@@ -953,13 +974,14 @@ async def process_tool_calls(  # noqa: C901
             # we shouldn't insert return parts as the deferred tools will still get a real result.
             if not isinstance(final_result.output, _output.DeferredToolRequests):
                 for call in calls:
-                    output_parts.append(
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content='Tool not executed - a final result was already processed.',
-                            tool_call_id=call.tool_call_id,
-                        )
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=call.tool_call_id,
+                        prompt_template_type='tool_not_executed',
                     )
+                    apply_prompt_template(part)
+                    output_parts.append(part)
         elif calls:
             deferred_calls['external'].extend(tool_calls_by_kind['external'])
             deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
@@ -1346,3 +1368,11 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+def _apply_prompt_templates(
+    messages: list[_messages.ModelMessage], prompt_templates: _messages.PromptTemplates, ctx: RunContext[Any]
+):
+    for msg in messages:
+        for msg_part in msg.parts:
+            prompt_templates.apply_template(msg_part, ctx)
