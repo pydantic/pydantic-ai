@@ -305,7 +305,7 @@ print(repr(result.output))
 1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle`. However, as `ToolOutput` is an object rather than a type, we have to use a list.
 
 !!! note "Handling Multiple Output Tool Calls"
-    When a model calls multiple output tools in the same response (for example, when you have multiple output types in a union or list), the agent's `end_strategy` parameter controls whether all output tool functions are executed or only the first one:
+    When a model calls multiple output tools in the same response, the agent's `end_strategy` parameter controls whether all output tool functions are executed or only the first one:
 
     - `'early'` (default): Only the first output tool is executed, and additional output tool calls are skipped once a final result is found. This is the default behavior.
     - `'exhaustive'`: All output tool functions are executed, even after a final result is found. The first valid output tool's result is used as the final output.
