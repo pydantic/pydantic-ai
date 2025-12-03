@@ -2947,7 +2947,7 @@ class TestMultipleToolCalls:
 
     def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
-        tool_called = []
+        tool_called: list[str] = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
@@ -3619,7 +3619,7 @@ class TestMultipleToolCalls:
 
     def test_early_strategy_with_final_result_in_middle(self):
         """Test that 'early' strategy stops at first final result, regardless of position."""
-        tool_called = []
+        tool_called: list[str] = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
@@ -3726,8 +3726,8 @@ class TestMultipleToolCalls:
         )
 
     def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
-        """Test that 'early' strategy does not apply to tool calls without final tool."""
-        tool_called = []
+        """Test that 'early' strategy does not apply to tool calls when no output tool is called."""
+        tool_called: list[str] = []
         agent = Agent(TestModel(), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
@@ -3737,10 +3737,72 @@ class TestMultipleToolCalls:
             return x
 
         result = agent.run_sync('test early strategy with regular tool calls')
+
+        # Verify the regular tool was executed
         assert tool_called == ['regular_tool']
 
-        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturnPart)]
-        assert tool_returns == snapshot([])
+        # Verify we got appropriate tool returns
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test early strategy with regular tool calls',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='regular_tool',
+                            args={'x': 0},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=57, output_tokens=4),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=0,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'a'},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=58, output_tokens=9),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_multiple_final_result_are_validated_correctly(self):
         """Tests that if multiple final results are returned, but one fails validation, the other is used."""

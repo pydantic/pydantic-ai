@@ -1534,7 +1534,7 @@ class TestMultipleToolCalls:
         )
 
     async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
-        """Test that 'early' strategy does not apply to tool calls without final tool."""
+        """Test that 'early' strategy does not apply to tool calls when no output tool is called."""
         tool_called: list[str] = []
         agent = Agent(TestModel(), output_type=OutputType, end_strategy='early')
 
@@ -1549,10 +1549,73 @@ class TestMultipleToolCalls:
             assert response.value == snapshot('a')
             messages = result.all_messages()
 
+        # Verify the regular tool was executed
         assert tool_called == ['regular_tool']
 
-        tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturnPart)]
-        assert tool_returns == snapshot([])
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test early strategy with regular tool calls',
+                            timestamp=IsNow(tz=datetime.timezone.utc),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='regular_tool',
+                            args={'x': 0},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=57),
+                    model_name='test',
+                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    provider_name='test',
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=0,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=datetime.timezone.utc),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'a'},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=58, output_tokens=4),
+                    model_name='test',
+                    timestamp=IsNow(tz=datetime.timezone.utc),
+                    provider_name='test',
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=datetime.timezone.utc),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     @pytest.mark.xfail(
         reason='Multiple output validation not supported in streaming mode. '
