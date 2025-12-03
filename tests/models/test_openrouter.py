@@ -406,3 +406,72 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
             }
         ]
     )
+
+
+async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
+
+    This verifies the fix for https://github.com/pydantic/pydantic-ai/issues/3617
+    where OpenRouter's translation layer didn't support modern JSON Schema features.
+    """
+    from enum import Enum
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+
+    class LevelType(str, Enum):
+        ground = 'ground'
+        basement = 'basement'
+        floor = 'floor'
+        attic = 'attic'
+
+    class SpaceType(str, Enum):
+        entryway = 'entryway'
+        living_room = 'living-room'
+        kitchen = 'kitchen'
+        bedroom = 'bedroom'
+        bathroom = 'bathroom'
+        garage = 'garage'
+
+    class InsertLevelArg(BaseModel):
+        level_name: str
+        level_type: LevelType
+
+    class SpaceArg(BaseModel):
+        space_name: str
+        space_type: SpaceType
+
+    class InsertLevelWithSpaces(BaseModel):
+        """Insert a level with its spaces."""
+
+        level: InsertLevelArg | None = None
+        spaces: list[SpaceArg]
+
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    response = await model_request(
+        model,
+        [
+            ModelRequest.user_text_prompt(
+                "It's a house with a ground floor that has an entryway, a living room and a garage."
+            )
+        ],
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='insert_level_with_spaces',
+                    description=InsertLevelWithSpaces.__doc__ or '',
+                    parameters_json_schema=InsertLevelWithSpaces.model_json_schema(),
+                )
+            ],
+            allow_text_output=False,
+        ),
+    )
+
+    assert response.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='insert_level_with_spaces',
+                args='{"level":{"level_name":"ground floor","level_type":"ground"},"spaces":[{"space_name":"entryway","space_type":"entryway"},{"space_type":"living-room","space_name":"living room"},{"space_type":"garage","space_name":"garage"}]}',
+                tool_call_id='tool_insert_level_with_spaces_Dp2OGkGjAwsmqUUwHwmj',
+            )
+        ]
+    )

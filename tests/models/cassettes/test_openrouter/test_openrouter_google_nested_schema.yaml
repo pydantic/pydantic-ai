@@ -1,0 +1,136 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '914'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: It's a house with a ground floor that has an entryway, a living room and a garage.
+        role: user
+      model: google/gemini-2.5-flash
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Insert a level with its spaces.
+          name: insert_level_with_spaces
+          parameters:
+            description: Insert a level with its spaces.
+            properties:
+              level:
+                default: null
+                nullable: true
+                properties:
+                  level_name:
+                    type: string
+                  level_type:
+                    enum:
+                    - ground
+                    - basement
+                    - floor
+                    - attic
+                    type: string
+                required:
+                - level_name
+                - level_type
+                type: object
+              spaces:
+                items:
+                  properties:
+                    space_name:
+                      type: string
+                    space_type:
+                      enum:
+                      - entryway
+                      - living-room
+                      - kitchen
+                      - bedroom
+                      - bathroom
+                      - garage
+                      type: string
+                  required:
+                  - space_name
+                  - space_type
+                  type: object
+                type: array
+            required:
+            - spaces
+            type: object
+          strict: true
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '1163'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"level":{"level_name":"ground floor","level_type":"ground"},"spaces":[{"space_name":"entryway","space_type":"entryway"},{"space_type":"living-room","space_name":"living
+                room"},{"space_type":"garage","space_name":"garage"}]}'
+              name: insert_level_with_spaces
+            id: tool_insert_level_with_spaces_Dp2OGkGjAwsmqUUwHwmj
+            index: 0
+            type: function
+        native_finish_reason: STOP
+      created: 1764781178
+      id: gen-1764781178-SLI9BlpnJoXSOwuii48G
+      model: google/gemini-2.5-flash
+      object: chat.completion
+      provider: Google AI Studio
+      usage:
+        completion_tokens: 89
+        completion_tokens_details:
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0
+        cost_details:
+          upstream_inference_completions_cost: 0.0002225
+          upstream_inference_cost: 0.000296
+          upstream_inference_prompt_cost: 7.35e-05
+        is_byok: true
+        prompt_tokens: 245
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 334
+    status:
+      code: 200
+      message: OK
+version: 1

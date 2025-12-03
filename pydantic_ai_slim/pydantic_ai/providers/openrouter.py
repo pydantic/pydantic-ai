@@ -86,7 +86,7 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     translation layer, which doesn't fully support modern JSON Schema features.
     """
     profile = google_model_profile(model_name)
-    if profile is None:
+    if profile is None:  # pragma: no cover
         return None
     return replace(profile, json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer)
 
