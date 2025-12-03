@@ -161,9 +161,9 @@ class TestModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """TestModel supports all builtin tools for testing flexibility."""
-        from ..builtin_tools import get_builtin_tool_types
+        from ..builtin_tools import BUILTIN_TOOL_TYPES, DEPRECATED_BUILTIN_TOOL_TYPES
 
-        return get_builtin_tool_types()
+        return frozenset(c for kind, c in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_TYPES)
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()

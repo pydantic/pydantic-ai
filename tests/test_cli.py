@@ -24,7 +24,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
-    from pydantic_ai._cli._web import _run_web_command  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
@@ -379,7 +379,7 @@ def test_model_label(model_name: str, expected: str):
 def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
     """Test web command without agent creates generic agent."""
     env.set('OPENAI_API_KEY', 'test')
-    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
     assert cli(['web', '-m', 'gpt-5', '-t', 'web_search'], prog_name='clai') == 0
 
@@ -397,7 +397,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
 def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
@@ -419,7 +419,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
     """Test web command with multiple -m flags."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
@@ -444,7 +444,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
     """Test web command with multiple -t flags."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
@@ -471,7 +471,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
     """Test generic agent with custom instructions."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
     assert cli(['web', '-m', 'gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
 
@@ -490,7 +490,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
     """Test web command with custom host/port."""
     env.set('OPENAI_API_KEY', 'test')
 
-    mock_run_web = mocker.patch('pydantic_ai._cli._web._run_web_command', return_value=0)
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
@@ -514,24 +514,24 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
 def test_run_web_command_agent_with_model(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
-    """Test _run_web_command uses agent's model when no -m flag provided."""
+    """Test run_web_command uses agent's model when no -m flag provided."""
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
 
-    result = _run_web_command(agent_path='test_module:custom_agent')
+    result = run_web_command(agent_path='test_module:custom_agent')
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
 
 
 def test_run_web_command_generic_agent_no_model(capfd: CaptureFixture[str]):
-    """Test _run_web_command returns error when no agent and no model provided."""
+    """Test run_web_command returns error when no agent and no model provided."""
 
-    result = _run_web_command()
+    result = run_web_command()
 
     assert result == 1
     output = capfd.readouterr().out
@@ -539,12 +539,12 @@ def test_run_web_command_generic_agent_no_model(capfd: CaptureFixture[str]):
 
 
 def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
-    """Test _run_web_command creates generic agent with system prompt decorator."""
+    """Test run_web_command creates generic agent with system prompt decorator."""
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
-    result = _run_web_command(models=['test'], instructions='You are a helpful assistant')
+    result = run_web_command(models=['test'], instructions='You are a helpful assistant')
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
@@ -557,9 +557,9 @@ def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, 
 
 
 def test_run_web_command_agent_load_failure(capfd: CaptureFixture[str]):
-    """Test _run_web_command returns error when agent path is invalid."""
+    """Test run_web_command returns error when agent path is invalid."""
 
-    result = _run_web_command(agent_path='nonexistent_module:agent')
+    result = run_web_command(agent_path='nonexistent_module:agent')
 
     assert result == 1
     output = capfd.readouterr().out
@@ -567,12 +567,12 @@ def test_run_web_command_agent_load_failure(capfd: CaptureFixture[str]):
 
 
 def test_run_web_command_unknown_tool(mocker: MockerFixture, capfd: CaptureFixture[str]):
-    """Test _run_web_command warns about unknown tool IDs."""
+    """Test run_web_command warns about unknown tool IDs."""
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mocker.patch('pydantic_ai._cli.web.create_web_app')
 
-    result = _run_web_command(models=['test'], tools=['unknown_tool_xyz'])
+    result = run_web_command(models=['test'], tools=['unknown_tool_xyz'])
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
@@ -581,23 +581,23 @@ def test_run_web_command_unknown_tool(mocker: MockerFixture, capfd: CaptureFixtu
 
 
 def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixture[str]):
-    """Test _run_web_command warns about memory tool requiring agent configuration."""
+    """Test run_web_command warns about memory tool requiring agent configuration."""
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mocker.patch('pydantic_ai._cli.web.create_web_app')
 
-    result = _run_web_command(models=['test'], tools=['memory'])
+    result = run_web_command(models=['test'], tools=['memory'])
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
     output = capfd.readouterr().out
-    assert 'MemoryTool requires agent to have memory configured' in output
+    assert '"memory" requires configuration and cannot be enabled via CLI' in output
 
 
 def test_run_web_command_mcp_file_not_found(capfd: CaptureFixture[str]):
-    """Test _run_web_command returns error when MCP file is missing."""
+    """Test run_web_command returns error when MCP file is missing."""
 
-    result = _run_web_command(models=['test'], mcp='/nonexistent/path/mcp.json')
+    result = run_web_command(models=['test'], mcp='/nonexistent/path/mcp.json')
 
     assert result == 1
     output = capfd.readouterr().out
@@ -605,13 +605,13 @@ def test_run_web_command_mcp_file_not_found(capfd: CaptureFixture[str]):
 
 
 def test_run_web_command_mcp_validation_error(tmp_path: Path, capfd: CaptureFixture[str]):
-    """Test _run_web_command returns error for invalid MCP JSON structure."""
+    """Test run_web_command returns error for invalid MCP JSON structure."""
     import json
 
     mcp_file = tmp_path / 'invalid_mcp.json'
     mcp_file.write_text(json.dumps({'mcpServers': {'bad': {}}}))
 
-    result = _run_web_command(models=['test'], mcp=str(mcp_file))
+    result = run_web_command(models=['test'], mcp=str(mcp_file))
 
     assert result == 1
     output = capfd.readouterr().out
@@ -621,18 +621,18 @@ def test_run_web_command_mcp_validation_error(tmp_path: Path, capfd: CaptureFixt
 def test_run_web_command_agent_with_builtin_tools(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
-    """Test _run_web_command merges agent's builtin tools with CLI-provided tools."""
+    """Test run_web_command merges agent's builtin tools with CLI-provided tools."""
     from pydantic_ai.builtin_tools import WebSearchTool
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     # Create agent with web_search tool already configured
     test_agent = Agent(TestModel(custom_output_text='test'), builtin_tools=[WebSearchTool()])
     create_test_module(custom_agent=test_agent)
 
     # Add code_execution via CLI
-    result = _run_web_command(agent_path='test_module:custom_agent', tools=['code_execution'])
+    result = run_web_command(agent_path='test_module:custom_agent', tools=['code_execution'])
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
@@ -646,16 +646,16 @@ def test_run_web_command_agent_with_builtin_tools(
 
 
 def test_run_web_command_mcp_success(tmp_path: Path, mocker: MockerFixture, capfd: CaptureFixture[str]):
-    """Test _run_web_command successfully loads MCP servers."""
+    """Test run_web_command successfully loads MCP servers."""
     import json
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     mcp_file = tmp_path / 'mcp.json'
     mcp_file.write_text(json.dumps({'mcpServers': {'test-server': {'url': 'https://example.com/mcp'}}}))
 
-    result = _run_web_command(models=['test'], mcp=str(mcp_file))
+    result = run_web_command(models=['test'], mcp=str(mcp_file))
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
@@ -668,12 +668,12 @@ def test_run_web_command_agent_model_merged_with_cli_models(
 ):
     """Test that agent's model is included first, followed by CLI models."""
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
 
-    result = _run_web_command(
+    result = run_web_command(
         agent_path='test_module:custom_agent', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
     )
 
@@ -687,13 +687,13 @@ def test_run_web_command_agent_model_merged_with_cli_models(
 def test_run_web_command_agent_model_deduplicated(mocker: MockerFixture, create_test_module: Callable[..., None]):
     """Test that duplicate models are removed when CLI passes the same model as agent."""
     mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mock_create_app = mocker.patch('pydantic_ai._cli._web.create_web_app')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
 
     # Pass the same model that the agent has, plus another
-    result = _run_web_command(agent_path='test_module:custom_agent', models=['test:test', 'openai:gpt-5'])
+    result = run_web_command(agent_path='test_module:custom_agent', models=['test:test', 'openai:gpt-5'])
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()

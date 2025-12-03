@@ -1,45 +1,26 @@
-"""CLI command for launching a web chat UI for agents."""
-
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from typing import Any
-
-from pydantic import ImportString, TypeAdapter, ValidationError
+from pydantic import ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool, get_builtin_tool_cls
+from pydantic_ai.builtin_tools import (
+    BUILTIN_TOOL_TYPES,
+    DEPRECATED_BUILTIN_TOOL_TYPES,
+    AbstractBuiltinTool,
+)
 from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import infer_model
 from pydantic_ai.ui._web import create_web_app
 
-__all__ = ['_run_web_command']
+from . import load_agent
 
-_import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
-
-
-def _load_agent(agent_path: str) -> Agent | None:
-    """Load an agent from module path in uvicorn style.
-
-    Args:
-        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
-
-    Returns:
-        Agent instance or None if loading fails
-    """
-    sys.path.insert(0, str(Path.cwd()))
-    try:
-        obj = _import_string_adapter.validate_python(agent_path)
-        if not isinstance(obj, Agent):
-            return None
-        return obj  # pyright: ignore[reportUnknownVariableType]
-    except ValidationError:
-        return None
+# Tools that require configuration and cannot be enabled via CLI
+# (includes deprecated tools plus tools needing config like mcp_server and memory)
+UNSUPPORTED_CLI_TOOLS = DEPRECATED_BUILTIN_TOOL_TYPES | frozenset({'mcp_server', 'memory'})
 
 
-def _run_web_command(  # noqa: C901
+def run_web_command(  # noqa: C901
     agent_path: str | None = None,
     host: str = '127.0.0.1',
     port: int = 7932,
@@ -66,7 +47,7 @@ def _run_web_command(  # noqa: C901
     console = Console()
 
     if agent_path:
-        agent = _load_agent(agent_path)
+        agent = load_agent(agent_path)
         if agent is None:
             console.print(f'[red]Error: Could not load agent from {agent_path}[/red]')
             return 1
@@ -92,12 +73,14 @@ def _run_web_command(  # noqa: C901
     # then CLI tools
     if tools:
         for tool_id in tools:
-            tool_cls = get_builtin_tool_cls(tool_id)
-            if tool_cls is None or tool_id in ('url_context', 'mcp_server'):
-                console.print(f'[yellow]Warning: Unknown tool "{tool_id}", skipping[/yellow]')
+            if tool_id in UNSUPPORTED_CLI_TOOLS:
+                console.print(
+                    f'[yellow]Warning: "{tool_id}" requires configuration and cannot be enabled via CLI, skipping[/yellow]'
+                )
                 continue
-            if tool_id == 'memory':
-                console.print('[yellow]Warning: MemoryTool requires agent to have memory configured, skipping[/yellow]')
+            tool_cls = BUILTIN_TOOL_TYPES.get(tool_id)
+            if tool_cls is None:
+                console.print(f'[yellow]Warning: Unknown tool "{tool_id}", skipping[/yellow]')
                 continue
             all_tool_instances.append(tool_cls())
 
@@ -120,8 +103,8 @@ def _run_web_command(  # noqa: C901
     app = create_web_app(
         agent,
         models=models,
-        builtin_tools=all_tool_instances if all_tool_instances else None,
-        toolsets=mcp_servers if mcp_servers else None,
+        builtin_tools=all_tool_instances or None,
+        toolsets=mcp_servers or None,
     )
 
     agent_desc = agent_path if agent_path else 'generic agent'

@@ -18,12 +18,19 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
-    'get_builtin_tool_ids',
+    'BUILTIN_TOOL_TYPES',
+    'DEPRECATED_BUILTIN_TOOL_TYPES',
     'get_builtin_tool_types',
-    'get_builtin_tool_cls',
 )
 
-_BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
+BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
+"""Registry of all builtin tool types, keyed by their kind string.
+
+This dict is populated automatically via `__init_subclass__` when tool classes are defined.
+"""
+
+DEPRECATED_BUILTIN_TOOL_TYPES: frozenset[str] = frozenset({'url_context'})
+"""Set of deprecated builtin tool IDs that should not be offered in new UIs."""
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
@@ -59,7 +66,7 @@ class AbstractBuiltinTool(ABC):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        _BUILTIN_TOOL_TYPES[cls.kind] = cls
+        BUILTIN_TOOL_TYPES[cls.kind] = cls
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -68,7 +75,7 @@ class AbstractBuiltinTool(ABC):
         if cls is not AbstractBuiltinTool:
             return handler(cls)
 
-        tools = _BUILTIN_TOOL_TYPES.values()
+        tools = BUILTIN_TOOL_TYPES.values()
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
@@ -429,20 +436,7 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.kind
 
 
-def get_builtin_tool_ids() -> frozenset[str]:  # pragma: no cover
-    """Get the set of all builtin tool IDs (excluding deprecated tools like url_context)."""
-    return frozenset(_BUILTIN_TOOL_TYPES.keys() - {'url_context'})
-
-
+# This function exists primarily as a clean default_factory for ModelProfile.supported_builtin_tools
 def get_builtin_tool_types() -> frozenset[type[AbstractBuiltinTool]]:
-    """Get the set of all builtin tool types (excluding deprecated tools like UrlContextTool)."""
-    return frozenset(cls for kind, cls in _BUILTIN_TOOL_TYPES.items() if kind != 'url_context')
-
-
-def get_builtin_tool_cls(tool_id: str) -> type[AbstractBuiltinTool] | None:
-    """Get a builtin tool class by its ID.
-
-    Args:
-        tool_id: The tool ID (e.g., 'web_search', 'code_execution')
-    """
-    return _BUILTIN_TOOL_TYPES.get(tool_id)
+    """Get the set of all builtin tool types (excluding deprecated tools)."""
+    return frozenset(cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_TYPES)
