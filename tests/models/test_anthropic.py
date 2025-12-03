@@ -8,12 +8,12 @@ from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Any, TypeVar, cast
+from typing import Annotated, Any, TypeVar, cast
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -69,6 +69,7 @@ with try_import() as imports_successful:
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
+        BetaDirectCaller,
         BetaInputJSONDelta,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
@@ -78,6 +79,7 @@ with try_import() as imports_successful:
         BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
+        BetaMessageTokensCount,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -181,10 +183,15 @@ class MockAnthropic:
         self.index += 1
         return response
 
-    async def messages_count_tokens(self, *_args: Any, **_kwargs: Any) -> Any:
+    async def messages_count_tokens(self, *_args: Any, **kwargs: Any) -> BetaMessageTokensCount:
+        # check if we are configured to raise an exception
         if self.messages_ is not None:
             raise_if_exception(self.messages_ if not isinstance(self.messages_, Sequence) else self.messages_[0])
-        return None  # pragma: no cover
+
+        # record the kwargs used
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+
+        return BetaMessageTokensCount(input_tokens=10)
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
@@ -301,7 +308,10 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 
 
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
-    """Test that CachePoint correctly adds cache_control to content blocks."""
+    """Test that CachePoint correctly adds cache_control to content blocks.
+
+    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    """
     c = completion_message(
         [BetaTextBlock(text='response', type='text')],
         usage=BetaUsage(input_tokens=3, output_tokens=5),
@@ -310,10 +320,10 @@ async def test_cache_point_adds_cache_control(allow_model_requests: None):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    # Test with CachePoint after text content
+    # Test with CachePoint after text content (default ttl='5m')
     await agent.run(['Some context to cache', CachePoint(), 'Now the question'])
 
-    # Verify cache_control was added to the right content block
+    # Verify cache_control was added with default ttl='5m'
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     messages = completion_kwargs['messages']
     assert messages == snapshot(
@@ -348,6 +358,7 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
+    # Default ttl='5m' for non-Bedrock clients
     assert content == snapshot(
         [
             {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -395,6 +406,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
+    # Default ttl='5m' for non-Bedrock clients
     assert content == snapshot(
         [
             {
@@ -427,16 +439,127 @@ async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
 
 def test_cache_control_unsupported_param_type():
     """Test that cache control raises error for unsupported param types."""
+    from unittest.mock import MagicMock
 
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.models.anthropic import AnthropicModel
 
-    # Create a list with an unsupported param type (document)
-    # We'll use a mock document block param
+    # Create a mock model instance
+    mock_client = MagicMock()
+    mock_client.__class__.__name__ = 'AsyncAnthropic'
+    mock_client.base_url = 'https://api.anthropic.com'
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Create a list with an unsupported param type (thinking)
     params: list[dict[str, Any]] = [{'type': 'thinking', 'source': {'data': 'test'}}]
 
     with pytest.raises(UserError, match='Cache control not supported for param type: thinking'):
-        AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+        m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+
+
+def test_build_cache_control_bedrock_omits_ttl():
+    """Test that _build_cache_control automatically omits TTL for Bedrock clients."""
+    from unittest.mock import MagicMock
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # Create a mock client using spec=AsyncAnthropicBedrock for isinstance check
+    mock_bedrock_client = MagicMock(spec=AsyncAnthropicBedrock)
+    mock_bedrock_client.base_url = 'https://bedrock.amazonaws.com'
+
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
+
+    # Verify cache_control is built without TTL for Bedrock
+    cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control == {'type': 'ephemeral'}  # No 'ttl' field
+
+    cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control_1h == {'type': 'ephemeral'}  # TTL still omitted
+
+
+def test_build_cache_control_standard_client_includes_ttl():
+    """Test that _build_cache_control includes TTL for standard Anthropic clients."""
+    from unittest.mock import MagicMock
+
+    # Create a mock client that looks like standard AsyncAnthropic
+    mock_client = MagicMock()
+    mock_client.__class__.__name__ = 'AsyncAnthropic'
+    mock_client.base_url = 'https://api.anthropic.com'
+
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Verify cache_control includes TTL for standard clients
+    cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control == {'type': 'ephemeral', 'ttl': '5m'}
+
+    cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+async def test_cache_point_with_5m_ttl(allow_model_requests: None):
+    """Test that CachePoint with explicit ttl='5m' includes the ttl field."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with explicit CachePoint(ttl='5m')
+    await agent.run(['Some context to cache', CachePoint(ttl='5m'), 'Now the question'])
+
+    # Verify cache_control was added with 5m ttl
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_cache_point_with_1h_ttl(allow_model_requests: None):
+    """Test that CachePoint with ttl='1h' correctly sets the TTL."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with CachePoint(ttl='1h')
+    await agent.run(['Some context to cache', CachePoint(ttl='1h'), 'Now the question'])
+
+    # Verify cache_control was added with 1h ttl
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '1h'},
+                    },
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
 
 
 async def test_anthropic_cache_tools(allow_model_requests: None):
@@ -466,6 +589,8 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
     # Verify cache_control was added to the last tool
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
+    has_strict_tools = any('strict' in tool for tool in tools)  # we only ever set strict: True
+    assert has_strict_tools is False  # ensure strict is not set for haiku-4-5
     assert tools == snapshot(
         [
             {
@@ -540,6 +665,8 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
     system = completion_kwargs['system']
+    has_strict_tools = any('strict' in tool for tool in tools)  # we only ever set strict: True
+    assert has_strict_tools is False  # ensure strict is not set for haiku-4-5
     assert tools == snapshot(
         [
             {
@@ -592,6 +719,103 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
     # System instructions should have 5m TTL
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
+async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
+    """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
+    c = completion_message(
+        [BetaTextBlock(text='Done', type='text')],
+        usage=BetaUsage(input_tokens=8, output_tokens=3),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def constrained_tool(value: Annotated[str, Field(min_length=2)]) -> str:  # pragma: no cover
+        return value
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'strict' not in completion_kwargs['tools'][0]
+
+
+async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_requests: None):
+    """Verify beta headers merge from custom headers, builtin tools, and native output."""
+    c = completion_message(
+        [BetaTextBlock(text='{"city": "Mexico City", "country": "Mexico"}', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2'}),
+    )
+
+    agent = Agent(
+        model,
+        builtin_tools=[MemoryTool()],
+        output_type=NativeOutput(CityLocation),
+    )
+
+    @agent.tool_plain
+    def memory(**command: Any) -> Any:  # pragma: no cover
+        return 'memory response'
+
+    await agent.run('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs['betas']
+
+    assert betas == snapshot(
+        [
+            'context-management-2025-06-27',
+            'custom-feature-1',
+            'custom-feature-2',
+            'structured-outputs-2025-11-13',
+        ]
+    )
+
+
+async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
+    """Exercise both strict=True and strict=False tool definitions against the live API."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
+    )
+
+    @agent.tool_plain(strict=True)
+    async def country_source() -> str:
+        return 'Japan'
+
+    capital_called = {'value': False}
+
+    @agent.tool_plain(strict=False)
+    async def capital_lookup(country: str) -> str:
+        capital_called['value'] = True
+        if country == 'Japan':
+            return 'Tokyo'
+        return f'Unknown capital for {country}'  # pragma: no cover
+
+    result = await agent.run('Use the registered tools and respond exactly as `Capital: <city>`.')
+    assert capital_called['value'] is True
+    assert result.output.startswith('Capital:')
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'capital_lookup'
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    )
 
 
 async def test_anthropic_cache_messages(allow_model_requests: None):
@@ -5965,21 +6189,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
-    assert result.output == snapshot("""\
-Based on the search results, today is Thursday, August 14, 2025. Here are some additional details about the date:
-
-It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year.
-
-Some interesting observances for today include:
-It's being celebrated as:
-- Color Book Day
-- National Creamsicle Day
-- National Financial Awareness Day
-- National Navajo Code Talkers Day
-- National Tattoo Removal Day
-- National Wiffle Ball Day
-- Social Security Day\
-""")
+    assert result.output == snapshot('Today is November 19, 2025.')
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
@@ -5990,16 +6200,16 @@ It's being celebrated as:
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Tomorrow will be **Friday, August 15, 2025**.',
-                        id='msg_689dc4acfa488196a6b1ec0ebd3bd9520afe80ec3d42722e',
+                        content='Tomorrow is November 20, 2025.',
+                        id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
                     )
                 ],
-                usage=RequestUsage(input_tokens=458, output_tokens=17, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6411,19 +6621,6 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
     )
 
 
-async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):  # pragma: lax no cover
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-
-    class CityLocation(BaseModel):
-        city: str
-        country: str
-
-    agent = Agent(m, output_type=NativeOutput(CityLocation))
-
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
-        await agent.run('What is the largest city in the user country?')
-
-
 async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel(
         'claude-sonnet-4-0',
@@ -6474,26 +6671,34 @@ Mexico City serves as the country's capital and is the political, economic, and 
 async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Test passing web search tool history back to Anthropic."""
     # Create the first mock response with server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me search for the current date.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_123',
+            name='web_search',
+            input={'query': 'current date today'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaWebSearchToolResultBlock(
+            tool_use_id='server_tool_123',
+            type='web_search_tool_result',
+            content=[
+                BetaWebSearchResultBlock(
+                    title='Current Date and Time',
+                    url='https://example.com/date',
+                    type='web_search_result',
+                    encrypted_content='dummy_encrypted_content',
+                )
+            ],
+        ),
+    )
+    content.append(BetaTextBlock(text='Today is January 2, 2025.', type='text'))
     first_response = completion_message(
-        [
-            BetaTextBlock(text='Let me search for the current date.', type='text'),
-            BetaServerToolUseBlock(
-                id='server_tool_123', name='web_search', input={'query': 'current date today'}, type='server_tool_use'
-            ),
-            BetaWebSearchToolResultBlock(
-                tool_use_id='server_tool_123',
-                type='web_search_tool_result',
-                content=[
-                    BetaWebSearchResultBlock(
-                        title='Current Date and Time',
-                        url='https://example.com/date',
-                        type='web_search_result',
-                        encrypted_content='dummy_encrypted_content',
-                    )
-                ],
-            ),
-            BetaTextBlock(text='Today is January 2, 2025.', type='text'),
-        ],
+        content,
         BetaUsage(input_tokens=10, output_tokens=20),
     )
 
@@ -6527,25 +6732,33 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Test passing code execution tool history back to Anthropic."""
     # Create the first mock response with server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me calculate 2 + 2.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_456',
+            name='code_execution',
+            input={'code': 'print(2 + 2)'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_456',
+            type='code_execution_tool_result',
+            content=BetaCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='4\n',
+                type='code_execution_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The result is 4.', type='text'))
     first_response = completion_message(
-        [
-            BetaTextBlock(text='Let me calculate 2 + 2.', type='text'),
-            BetaServerToolUseBlock(
-                id='server_tool_456', name='code_execution', input={'code': 'print(2 + 2)'}, type='server_tool_use'
-            ),
-            BetaCodeExecutionToolResultBlock(
-                tool_use_id='server_tool_456',
-                type='code_execution_tool_result',
-                content=BetaCodeExecutionResultBlock(
-                    content=[],
-                    return_code=0,
-                    stderr='',
-                    stdout='4\n',
-                    type='code_execution_result',
-                ),
-            ),
-            BetaTextBlock(text='The result is 4.', type='text'),
-        ],
+        content,
         BetaUsage(input_tokens=10, output_tokens=20),
     )
 
@@ -7541,6 +7754,37 @@ I noticed a small typo in that famous pangram! It should be:
 This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.\
 """
     )
+
+
+async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
+    """Test that count_tokens is called on the mock client."""
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    assert result.output == 'hello world'
+    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert 'model' in count_tokens_kwargs
+    assert 'messages' in count_tokens_kwargs
+
+
+async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: None):
+    """Test count_tokens when messages_ is None (no exception configured)."""
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    result = await m.count_tokens(
+        [ModelRequest.user_text_prompt('hello')],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == 10
 
 
 @pytest.mark.vcr()

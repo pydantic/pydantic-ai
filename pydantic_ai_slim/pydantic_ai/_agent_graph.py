@@ -146,6 +146,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
+    validation_context: Any | Callable[[RunContext[DepsT]], Any]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
@@ -747,7 +748,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
 
-        result_data = await text_processor.process(text, run_context)
+        result_data = await text_processor.process(text, run_context=run_context)
 
         for validator in ctx.deps.output_validators:
             result_data = await validator.validate(result_data, run_context)
@@ -792,12 +793,13 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
-    return RunContext[DepsT](
+    run_context = RunContext[DepsT](
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         usage=ctx.state.usage,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
+        validation_context=None,
         tracer=ctx.deps.tracer,
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
@@ -807,6 +809,21 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
     )
+    validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+    run_context = replace(run_context, validation_context=validation_context)
+    return run_context
+
+
+def build_validation_context(
+    validation_ctx: Any | Callable[[RunContext[DepsT]], Any],
+    run_context: RunContext[DepsT],
+) -> Any:
+    """Build a Pydantic validation context, potentially from the current agent run context."""
+    if callable(validation_ctx):
+        fn = cast(Callable[[RunContext[DepsT]], Any], validation_ctx)
+        return fn(run_context)
+    else:
+        return validation_ctx
 
 
 async def process_tool_calls(  # noqa: C901

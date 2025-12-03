@@ -121,7 +121,7 @@ Instead of plain text or structured data, you may want the output of your agent 
 
 Output functions are similar to [function tools](tools.md), but the model is forced to call one of them, the call ends the agent run, and the result is not passed back to the model.
 
-As with tool functions, output function arguments provided by the model are validated using Pydantic, they can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and they can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
+As with tool functions, output function arguments provided by the model are validated using Pydantic (with optional [validation context](#validation-context)), can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
 To specify output functions, you set the agent's `output_type` to either a single function (or bound instance method), or a list of functions. The list can also contain other output types like simple scalars or entire Pydantic models.
 You typically do not want to also register your output function as a tool (using the `@agent.tool` decorator or `tools` argument), as this could confuse the model about which it should be calling.
@@ -316,7 +316,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Anthropic does not support this at all, and Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -423,6 +423,62 @@ agent = Agent('openai:gpt-5', output_type=HumanDict)
 result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
+
+### Validation context {#validation-context}
+
+Some validation relies on an extra Pydantic [context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) object. You can pass such an object to an `Agent` at definition-time via its [`validation_context`][pydantic_ai.Agent.__init__] parameter. It will be used in the validation of both structured outputs and [tool arguments](tools-advanced.md#tool-retries).
+
+This validation context can be either:
+
+- the context object itself (`Any`), used as-is to validate outputs, or
+- a function that takes the [`RunContext`][pydantic_ai.tools.RunContext] and returns a context object (`Any`). This function will be called automatically before each validation, allowing you to build a dynamic validation context.
+
+!!! warning "Don't confuse this _validation_ context with the _LLM_ context"
+    This Pydantic validation context object is only used internally by Pydantic AI for tool arg and output validation. In particular, it is **not** included in the prompts or messages sent to the language model.
+
+```python {title="validation_context.py"}
+from dataclasses import dataclass
+
+from pydantic import BaseModel, ValidationInfo, field_validator
+
+from pydantic_ai import Agent
+
+
+class Value(BaseModel):
+    x: int
+
+    @field_validator('x')
+    def increment_value(cls, value: int, info: ValidationInfo):
+        return value + (info.context or 0)
+
+
+agent = Agent(
+    'google-gla:gemini-2.5-flash',
+    output_type=Value,
+    validation_context=10,
+)
+result = agent.run_sync('Give me a value of 5.')
+print(repr(result.output))  # 5 from the model + 10 from the validation context
+#> Value(x=15)
+
+
+@dataclass
+class Deps:
+    increment: int
+
+
+agent = Agent(
+    'google-gla:gemini-2.5-flash',
+    output_type=Value,
+    deps_type=Deps,
+    validation_context=lambda ctx: ctx.deps.increment,
+)
+result = agent.run_sync('Give me a value of 5.', deps=Deps(increment=10))
+print(repr(result.output))  # 5 from the model + 10 from the validation context
+#> Value(x=15)
+```
+
+_(This example is complete, it can be run "as is")_
 
 ### Output validators {#output-validator-functions}
 
