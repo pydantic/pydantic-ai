@@ -6313,3 +6313,43 @@ async def test_message_history():
             ]
         )
         assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+
+
+def test_instructions_inserted_after_system_prompt():
+    """Tests that instructions are inserted after system prompts."""
+
+    agent = Agent('test')
+
+    @agent.system_prompt
+    def system_prompt_1() -> str:
+        return 'System prompt 1'
+
+    @agent.system_prompt
+    def system_prompt_2() -> str:
+        return 'System prompt 2'
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'Instructions'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content='System prompt 1',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                SystemPromptPart(
+                    content='System prompt 2',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content='Hello',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ],
+            instructions='Instructions',
+            run_id=IsStr(),
+        )
+    )
