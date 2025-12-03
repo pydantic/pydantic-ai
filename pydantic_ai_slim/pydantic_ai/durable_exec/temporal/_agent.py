@@ -40,7 +40,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
-from ._model import ModelSelection, TemporalModel, TemporalProviderFactory
+from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
@@ -125,11 +125,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         self._registered_model_instances: dict[str, Model] = {'default': wrapped_model}
-        self._default_selection = ModelSelection(model_key='default', model_name=None)
-        self._model_selection_var: ContextVar[ModelSelection] = ContextVar(
-            '_temporal_model_selection',
-            default=self._default_selection,
-        )
 
         # start_to_close_timeout is required
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
@@ -183,7 +178,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps_type=self.deps_type,
             run_context_type=self.run_context_type,
             event_stream_handler=self.event_stream_handler,
-            model_selection_var=self._model_selection_var,
             model_instances=self._registered_model_instances,
             provider_factory=provider_factory,
         )
@@ -230,10 +224,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             raise UserError(f'Duplicate model name {normalized!r} provided to `additional_models`.')
         return normalized
 
-    def _select_model(self, model: models.Model | models.KnownModelName | str | None = None) -> ModelSelection:
-        """Select the appropriate model based on the runtime parameter."""
-        if model is None:
-            return self._default_selection
+    def _select_model(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
+        """Select the appropriate model based on the runtime parameter.
+
+        Returns a string that will be checked against registered model instances,
+        or passed to infer_model if not found. Returns None to use the default model.
+        """
+        if model is None or model == 'default':
+            return None
 
         if isinstance(model, Model):
             raise UserError(
@@ -241,13 +239,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Register the model via the mapping form of `additional_models` and reference it by name.'
             )
 
-        if model == 'default':
-            return self._default_selection
-
-        if model in self._registered_model_instances:
-            return ModelSelection(model_key=model, model_name=None)
-
-        return ModelSelection(model_key=None, model_name=model)
+        return model
 
     @property
     def name(self) -> str | None:
@@ -300,11 +292,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(self, selection: ModelSelection | None = None) -> Iterator[None]:
+    def _temporal_overrides(self, selection: str | None = None) -> Iterator[None]:
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        with super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]):
+        with (
+            super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
+            self._temporal_model.using_model(selection),
+        ):
             token = self._temporal_overrides_active.set(True)
-            selection_token = self._model_selection_var.set(selection or self._default_selection)
             try:
                 yield
             except PydanticSerializationError as e:
@@ -313,7 +307,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 ) from e
             finally:
                 self._temporal_overrides_active.reset(token)
-                self._model_selection_var.reset(selection_token)
 
     @overload
     async def run(
@@ -417,12 +410,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             )
 
-        selection = self._default_selection
+        selection: str | None = None
         if workflow.in_workflow() and model is not None:
             selection = self._select_model(model)
             model = None
 
-        with self._temporal_overrides(selection if workflow.in_workflow() else self._default_selection):
+        with self._temporal_overrides(selection if workflow.in_workflow() else None):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
