@@ -58,9 +58,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         name: str | None = None,
-        additional_models: Mapping[str, Model | models.KnownModelName | str]
-        | Sequence[models.KnownModelName | str]
-        | None = None,
+        additional_models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
@@ -88,10 +86,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             wrapped: The agent to wrap.
             name: Optional unique agent name to use in the Temporal activities' names. If not provided, the agent's `name` will be used.
             additional_models:
-                Optional mapping or sequence of additional models to register with the agent.
-                - When providing a mapping, keys define the names that can be referenced at runtime and the values are either `Model` instances or model strings (e.g., `'openai:gpt-4'`).
-                - When providing a sequence, only provider/model strings are allowed and they will be referenced by their literal string when calling `run(model=...)`.
-                Model instances must be registered via the mapping form so they can be referenced by name.
+                Optional mapping of additional models to register with the agent.
+                Keys define the names that can be referenced at runtime and the values are `Model` instances.
+                Model strings (e.g., `'openai:gpt-4'`) don't need to be pre-registered and can be passed directly to `run(model=...)`.
             provider_factory:
                 Optional callable used when instantiating models from provider strings (both pre-registered and those supplied at runtime).
                 The callable receives the provider name, the current run context (if available) and the run dependencies, allowing custom configuration such as injecting API keys stored on `deps`.
@@ -128,7 +125,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         self._registered_model_instances: dict[str, Model] = {'default': wrapped_model}
-        self._registered_model_names: dict[str, str] = {}
         self._default_selection = ModelSelection(model_key='default', model_name=None)
         self._model_selection_var: ContextVar[ModelSelection] = ContextVar(
             '_temporal_model_selection',
@@ -177,17 +173,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         activities.append(self.event_stream_handler_activity)
 
         if additional_models:
-            if isinstance(additional_models, Mapping):
-                for key, value in additional_models.items():
-                    self._register_additional_model(key, value)
-            else:
-                for value in additional_models:
-                    if not isinstance(value, str):
-                        raise UserError(
-                            'When providing `additional_models` as a sequence, all entries must be model strings like "openai:gpt-4o". '
-                            'To register Model instances, pass a mapping of names to models.'
-                        )
-                    self._register_string_model(value, value)
+            for key, value in additional_models.items():
+                self._register_model_instance(key, value)
 
         temporal_model = TemporalModel(
             wrapped_model,
@@ -198,7 +185,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=self.event_stream_handler,
             model_selection_var=self._model_selection_var,
             model_instances=self._registered_model_instances,
-            model_string_map=self._registered_model_names,
             provider_factory=provider_factory,
         )
         activities.extend(temporal_model.temporal_activities)
@@ -230,25 +216,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
 
-    def _register_additional_model(
-        self,
-        name: str,
-        model: Model | models.KnownModelName | str,
-    ) -> None:
-        if isinstance(model, Model):
-            self._register_model_instance(name, model)
-        elif isinstance(model, str):
-            self._register_string_model(name, model)
-        else:  # pragma: no cover
-            raise UserError('Invalid model specification provided to `additional_models`.')
-
     def _register_model_instance(self, name: str, model: Model) -> None:
         key = self._normalize_model_name(name)
         self._registered_model_instances[key] = model
-
-    def _register_string_model(self, name: str, model_identifier: str) -> None:
-        key = self._normalize_model_name(name)
-        self._registered_model_names[key] = model_identifier
 
     def _normalize_model_name(self, name: str) -> str:
         normalized = name.strip()
@@ -256,7 +226,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             raise UserError('Model names must be non-empty strings.')
         if normalized == 'default':
             raise UserError("Model name 'default' is reserved for the agent's primary model.")
-        if normalized in self._registered_model_instances or normalized in self._registered_model_names:
+        if normalized in self._registered_model_instances:
             raise UserError(f'Duplicate model name {normalized!r} provided to `additional_models`.')
         return normalized
 
@@ -276,9 +246,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         if model in self._registered_model_instances:
             return ModelSelection(model_key=model, model_name=None)
-
-        if model in self._registered_model_names:
-            return ModelSelection(model_key=model, model_name=self._registered_model_names[model])
 
         return ModelSelection(model_key=None, model_name=model)
 
