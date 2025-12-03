@@ -194,12 +194,12 @@ def test_result_pydantic_model_retry():
                     RetryPromptPart(
                         tool_name='final_result',
                         content=[
-                            {
-                                'type': 'int_parsing',
-                                'loc': ('a',),
-                                'msg': 'Input should be a valid integer, unable to parse string as an integer',
-                                'input': 'wrong',
-                            }
+                            ErrorDetails(
+                                type='int_parsing',
+                                loc=('a',),
+                                msg='Input should be a valid integer, unable to parse string as an integer',
+                                input='wrong',
+                            )
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),

@@ -1585,7 +1585,12 @@ class TestMultipleToolCalls:
             [
                 RetryPromptPart(
                     content=[
-                        {'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad_value': 'first'}}
+                        ErrorDetails(
+                            type='missing',
+                            loc=('value',),
+                            msg='Field required',
+                            input={'bad_value': 'first'},
+                        )
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
