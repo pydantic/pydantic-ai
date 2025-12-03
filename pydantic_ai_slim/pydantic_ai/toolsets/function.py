@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, overload
+from typing import Any, Literal, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
@@ -52,6 +52,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] = False,
         id: str | None = None,
     ):
         """Build a new function toolset.
@@ -76,6 +77,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
+            programmatically_callable: Whether this tool can be called from code execution.
+                Set to `True` to allow both direct model calls and calls from code execution.
+                Set to `'only'` to only allow calls from code execution.
+                Defaults to `False`. Applies to all tools, unless overridden when adding a tool.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
         """
@@ -88,6 +93,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.programmatically_callable = programmatically_callable
 
         self.tools = {}
         for tool in tools:
@@ -119,6 +125,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -137,6 +144,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -193,6 +201,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            programmatically_callable: Whether this tool can be called from code execution.
+                Set to `True` to allow both direct model calls and calls from code execution.
+                Set to `'only'` to only allow calls from code execution.
+                If `None`, the default value is determined by the toolset.
         """
 
         def tool_decorator(
@@ -213,6 +225,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                programmatically_callable=programmatically_callable,
             )
             return func_
 
@@ -233,6 +246,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -267,6 +281,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            programmatically_callable: Whether this tool can be called from code execution.
+                Set to `True` to allow both direct model calls and calls from code execution.
+                Set to `'only'` to only allow calls from code execution.
+                If `None`, the default value is determined by the toolset.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -280,6 +298,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential = self.sequential
         if requires_approval is None:
             requires_approval = self.requires_approval
+        if programmatically_callable is None:
+            programmatically_callable = self.programmatically_callable
 
         tool = Tool[AgentDepsT](
             func,
@@ -295,6 +315,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            programmatically_callable=programmatically_callable,
         )
         self.add_tool(tool)
 

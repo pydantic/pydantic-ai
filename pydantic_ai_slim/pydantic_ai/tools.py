@@ -262,6 +262,7 @@ class Tool(Generic[ToolAgentDepsT]):
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    programmatically_callable: bool | Literal['only']
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -285,6 +286,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] = False,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -341,6 +343,10 @@ class Tool(Generic[ToolAgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            programmatically_callable: Whether this tool can be called from code execution.
+                Set to `True` to allow both direct model calls and calls from code execution.
+                Set to `'only'` to only allow calls from code execution.
+                Defaults to `False`. See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -362,6 +368,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.programmatically_callable = programmatically_callable
 
     @classmethod
     def from_schema(
@@ -418,6 +425,7 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=self.sequential,
             metadata=self.metadata,
             kind='unapproved' if self.requires_approval else 'function',
+            programmatically_callable=self.programmatically_callable,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -501,6 +509,16 @@ class ToolDefinition:
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
     For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
+    """
+
+    programmatically_callable: bool | Literal['only'] = False
+    """Whether this tool can be called programmatically from code execution.
+
+    - `False` (default): The tool can only be called directly by the model.
+    - `True`: The tool can be called both directly by the model and from code execution.
+    - `'only'`: The tool can only be called from code execution, not directly by the model.
+
+    Note: this is currently only supported by Anthropic models with the code execution feature.
     """
 
     @property

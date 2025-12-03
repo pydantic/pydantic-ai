@@ -70,6 +70,7 @@ try:
         BetaCitationsConfigParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
+        BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionToolResultBlock,
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
@@ -510,11 +511,19 @@ class AnthropicModel(Model):
                 items.append(_map_mcp_server_result_block(item, call_part, self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
+                # Include caller info in provider_details if tool was called programmatically
+                tool_provider_details: dict[str, Any] | None = None
+                if item.caller is not None:
+                    tool_provider_details = {'caller': item.caller.type}
+                    # If called from code execution, include the container_id (tool_id)
+                    if hasattr(item.caller, 'tool_id'):
+                        tool_provider_details['container_id'] = item.caller.tool_id
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
+                        provider_details=tool_provider_details,
                     )
                 )
 
@@ -574,7 +583,24 @@ class AnthropicModel(Model):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
-        for tool in model_request_parameters.builtin_tools:
+
+        # Check if any tool has programmatically_callable set - if so, we need newer code execution
+        has_programmatically_callable = any(
+            t.programmatically_callable for t in model_request_parameters.tool_defs.values()
+        )
+        # Check if CodeExecutionTool is in builtin_tools
+        has_code_execution = any(isinstance(t, CodeExecutionTool) for t in model_request_parameters.builtin_tools)
+        # Use newer code execution (20250825) when programmatically_callable is used
+        use_newer_code_execution = has_programmatically_callable
+
+        # If any tool has programmatically_callable but CodeExecutionTool is not present, auto-add it
+        # (tools can only be called programmatically from code execution)
+        builtin_tools_to_process = list(model_request_parameters.builtin_tools)
+        if has_programmatically_callable and not has_code_execution:
+            builtin_tools_to_process.append(CodeExecutionTool())
+            has_code_execution = True
+
+        for tool in builtin_tools_to_process:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
                 tools.append(
@@ -588,8 +614,17 @@ class AnthropicModel(Model):
                     )
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
-                beta_features.add('code-execution-2025-05-22')
+                if use_newer_code_execution:
+                    # Use newer code execution tool that supports programmatic tool calling
+                    tools.append(
+                        BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825')
+                    )
+                    beta_features.add('code-execution-2025-08-25')
+                else:
+                    tools.append(
+                        BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522')
+                    )
+                    beta_features.add('code-execution-2025-05-22')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
@@ -1041,6 +1076,14 @@ class AnthropicModel(Model):
         }
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
+        # Handle programmatically_callable - maps to Anthropic's allowed_callers
+        if f.programmatically_callable:
+            if f.programmatically_callable == 'only':
+                # Only callable from code execution, not directly by the model
+                tool_param['allowed_callers'] = ['code_execution_20250825']
+            else:
+                # Callable both directly and from code execution
+                tool_param['allowed_callers'] = ['direct', 'code_execution_20250825']
         return tool_param
 
     @staticmethod
@@ -1126,11 +1169,19 @@ class AnthropicStreamedResponse(StreamedResponse):
                         provider_name=self.provider_name,
                     )
                 elif isinstance(current_block, BetaToolUseBlock):
+                    # Include caller info in provider_details if tool was called programmatically
+                    tool_provider_details: dict[str, Any] | None = None
+                    if current_block.caller is not None:
+                        tool_provider_details = {'caller': current_block.caller.type}
+                        # If called from code execution, include the container_id (tool_id)
+                        if hasattr(current_block.caller, 'tool_id'):
+                            tool_provider_details['container_id'] = current_block.caller.tool_id
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=event.index,
                         tool_name=current_block.name,
                         args=cast(dict[str, Any], current_block.input) or None,
                         tool_call_id=current_block.id,
+                        provider_details=tool_provider_details,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
