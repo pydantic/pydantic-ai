@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
@@ -33,14 +33,7 @@ class _RequestParams:
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any | None = None
-    model_key: str | None = None
-    model_name: str | None = None
-
-
-@dataclass(frozen=True)
-class ModelSelection:
-    model_key: str | None = None
-    model_name: str | None = None
+    model_selection: str | None = None
 
 
 TemporalProviderFactory = Callable[[str, RunContext[Any] | None, Any | None], Provider[Any]]
@@ -89,7 +82,6 @@ class TemporalModel(WrapperModel):
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         event_stream_handler: EventStreamHandler[Any] | None = None,
-        model_selection_var: ContextVar[ModelSelection] | None = None,
         model_instances: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
     ):
@@ -97,14 +89,11 @@ class TemporalModel(WrapperModel):
         self.activity_config = activity_config
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
-        self._model_selection_var = model_selection_var
+        self._model_selection_var: ContextVar[str | None] = ContextVar('_temporal_model_selection', default=None)
         self._model_instances = dict(model_instances or {})
         self._provider_factory = provider_factory
 
-        request_activity_name = f'{activity_name_prefix}__model_request'
-        request_stream_activity_name = f'{activity_name_prefix}__model_request_stream'
-
-        @activity.defn(name=request_activity_name)
+        @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any) -> ModelResponse:
             model_for_request = self._resolve_model(params, deps)
             return await model_for_request.request(
@@ -116,7 +105,7 @@ class TemporalModel(WrapperModel):
         self.request_activity = request_activity
         self.request_activity.__annotations__['deps'] = deps_type
 
-        async def request_stream_activity(params: _RequestParams, deps: Any) -> ModelResponse:
+        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
 
@@ -139,7 +128,9 @@ class TemporalModel(WrapperModel):
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         request_stream_activity.__annotations__['deps'] = deps_type
 
-        self.request_stream_activity = activity.defn(name=request_stream_activity_name)(request_stream_activity)
+        self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
+            request_stream_activity
+        )
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
@@ -172,8 +163,7 @@ class TemporalModel(WrapperModel):
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
-                    model_key=selection.model_key,
-                    model_name=selection.model_name,
+                    model_selection=selection,
                 ),
                 deps,
             ],
@@ -216,8 +206,7 @@ class TemporalModel(WrapperModel):
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
-                    model_key=selection.model_key,
-                    model_name=selection.model_name,
+                    model_selection=selection,
                 ),
                 run_context.deps,
             ],
@@ -229,27 +218,27 @@ class TemporalModel(WrapperModel):
         if model_request_parameters.allow_image_output:
             raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
 
-    def _current_selection(self) -> ModelSelection:
-        if self._model_selection_var is None:
-            return ModelSelection(model_key='default', model_name=None)
-        selection = self._model_selection_var.get()
-        if selection.model_key is None and selection.model_name is None:
-            return ModelSelection(model_key='default', model_name=None)
-        return selection
+    @contextmanager
+    def using_model(self, selection: str | None) -> Iterator[None]:
+        """Context manager to set the model selection for the duration of a block."""
+        token = self._model_selection_var.set(selection)
+        try:
+            yield
+        finally:
+            self._model_selection_var.reset(token)
+
+    def _current_selection(self) -> str | None:
+        return self._model_selection_var.get()
 
     def _resolve_model(self, params: _RequestParams, deps: Any | None) -> Model:
-        if params.model_key:
-            if params.model_key in self._model_instances:
-                return self._model_instances[params.model_key]
-            raise UserError(
-                f'Model "{params.model_key}" is not registered with this TemporalAgent. '
-                'Register model instances using `additional_models` when constructing the agent.'
-            )
+        selection = params.model_selection
+        if selection is None:
+            return self.wrapped
 
-        if params.model_name:
-            return self._infer_model(params.model_name, params, deps)
+        if selection in self._model_instances:
+            return self._model_instances[selection]
 
-        return self.wrapped
+        return self._infer_model(selection, params, deps)
 
     def _infer_model(self, model_name: str, params: _RequestParams, deps: Any | None) -> Model:
         run_context: RunContext[Any] | None = None

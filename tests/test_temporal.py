@@ -2696,10 +2696,9 @@ async def test_temporal_agent_select_model_string_passthrough():
         name='string_passthrough_test',
     )
 
-    # Unregistered model string should pass through with model_key=None
+    # Unregistered model string should pass through directly
     selected = temporal_agent._select_model('openai:gpt-4o')  # pyright: ignore[reportPrivateUsage]
-    assert selected.model_key is None
-    assert selected.model_name == 'openai:gpt-4o'
+    assert selected == 'openai:gpt-4o'
 
 
 async def test_temporal_agent_unregistered_string_model():
@@ -2710,8 +2709,7 @@ async def test_temporal_agent_unregistered_string_model():
     temporal_agent = TemporalAgent(agent, name='unregistered_string_test')
 
     selection = temporal_agent._select_model('unregistered:model')  # pyright: ignore[reportPrivateUsage]
-    assert selection.model_key is None
-    assert selection.model_name == 'unregistered:model'
+    assert selection == 'unregistered:model'
 
 
 async def test_temporal_agent_disallows_model_instances_in_selection():
@@ -2771,7 +2769,7 @@ def test_temporal_agent_provider_factory_uses_run_context(monkeypatch: MonkeyPat
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
         serialized_run_context=serialized_ctx,
-        model_name='openai:gpt-4o',
+        model_selection='openai:gpt-4o',
     )
 
     captured: dict[str, str] = {}
@@ -2808,67 +2806,67 @@ async def test_temporal_agent_empty_model_name_validation():
 
 
 async def test_temporal_agent_select_model_none():
-    """Test that _select_model(None) returns the default selection."""
+    """Test that _select_model(None) returns None (use default)."""
     test_model = TestModel()
     agent = Agent(test_model, name='select_none_test')
     temporal_agent = TemporalAgent(agent, name='select_none_test')
 
     selection = temporal_agent._select_model(None)  # pyright: ignore[reportPrivateUsage]
-    assert selection == temporal_agent._default_selection  # pyright: ignore[reportPrivateUsage]
+    assert selection is None
 
 
 async def test_temporal_agent_select_model_default_string():
-    """Test that _select_model('default') returns the default selection."""
+    """Test that _select_model('default') returns None (use default)."""
     test_model = TestModel()
     agent = Agent(test_model, name='select_default_test')
     temporal_agent = TemporalAgent(agent, name='select_default_test')
 
     selection = temporal_agent._select_model('default')  # pyright: ignore[reportPrivateUsage]
-    assert selection == temporal_agent._default_selection  # pyright: ignore[reportPrivateUsage]
+    assert selection is None
 
 
-def test_temporal_model_current_selection_no_var():
-    """Test _current_selection when _model_selection_var is None."""
+def test_temporal_model_current_selection_default():
+    """Test _current_selection returns None by default."""
     test_model = TestModel()
-    agent = Agent(test_model, name='current_selection_no_var')
-    temporal_agent = TemporalAgent(agent, name='current_selection_no_var')
-
-    # Access the temporal model directly
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-    # Ensure _model_selection_var is None (default state)
-    temporal_model._model_selection_var = None  # pyright: ignore[reportPrivateUsage]
-
-    selection = temporal_model._current_selection()  # pyright: ignore[reportPrivateUsage]
-    assert selection.model_key == 'default'
-    assert selection.model_name is None
-
-
-def test_temporal_model_current_selection_empty_selection():
-    """Test _current_selection when selection has both keys as None."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='current_selection_empty')
-    temporal_agent = TemporalAgent(agent, name='current_selection_empty')
+    agent = Agent(test_model, name='current_selection_default')
+    temporal_agent = TemporalAgent(agent, name='current_selection_default')
 
     temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-    # Set up a selection var with empty selection
-    from contextvars import ContextVar
 
-    from pydantic_ai.durable_exec.temporal._model import ModelSelection
-
-    selection_var: ContextVar[ModelSelection] = ContextVar('model_selection')
-    selection_var.set(ModelSelection(model_key=None, model_name=None))
-    temporal_model._model_selection_var = selection_var  # pyright: ignore[reportPrivateUsage]
-
+    # By default, no selection is set
     selection = temporal_model._current_selection()  # pyright: ignore[reportPrivateUsage]
-    assert selection.model_key == 'default'
-    assert selection.model_name is None
+    assert selection is None
 
 
-def test_temporal_model_resolve_model_unregistered_key():
-    """Test _resolve_model raises error for unregistered model key."""
+def test_temporal_model_using_model_context_manager():
+    """Test using_model context manager sets and resets selection."""
     test_model = TestModel()
-    agent = Agent(test_model, name='resolve_unregistered')
-    temporal_agent = TemporalAgent(agent, name='resolve_unregistered')
+    agent = Agent(test_model, name='using_model_test')
+    temporal_agent = TemporalAgent(agent, name='using_model_test')
+
+    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
+
+    # Default is None
+    assert temporal_model._current_selection() is None  # pyright: ignore[reportPrivateUsage]
+
+    # Inside using_model, selection is set
+    with temporal_model.using_model('openai:gpt-4o'):
+        assert temporal_model._current_selection() == 'openai:gpt-4o'  # pyright: ignore[reportPrivateUsage]
+
+    # After exiting, selection is reset to None
+    assert temporal_model._current_selection() is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_temporal_model_resolve_model_uses_model_instances(monkeypatch: MonkeyPatch):
+    """Test _resolve_model uses model_instances when key matches."""
+    test_model = TestModel()
+    alt_model = TestModel(custom_output_text='alt model')
+    agent = Agent(test_model, name='resolve_instances')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='resolve_instances',
+        additional_models={'alt': alt_model},
+    )
 
     temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
 
@@ -2877,12 +2875,11 @@ def test_temporal_model_resolve_model_unregistered_key():
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
         serialized_run_context=None,
-        model_key='unknown_model',
-        model_name=None,
+        model_selection='alt',
     )
 
-    with pytest.raises(UserError, match='Model "unknown_model" is not registered'):
-        temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
+    result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
+    assert result is alt_model
 
 
 def test_temporal_model_infer_model_no_provider_factory(monkeypatch: MonkeyPatch):
@@ -2909,8 +2906,7 @@ def test_temporal_model_infer_model_no_provider_factory(monkeypatch: MonkeyPatch
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
         serialized_run_context=None,
-        model_key=None,
-        model_name=None,
+        model_selection=None,
     )
 
     temporal_model._infer_model('test:model', params, None)  # pyright: ignore[reportPrivateUsage]
@@ -2970,8 +2966,7 @@ def test_temporal_model_infer_model_no_serialized_context(monkeypatch: MonkeyPat
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
         serialized_run_context=None,  # No serialized context
-        model_key=None,
-        model_name=None,
+        model_selection=None,
     )
 
     temporal_model._infer_model('test:model', params, {'key': 'value'})  # pyright: ignore[reportPrivateUsage]
@@ -2984,11 +2979,11 @@ def test_temporal_model_infer_model_no_serialized_context(monkeypatch: MonkeyPat
     assert provider_calls[0][2] == {'key': 'value'}  # deps passed through
 
 
-def test_temporal_model_resolve_model_by_model_name(monkeypatch: MonkeyPatch):
-    """Test _resolve_model when model_name is set (but model_key is not)."""
+def test_temporal_model_resolve_model_by_model_selection(monkeypatch: MonkeyPatch):
+    """Test _resolve_model when model_selection is a string not in model_instances."""
     test_model = TestModel()
-    agent = Agent(test_model, name='resolve_by_name')
-    temporal_agent = TemporalAgent(agent, name='resolve_by_name')
+    agent = Agent(test_model, name='resolve_by_selection')
+    temporal_agent = TemporalAgent(agent, name='resolve_by_selection')
 
     temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
 
@@ -3000,14 +2995,13 @@ def test_temporal_model_resolve_model_by_model_name(monkeypatch: MonkeyPatch):
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
 
-    # model_key is None, but model_name is set - should call _infer_model
+    # model_selection is set to a string not in model_instances - should call _infer_model
     params = _RequestParams(
         messages=[],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
         serialized_run_context=None,
-        model_key=None,
-        model_name='openai:gpt-4o',
+        model_selection='openai:gpt-4o',
     )
 
     result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
@@ -3016,21 +3010,20 @@ def test_temporal_model_resolve_model_by_model_name(monkeypatch: MonkeyPatch):
 
 
 def test_temporal_model_resolve_model_fallback_to_wrapped():
-    """Test _resolve_model returns wrapped model when no model_key or model_name."""
+    """Test _resolve_model returns wrapped model when model_selection is None."""
     test_model = TestModel(custom_output_text='wrapped model response')
     agent = Agent(test_model, name='resolve_fallback')
     temporal_agent = TemporalAgent(agent, name='resolve_fallback')
 
     temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
 
-    # Both model_key and model_name are None - should return wrapped model
+    # model_selection is None - should return wrapped model
     params = _RequestParams(
         messages=[],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
         serialized_run_context=None,
-        model_key=None,
-        model_name=None,
+        model_selection=None,
     )
 
     result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
