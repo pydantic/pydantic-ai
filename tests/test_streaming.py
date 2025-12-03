@@ -1460,7 +1460,6 @@ class TestMultipleToolCalls:
                         UserPromptPart(
                             content='test early strategy with final result in middle',
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            part_kind='user-prompt',
                         )
                     ],
                     run_id=IsStr(),
@@ -1471,25 +1470,21 @@ class TestMultipleToolCalls:
                             tool_name='regular_tool',
                             args='{"x": 1}',
                             tool_call_id=IsStr(),
-                            part_kind='tool-call',
                         ),
                         ToolCallPart(
                             tool_name='final_result',
                             args='{"value": "final"}',
                             tool_call_id=IsStr(),
-                            part_kind='tool-call',
                         ),
                         ToolCallPart(
                             tool_name='another_tool',
                             args='{"y": 2}',
                             tool_call_id=IsStr(),
-                            part_kind='tool-call',
                         ),
                         ToolCallPart(
                             tool_name='unknown_tool',
                             args='{"value": "???"}',
                             tool_call_id=IsStr(),
-                            part_kind='tool-call',
                         ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=14),
@@ -1504,28 +1499,24 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            part_kind='tool-return',
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            part_kind='tool-return',
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            part_kind='tool-return',
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            part_kind='retry-prompt',
                         ),
                     ],
                     run_id=IsStr(),
@@ -1724,7 +1715,6 @@ class TestMultipleToolCalls:
                         UserPromptPart(
                             content='test early strategy with external tool call',
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            part_kind='user-prompt',
                         )
                     ],
                     run_id=IsStr(),
@@ -1809,7 +1799,6 @@ class TestMultipleToolCalls:
                         UserPromptPart(
                             content='test early strategy with external tool call',
                             timestamp=IsNow(tz=datetime.timezone.utc),
-                            part_kind='user-prompt',
                         )
                     ],
                     run_id=IsStr(),
@@ -1947,7 +1936,7 @@ async def test_iter_stream_responses():
 
     assert messages == [
         ModelResponse(
-            parts=[TextPart(content=text, part_kind='text')],
+            parts=[TextPart(content=text)],
             usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
