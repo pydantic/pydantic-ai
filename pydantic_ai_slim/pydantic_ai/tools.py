@@ -131,8 +131,6 @@ BuiltinToolFunc: TypeAlias = Callable[
 
 This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
-
-Usage `BuiltinToolFunc[AgentDepsT]`.
 """
 
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
