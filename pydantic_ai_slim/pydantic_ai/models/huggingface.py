@@ -334,9 +334,6 @@ class HuggingFaceModel(Model):
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
         hf_messages: list[ChatCompletionInputMessage | ChatCompletionOutputMessage] = []
-        system_prompt_count = sum(
-            1 for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, SystemPromptPart)
-        )
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
@@ -371,6 +368,7 @@ class HuggingFaceModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
+            system_prompt_count = sum(1 for m in hf_messages if getattr(m, 'role', None) == 'system')
             hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))  # type: ignore
         return hf_messages
 
