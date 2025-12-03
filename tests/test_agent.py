@@ -25,6 +25,7 @@ from pydantic_ai import (
     BinaryImage,
     CombinedToolset,
     DocumentUrl,
+    ExternalToolset,
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
@@ -58,6 +59,7 @@ from pydantic_ai._output import (
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -3504,6 +3506,117 @@ class TestMultipleToolCalls:
             ]
         )
 
+    def test_exhaustive_strategy_multiple_final_results_with_retry(self):
+        """Test that exhaustive strategy works correctly with retries when first tool initially fails."""
+        output_tools_called: list[tuple[str, int]] = []
+        call_count = 0
+
+        class FirstOutput(BaseModel):
+            value: str
+
+        class SecondOutput(BaseModel):
+            value: str
+
+        def process_first(output: FirstOutput) -> FirstOutput:
+            """Process first output - invalid on first call, valid on retry."""
+            nonlocal call_count
+            output_tools_called.append(('first', call_count))
+            if output.value == 'invalid':
+                raise ModelRetry('First output validation failed')
+            return output
+
+        def process_second(output: SecondOutput) -> SecondOutput:
+            """Process second output - always valid."""
+            nonlocal call_count
+            output_tools_called.append(('second', call_count))
+            return output
+
+        def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            assert info.output_tools is not None
+
+            # First call: first tool invalid, second valid
+            if call_count == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('first_output', {'value': 'invalid'}),
+                        ToolCallPart('second_output', {'value': 'valid_second'}),
+                    ],
+                )
+            # Second call (after retry): both tools valid
+            else:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('first_output', {'value': 'valid_first'}),
+                        ToolCallPart('second_output', {'value': 'valid_second_again'}),
+                    ],
+                )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+            output_retries=1,  # Allow one retry
+        )
+
+        result = agent.run_sync('test multiple retries')
+
+        # Verify the result came from the second output tool (first attempt)
+        # With exhaustive strategy, second tool succeeds on first try and becomes final_result
+        assert isinstance(result.output, SecondOutput)
+        assert result.output.value == snapshot('valid_second')
+
+        # Verify both output tools were called on first attempt
+        # First tool failed, second succeeded (becomes final_result)
+        # With exhaustive strategy, both tools are called even though one fails
+        assert output_tools_called == snapshot(
+            [
+                ('first', 1),  # First attempt - fails
+                ('second', 1),  # First attempt - succeeds, becomes final_result
+            ]
+        )
+
+        # Verify we got appropriate messages
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test multiple retries', timestamp=IsNow(tz=timezone.utc))],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='first_output', args={'value': 'invalid'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='second_output', args={'value': 'valid_second'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=53, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='First output validation failed',
+                            tool_name='first_output',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='second_output',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
     def test_early_strategy_with_final_result_in_middle(self):
         """Test that 'early' strategy stops at first final result, regardless of position."""
         tool_called = []
@@ -3663,6 +3776,181 @@ class TestMultipleToolCalls:
                     content='Final result processed.',
                     timestamp=IsNow(tz=timezone.utc),
                     tool_call_id='second',
+                ),
+            ]
+        )
+
+    def test_early_strategy_with_external_tool_call(self):
+        """Test that early strategy handles external tool calls correctly."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('external_tool'),
+                    ToolCallPart('final_result', {'value': 'final'}),
+                    ToolCallPart('regular_tool', {'x': 1}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[self.OutputType, DeferredToolRequests],
+            toolsets=[
+                ExternalToolset(
+                    tool_defs=[
+                        ToolDefinition(
+                            name='external_tool',
+                            kind='external',
+                        )
+                    ]
+                )
+            ],
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            """A regular tool that should not be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early strategy with external tool call')
+        assert result.output == snapshot(TestMultipleToolCalls.OutputType(value='final'))
+        messages = result.all_messages()
+
+        # Verify no tools were called
+        assert tool_called == []
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test early strategy with external tool call', timestamp=IsNow(tz=timezone.utc)
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='external_tool', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 'final'},
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='regular_tool',
+                            args={'x': 1},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=57, output_tokens=11),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='external_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_early_strategy_with_deferred_tool_call(self):
+        """Test that early strategy handles deferred tool calls correctly."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('deferred_tool'),
+                    ToolCallPart('regular_tool', {'x': 1}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[str, DeferredToolRequests],
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def deferred_tool() -> int:
+            raise CallDeferred
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            tool_called.append('regular_tool')
+            return x
+
+        result = agent.run_sync('test early strategy with deferred tool call')
+        assert result.output == snapshot(
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+        )
+        messages = result.all_messages()
+
+        # Verify regular tool was called
+        assert tool_called == ['regular_tool']
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test early strategy with deferred tool call', timestamp=IsNow(tz=timezone.utc)
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='regular_tool',
+                            args={'x': 1},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=57, output_tokens=6),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=1,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    run_id=IsStr(),
                 ),
             ]
         )
