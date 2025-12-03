@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 import httpx
 from openai import AsyncOpenAI
@@ -20,6 +20,9 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the DeepSeek provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner']
 
 
 class DeepSeekProvider(Provider[AsyncOpenAI]):
@@ -45,7 +48,11 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
         return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer, supports_json_object_output=True
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            supports_json_object_output=True,
+            openai_chat_thinking_field='reasoning_content',
+            # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
+            openai_chat_send_back_thinking_parts='field',
         ).update(profile)
 
     @overload
