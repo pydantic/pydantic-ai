@@ -192,18 +192,18 @@ def test_openrouter_google_json_schema_transformer():
     transformer = _OpenRouterGoogleJsonSchemaTransformer(schema)
     result = transformer.walk()
 
-    # const -> enum conversion (line 59)
+    # const -> enum conversion
     assert result['properties']['status'] == {'enum': ['active'], 'type': 'string'}
 
-    # oneOf -> anyOf conversion (line 68)
+    # oneOf -> anyOf conversion
     assert 'anyOf' in result['properties']['category']
     assert 'oneOf' not in result['properties']['category']
 
-    # format -> description with existing description (lines 73-75)
+    # format -> description with existing description
     assert result['properties']['email']['description'] == 'User email (format: email)'
     assert 'format' not in result['properties']['email']
 
-    # format -> description without existing description (lines 76-77)
+    # format -> description without existing description
     assert result['properties']['date']['description'] == 'Format: date'
     assert 'format' not in result['properties']['date']
 

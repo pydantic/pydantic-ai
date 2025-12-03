@@ -440,38 +440,33 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
         space_name: str
         space_type: SpaceType
 
-    class InsertLevelWithSpaces(BaseModel):
-        """Insert a level with its spaces."""
+    class InsertedLevel(BaseModel):
+        """Result of inserting a level."""
 
-        level: InsertLevelArg | None = None
-        spaces: list[SpaceArg]
+        level_name: str
+        level_type: LevelType
+        space_count: int
 
     model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
-    response = await model_request(
-        model,
-        [
-            ModelRequest.user_text_prompt(
-                "It's a house with a ground floor that has an entryway, a living room and a garage."
-            )
-        ],
-        model_request_parameters=ModelRequestParameters(
-            function_tools=[
-                ToolDefinition(
-                    name='insert_level_with_spaces',
-                    description=InsertLevelWithSpaces.__doc__ or '',
-                    parameters_json_schema=InsertLevelWithSpaces.model_json_schema(),
-                )
-            ],
-            allow_text_output=False,
-        ),
-    )
+    agent: Agent[None, InsertedLevel] = Agent(model, output_type=InsertedLevel)
 
-    assert response.parts == snapshot(
+    @agent.tool_plain
+    def insert_level_with_spaces(level: InsertLevelArg | None, spaces: list[SpaceArg]) -> str:
+        """Insert a level with its spaces."""
+        return f'Inserted level {level} with {len(spaces)} spaces'
+
+    result = await agent.run("It's a house with a ground floor that has an entryway, a living room and a garage.")
+
+    tool_call_message = result.all_messages()[1]
+    assert tool_call_message.parts == snapshot(
         [
             ToolCallPart(
                 tool_name='insert_level_with_spaces',
-                args='{"level":{"level_name":"ground floor","level_type":"ground"},"spaces":[{"space_name":"entryway","space_type":"entryway"},{"space_type":"living-room","space_name":"living room"},{"space_type":"garage","space_name":"garage"}]}',
-                tool_call_id='tool_insert_level_with_spaces_Dp2OGkGjAwsmqUUwHwmj',
+                args='{"spaces":[{"space_type":"entryway","space_name":"entryway"},{"space_name":"living_room","space_type":"living-room"},{"space_name":"garage","space_type":"garage"}],"level":{"level_type":"ground","level_name":"ground_floor"}}',
+                tool_call_id='tool_insert_level_with_spaces_3ZiChYzj8xER8HixJe7W',
             )
         ]
     )
+
+    assert result.output.level_type == LevelType.ground
+    assert result.output.space_count == 3
