@@ -59,7 +59,7 @@ def test_chat_app_configure_endpoint():
         assert response.status_code == 200
         assert response.json() == snapshot(
             {
-                'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': ['web_search']}],
+                'models': [{'id': 'test', 'name': 'Test', 'builtinTools': ['web_search']}],
                 'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
             }
         )
@@ -268,6 +268,36 @@ def test_post_chat_invalid_model():
 
         assert response.status_code == 400
         assert response.json() == snapshot({'error': 'Model "test:different_model" is not in the allowed models list'})
+
+
+def test_post_chat_invalid_builtin_tool():
+    """Test POST /api/chat returns 400 when builtin tool is not in allowed list."""
+    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(TestModel(custom_output_text='Hello'))
+    app = create_web_app(agent, models=['test'], builtin_tools=[WebSearchTool()])
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'test-id',
+                'messages': [
+                    {
+                        'id': 'msg-1',
+                        'role': 'user',
+                        'parts': [{'type': 'text', 'text': 'Hello'}],
+                    }
+                ],
+                'model': 'test',
+                'builtinTools': ['code_execution'],  # Not in allowed list
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json() == snapshot({'error': "Builtin tool(s) ['code_execution'] not in the allowed tools list"})
 
 
 def test_model_label_openrouter():

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
 
 from .. import __version__
@@ -82,6 +83,27 @@ Markdown.elements.update(
 
 
 cli_agent = Agent()
+
+_import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
+
+
+def load_agent(agent_path: str) -> Agent[Any, Any] | None:
+    """Load an agent from module path in uvicorn style.
+
+    Args:
+        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
+
+    Returns:
+        Agent instance or None if loading fails
+    """
+    sys.path.insert(0, str(Path.cwd()))
+    try:
+        obj = _import_string_adapter.validate_python(agent_path)
+        if not isinstance(obj, Agent):
+            return None
+        return obj  # pyright: ignore[reportUnknownVariableType]
+    except ValidationError:
+        return None
 
 
 @cli_agent.system_prompt
@@ -200,9 +222,9 @@ Special prompts:
     args = parser.parse_args(args_list)
 
     if prog_name == 'clai' and getattr(args, 'command', None) == 'web':
-        from ._web import _run_web_command  # pyright: ignore[reportPrivateUsage]
+        from .web import run_web_command
 
-        return _run_web_command(
+        return run_web_command(
             agent_path=args.agent,
             host=args.host,
             port=args.port,
@@ -225,9 +247,7 @@ Special prompts:
 
     agent: Agent[None, str] = cli_agent
     if args.agent:
-        from ._web import _load_agent  # pyright: ignore[reportPrivateUsage]
-
-        loaded = _load_agent(args.agent)
+        loaded = load_agent(args.agent)
         if loaded is None:
             console.print(f'[red]Error: Could not load agent from {args.agent}[/red]')
             return 1
