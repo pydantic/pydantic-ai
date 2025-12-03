@@ -316,7 +316,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
-                else:  # pragma: no cover
+                else:
                     ui_parts.append(
                         ToolInputAvailablePart(
                             type=f'tool-{part.tool_name}',

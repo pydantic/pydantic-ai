@@ -2126,6 +2126,52 @@ async def test_adapter_dump_messages_with_builtin_tools():
     )
 
 
+async def test_adapter_dump_messages_with_builtin_tool_without_return():
+    """Test dumping messages with a builtin tool call that has no return in the same message."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'orphan query'},
+                    tool_call_id='orphan_tool_id',
+                    provider_name='openai',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Search for something', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-web_search',
+                        'tool_call_id': 'orphan_tool_id',
+                        'state': 'input-available',
+                        'input': '{"query":"orphan query"}',
+                        'provider_executed': True,
+                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_adapter_dump_messages_with_thinking():
     """Test dumping messages with thinking parts."""
     messages = [
