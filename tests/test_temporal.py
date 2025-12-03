@@ -2562,6 +2562,22 @@ async def test_temporal_agent_multi_model_reserved_name():
         )
 
 
+async def test_temporal_agent_multi_model_duplicate_name():
+    """Test that duplicate model names (after normalization) raise helpful errors."""
+    test_model1 = TestModel()
+    test_model2 = TestModel()
+    test_model3 = TestModel()
+
+    agent = Agent(test_model1, name='duplicate_name_test')
+    # Keys that normalize to the same value should raise an error
+    with pytest.raises(UserError, match="Duplicate model name 'model2' provided to `additional_models`"):
+        TemporalAgent(
+            agent,
+            name='duplicate_name_test',
+            additional_models={'model2': test_model2, ' model2 ': test_model3},
+        )
+
+
 async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requests: None, client: Client):
     """Test selecting different models in a workflow using the model parameter."""
     async with Worker(
