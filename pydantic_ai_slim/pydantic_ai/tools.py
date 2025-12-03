@@ -372,6 +372,7 @@ class Tool(Generic[ToolAgentDepsT]):
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
         sequential: bool = False,
+        requires_approval: bool = False,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -406,6 +407,7 @@ class Tool(Generic[ToolAgentDepsT]):
             description=description,
             function_schema=function_schema,
             sequential=sequential,
+            requires_approval=requires_approval,
         )
 
     @property
