@@ -63,8 +63,8 @@ class OpenAIModelProfile(ModelProfile):
     openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
 
-    openai_audio_input_encoding: Literal['base64', 'uri'] = 'base64'
-    """The encoding to use for audio input.
+    openai_chat_audio_input_encoding: Literal['base64', 'uri'] = 'base64'
+    """The encoding to use for audio input in Chat Completions requests.
 
     - `'base64'`: Raw base64 encoded string. (Default, used by OpenAI)
     - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`). (Used by Qwen Omni)

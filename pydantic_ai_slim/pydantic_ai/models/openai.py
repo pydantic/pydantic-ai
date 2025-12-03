@@ -1042,7 +1042,7 @@ class OpenAIChatModel(Model):
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
                         profile = OpenAIModelProfile.from_profile(self.profile)
-                        if profile.openai_audio_input_encoding == 'uri':
+                        if profile.openai_chat_audio_input_encoding == 'uri':
                             audio = InputAudio(data=item.data_uri, format=item.format)
                         else:
                             audio = InputAudio(data=item.base64, format=item.format)
@@ -1066,11 +1066,8 @@ class OpenAIChatModel(Model):
                         'mp3',
                     ), f'Unsupported audio format: {downloaded_item["data_type"]}'
                     profile = OpenAIModelProfile.from_profile(self.profile)
-                    if profile.openai_audio_input_encoding == 'uri':
-                        format_to_mime = {'wav': 'audio/wav', 'mp3': 'audio/mpeg'}
-                        mime_type = format_to_mime.get(
-                            downloaded_item['data_type'], f'audio/{downloaded_item["data_type"]}'
-                        )
+                    if profile.openai_chat_audio_input_encoding == 'uri':
+                        mime_type = item.media_type or f'audio/{downloaded_item["data_type"]}'
                         data_uri = f'data:{mime_type};base64,{downloaded_item["data"]}'
                         audio = InputAudio(data=data_uri, format=downloaded_item['data_type'])
                     else:
