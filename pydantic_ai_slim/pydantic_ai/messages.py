@@ -611,14 +611,17 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(init=False, repr=False)
 class BinaryImage(BinaryContent):
     """Binary content that's guaranteed to be an image."""
+
+    media_type: ImageMediaType | str
 
     def __init__(
         self,
         data: bytes,
         *,
-        media_type: str,
+        media_type: ImageMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
