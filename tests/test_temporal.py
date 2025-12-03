@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel
@@ -2534,7 +2534,6 @@ async def test_temporal_agent_multi_model_registration():
         'model_2',
         'model_3',
     }
-    assert temporal_agent._registered_model_names == {}  # pyright: ignore[reportPrivateUsage]
 
     activity_names = {
         name
@@ -2549,39 +2548,16 @@ async def test_temporal_agent_multi_model_registration():
     assert len([name for name in activity_names if name.endswith('__model_request_stream')]) == 1
 
 
-async def test_temporal_agent_multi_model_with_strings():
-    """Test that TemporalAgent can register models using model strings."""
-    test_model1 = TestModel()
-
-    agent = Agent(test_model1, name='multi_model_string_test')
-    temporal_agent = TemporalAgent(
-        agent,
-        name='multi_model_string_test',
-        additional_models=['test', 'anthropic:claude-sonnet-4-5'],
-    )
-
-    assert temporal_agent._registered_model_names['test'] == 'test'  # pyright: ignore[reportPrivateUsage]
-    assert temporal_agent._registered_model_names['anthropic:claude-sonnet-4-5'] == 'anthropic:claude-sonnet-4-5'  # pyright: ignore[reportPrivateUsage]
-    assert set(temporal_agent._registered_model_instances.keys()) == {'default'}  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_temporal_agent_multi_model_duplicate_names():
-    """Test that duplicate or reserved model names raise helpful errors."""
+async def test_temporal_agent_multi_model_reserved_name():
+    """Test that reserved model names raise helpful errors."""
     test_model1 = TestModel()
     test_model2 = TestModel()
 
-    agent = Agent(test_model1, name='duplicate_test')
-    with pytest.raises(UserError, match='Duplicate model name'):
-        TemporalAgent(
-            agent,
-            name='duplicate_test',
-            additional_models=['test', 'test'],
-        )
-
+    agent = Agent(test_model1, name='reserved_name_test')
     with pytest.raises(UserError, match="Model name 'default' is reserved"):
         TemporalAgent(
             agent,
-            name='duplicate_test',
+            name='reserved_name_test',
             additional_models={'default': test_model2},
         )
 
@@ -2671,7 +2647,6 @@ async def test_temporal_agent_multi_model_backward_compatibility():
 
     # Should only have default model registered
     assert list(temporal_agent._registered_model_instances.keys()) == ['default']  # pyright: ignore[reportPrivateUsage]
-    assert temporal_agent._registered_model_names == {}  # pyright: ignore[reportPrivateUsage]
 
     # Should work without additional_models parameter
     assert isinstance(temporal_agent.model, TemporalModel)
@@ -2711,73 +2686,20 @@ async def test_temporal_agent_multi_model_outside_workflow():
     assert result.output == 'Model 1 response'
 
 
-async def test_temporal_agent_multi_model_mixed_types():
-    """Test that different model instances can be registered."""
+async def test_temporal_agent_select_model_string_passthrough():
+    """Test that unregistered model strings pass through to infer_model."""
     test_model1 = TestModel()
-    test_model2 = TestModel()
 
-    agent = Agent(test_model1, name='mixed_types_test')
+    agent = Agent(test_model1, name='string_passthrough_test')
     temporal_agent = TemporalAgent(
         agent,
-        name='mixed_types_test',
-        additional_models={
-            'named_model': test_model2,
-            'string_model': 'test',
-        },
+        name='string_passthrough_test',
     )
 
-    assert set(temporal_agent._registered_model_instances.keys()) == {  # pyright: ignore[reportPrivateUsage]
-        'default',
-        'named_model',
-    }
-    assert temporal_agent._registered_model_names['string_model'] == 'test'  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_temporal_agent_multi_model_with_model_strings():
-    """Test that TemporalAgent can register models using actual model strings like 'test'."""
-    test_model1 = TestModel()
-
-    agent = Agent(test_model1, name='model_string_test')
-    # Using the 'test' model string which creates a TestModel via models.infer_model
-    temporal_agent = TemporalAgent(
-        agent,
-        name='model_string_test',
-        additional_models=['test'],  # This is a valid model string
-    )
-
-    assert temporal_agent._registered_model_names == {'test': 'test'}  # pyright: ignore[reportPrivateUsage]
-    assert list(temporal_agent._registered_model_instances.keys()) == ['default']  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_temporal_agent_model_without_model_name():
-    """Test that TemporalAgent requires names for model instances."""
-    test_model1 = TestModel()
-    test_model2 = TestModel()
-    agent = Agent(test_model1, name='no_model_name_test')
-
-    with pytest.raises(UserError, match='sequence.*model strings'):
-        TemporalAgent(
-            agent,
-            name='no_model_name_test',
-            additional_models=cast(Any, [test_model2]),
-        )
-
-
-async def test_temporal_agent_select_model_by_string():
-    """Test selecting a model by its string key."""
-    test_model1 = TestModel()
-
-    agent = Agent(test_model1, name='string_select_test')
-    temporal_agent = TemporalAgent(
-        agent,
-        name='string_select_test',
-        additional_models=['test'],
-    )
-
-    # Select model by string - this exercises the string lookup path
-    selected = temporal_agent._select_model('test')  # pyright: ignore[reportPrivateUsage]
-    assert selected.model_key == 'test'
-    assert selected.model_name == 'test'
+    # Unregistered model string should pass through with model_key=None
+    selected = temporal_agent._select_model('openai:gpt-4o')  # pyright: ignore[reportPrivateUsage]
+    assert selected.model_key is None
+    assert selected.model_name == 'openai:gpt-4o'
 
 
 async def test_temporal_agent_unregistered_string_model():
@@ -2940,37 +2862,6 @@ def test_temporal_model_current_selection_empty_selection():
     selection = temporal_model._current_selection()  # pyright: ignore[reportPrivateUsage]
     assert selection.model_key == 'default'
     assert selection.model_name is None
-
-
-def test_temporal_model_resolve_model_string_map(monkeypatch: MonkeyPatch):
-    """Test _resolve_model when model_key is in _model_string_map."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='resolve_string_map')
-    temporal_agent = TemporalAgent(
-        agent,
-        name='resolve_string_map',
-        additional_models=['openai:gpt-4o'],
-    )
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    # Mock infer_model to return a test model
-    def mock_infer_model(model_name: str, **kwargs: Any) -> TestModel:
-        return TestModel()
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
-
-    params = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=None,
-        model_key='openai:gpt-4o',
-        model_name=None,
-    )
-
-    model = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(model, TestModel)
 
 
 def test_temporal_model_resolve_model_unregistered_key():

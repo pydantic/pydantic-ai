@@ -91,7 +91,6 @@ class TemporalModel(WrapperModel):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         model_selection_var: ContextVar[ModelSelection] | None = None,
         model_instances: Mapping[str, Model] | None = None,
-        model_string_map: Mapping[str, str] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
     ):
         super().__init__(model)
@@ -100,7 +99,6 @@ class TemporalModel(WrapperModel):
         self.event_stream_handler = event_stream_handler
         self._model_selection_var = model_selection_var
         self._model_instances = dict(model_instances or {})
-        self._model_string_map = dict(model_string_map or {})
         self._provider_factory = provider_factory
 
         request_activity_name = f'{activity_name_prefix}__model_request'
@@ -243,8 +241,6 @@ class TemporalModel(WrapperModel):
         if params.model_key:
             if params.model_key in self._model_instances:
                 return self._model_instances[params.model_key]
-            if params.model_key in self._model_string_map:
-                return self._infer_model(self._model_string_map[params.model_key], params, deps)
             raise UserError(
                 f'Model "{params.model_key}" is not registered with this TemporalAgent. '
                 'Register model instances using `additional_models` when constructing the agent.'
