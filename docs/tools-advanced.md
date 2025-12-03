@@ -380,14 +380,10 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 ### End Strategy
 
-When a model returns multiple tool calls (either function tools or [output tools](output.md)), the agent's `end_strategy` parameter controls whether all tools are executed once a final result is found:
+When a model returns multiple tool calls in a single response, the agent's `end_strategy` parameter controls how these tools are executed.
+The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-- **`'early'`** (default): Once a final result is found (from an output tool), all remaining tool calls (both function tools and output tools) are skipped.
-- **`'exhaustive'`**: All tool calls are executed, even after a final result is found. The first valid output tool's result is used as the final output.
-
-The `'exhaustive'` strategy is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute, regardless of whether a final result has been found.
-
-For more details on how `end_strategy` applies to output tools, see [Handling Multiple Output Tool Calls](output.md#handling-multiple-output-tool-calls).
+For a detailed explanation of how `end_strategy` works with both function tools and output tools, see [Handling Multiple Tool Calls with `end_strategy`](output.md#handling-multiple-tool-calls-with-end_strategy).
 
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.

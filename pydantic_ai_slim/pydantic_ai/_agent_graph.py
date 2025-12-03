@@ -61,10 +61,12 @@ NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 """The strategy for handling multiple tool calls when a final result is found.
 
-- `'early'`: Stop processing other tool calls (both function tools and output tools) once a final result is found
-- `'exhaustive'`: Process all tool calls (both function tools and output tools) even after finding a final result
+- `'early'`: Tools are executed in order until a valid final result is found, then remaining tool calls are skipped (default)
+- `'exhaustive'`: All tool calls are executed, even after a valid final result is found
 
 This applies to both function tools and output tools.
+With output tools, the first valid result becomes the final output.
+With 'early', if an output tool fails validation, the next one is tried.
 """
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')

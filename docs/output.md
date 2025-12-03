@@ -304,13 +304,20 @@ print(repr(result.output))
 
 1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle`. However, as `ToolOutput` is an object rather than a type, we have to use a list.
 
-!!! note "Handling Multiple Output Tool Calls"
-    When a model calls multiple output tools in the same response, the agent's `end_strategy` parameter controls whether all output tool functions are executed or only the first one:
+!!! note "Handling Multiple Tool Calls with `end_strategy`"
+    When a model calls multiple tools in the same response (either output tools or [function tools](tools.md)), the agent's `end_strategy` parameter controls how these tools are executed:
 
-    - `'early'` (default): Only the first output tool is executed, and additional output tool calls are skipped once a final result is found. This is the default behavior.
-    - `'exhaustive'`: All output tool functions are executed, even after a final result is found. The first valid output tool's result is used as the final output.
+    **For Output Tools:**
 
-    This parameter also applies to [function tools](tools.md), not just output tools.
+    - `'early'` (default): Output tools are executed one by one in the order they were called. Once any output tool produces a valid result, that result becomes the final output and all remaining tool calls (both output tools and function tools) are skipped. If an output tool fails validation, the next output tool in the list is tried.
+    - `'exhaustive'`: All output tool functions are executed, regardless of whether earlier ones succeeded or failed. The first output tool that produces a valid result becomes the final output. All function tools in the response are also executed, even after a final result is found.
+
+    **For Function Tools:**
+
+    - `'early'` (default): Once a final result is found from an output tool, all remaining function tool calls are skipped and not executed.
+    - `'exhaustive'`: All function tool calls are executed, even after a final result has been found from an output tool.
+
+    The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute, regardless of whether a final result has been found.
 
 _(This example is complete, it can be run "as is")_
 
