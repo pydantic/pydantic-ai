@@ -434,7 +434,7 @@ class AnthropicModel(Model):
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
 
-        if beta_header := extra_headers.pop('anthropic-beta', None):
+        if beta_header := extra_headers.get('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
         return betas, extra_headers
