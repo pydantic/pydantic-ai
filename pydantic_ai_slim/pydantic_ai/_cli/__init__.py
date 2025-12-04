@@ -16,6 +16,7 @@ from typing_inspection.introspection import get_literal_values
 from .. import __version__
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
+from ..builtin_tools import get_builtin_tool_types
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
@@ -53,6 +54,13 @@ This folder is used to store the prompt history and configuration.
 """
 
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
+
+# CLI-supported tool IDs (excludes deprecated and config-requiring tools)
+_CLI_TOOL_IDS = sorted(
+    k.kind
+    for k in get_builtin_tool_types()
+    if k not in {'mcp_server', 'memory', 'unknown_builtin_tool'}
+)
 
 
 class SimpleCodeBlock(CodeBlock):
@@ -174,54 +182,56 @@ Special prompts:
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
-    if prog_name == 'clai':
-        subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-        web_parser = subparsers.add_parser(
-            'web',
-            help='Launch web chat UI for an agent',
-            description='Start a web-based chat interface for the specified agent',
-        )
-        web_parser.add_argument(
-            '--agent',
-            '-a',
-            help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
-            'If omitted, creates a generic agent with the first specified model as default.',
-        )
-        web_parser.add_argument(
-            '-m',
-            '--model',
-            action='append',
-            dest='models',
-            help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
-            'Format: "provider:model_name". Prefix-less names (gpt-5, claude-sonnet-4-5, gemini-2.5-pro) '
-            'auto-infer provider. First model is preselected in UI; additional models appear as options.',
-        )
-        web_parser.add_argument(
-            '-t',
-            '--tool',
-            action='append',
-            dest='tools',
-            help='Builtin tool to enable (can be repeated, e.g., -t web_search -t code_execution). '
-            'Available: web_search, code_execution, image_generation, web_fetch.',
-        )
-        web_parser.add_argument(
-            '-i',
-            '--instructions',
-            help='System instructions for the agent. Only applies when --agent is not specified (generic agent mode).',
-        )
-        web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
-        web_parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
-        web_parser.add_argument(
-            '--mcp',
-            help='Path to JSON file with MCP server configurations. '
-            'Format: {"mcpServers": {"id": {"url": "...", "authorizationToken": "..."}}}',
-        )
+    web_parser = subparsers.add_parser(
+        'web',
+        help='Launch web chat UI for an agent',
+        description='Start a web-based chat interface for the specified agent',
+    )
+    web_parser.add_argument(
+        '--agent',
+        '-a',
+        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+        'If omitted, creates a generic agent with the first specified model as default.',
+    )
+    web_parser.add_argument(
+        '-m',
+        '--model',
+        choices=KnownModelName.__value__.__args__,
+        action='append',
+        dest='models',
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+        'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
+    )
+    web_parser.add_argument(
+        '-t',
+        '--tool',
+        choices=_CLI_TOOL_IDS,
+        action='append',
+        dest='tools',
+        help=f'Builtin tool to enable (can be repeated, e.g., -t web_search -t code_execution). '
+        f'Available: {", ".join(_CLI_TOOL_IDS)}.',
+    )
+
+    web_parser.add_argument(
+        '-i',
+        '--instructions',
+        help='System instructions for the agent. In generic mode (no --agent), these are the agent instructions. '
+        'With --agent, these are passed as extra instructions to each run.',
+    )
+    web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
+    web_parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
+    web_parser.add_argument(
+        '--mcp',
+        help='Path to JSON file with MCP server configurations. '
+        'Format: {"mcpServers": {"id": {"url": "...", "headers": {...}}}}',
+    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
-    if prog_name == 'clai' and getattr(args, 'command', None) == 'web':
+    if args.command == 'web':
         from .web import run_web_command
 
         return run_web_command(
