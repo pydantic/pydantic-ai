@@ -1935,16 +1935,21 @@ class PromptTemplates:
     Default: "Tool not executed - a final result was already processed."
     """
 
-
     def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
         if isinstance(message, ToolReturnPart):
             if message.content == 'Final result processed.' and self.tool_final_result:
                 self._apply_tool_template(message, ctx, self.tool_final_result)
-            elif message.content == 'Output tool not used - a final result was already processed.' and self.output_tool_not_executed:
+            elif (
+                message.content == 'Output tool not used - a final result was already processed.'
+                and self.output_tool_not_executed
+            ):
                 self._apply_tool_template(message, ctx, self.output_tool_not_executed)
-            elif message.content == 'Tool not executed - a final result was already processed.' and self.function_tool_not_executed:
+            elif (
+                message.content == 'Tool not executed - a final result was already processed.'
+                and self.function_tool_not_executed
+            ):
                 self._apply_tool_template(message, ctx, self.function_tool_not_executed)
-                        
+
         elif isinstance(message, RetryPromptPart):
             if self.retry_prompt:
                 if isinstance(self.retry_prompt, str):
@@ -1952,7 +1957,9 @@ class PromptTemplates:
                 else:
                     message.pre_compiled = self.retry_prompt(message, ctx)
 
-    def _apply_tool_template(self, message: ToolReturnPart, ctx: _RunContext[Any], template: str | Callable[[Any, _RunContext[Any]], str]):
+    def _apply_tool_template(
+        self, message: ToolReturnPart, ctx: _RunContext[Any], template: str | Callable[[Any, _RunContext[Any]], str]
+    ):
         if isinstance(template, str):
             message.content = template
         else:
