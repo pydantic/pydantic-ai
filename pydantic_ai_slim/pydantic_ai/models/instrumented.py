@@ -515,7 +515,7 @@ class InstrumentedModel(WrapperModel):
         if not event.body:
             body = {}  # pragma: no cover
         elif isinstance(event.body, Mapping):
-            body = event.body  # type: ignore
+            body = event.body
         else:
             body = {'body': event.body}
         return {**body, **(event.attributes or {})}

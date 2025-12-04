@@ -544,6 +544,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
+                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
                     'logfire.level_num': 17,
                 },
                 'events': [
