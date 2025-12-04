@@ -1571,7 +1571,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # weird ternary for typing purposes
         resolved_models: ModelsParam = models or (self._model and [self._model])
 
-        resolved_builtin_tools = builtin_tools or list(self._builtin_tools)
+        resolved_builtin_tools = builtin_tools or [t for t in self._builtin_tools if isinstance(t, AbstractBuiltinTool)]
 
         return create_web_app(
             self,

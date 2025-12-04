@@ -66,7 +66,7 @@ async def _get_ui_html(version: str) -> bytes:
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
-    builtin_tools: list[AbstractBuiltinTool] | None = None,
+    builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,

@@ -79,7 +79,7 @@ def validate_request_options(
 def create_api_routes(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
-    builtin_tools: list[AbstractBuiltinTool] | None = None,
+    builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
