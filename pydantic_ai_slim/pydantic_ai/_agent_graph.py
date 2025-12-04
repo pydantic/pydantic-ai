@@ -447,7 +447,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        self.request.timestamp = now_utc()
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters, run_context
         ) as streamed_response:
@@ -480,7 +479,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return self._result  # pragma: no cover
 
         model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
-        self.request.timestamp = now_utc()
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 
@@ -489,6 +487,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
+        self.request.timestamp = now_utc()
         self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
@@ -505,6 +504,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
+
+        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
+        last_request = message_history[-1]
+        if isinstance(last_request, _messages.ModelRequest) and last_request.timestamp is None:
+            last_request.timestamp = self.request.timestamp
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.

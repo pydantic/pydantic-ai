@@ -139,7 +139,10 @@ async def test_history_processor_run_replaces_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
@@ -200,7 +203,10 @@ async def test_history_processor_streaming_replaces_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
@@ -314,7 +320,10 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
         [
             ModelRequest(parts=[UserPromptPart(content='[SECOND] [FIRST] Question', timestamp=IsDatetime())]),
             ModelResponse(parts=[TextPart(content='Answer')], timestamp=IsDatetime()),
-            ModelRequest(parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
@@ -338,7 +347,8 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                         content='[SECOND] [FIRST] New question',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -521,7 +531,8 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                         content='PREFIX: test',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -534,7 +545,8 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                         content='PREFIX: test',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -678,7 +690,8 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                         content='TEST: Question 2',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -717,7 +730,8 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                         content='Modified message',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             )
         ]
     )
@@ -730,7 +744,8 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                         content='Modified message',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],

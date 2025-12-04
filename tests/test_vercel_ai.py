@@ -2517,7 +2517,7 @@ async def test_adapter_dump_load_roundtrip():
                 if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                     new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
     # Load back to Pydantic AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
@@ -2755,7 +2755,7 @@ async def test_adapter_dump_messages_thinking_with_metadata():
 
     # Sync timestamps for comparison (ModelResponse always has timestamp)
     for orig_msg, new_msg in zip(original_messages, reloaded_messages):
-        new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+        new_msg.timestamp = orig_msg.timestamp
 
     assert reloaded_messages == original_messages
 
