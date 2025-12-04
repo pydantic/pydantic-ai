@@ -381,13 +381,13 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
-    assert cli(['web', '-m', 'gpt-5', '-t', 'web_search'], prog_name='clai') == 0
+    assert cli(['web', '-m', 'openai:gpt-5', '-t', 'web_search'], prog_name='clai') == 0
 
     mock_run_web.assert_called_once_with(
         agent_path=None,
         host='127.0.0.1',
         port=7932,
-        models=['gpt-5'],
+        models=['openai:gpt-5'],
         tools=['web_search'],
         instructions=None,
         mcp=None,
@@ -425,7 +425,18 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
     create_test_module(custom_agent=test_agent)
 
     assert (
-        cli(['web', '--agent', 'test_module:custom_agent', '-m', 'gpt-5', '-m', 'claude-sonnet-4-5'], prog_name='clai')
+        cli(
+            [
+                'web',
+                '--agent',
+                'test_module:custom_agent',
+                '-m',
+                'openai:gpt-5',
+                '-m',
+                'anthropic:claude-sonnet-4-5',
+            ],
+            prog_name='clai',
+        )
         == 0
     )
 
@@ -433,7 +444,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         agent_path='test_module:custom_agent',
         host='127.0.0.1',
         port=7932,
-        models=['gpt-5', 'claude-sonnet-4-5'],
+        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
         tools=None,
         instructions=None,
         mcp=None,
@@ -473,13 +484,13 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
 
     mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
 
-    assert cli(['web', '-m', 'gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
+    assert cli(['web', '-m', 'openai:gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
 
     mock_run_web.assert_called_once_with(
         agent_path=None,
         host='127.0.0.1',
         port=7932,
-        models=['gpt-5'],
+        models=['openai:gpt-5'],
         tools=None,
         instructions='You are a helpful coding assistant',
         mcp=None,

@@ -2318,7 +2318,7 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
     )
 
-    with pytest.raises(UserError, match='Builtin tool WebSearchTool is not supported by this model'):
+    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('What day is today?')
 
 

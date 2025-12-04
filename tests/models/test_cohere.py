@@ -562,5 +562,5 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
 async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match='Builtin tool WebSearchTool is not supported by this model'):
+    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')
