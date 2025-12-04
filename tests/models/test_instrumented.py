@@ -8,7 +8,6 @@ from typing import Literal
 import pytest
 from inline_snapshot import snapshot
 from inline_snapshot.extra import warns
-from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
@@ -54,11 +53,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
     pytest.mark.anyio,
 ]
-
-requires_logfire_events = pytest.mark.skipif(
-    not hasattr(DEFAULT_LOGFIRE_INSTANCE.config, 'get_event_logger_provider'),
-    reason='old logfire without events/logs support',
-)
 
 
 class MyModel(Model):
@@ -138,7 +132,6 @@ class MyResponseStream(StreamedResponse):
         return datetime(2022, 1, 1)
 
 
-@requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
     assert model.system == 'openai'
@@ -378,7 +371,6 @@ async def test_instrumented_model_not_recording():
     )
 
 
-@requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
@@ -481,7 +473,6 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
     )
 
 
-@requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
