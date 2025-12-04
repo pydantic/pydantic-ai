@@ -1137,19 +1137,9 @@ class TestMultipleToolCalls:
             ]
         )
 
-    @pytest.mark.xfail(
-        reason='Exhaustive strategy with ModelRetry is not supported in streaming mode even with output_retries=0. '
-        'See https://github.com/pydantic/pydantic-ai/issues/3624'
-    )
+    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3624')
     async def test_exhaustive_strategy_invalid_first_valid_second_output(self):
-        """Test that exhaustive strategy uses the second valid output when the first is invalid.
-
-        NOTE: This test fails because streaming mode validates the first output tool (which became
-        final_result during graph execution) and raises UnexpectedModelBehavior when it fails with
-        ModelRetry. Exhaustive strategy should try all output tools and use the first valid one,
-        but this behavior is not implemented in streaming mode yet.
-        See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        """
+        """Test that exhaustive strategy uses the second valid output when the first is invalid."""
         output_tools_called: list[str] = []
 
         def process_first(output: OutputType) -> OutputType:
@@ -1531,7 +1521,7 @@ class TestMultipleToolCalls:
 
     @pytest.mark.xfail(
         reason='Multiple output validation not supported in streaming mode. '
-        'See https://github.com/pydantic/pydantic-ai/issues/3624'
+        'See https://github.com/pydantic/pydantic-ai/issues/3638'
     )
     async def test_multiple_final_result_are_validated_correctly(self):
         """Tests that if multiple final results are returned, but one fails validation, the other is used.
@@ -1539,7 +1529,7 @@ class TestMultipleToolCalls:
         NOTE: This test fails because streaming mode validates the first output tool and raises
         ValidationError when it fails. Early strategy should try all output tools until finding
         a valid one, but this behavior is not implemented in streaming mode yet.
-        See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
+        See https://github.com/pydantic/pydantic-ai/issues/3638 for details.
         """
 
         async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
