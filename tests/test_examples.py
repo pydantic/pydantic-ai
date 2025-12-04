@@ -328,6 +328,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
     'What is 7 plus 5?': 'The answer is 12.',
+    'What is the weather like?': "It's currently raining in London.",
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
