@@ -424,7 +424,7 @@ class AnthropicModel(Model):
         Handles merging custom `anthropic-beta` header from `extra_headers` into betas set
         and ensuring `User-Agent` is set.
         """
-        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         betas: set[str] = set()
