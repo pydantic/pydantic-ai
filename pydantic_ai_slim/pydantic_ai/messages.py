@@ -1906,36 +1906,54 @@ AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pyd
 
 @dataclass
 class PromptTemplates:
-    """Templates for specific message parts that Pydantic AI injects.
+    """Templates for customizing messages that Pydantic AI sends to models.
 
-    Each template can be either:
-    - A static string: Simple replacement for the default message
-    - A callable: Dynamic formatting based on RunContext
+    Each template can be a static string or a callable that receives context and returns a string.
     """
 
     retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
-    """Override text for [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] that Pydantic AI inserts before re-asking the model
-    after validation failures. Callables receive the retry part and run context to generate custom guidance."""
+    """Message sent to the model after validation failures or invalid responses.
+    
+    Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
+    """
 
-    tool_final_result: str | Callable[[ToolReturnPart, Any[Any]], str] | None = None
-    """Override how tool return confirmations (final tool messages that wrap up a run) are phrased. Callables receive the
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] and run context to produce dynamic messaging."""
+    tool_final_result: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Confirmation message sent when a final result is successfully processed.
+    
+    Default: "Final result processed."
+    """
+
+    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when an output tool call is skipped because a result was already found.
+    
+    Default: "Output tool not used - a final result was already processed."
+    """
+
+    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when a function tool call is skipped because a result was already found.
+    
+    Default: "Tool not executed - a final result was already processed."
+    """
+
 
     def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
         if isinstance(message, ToolReturnPart):
-            if not self.tool_final_result:
-                return
-            # Apply tool return template
-            if isinstance(self.tool_final_result, str):
-                message.content = self.tool_final_result
-                return
-
-            message.content = self.tool_final_result(message, ctx)
+            if message.content == 'Final result processed.' and self.tool_final_result:
+                self._apply_tool_template(message, ctx, self.tool_final_result)
+            elif message.content == 'Output tool not used - a final result was already processed.' and self.output_tool_not_executed:
+                self._apply_tool_template(message, ctx, self.output_tool_not_executed)
+            elif message.content == 'Tool not executed - a final result was already processed.' and self.function_tool_not_executed:
+                self._apply_tool_template(message, ctx, self.function_tool_not_executed)
+                        
         elif isinstance(message, RetryPromptPart):
-            if not self.retry_prompt:
-                return ''
-            # Apply RetryPromptPart
-            if isinstance(self.retry_prompt, str):
-                message.pre_compiled = self.retry_prompt
-                return
-            message.pre_compiled = self.retry_prompt(message, ctx)
+            if self.retry_prompt:
+                if isinstance(self.retry_prompt, str):
+                    message.pre_compiled = self.retry_prompt
+                else:
+                    message.pre_compiled = self.retry_prompt(message, ctx)
+
+    def _apply_tool_template(self, message: ToolReturnPart, ctx: _RunContext[Any], template: str | Callable[[Any, _RunContext[Any]], str]):
+        if isinstance(template, str):
+            message.content = template
+        else:
+            message.content = template(message, ctx)

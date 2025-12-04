@@ -229,6 +229,93 @@ def test_result_pydantic_model_retry():
     assert result.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
 
 
+def test_prompt_templates():
+    """Test both retry_prompt and tool_final_result templates."""
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args_json = '{"a": "wrong", "b": "foo"}'
+        else:
+            args_json = '{"a": 42, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Foo,
+        prompt_templates=PromptTemplates(
+            retry_prompt=lambda part, ctx: f'Custom retry message {ctx.run_id} {part.content}',
+            tool_final_result=lambda part, ctx: f'Custom final result {ctx.run_id} {part.content}',
+        ),
+    )
+
+    result = agent.run_sync('Hello')
+    assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
+
+    retry_request = result.all_messages()[2]
+    assert isinstance(retry_request, ModelRequest)
+    retry_part = retry_request.parts[0]
+    assert isinstance(retry_part, RetryPromptPart)
+    # Verify the custom template includes run_id and content
+    response = retry_part.model_response()
+    assert response.startswith('Custom retry message ')
+    assert result.run_id in response
+    assert "[{'type': 'int_parsing'" in response
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
+                model_name='function:return_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='final_result',
+                        content=[
+                            {
+                                'type': 'int_parsing',
+                                'loc': ('a',),
+                                'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                'input': 'wrong',
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        pre_compiled="Custom retry message 630a3726-d848-4328-9824-035676e55100 [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=76, output_tokens=14),
+                model_name='function:return_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Custom final result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
