@@ -12,7 +12,7 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, ModelResponseStreamEvent, models
-from pydantic_ai._run_context import CURRENT_RUN_CONTEXT
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -152,7 +152,7 @@ class TemporalModel(WrapperModel):
         self._validate_model_request_parameters(model_request_parameters)
 
         selection = self._current_selection()
-        run_context = CURRENT_RUN_CONTEXT.get()
+        run_context = get_current_run_context()
         serialized_run_context = None
         deps: Any | None = None
         if run_context is not None:
