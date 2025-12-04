@@ -346,6 +346,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         elicitation_callback: ElicitationFnT | None = None,
         *,
         id: str | None = None,
+        client_info: mcp_types.Implementation | None = None,
     ):
         self.tool_prefix = tool_prefix
         self.log_level = log_level
@@ -357,6 +358,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.sampling_model = sampling_model
         self.max_retries = max_retries
         self.elicitation_callback = elicitation_callback
+        self.client_info = client_info
 
         self._id = id or tool_prefix
 
@@ -621,6 +623,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if self._running_count == 0:
                 async with AsyncExitStack() as exit_stack:
                     self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
+
                     client = ClientSession(
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
@@ -628,6 +631,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         elicitation_callback=self.elicitation_callback,
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
+                        client_info=self.client_info,
                     )
                     self._client = await exit_stack.enter_async_context(client)
 
@@ -795,6 +799,7 @@ class MCPServerStdio(MCPServer):
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
         id: str | None = None,
+        client_info: mcp_types.Implementation | None = None,
     ):
         """Build a new MCP server.
 
@@ -814,6 +819,7 @@ class MCPServerStdio(MCPServer):
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
+            client_info: Information describing the MCP client implementation.
         """
         self.command = command
         self.args = args
@@ -832,6 +838,7 @@ class MCPServerStdio(MCPServer):
             max_retries,
             elicitation_callback,
             id=id,
+            client_info=client_info,
         )
 
     @classmethod
@@ -948,6 +955,7 @@ class _MCPServerHTTP(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        client_info: mcp_types.Implementation | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Build a new MCP server.
@@ -967,6 +975,7 @@ class _MCPServerHTTP(MCPServer):
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
+            client_info: Information describing the MCP client implementation.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
             if read_timeout is not None:
@@ -998,6 +1007,7 @@ class _MCPServerHTTP(MCPServer):
             max_retries,
             elicitation_callback,
             id=id,
+            client_info=client_info,
         )
 
     @property
