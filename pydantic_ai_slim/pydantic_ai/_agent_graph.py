@@ -773,6 +773,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
+        if tool_responses and ctx.deps.prompt_templates:
+            run_ctx = build_run_context(ctx)
+            for part in tool_responses:
+                ctx.deps.prompt_templates.apply_template(part, run_ctx)
+
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
@@ -852,8 +857,6 @@ async def process_tool_calls(  # noqa: C901
         else:
             kind = 'unknown'
         tool_calls_by_kind[kind].append(call)
-
-    prompt_templates = ctx.deps.prompt_templates
 
     # First, we handle output tool calls
     for call in tool_calls_by_kind['output']:
