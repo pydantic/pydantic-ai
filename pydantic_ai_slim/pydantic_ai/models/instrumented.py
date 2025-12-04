@@ -128,9 +128,9 @@ class InstrumentationSettings:
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
-            logger_provider: The OpenTelemetry event logger provider to use.
-                If not provided, the global event logger provider is used.
-                Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
+            logger_provider: The OpenTelemetry logger provider to use.
+                If not provided, the global logger provider is used.
+                Calling `logfire.configure()` sets the global logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'` and `version=1`.
         """
         from pydantic_ai import __version__
