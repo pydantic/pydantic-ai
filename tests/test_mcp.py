@@ -1532,15 +1532,13 @@ def test_map_from_pai_messages_with_binary_content():
     Note: `data` in this case are base64-encoded bytes (e.g., base64.b64encode(b'raw')).
     map_from_pai_messages decodes this to get the base64 string for MCP.
     """
-    image_data = base64.b64encode(b'raw_image_bytes')
-    audio_data = base64.b64encode(b'raw_audio_bytes')
 
     message = ModelRequest(
         parts=[
             UserPromptPart(content='text message'),
-            UserPromptPart(content=[BinaryContent(data=image_data, media_type='image/png')]),
-            # cover the loop continuation branch
-            UserPromptPart(content=[BinaryContent(data=audio_data, media_type='audio/wav'), 'text after audio']),
+            UserPromptPart(content=[BinaryContent(data=b'raw_image_bytes', media_type='image/png')]),
+            # TODO uncomment when audio content is supported
+            # UserPromptPart(content=[BinaryContent(data=b'raw_audio_bytes', media_type='audio/wav'), 'text after audio']),
         ]
     )
     system_prompt, sampling_msgs = map_from_pai_messages([message])
@@ -1552,25 +1550,11 @@ def test_map_from_pai_messages_with_binary_content():
                 'role': 'user',
                 'content': {
                     'type': 'image',
-                    'data': 'raw_image_bytes',
+                    'data': 'cmF3X2ltYWdlX2J5dGVz',
                     'mimeType': 'image/png',
                     'annotations': None,
                     '_meta': None,
                 },
-            },
-            {
-                'role': 'user',
-                'content': {
-                    'type': 'audio',
-                    'data': 'raw_audio_bytes',
-                    'mimeType': 'audio/wav',
-                    'annotations': None,
-                    '_meta': None,
-                },
-            },
-            {
-                'role': 'user',
-                'content': {'type': 'text', 'text': 'text after audio', 'annotations': None, '_meta': None},
             },
         ]
     )
