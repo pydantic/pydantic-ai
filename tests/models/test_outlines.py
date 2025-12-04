@@ -7,6 +7,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import platform
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -81,11 +82,30 @@ skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
     not transformer_imports_successful(), reason='transformers not available'
 )
 
-# We only run this on the latest Python as the llama_cpp tests have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
+
+def _has_avx2_support() -> bool:
+    """Check if the CPU supports AVX2 instructions required by llama_cpp.
+
+    The llama_cpp library crashes with 'Fatal Python error: Illegal instruction' on CPUs without AVX2.
+    This check allows us to skip the tests gracefully on such machines (e.g., some GitHub Actions runners).
+    """
+    if platform.system() == 'Linux':
+        try:
+            with open('/proc/cpuinfo', encoding='utf-8') as f:
+                return 'avx2' in f.read().lower()
+        except Exception:
+            return False
+    return True
+
+
+# The llama_cpp tests have been regularly failing in CI with `Fatal Python error: Illegal instruction`
+# due to AVX2 instructions not being supported on some GitHub Actions runners:
 # https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
 skip_if_llama_cpp_imports_unsuccessful = pytest.mark.skipif(
-    not llama_cpp_imports_successful() or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false',
-    reason='llama_cpp not available',
+    not llama_cpp_imports_successful()
+    or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false'
+    or not _has_avx2_support(),
+    reason='llama_cpp not available or AVX2 not supported',
 )
 
 skip_if_vllm_imports_unsuccessful = pytest.mark.skipif(not vllm_imports_successful(), reason='vllm not available')
@@ -156,6 +176,12 @@ def transformers_multimodal_model() -> OutlinesModel:
 
 @pytest.fixture
 def llamacpp_model() -> OutlinesModel:
+    if (
+        not llama_cpp_imports_successful()
+        or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false'
+        or not _has_avx2_support()
+    ):
+        pytest.skip('llama_cpp not available or AVX2 not supported')
     outlines_model_llamacpp = outlines.models.llamacpp.from_llamacpp(
         llama_cpp.Llama.from_pretrained(
             repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
