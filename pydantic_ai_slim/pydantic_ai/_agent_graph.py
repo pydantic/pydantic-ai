@@ -854,13 +854,6 @@ async def process_tool_calls(  # noqa: C901
         tool_calls_by_kind[kind].append(call)
 
     prompt_templates = ctx.deps.prompt_templates
-    run_context: RunContext[DepsT] | None = None
-    if prompt_templates:
-        run_context = build_run_context(ctx)
-
-    def apply_prompt_template(part: _messages.ToolReturnPart) -> None:
-        if prompt_templates and run_context is not None:
-            prompt_templates.apply_template(part, run_context)
 
     # First, we handle output tool calls
     for call in tool_calls_by_kind['output']:
@@ -870,18 +863,14 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
-                    prompt_template_type='final_result',
                 )
-                apply_prompt_template(part)
             else:
                 yield _messages.FunctionToolCallEvent(call)
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content='Output tool not used - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
-                    prompt_template_type='output_tool_not_used',
                 )
-                apply_prompt_template(part)
                 yield _messages.FunctionToolResultEvent(part)
 
             output_parts.append(part)
@@ -905,10 +894,8 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
-                    prompt_template_type='final_result',
                 )
                 output_parts.append(part)
-                apply_prompt_template(part)
                 final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
     # Then, we handle function tool calls
@@ -919,9 +906,7 @@ async def process_tool_calls(  # noqa: C901
                 tool_name=call.tool_name,
                 content='Tool not executed - a final result was already processed.',
                 tool_call_id=call.tool_call_id,
-                prompt_template_type='tool_not_executed',
             )
-            apply_prompt_template(part)
             output_parts.append(part)
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
@@ -978,9 +963,7 @@ async def process_tool_calls(  # noqa: C901
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=call.tool_call_id,
-                        prompt_template_type='tool_not_executed',
                     )
-                    apply_prompt_template(part)
                     output_parts.append(part)
         elif calls:
             deferred_calls['external'].extend(tool_calls_by_kind['external'])
