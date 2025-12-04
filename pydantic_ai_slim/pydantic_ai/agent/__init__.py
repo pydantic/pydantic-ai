@@ -364,9 +364,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
-        self._override_prompt_templates: ContextVar[
-            _utils.Option[_messages.PromptTemplates]
-        ] = ContextVar('_override_prompt_templates', default=None)
+        self._override_prompt_templates: ContextVar[_utils.Option[_messages.PromptTemplates]] = ContextVar(
+            '_override_prompt_templates', default=None
+        )
 
         self._enter_lock = Lock()
         self._entered_count = 0
