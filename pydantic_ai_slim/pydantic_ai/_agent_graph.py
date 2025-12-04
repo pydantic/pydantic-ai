@@ -225,7 +225,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
-                next_message = _messages.ModelRequest(parts=last_message.parts, timestamp=now_utc())
+                next_message = _messages.ModelRequest(parts=last_message.parts)
 
                 # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
                 user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
@@ -269,7 +269,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if self.user_prompt is not None:
                 parts.append(_messages.UserPromptPart(self.user_prompt))
 
-            next_message = _messages.ModelRequest(parts=parts, timestamp=now_utc())
+            next_message = _messages.ModelRequest(parts=parts)
 
         next_message.instructions = instructions
 
@@ -637,7 +637,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                        _messages.ModelRequest(parts=[], instructions=instructions, timestamp=now_utc())
+                        _messages.ModelRequest(parts=[], instructions=instructions)
                     )
                     return
 
@@ -705,7 +705,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                        _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions, timestamp=now_utc())
+                        _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions)
                     )
 
             self._events_iterator = _run_stream()
@@ -747,7 +747,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                _messages.ModelRequest(parts=output_parts, instructions=instructions, timestamp=now_utc())
+                _messages.ModelRequest(parts=output_parts, instructions=instructions)
             )
 
     async def _handle_text_response(
@@ -1359,7 +1359,9 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
                 )
                 merged_message = _messages.ModelRequest(
-                    parts=parts, instructions=last_message.instructions or message.instructions, timestamp=now_utc()
+                    parts=parts,
+                    instructions=last_message.instructions or message.instructions,
+                    timestamp=message.timestamp or last_message.timestamp,
                 )
                 clean_messages[-1] = merged_message
             else:
