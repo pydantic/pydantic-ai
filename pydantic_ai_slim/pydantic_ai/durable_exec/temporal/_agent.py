@@ -169,7 +169,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         if additional_models:
             for key, value in additional_models.items():
-                self._register_model_instance(key, value)
+                key = self._normalize_model_name(key)
+                self._registered_model_instances[key] = value
 
         temporal_model = TemporalModel(
             wrapped_model,
@@ -209,10 +210,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._temporal_activities = activities
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
-
-    def _register_model_instance(self, name: str, model: Model) -> None:
-        key = self._normalize_model_name(name)
-        self._registered_model_instances[key] = model
 
     def _normalize_model_name(self, name: str) -> str:
         normalized = name.strip()
@@ -947,8 +944,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                 )
 
-            # Note: Model selection is handled in _temporal_overrides context, not here
-            # since iter() is called within that context
             if toolsets is not None:
                 raise UserError(
                     'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
