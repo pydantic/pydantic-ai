@@ -364,6 +364,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
+        self._override_prompt_templates: ContextVar[
+            _utils.Option[_messages.PromptTemplates]
+        ] = ContextVar('_override_prompt_templates', default=None)
 
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -763,6 +766,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        prompt_templates: _messages.PromptTemplates | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -776,6 +780,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            prompt_templates: The prompt templates to use instead of the prompt templates passed to the agent constructor and agent run.
         """
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -808,6 +813,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instructions_token = None
 
+        if _utils.is_set(prompt_templates):
+            prompt_templates_token = self._override_prompt_templates.set(_utils.Some(prompt_templates))
+        else:
+            prompt_templates_token = None
+
         try:
             yield
         finally:
@@ -823,6 +833,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_tools.reset(tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
+            if prompt_templates_token is not None:
+                self._override_prompt_templates.reset(prompt_templates_token)
 
     @overload
     def instructions(

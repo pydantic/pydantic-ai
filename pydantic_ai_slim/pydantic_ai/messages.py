@@ -1926,7 +1926,7 @@ class PromptTemplates:
             if isinstance(self.tool_final_result, str):
                 message.content = self.tool_final_result
                 return
-            
+
             message.content = self.tool_final_result(message, ctx)
         elif isinstance(message, RetryPromptPart):
             if not self.retry_prompt:
@@ -1936,4 +1936,3 @@ class PromptTemplates:
                 message.pre_compiled = self.retry_prompt
                 return
             message.pre_compiled = self.retry_prompt(message, ctx)
-            

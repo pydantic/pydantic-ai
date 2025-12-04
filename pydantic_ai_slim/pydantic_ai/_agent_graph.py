@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
-from typing import TYPE_CHECKING, Any, Final, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never

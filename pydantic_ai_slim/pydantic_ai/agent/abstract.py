@@ -134,6 +134,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -154,6 +155,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -173,6 +175,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -207,6 +210,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -231,6 +236,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             usage=usage,
             toolsets=toolsets,
@@ -258,6 +264,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -278,6 +285,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -297,6 +305,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -330,6 +339,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -353,6 +364,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
+                prompt_templates=prompt_templates,
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=False,
@@ -374,6 +386,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -394,6 +407,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -414,6 +428,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -455,6 +470,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -484,6 +501,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps=deps,
             instructions=instructions,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             usage=usage,
             infer_name=False,
@@ -606,6 +624,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -625,6 +644,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -643,6 +663,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -686,6 +707,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -710,6 +733,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
+                prompt_templates=prompt_templates,
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=infer_name,
@@ -734,6 +758,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -753,6 +778,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -771,6 +797,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -821,6 +848,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -846,6 +875,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             usage=usage,
             toolsets=toolsets,
@@ -863,6 +893,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -889,6 +920,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     instructions=instructions,
                     deps=deps,
                     model_settings=model_settings,
+                    prompt_templates=prompt_templates,
                     usage_limits=usage_limits,
                     usage=usage,
                     infer_name=False,
@@ -918,6 +950,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -937,6 +970,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -957,6 +991,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -1033,6 +1068,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
+                this specific run, falling back to the agent defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
