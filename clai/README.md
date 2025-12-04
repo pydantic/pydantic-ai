@@ -59,6 +59,8 @@ Launch a web-based chat interface for your agent:
 clai web --agent module:agent_variable
 ```
 
+![Web Chat UI](https://github.com/user-attachments/assets/8a1c90dc-f62b-4e35-9d66-59459b45790d)
+
 For example, if you have an agent defined in `my_agent.py`:
 
 ```python
@@ -78,9 +80,10 @@ This will start a web server (default: http://127.0.0.1:7932) with a chat interf
 ### Web Command Options
 
 - `--agent`, `-a`: Agent to serve in `module:variable` format
-- `--models`, `-m`: Comma-separated models to make available (e.g., `gpt-5,sonnet-4-5`)
-- `--tools`, `-t`: Comma-separated builtin tool IDs to enable (e.g., `web_search,code_execution`)
-- `--instructions`, `-i`: System instructions for generic agent (when `--agent` not specified)
+- `--model`, `-m`: Model to make available (repeatable, agent's model is default if present)
+- `--tool`, `-t`: [Builtin tool](https://ai.pydantic.dev/builtin-tools/) to enable (repeatable). See [available tools](https://ai.pydantic.dev/ui/web/#builtin-tool-support).
+- `--mcp`: Path to MCP server config JSON file
+- `--instructions`, `-i`: System instructions. In generic mode (no `--agent`), these are the agent instructions. With `--agent`, these are passed as extra instructions to each run.
 - `--host`: Host to bind the server to (default: 127.0.0.1)
 - `--port`: Port to bind the server to (default: 7932)
 
@@ -90,29 +93,21 @@ You can specify which models and builtin tools are available in the UI via CLI f
 
 ```bash
 # Generic agent with specific models and tools
-clai web -m gpt-5,sonnet-4-5 -t web_search,code_execution
+clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5 -t web_search -t code_execution
 
 # Custom agent with additional models
-clai web --agent my_agent:my_agent -m gpt-5,gemini-2.5-pro
+clai web --agent my_agent:my_agent -m openai:gpt-5 -m google:gemini-2.5-pro
 
 # Generic agent with system instructions
-clai web -m gpt-5 -i 'You are a helpful coding assistant'
+clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
+
+# Custom agent with extra instructions for each run
+clai web --agent my_agent:my_agent -i 'Always respond in Spanish'
 ```
 
-You can also launch the web UI directly from an `Agent` instance using `Agent.to_web()`:
+When using `--agent`, the agent's configured model becomes the default. CLI models (`-m`) are additional options. Without `--agent`, the first `-m` model is the default.
 
-```python
-from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import WebSearchTool
-
-agent = Agent('openai:gpt-5')
-
-# Use defaults
-app = agent.to_web()
-
-# Or customize models and tools
-app = agent.to_web(builtin_tools=[WebSearchTool()])
-```
+For full documentation, see [Web Chat UI](https://ai.pydantic.dev/ui/web/).
 
 ## Help
 

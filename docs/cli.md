@@ -72,7 +72,49 @@ clai web --agent my_agent:my_agent
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface for your agent.
 
-For more details on web UI options, MCP server configuration, and programmatic usage with `Agent.to_web()`, see the [Web Chat UI documentation](ui/web.md).
+#### CLI Options
+
+```bash
+# With a custom agent
+clai web --agent my_module:my_agent
+
+# With specific models (first is default when no --agent)
+clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5
+
+# With builtin tools
+clai web -m openai:gpt-5 -t web_search -t code_execution
+
+# Generic agent with system instructions
+clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
+
+# Custom agent with extra instructions for each run
+clai web --agent my_module:my_agent -i 'Always respond in Spanish'
+```
+
+| Option | Description |
+|--------|-------------|
+| `--agent`, `-a` | Agent to serve in `module:variable` format |
+| `--model`, `-m` | Model to make available (repeatable, agent's model is default if present) |
+| `--tool`, `-t` | [Builtin tool](builtin-tools.md) to enable (repeatable). See [available tools](ui/web.md#builtin-tool-support). |
+| `--mcp` | Path to MCP server config JSON file |
+| `--instructions`, `-i` | System instructions. In generic mode (no `--agent`), these are the agent instructions. With `--agent`, these are passed as extra instructions to each run. |
+| `--host` | Host to bind server (default: 127.0.0.1) |
+| `--port` | Port to bind server (default: 7932) |
+
+!!! note "Memory Tool"
+    The `memory` tool requires the agent to have memory configured and cannot be enabled via `-t memory` alone. An agent with memory must be provided via `--agent`.
+
+#### MCP Server Configuration
+
+You can enable [MCP (Model Context Protocol)](mcp/overview.md) servers using a JSON configuration file:
+
+```bash
+clai web --agent my_agent:my_agent --mcp mcp-servers.json
+```
+
+See [Loading MCP Servers from Configuration](mcp/client.md#loading-mcp-servers-from-configuration) for the full configuration format and environment variable syntax.
+
+For programmatic usage with `Agent.to_web()`, see the [Web UI documentation](ui/web.md).
 
 ### Help
 

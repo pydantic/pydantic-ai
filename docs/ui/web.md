@@ -2,82 +2,84 @@
 
 Pydantic AI includes a built-in web chat interface that you can use to interact with your agents through a browser.
 
-https://github.com/user-attachments/assets/8a1c90dc-f62b-4e35-9d66-59459b45790d
+<video src="https://github.com/user-attachments/assets/8a1c90dc-f62b-4e35-9d66-59459b45790d" autoplay loop muted playsinline></video>
 
 ## Installation
 
-Install the `web` extra to get the required dependencies:
+Install the `web` extra (installs Starlette):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[web]'
 ```
 
+For CLI usage with `clai web`, see the [CLI documentation](../cli.md#web-chat-ui).
+
 ## Usage
 
-There are two ways to launch the web chat UI:
+Create a web app from an agent instance using [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web]:
 
-### 1. Using the CLI (`clai web`)
+=== "Using Model Names"
 
-The simplest way to start the web UI is using the `clai web` command:
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.builtin_tools import WebSearchTool
 
-```bash
-# With a custom agent
-clai web --agent my_module:my_agent
+    model = 'openai:gpt-5'
+    agent = Agent(model)
 
-# With specific models
-clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'The weather in {city} is sunny'
 
-# With builtin tools
-clai web -m openai:gpt-5 -t web_search -t code_execution
+    # Create app with model names (their display names are auto-generated)
+    app = agent.to_web(
+        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
+        builtin_tools=[WebSearchTool()],
+    )
 
-# Generic agent with system instructions
-clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
-```
+    # Or with custom display labels
+    app = agent.to_web(
+        models={'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'},
+        builtin_tools=[WebSearchTool()],
+    )
+    ```
 
-#### CLI Options
+=== "Using Model Instances"
 
-| Option | Description |
-|--------|-------------|
-| `--agent`, `-a` | Agent to serve in `module:variable` format |
-| `--model`, `-m` | Model to make available (repeatable) |
-| `--tool`, `-t` | Builtin tool to enable (repeatable) |
-| `--instructions`, `-i` | System instructions (when `--agent` not specified) |
-| `--host` | Host to bind server (default: 127.0.0.1) |
-| `--port` | Port to bind server (default: 7932) |
-| `--mcp` | Path to MCP server config JSON file |
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.openai import OpenAIModel
 
-Model names without a provider prefix are automatically inferred:
+    # Create separate models with their own custom configuration
+    anthropic_model = AnthropicModel('claude-sonnet-4-5')
+    openai_model = OpenAIModel('gpt-5', api_key='custom-key')
 
-- `gpt-*`, `o1`, `o3` → OpenAI
-- `claude-*`, `sonnet`, `opus`, `haiku` → Anthropic
-- `gemini-*` → Google
+    agent = Agent(openai_model)
 
-### 2. Using `Agent.to_web()` Programmatically
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'The weather in {city} is sunny'
 
-For more control, you can create a web app from an agent instance:
+    # Use the instances directly
+    app = agent.to_web(
+        models=[openai_model, anthropic_model],
+        builtin_tools=[WebSearchTool()],
+    )
 
-```python
-from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import WebSearchTool
+    # Or mix instances and strings with custom labels
+    app = agent.to_web(
+        models={'Custom GPT': openai_model, 'Claude': 'anthropic:claude-sonnet-4-5'},
+        builtin_tools=[WebSearchTool()],
+    )
 
-agent = Agent('openai:gpt-5')
-
-@agent.tool_plain
-def get_weather(city: str) -> str:
-    return f'The weather in {city} is sunny'
-
-# Create app with model names (their display names are auto-generated)
-app = agent.to_web(
-    models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
-    builtin_tools=[WebSearchTool()],
-)
-
-# Or with custom display labels
-app = agent.to_web(
-    models={'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'},
-    builtin_tools=[WebSearchTool()],
-)
-```
+    # With extra instructions passed to each run
+    app = agent.to_web(
+        models=[openai_model],
+        instructions='Always respond in a friendly tone.',
+    )
+    ```
 
 The returned Starlette app can be run with any ASGI server:
 
@@ -85,66 +87,30 @@ The returned Starlette app can be run with any ASGI server:
 uvicorn my_module:app --host 0.0.0.0 --port 8080
 ```
 
-!!! note "Reserved Routes"
-    The web UI app uses the following routes which should not be overwritten:
-
-    - `/` and `/{id}` - Serves the chat UI
-    - `/api/chat` - Chat endpoint (POST, OPTIONS)
-    - `/api/configure` - Frontend configuration (GET)
-    - `/api/health` - Health check (GET)
-
-    The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
-
-## MCP Server Configuration
-
-You can enable [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers using a JSON configuration file:
-
-```bash
-clai web --agent my_agent:my_agent --mcp mcp-servers.json
-```
-
-Example JSON configuration:
-
-```json
-{
-  "mcpServers": {
-    "deepwiki": {
-      "url": "https://mcp.deepwiki.com/mcp"
-    },
-    "github": {
-      "url": "https://api.githubcopilot.com/mcp",
-      "authorizationToken": "${GITHUB_TOKEN}"
-    }
-  }
-}
-```
-
-Environment variables can be referenced using `${VAR_NAME}` syntax, with optional defaults: `${VAR_NAME:-default_value}`.
-
-Each server entry supports:
-
-| Field | Description |
-|-------|-------------|
-| `url` (required) | The MCP server URL |
-| `authorizationToken` | Authorization token for the server |
-| `description` | Description shown in the UI |
-| `allowedTools` | List of allowed tool names |
-| `headers` | Additional HTTP headers |
-
 ## Builtin Tool Support
 
-When using the new models API, builtin tool support is automatically determined from each model's profile. The UI will only show tools that the selected model supports.
+Builtin tool support is automatically determined from each model's profile. The UI will only show tools that the selected model supports.
 
-Available builtin tools:
+Available [builtin tools](../builtin-tools.md):
 
-- `web_search` - Web search capability
-- `code_execution` - Code execution in a sandbox
-- `image_generation` - Image generation
-- `web_fetch` - Fetch content from URLs
-- `memory` - Persistent memory across conversations
+- `web_search` - Web search capability ([`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool])
+- `code_execution` - Code execution in a sandbox ([`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool])
+- `image_generation` - Image generation ([`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool])
+- `web_fetch` - Fetch content from URLs ([`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool])
+- `memory` - Persistent memory across conversations ([`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool])
 
 !!! note "Memory Tool Requirements"
     The `memory` tool requires the agent to have memory configured via the
-    `memory` parameter when creating the agent. It cannot be enabled via
-    the CLI `-t memory` flag alone - an agent with memory must be provided
-    via `--agent`.
+    `memory` parameter when creating the agent.
+
+
+## Reserved Routes
+
+The web UI app uses the following routes which should not be overwritten:
+
+- `/` and `/{id}` - Serves the chat UI
+- `/api/chat` - Chat endpoint (POST, OPTIONS)
+- `/api/configure` - Frontend configuration (GET)
+- `/api/health` - Health check (GET)
+
+The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
