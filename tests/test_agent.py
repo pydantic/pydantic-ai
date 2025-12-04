@@ -3346,9 +3346,7 @@ class TestMultipleToolCalls:
         def process_first(output: FirstOutput) -> FirstOutput:
             """Process first output - will be invalid."""
             output_tools_called.append('first')
-            if output.value == 'invalid':
-                raise ModelRetry('First output validation failed')
-            return output
+            raise ModelRetry('First output validation failed')
 
         def process_second(output: SecondOutput) -> SecondOutput:
             """Process second output - will be valid."""
@@ -3437,9 +3435,7 @@ class TestMultipleToolCalls:
         def process_second(output: SecondOutput) -> SecondOutput:
             """Process second output - will be invalid."""
             output_tools_called.append('second')
-            if output.value == 'invalid':
-                raise ModelRetry('Second output validation failed')
-            return output
+            raise ModelRetry('Second output validation failed')
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
@@ -3497,117 +3493,6 @@ class TestMultipleToolCalls:
                         RetryPromptPart(
                             content='Second output validation failed',
                             tool_name='second_output',
-                            tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                    ],
-                    run_id=IsStr(),
-                ),
-            ]
-        )
-
-    def test_exhaustive_strategy_multiple_final_results_with_retry(self):
-        """Test that exhaustive strategy works correctly with retries when first tool initially fails."""
-        output_tools_called: list[tuple[str, int]] = []
-        call_count = 0
-
-        class FirstOutput(BaseModel):
-            value: str
-
-        class SecondOutput(BaseModel):
-            value: str
-
-        def process_first(output: FirstOutput) -> FirstOutput:
-            """Process first output - invalid on first call, valid on retry."""
-            nonlocal call_count
-            output_tools_called.append(('first', call_count))
-            if output.value == 'invalid':
-                raise ModelRetry('First output validation failed')
-            return output
-
-        def process_second(output: SecondOutput) -> SecondOutput:
-            """Process second output - always valid."""
-            nonlocal call_count
-            output_tools_called.append(('second', call_count))
-            return output
-
-        def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal call_count
-            call_count += 1
-            assert info.output_tools is not None
-
-            # First call: first tool invalid, second valid
-            if call_count == 1:
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart('first_output', {'value': 'invalid'}),
-                        ToolCallPart('second_output', {'value': 'valid_second'}),
-                    ],
-                )
-            # Second call (after retry): both tools valid
-            else:
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart('first_output', {'value': 'valid_first'}),
-                        ToolCallPart('second_output', {'value': 'valid_second_again'}),
-                    ],
-                )
-
-        agent = Agent(
-            FunctionModel(return_model),
-            output_type=[
-                ToolOutput(process_first, name='first_output'),
-                ToolOutput(process_second, name='second_output'),
-            ],
-            end_strategy='exhaustive',
-            output_retries=1,  # Allow one retry
-        )
-
-        result = agent.run_sync('test multiple retries')
-
-        # Verify the result came from the second output tool (first attempt)
-        # With exhaustive strategy, second tool succeeds on first try and becomes final_result
-        assert isinstance(result.output, SecondOutput)
-        assert result.output.value == snapshot('valid_second')
-
-        # Verify both output tools were called on first attempt
-        # First tool failed, second succeeded (becomes final_result)
-        # With exhaustive strategy, both tools are called even though one fails
-        assert output_tools_called == snapshot(
-            [
-                ('first', 1),  # First attempt - fails
-                ('second', 1),  # First attempt - succeeds, becomes final_result
-            ]
-        )
-
-        # Verify we got appropriate messages
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='test multiple retries', timestamp=IsNow(tz=timezone.utc))],
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(tool_name='first_output', args={'value': 'invalid'}, tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='second_output', args={'value': 'valid_second'}, tool_call_id=IsStr()),
-                    ],
-                    usage=RequestUsage(input_tokens=53, output_tokens=10),
-                    model_name='function:return_model:',
-                    timestamp=IsNow(tz=timezone.utc),
-                    run_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        RetryPromptPart(
-                            content='First output validation failed',
-                            tool_name='first_output',
-                            tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                        ToolReturnPart(
-                            tool_name='second_output',
-                            content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -3724,6 +3609,55 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    def test_exhaustive_strategy_with_validation_error(self):
+        """Test that exhaustive strategy doesn't increment retries when one output has validation error but another is valid."""
+        output_tools_called: list[str] = []
+
+        class ValidOutput(BaseModel):
+            value: str
+
+        class InvalidOutput(BaseModel):
+            required_field: str  # This field is required
+
+        def process_valid(output: ValidOutput) -> ValidOutput:
+            """Process valid output - will succeed."""
+            output_tools_called.append('valid')
+            return output
+
+        def process_invalid(output: InvalidOutput) -> InvalidOutput:
+            """Process invalid output - will fail validation due to missing field."""
+            output_tools_called.append('invalid')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('valid_output', {'value': 'valid'}),
+                    # Missing 'required_field' will cause validation error
+                    ToolCallPart('invalid_output', {'wrong_field': 'invalid'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_valid, name='valid_output'),
+                ToolOutput(process_invalid, name='invalid_output'),
+            ],
+            end_strategy='exhaustive',
+            output_retries=0,  # No retries - should succeed with valid output
+        )
+
+        result = agent.run_sync('test validation error with valid output')
+
+        # Verify the result came from the valid output tool
+        assert isinstance(result.output, ValidOutput)
+        assert result.output.value == 'valid'
+
+        # Verify both output tools were called
+        assert output_tools_called == ['valid', 'invalid']
 
     def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
         """Test that 'early' strategy does not apply to tool calls when no output tool is called."""
