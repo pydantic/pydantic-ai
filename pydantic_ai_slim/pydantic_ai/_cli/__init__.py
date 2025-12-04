@@ -128,9 +128,7 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(  # noqa: C901
-    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5'
-) -> int:
+def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
@@ -138,8 +136,26 @@ def cli(  # noqa: C901
 
     parser = argparse.ArgumentParser(
         prog=prog_name,
-        description=f"""\
-Pydantic AI CLI v{__version__}\n\n
+        description=f'Pydantic AI CLI v{__version__}',
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    parser.add_argument(
+        '-l',
+        '--list-models',
+        action='store_true',
+        help='List all available models and exit',
+    )
+    parser.add_argument('--version', action='store_true', help='Show version and exit')
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Chat subcommand
+    chat_parser = subparsers.add_parser(
+        'chat',
+        help='Interactive chat with an AI model',
+        description="""\
+Interactive chat mode with an AI model.
 
 Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
@@ -149,39 +165,29 @@ Special prompts:
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
-
-    parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
-
-    arg = parser.add_argument(
+    chat_parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
+    chat_model_arg = chat_parser.add_argument(
         '-m',
         '--model',
         nargs='?',
         help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
     )
-    arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
-    parser.add_argument(
+    chat_model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
+    chat_parser.add_argument(
         '-a',
         '--agent',
         help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
     )
-    parser.add_argument(
-        '-l',
-        '--list-models',
-        action='store_true',
-        help='List all available models and exit',
-    )
-    parser.add_argument(
+    chat_parser.add_argument(
         '-t',
         '--code-theme',
         nargs='?',
         help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
         default='dark',
     )
-    parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
-    parser.add_argument('--version', action='store_true', help='Show version and exit')
+    chat_parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
 
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-
+    # Web subcommand
     web_parser = subparsers.add_parser(
         'web',
         help='Launch web chat UI for an agent',
@@ -211,7 +217,6 @@ Special prompts:
         help=f'Builtin tool to enable (can be repeated, e.g., -t web_search -t code_execution). '
         f'Available: {", ".join(_CLI_TOOL_IDS)}.',
     )
-
     web_parser.add_argument(
         '-i',
         '--instructions',
@@ -229,6 +234,18 @@ Special prompts:
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
+    console = Console()
+    name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
+
+    if args.version:
+        console.print(name_version, highlight=False)
+        return 0
+    if args.list_models:
+        console.print(f'{name_version}\n\n[green]Available models:[/green]')
+        for model in qualified_model_names:
+            console.print(f'  {model}', highlight=False)
+        return 0
+
     if args.command == 'web':
         from .web import run_web_command
 
@@ -242,17 +259,18 @@ Special prompts:
             mcp=args.mcp,
         )
 
-    console = Console()
-    name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
-    if args.version:
-        console.print(name_version, highlight=False)
-        return 0
-    if args.list_models:
-        console.print(f'{name_version}\n\n[green]Available models:[/green]')
-        for model in qualified_model_names:
-            console.print(f'  {model}', highlight=False)
-        return 0
+    if args.command == 'chat':
+        return _run_chat_command(args, console, name_version, default_model, prog_name)
 
+    # No command specified - show help
+    parser.print_help()
+    return 0
+
+
+def _run_chat_command(
+    args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
+) -> int:
+    """Handle the chat subcommand."""
     agent: Agent[None, str] = cli_agent
     if args.agent:
         loaded = load_agent(args.agent)

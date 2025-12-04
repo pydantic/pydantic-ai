@@ -22,7 +22,7 @@ export OPENAI_API_KEY='your-api-key-here'
 Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
 ```bash
-uvx clai
+uvx clai chat
 ```
 
 Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools), run:
@@ -30,7 +30,7 @@ Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools
 ```bash
 uv tool install clai
 ...
-clai
+clai chat
 ```
 
 Or with `pip`, run:
@@ -38,10 +38,10 @@ Or with `pip`, run:
 ```bash
 pip install clai
 ...
-clai
+clai chat
 ```
 
-Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Either way, running `clai chat` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
@@ -122,6 +122,8 @@ To get help on the CLI, use the `--help` flag:
 
 ```bash
 uvx clai --help
+uvx clai chat --help
+uvx clai web --help
 ```
 
 ### Choose a model
@@ -129,7 +131,7 @@ uvx clai --help
 You can specify which model to use with the `--model` flag:
 
 ```bash
-uvx clai --model anthropic:claude-sonnet-4-0
+uvx clai chat --model anthropic:claude-sonnet-4-0
 ```
 
 (a full list of models available can be printed with `uvx clai --list-models`)
@@ -147,7 +149,7 @@ agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 Then run:
 
 ```bash
-uvx clai --agent custom_agent:agent "What's the weather today?"
+uvx clai chat --agent custom_agent:agent "What's the weather today?"
 ```
 
 The format must be `module:variable` where:
