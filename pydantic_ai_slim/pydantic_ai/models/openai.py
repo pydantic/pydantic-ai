@@ -2347,7 +2347,7 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
     """
 
     def update_provider_details(existing: dict[str, Any] | None) -> dict[str, Any]:
-        details = dict(existing or {})
+        details = {**(existing or {})}
         raw_list: list[str] = list(details.get('raw_content', []))
         while len(raw_list) <= index:
             raw_list.append('')

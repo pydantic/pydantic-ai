@@ -48,7 +48,7 @@ this includes ToolCallPartDelta's in addition to the more fully-formed ModelResp
 
 PartT = TypeVar('PartT', bound=ManagedPart)
 
-ProviderDetailsInput: TypeAlias = 'dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None'
+ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
@@ -71,49 +71,6 @@ class ModelResponsePartsManager:
             A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
         """
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
-
-    def _stop_tracking_vendor_id(self, vendor_part_id: VendorId | None) -> None:
-        """Stop tracking a vendor_part_id (no-op if None or not tracked)."""
-        if vendor_part_id is not None:  # pragma: no branch
-            self._vendor_id_to_part_index.pop(vendor_part_id, None)
-
-    def _append_part(self, part: ManagedPart, vendor_part_id: VendorId | None = None) -> int:
-        """Append a part, optionally track vendor_part_id, return new index."""
-        new_index = len(self._parts)
-        self._parts.append(part)
-        if vendor_part_id is not None:
-            self._vendor_id_to_part_index[vendor_part_id] = new_index
-        return new_index
-
-    def _latest_part_if_of_type(self, *part_types: type[PartT]) -> tuple[PartT, int] | None:
-        """Get the latest part and its index if it's an instance of the given type(s)."""
-        if self._parts:
-            part_index = len(self._parts) - 1
-            latest_part = self._parts[part_index]
-            if isinstance(latest_part, part_types):
-                return latest_part, part_index
-        return None
-
-    def _handle_embedded_thinking_start(
-        self, vendor_part_id: VendorId, provider_details: dict[str, Any] | None
-    ) -> Iterator[ModelResponseStreamEvent]:
-        """Handle <think> tag - create new ThinkingPart."""
-        self._stop_tracking_vendor_id(vendor_part_id)
-        part = ThinkingPart(content='', provider_details=provider_details)
-        new_index = self._append_part(part, vendor_part_id)
-        yield PartStartEvent(index=new_index, part=part)
-
-    def _handle_embedded_thinking_content(
-        self, existing_part: ThinkingPart, part_index: int, content: str, provider_details: dict[str, Any] | None
-    ) -> Iterator[ModelResponseStreamEvent]:
-        """Handle content inside <think>...</think>."""
-        part_delta = ThinkingPartDelta(content_delta=content, provider_details=provider_details)
-        self._parts[part_index] = part_delta.apply(existing_part)
-        yield PartDeltaEvent(index=part_index, delta=part_delta)
-
-    def _handle_embedded_thinking_end(self, vendor_part_id: VendorId) -> None:
-        """Handle </think> tag - stop tracking so next delta creates new part."""
-        self._stop_tracking_vendor_id(vendor_part_id)
 
     def handle_text_delta(
         self,
@@ -204,7 +161,7 @@ class ModelResponsePartsManager:
         id: str | None = None,
         signature: str | None = None,
         provider_name: str | None = None,
-        provider_details: ProviderDetailsInput = None,
+        provider_details: ProviderDetailsDelta = None,
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
 
@@ -266,21 +223,15 @@ class ModelResponsePartsManager:
         else:
             existing_thinking_part, part_index = existing_thinking_part_and_index
 
-            resolved_details = (
-                provider_details(existing_thinking_part.provider_details)
-                if callable(provider_details)
-                else provider_details
-            )
-
             # Skip if nothing to update
-            if content is None and signature is None and provider_name is None and resolved_details is None:
+            if content is None and signature is None and provider_name is None and provider_details is None:
                 return
 
             part_delta = ThinkingPartDelta(
                 content_delta=content,
                 signature_delta=signature,
                 provider_name=provider_name,
-                provider_details=resolved_details,
+                provider_details=provider_details,
             )
             self._parts[part_index] = part_delta.apply(existing_thinking_part)
             yield PartDeltaEvent(index=part_index, delta=part_delta)
@@ -447,3 +398,46 @@ class ModelResponsePartsManager:
                 new_part_index = self._append_part(part)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=part)
+
+    def _stop_tracking_vendor_id(self, vendor_part_id: VendorId | None) -> None:
+        """Stop tracking a vendor_part_id (no-op if None or not tracked)."""
+        if vendor_part_id is not None:  # pragma: no branch
+            self._vendor_id_to_part_index.pop(vendor_part_id, None)
+
+    def _append_part(self, part: ManagedPart, vendor_part_id: VendorId | None = None) -> int:
+        """Append a part, optionally track vendor_part_id, return new index."""
+        new_index = len(self._parts)
+        self._parts.append(part)
+        if vendor_part_id is not None:
+            self._vendor_id_to_part_index[vendor_part_id] = new_index
+        return new_index
+
+    def _latest_part_if_of_type(self, *part_types: type[PartT]) -> tuple[PartT, int] | None:
+        """Get the latest part and its index if it's an instance of the given type(s)."""
+        if self._parts:
+            part_index = len(self._parts) - 1
+            latest_part = self._parts[part_index]
+            if isinstance(latest_part, part_types):
+                return latest_part, part_index
+        return None
+
+    def _handle_embedded_thinking_start(
+        self, vendor_part_id: VendorId, provider_details: dict[str, Any] | None
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle <think> tag - create new ThinkingPart."""
+        self._stop_tracking_vendor_id(vendor_part_id)
+        part = ThinkingPart(content='', provider_details=provider_details)
+        new_index = self._append_part(part, vendor_part_id)
+        yield PartStartEvent(index=new_index, part=part)
+
+    def _handle_embedded_thinking_content(
+        self, existing_part: ThinkingPart, part_index: int, content: str, provider_details: dict[str, Any] | None
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle content inside <think>...</think>."""
+        part_delta = ThinkingPartDelta(content_delta=content, provider_details=provider_details)
+        self._parts[part_index] = part_delta.apply(existing_part)
+        yield PartDeltaEvent(index=part_index, delta=part_delta)
+
+    def _handle_embedded_thinking_end(self, vendor_part_id: VendorId) -> None:
+        """Handle </think> tag - stop tracking so next delta creates new part."""
+        self._stop_tracking_vendor_id(vendor_part_id)
