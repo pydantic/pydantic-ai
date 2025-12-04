@@ -63,10 +63,11 @@ def run_web_command(
         models = [agent_model] + [m for m in (models or []) if m != agent_model]
 
     # collect builtin tools
-    all_tool_instances: list[AbstractBuiltinTool] = []
-
-    # agent's own builtin tools first
-    all_tool_instances.extend(agent._builtin_tools)  # pyright: ignore[reportPrivateUsage]
+    all_tool_instances: list[AbstractBuiltinTool] = [
+        t
+        for t in agent._builtin_tools  # pyright: ignore[reportPrivateUsage]
+        if isinstance(t, AbstractBuiltinTool)
+    ]
 
     # then CLI tools
     if tools:
