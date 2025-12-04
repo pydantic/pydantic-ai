@@ -4,10 +4,12 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
+import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
-from ..exceptions import UserError
+from ..exceptions import ToolRetryError, UserError
+from ..messages import RetryPromptPart
 from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -196,7 +198,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
-                Defaults to None (no timeout). Overrides the agent-level `tool_timeout` if set.
+                Defaults to None (no timeout).
         """
 
         def tool_decorator(
@@ -274,7 +276,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
-                Defaults to None (no timeout). Overrides the agent-level `tool_timeout` if set.
+                Defaults to None (no timeout).
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -357,4 +359,19 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
-        return await tool.call_func(tool_args, ctx)
+
+        timeout = tool.timeout
+        if timeout is not None:
+            try:
+                with anyio.fail_after(timeout):
+                    return await tool.call_func(tool_args, ctx)
+            except TimeoutError:
+                assert ctx.tool_call_id is not None  # Set by ToolManager._call_tool
+                m = RetryPromptPart(
+                    tool_name=name,
+                    content=f'Timed out after {timeout} seconds.',
+                    tool_call_id=ctx.tool_call_id,
+                )
+                raise ToolRetryError(m) from None
+        else:
+            return await tool.call_func(tool_args, ctx)

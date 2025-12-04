@@ -2487,9 +2487,9 @@ async def test_tool_timeout_triggers_retry():
         # After receiving retry, return text
         return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
 
-    agent = Agent(FunctionModel(model_logic), tool_timeout=0.1)
+    agent = Agent(FunctionModel(model_logic))
 
-    @agent.tool_plain
+    @agent.tool_plain(timeout=0.1)
     async def slow_tool() -> str:
         await asyncio.sleep(1.0)  # 1 second, but timeout is 0.1s
         return 'done'  # pragma: no cover
@@ -2502,16 +2502,16 @@ async def test_tool_timeout_triggers_retry():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'timed out' in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
     assert retry_parts[0].tool_name == 'slow_tool'
 
 
 @pytest.mark.anyio
-async def test_per_tool_timeout_overrides_global():
-    """Test that per-tool timeout takes precedence over agent-level timeout."""
+async def test_tool_with_timeout_completes_successfully():
+    """Test that a tool completes successfully when within its timeout."""
     import asyncio
 
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -2530,22 +2530,22 @@ async def test_per_tool_timeout_overrides_global():
         # Second call: tool completed successfully, return final response
         return ModelResponse(parts=[TextPart(content='Tool completed successfully')])
 
-    agent = Agent(FunctionModel(model_logic), tool_timeout=0.05)  # 50ms global timeout
+    agent = Agent(FunctionModel(model_logic))
 
     @agent.tool_plain(timeout=5.0)  # 5s per-tool timeout
     async def slow_but_allowed_tool() -> str:
-        await asyncio.sleep(0.2)  # 200ms - would timeout with global, but OK with per-tool
+        await asyncio.sleep(0.2)  # 200ms - within 5s timeout
         return 'completed successfully'
 
     result = await agent.run('call slow_but_allowed_tool')
 
-    # Should NOT have any retry prompts since per-tool timeout is 5s
+    # Should NOT have any retry prompts since tool completed within timeout
     retry_parts = [
         part
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'timed out' in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 0
     assert 'completed successfully' in result.output
@@ -2574,11 +2574,11 @@ async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
 
-    agent = Agent(TestModel(), tool_timeout=0.05, retries=2)
+    agent = Agent(TestModel(), retries=2)
 
     call_count = 0
 
-    @agent.tool_plain
+    @agent.tool_plain(timeout=0.05)
     async def flaky_tool() -> str:
         nonlocal call_count
         call_count += 1
@@ -2606,9 +2606,9 @@ async def test_tool_timeout_message_format():
             return ModelResponse(parts=[ToolCallPart(tool_name='my_slow_tool', args={}, tool_call_id='call-1')])
         return ModelResponse(parts=[TextPart(content='done')])
 
-    agent = Agent(FunctionModel(model_logic), tool_timeout=0.1)
+    agent = Agent(FunctionModel(model_logic))
 
-    @agent.tool_plain
+    @agent.tool_plain(timeout=0.1)
     async def my_slow_tool() -> str:
         await asyncio.sleep(1.0)
         return 'done'  # pragma: no cover
@@ -2620,11 +2620,10 @@ async def test_tool_timeout_message_format():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'timed out' in str(part.content)
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    # Check message contains tool name and timeout value
-    assert 'my_slow_tool' in retry_parts[0].content
+    # Check message contains timeout value (tool_name is in the part, not in content)
     assert '0.1' in retry_parts[0].content
     assert retry_parts[0].tool_name == 'my_slow_tool'
 
@@ -2654,3 +2653,27 @@ def test_tool_timeout_default_none():
     tool = agent._function_toolset.tools['tool_without_timeout']
     assert tool.timeout is None
     assert tool.tool_def.timeout is None
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_exceeds_retry_limit():
+    """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
+    import asyncio
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Always try to call the slow tool
+        return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+
+    @agent.tool_plain(timeout=0.05)
+    async def always_slow_tool() -> str:
+        await asyncio.sleep(1.0)  # Always timeout
+        return 'done'  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match="exceeded max retries"):
+        await agent.run('call always_slow_tool')

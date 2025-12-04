@@ -61,7 +61,7 @@ class ToolsetTool(Generic[AgentDepsT]):
     """Timeout in seconds for tool execution.
 
     If the tool takes longer than this, a retry prompt is returned to the model.
-    Defaults to None (no timeout). Overrides the agent-level `tool_timeout` if set.
+    Defaults to None (no timeout).
     """
 
 

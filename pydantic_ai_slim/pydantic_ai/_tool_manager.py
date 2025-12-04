@@ -7,7 +7,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic
 
-import anyio
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import assert_never
@@ -36,8 +35,6 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
-    default_timeout: float | None = None
-    """Default timeout in seconds for tool execution. None means no timeout."""
 
     @classmethod
     @contextmanager
@@ -65,7 +62,6 @@ class ToolManager(Generic[AgentDepsT]):
             toolset=self.toolset,
             ctx=ctx,
             tools=await self.toolset.get_tools(ctx),
-            default_timeout=self.default_timeout,
         )
 
     @property
@@ -176,25 +172,20 @@ class ToolManager(Generic[AgentDepsT]):
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
 
-            # Determine effective timeout: per-tool timeout takes precedence over default
-            effective_timeout = tool.timeout if tool.timeout is not None else self.default_timeout
+            return await self.toolset.call_tool(name, args_dict, ctx, tool)
+        except ToolRetryError:
+            # ToolRetryError can be raised by toolset.call_tool() (e.g., on timeout)
+            # We need to track it as a failed tool for retry counting
+            max_retries = tool.max_retries if tool is not None else 1
+            current_retry = self.ctx.retries.get(name, 0)
 
-            if effective_timeout is not None:
-                try:
-                    with anyio.fail_after(effective_timeout):
-                        result = await self.toolset.call_tool(name, args_dict, ctx, tool)
-                except TimeoutError:
-                    m = _messages.RetryPromptPart(
-                        tool_name=name,
-                        content=f"Tool '{name}' timed out after {effective_timeout} seconds. Please try a different approach.",
-                        tool_call_id=call.tool_call_id,
-                    )
-                    self.failed_tools.add(name)
-                    raise ToolRetryError(m) from None
-            else:
-                result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+            if current_retry == max_retries:
+                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}')
 
-            return result
+            if not allow_partial:
+                self.failed_tools.add(name)
+
+            raise
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
             current_retry = self.ctx.retries.get(name, 0)

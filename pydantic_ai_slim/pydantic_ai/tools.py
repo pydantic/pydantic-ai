@@ -344,7 +344,7 @@ class Tool(Generic[ToolAgentDepsT]):
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
-                Defaults to None (no timeout). Overrides the agent-level `tool_timeout` if set.
+                Defaults to None (no timeout).
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -513,7 +513,7 @@ class ToolDefinition:
     """Timeout in seconds for tool execution.
 
     If the tool takes longer than this, a retry prompt is returned to the model.
-    Defaults to None (no timeout). Overrides the agent-level `tool_timeout` if set.
+    Defaults to None (no timeout).
     """
 
     @property
