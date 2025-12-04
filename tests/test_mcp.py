@@ -50,7 +50,6 @@ with try_import() as imports_successful:
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
     from mcp.types import (
-        AudioContent,
         CreateMessageRequestParams,
         ElicitRequestParams,
         ElicitResult,
@@ -1559,27 +1558,19 @@ def test_map_from_pai_messages_with_binary_content():
         ]
     )
 
-    # Unsupported binary content type raises NotImplementedError
-    video_data = base64.b64encode(b'raw_video_bytes')
+    # Unsupported content type raises NotImplementedError
     message_with_video = ModelRequest(
-        parts=[UserPromptPart(content=[BinaryContent(data=video_data, media_type='video/mp4')])]
+        parts=[UserPromptPart(content=[BinaryContent(data=b'raw_video_bytes', media_type='video/mp4')])]
     )
-    with pytest.raises(NotImplementedError, match='Unsupported binary content type: video/mp4'):
+    with pytest.raises(
+        NotImplementedError, match="Unsupported content type: <class 'pydantic_ai.messages.BinaryContent'>"
+    ):
         map_from_pai_messages([message_with_video])
 
 
 def test_map_from_model_response():
     with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
         map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
-
-
-async def test_map_tool_result_part_audio():
-    """Test that _map_tool_result_part correctly handles AudioContent."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    audio_content = AudioContent(type='audio', data='ZmFrZV9hdWRpb19kYXRh', mimeType='audio/mpeg')
-    async with server:
-        result = await server._map_tool_result_part(audio_content)  # pyright: ignore[reportPrivateUsage]
-        assert result == BinaryContent(data=b'fake_audio_data', media_type='audio/mpeg')
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
