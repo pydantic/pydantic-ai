@@ -288,6 +288,7 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
   - sane_lists # this means you can start a list from any number
+  - pydantic_docs.mdext
 
 watch:
   - pydantic_ai_slim

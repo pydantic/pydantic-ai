@@ -653,7 +653,7 @@ class CachePoint:
 
     Supported by:
 
-    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
