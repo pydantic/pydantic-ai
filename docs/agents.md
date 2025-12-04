@@ -708,7 +708,7 @@ print(result_sync.output)
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
 
 !!! note "Model Settings Support"
-    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like `FallbackModel`, `WrapperModel`, and `InstrumentedModel` don't have their own settings - they use the settings of their underlying models.
+    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model), [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], and [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] don't have their own settings - they use the settings of their underlying models.
 
 ### Model specific settings
 
