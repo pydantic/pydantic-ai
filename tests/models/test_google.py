@@ -4434,20 +4434,105 @@ def test_google_missing_tool_call_thought_signature():
     )
 
 
-def test_google_mapping_when_does_not_support_tools():
-    google_response = _content_model_response(
+async def test_google_mapping_messages_no_tool_support(google_provider: GoogleProvider):
+    old_messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content='What is the largest city in the user country?',
+                    timestamp=IsDatetime(),
+                )
+            ],
+            run_id=IsStr(),
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_user_country',
+                    content='Mexico',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
+            ],
+            run_id=IsStr(),
+        ),
         ModelResponse(
             parts=[
-                ToolCallPart(tool_name='tool', args={}, tool_call_id='tool_call_id'),
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'city': 'Mexico City', 'country': 'Mexico'},
+                    tool_call_id=IsStr(),
+                )
             ],
-            provider_name='openai',
         ),
-        'google-gla',
-        False,
-    )
-    assert google_response == snapshot(
-        {
-            'role': 'model',
-            'parts': [{'text': 'Tool tool called with args {}'}],
-        }
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
+            ],
+            run_id=IsStr(),
+        ),
+    ]
+    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    new_messages = await model._map_messages(old_messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert new_messages == snapshot(
+        (
+            None,
+            [
+                {'role': 'user', 'parts': [{'text': 'What is the largest city in the user country?'}]},
+                {
+                    'role': 'model',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL CALL name="get_user_country "id="IsStr()""-----
+args: {}
+-----END TOOL CALL id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL RETURN name="get_user_country" id="IsStr()"-----
+response: {'return_value': 'Mexico'}
+-----END TOOL RETURN id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+                {
+                    'role': 'model',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL CALL name="final_result "id="IsStr()""-----
+args: {"city":"Mexico City","country":"Mexico"}
+-----END TOOL CALL id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL RETURN name="final_result" id="IsStr()"-----
+response: {'return_value': 'Final result processed.'}
+-----END TOOL RETURN id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+            ],
+        )
     )

@@ -560,9 +560,14 @@ class GoogleModel(Model):
                                 }
                             )
                         else:
-                            message_parts.append(
-                                {'text': f'Tool {part.tool_name} responded with {part.model_response_object()}'}
+                            text = '\n'.join(
+                                [
+                                    f'-----BEGIN TOOL RETURN name="{part.tool_name}" id="{part.tool_call_id}"-----',
+                                    f'response: {part.model_response_object()}',
+                                    f'-----END TOOL RETURN id="{part.tool_call_id}"-----',
+                                ]
                             )
+                            message_parts.append({'text': text})
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -821,7 +826,14 @@ def _content_model_response(m: ModelResponse, provider_name: str, supports_tools
                 # Only the first function call requires a signature
                 function_call_requires_signature = False
             else:
-                part['text'] = f'Tool {item.tool_name} called with args {item.args_as_json_str()}'
+                text = '\n'.join(
+                    [
+                        f'-----BEGIN TOOL CALL name="{item.tool_name} "id="{item.tool_call_id}""-----',
+                        f'args: {item.args_as_json_str()}',
+                        f'-----END TOOL CALL id="{item.tool_call_id}"-----',
+                    ]
+                )
+                part['text'] = text
         elif isinstance(item, TextPart):
             part['text'] = item.content
         elif isinstance(item, ThinkingPart):
