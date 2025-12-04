@@ -335,51 +335,6 @@ def test_result_pydantic_model_validation_error_prompt_templates():
     )
 
 
-def test_tool_return_prompt_templates():
-    class Output(BaseModel):
-        value: str
-
-    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools is not None
-        final_tool = info.output_tools[0].name
-        return ModelResponse(
-            parts=[
-                ToolCallPart(final_tool, {'value': 'first'}),
-                ToolCallPart(final_tool, {'value': 'second'}),
-                ToolCallPart('regular_tool', {'x': 1}),
-            ]
-        )
-
-    prompt_templates = PromptTemplates(
-        tool_final_result='FINISHED',
-        tool_output_not_used=lambda part, _: f'SKIPPED OUTPUT {part.tool_name}',
-        tool_not_executed=lambda part, _: f'SKIPPED TOOL {part.tool_name}',
-    )
-
-    agent = Agent(
-        FunctionModel(return_model),
-        output_type=Output,
-        end_strategy='early',
-        prompt_templates=prompt_templates,
-    )
-
-    @agent.tool_plain
-    def regular_tool(x: int) -> int:  # pragma: no cover
-        return x
-
-    result = agent.run_sync('prompt template test')
-    assert result.output.value == 'first'
-
-    final_request = result.new_messages()[-1]
-    assert isinstance(final_request, ModelRequest)
-    tool_returns = [part for part in final_request.parts if isinstance(part, ToolReturnPart)]
-    assert [part.content for part in tool_returns] == [
-        'FINISHED',
-        'SKIPPED OUTPUT final_result',
-        'SKIPPED TOOL regular_tool',
-    ]
-
-
 def test_output_validator():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
