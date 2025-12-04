@@ -1914,9 +1914,12 @@ class PromptTemplates:
     """
 
     retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
-    """Template for RetryPromptPart messages when injecting retry instructions."""
+    """Override text for [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] that Pydantic AI inserts before re-asking the model
+    after validation failures. Callables receive the retry part and run context to generate custom guidance."""
 
     tool_final_result: str | Callable[[ToolReturnPart, Any[Any]], str] | None = None
+    """Override how tool return confirmations (final tool messages that wrap up a run) are phrased. Callables receive the
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] and run context to produce dynamic messaging."""
 
     def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
         if isinstance(message, ToolReturnPart):
