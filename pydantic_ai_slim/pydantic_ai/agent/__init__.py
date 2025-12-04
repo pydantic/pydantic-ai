@@ -1517,6 +1517,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         | dict[str, models.Model | models.KnownModelName | str]
         | None = None,
         builtin_tools: list[AbstractBuiltinTool] | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
 
@@ -1527,16 +1530,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The returned Starlette application can be mounted into a FastAPI app or run directly
         with any ASGI server (uvicorn, hypercorn, etc.).
 
+        Note that the `deps` and `model_settings` will be the same for each request.
+        To provide different `deps` for each request use the lower-level adapters directly.
+
         Args:
             models: Models to make available in the UI. Can be:
                 - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
                 - A dict mapping display labels to model names/instances
                   (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
-                If not provided, the UI will have no model options.
+                If not provided, uses the agent's configured model.
                 Builtin tool support is automatically determined from each model's profile.
-            builtin_tools: Builtin tools to make available. If not provided, no tools
-                will be available. Tool labels in the UI are derived from the tool's
-                `label` property.
+            builtin_tools: Builtin tools to make available. If not provided, uses the
+                agent's configured builtin tools. Tool labels in the UI are derived
+                from the tool's `label` property.
+            deps: Optional dependencies to use for all requests.
+            model_settings: Optional settings to use for all model requests.
+            instructions: Optional extra instructions to pass to each agent run.
 
         Returns:
             A configured Starlette application ready to be served (e.g., with uvicorn)
@@ -1546,30 +1555,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             from pydantic_ai import Agent
             from pydantic_ai.builtin_tools import WebSearchTool
 
-            agent = Agent('openai:gpt-5')
+            agent = Agent('openai:gpt-5', builtin_tools=[WebSearchTool()])
 
-            @agent.tool_plain
-            def get_weather(city: str) -> str:
-                return f'The weather in {city} is sunny'
+            # Simple usage - uses agent's model and builtin tools
+            app = agent.to_web()
 
-            # With model names (display names auto-generated)
-            app = agent.to_web(
-                models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
-                builtin_tools=[WebSearchTool()],
-            )
-
-            # Or with custom display labels
-            app = agent.to_web(
-                models={'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'},
-                builtin_tools=[WebSearchTool()],
-            )
+            # Or provide additional models for UI selection
+            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
 
             # Then run with: uvicorn app:app --reload
             ```
         """
-        from ..ui._web import create_web_app
+        from ..ui._web import ModelsParam, create_web_app
 
-        return create_web_app(self, models=models, builtin_tools=builtin_tools)
+        # weird ternary for typing purposes
+        resolved_models: ModelsParam = models or (self._model and [self._model])
+
+        resolved_builtin_tools = builtin_tools or list(self._builtin_tools)
+
+        return create_web_app(
+            self,
+            models=resolved_models,
+            builtin_tools=resolved_builtin_tools,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+        )
 
     @asynccontextmanager
     @deprecated(

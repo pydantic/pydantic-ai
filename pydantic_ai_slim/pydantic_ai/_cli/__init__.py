@@ -57,9 +57,7 @@ PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 # CLI-supported tool IDs (excludes deprecated and config-requiring tools)
 _CLI_TOOL_IDS = sorted(
-    k.kind
-    for k in get_builtin_tool_types()
-    if k not in {'mcp_server', 'memory', 'unknown_builtin_tool'}
+    k.kind for k in get_builtin_tool_types() if k not in {'mcp_server', 'memory', 'unknown_builtin_tool'}
 )
 
 

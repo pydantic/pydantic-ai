@@ -33,6 +33,51 @@ def test_agent_to_web():
     assert isinstance(app, Starlette)
 
 
+def test_agent_to_web_with_model_instances():
+    """Test to_web() accepts model instances, not just strings."""
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(TestModel())
+    model_instance = TestModel()
+
+    # List with instances
+    app = agent.to_web(models=[model_instance, 'test'])
+    assert isinstance(app, Starlette)
+
+    # Dict with instances
+    app = agent.to_web(models={'Custom': model_instance, 'Test': 'test'})
+    assert isinstance(app, Starlette)
+
+
+def test_agent_to_web_with_deps():
+    """Test to_web() accepts deps parameter."""
+    from dataclasses import dataclass
+
+    from pydantic_ai.models.test import TestModel
+
+    @dataclass
+    class MyDeps:
+        api_key: str
+
+    agent: Agent[MyDeps, str] = Agent(TestModel(), deps_type=MyDeps)
+    deps = MyDeps(api_key='test-key')
+
+    app = agent.to_web(deps=deps)
+    assert isinstance(app, Starlette)
+
+
+def test_agent_to_web_with_model_settings():
+    """Test to_web() accepts model_settings parameter."""
+    from pydantic_ai import ModelSettings
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(TestModel())
+    settings = ModelSettings(temperature=0.5, max_tokens=100)
+
+    app = agent.to_web(model_settings=settings)
+    assert isinstance(app, Starlette)
+
+
 def test_chat_app_health_endpoint():
     """Test the /api/health endpoint."""
     agent = Agent('test')
@@ -297,7 +342,9 @@ def test_post_chat_invalid_builtin_tool():
         )
 
         assert response.status_code == 400
-        assert response.json() == snapshot({'error': "Builtin tool(s) ['code_execution'] not in the allowed tools list"})
+        assert response.json() == snapshot(
+            {'error': "Builtin tool(s) ['code_execution'] not in the allowed tools list"}
+        )
 
 
 def test_model_label_openrouter():
@@ -306,3 +353,53 @@ def test_model_label_openrouter():
 
     model = TestModel(model_name='meta-llama/llama-3-70b')
     assert model.label == snapshot('Llama 3 70b')
+
+
+def test_agent_to_web_with_instructions():
+    """Test to_web() accepts instructions parameter."""
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(TestModel())
+    app = agent.to_web(instructions='Always respond in Spanish')
+    assert isinstance(app, Starlette)
+
+
+@pytest.mark.anyio
+async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
+    """Test that instructions from create_web_app are passed to dispatch_request."""
+    from unittest.mock import AsyncMock
+
+    from starlette.responses import Response
+
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+    agent = Agent(TestModel(custom_output_text='Hello'))
+    app = create_web_app(agent, models=['test'], instructions='Always respond in Spanish')
+
+    # Mock dispatch_request to capture the instructions parameter
+    mock_dispatch = AsyncMock(return_value=Response(content=b'', status_code=200))
+    monkeypatch.setattr(VercelAIAdapter, 'dispatch_request', mock_dispatch)
+
+    with TestClient(app) as client:
+        client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'test-id',
+                'messages': [
+                    {
+                        'id': 'msg-1',
+                        'role': 'user',
+                        'parts': [{'type': 'text', 'text': 'Hello'}],
+                    }
+                ],
+                'model': 'test',
+                'builtinTools': [],
+            },
+        )
+
+    # Verify dispatch_request was called with instructions
+    mock_dispatch.assert_called_once()
+    call_kwargs = mock_dispatch.call_args.kwargs
+    assert call_kwargs['instructions'] == 'Always respond in Spanish'

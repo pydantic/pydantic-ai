@@ -14,11 +14,12 @@ from starlette.responses import HTMLResponse, Response
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset
 
 from .api import ModelInfo, add_api_routes
 
-DEFAULT_UI_VERSION = '0.0.3'
+DEFAULT_UI_VERSION = '0.0.4'
 CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -54,7 +55,11 @@ def _resolve_models(
 
     for label, model_ref in items:
         model = infer_model(model_ref)
-        model_id = f'{model.system}:{model.model_name}'
+        # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
+        if isinstance(model_ref, str):
+            model_id = model_ref
+        else:
+            model_id = f'{model.system}:{model.model_name}'
         display_name = label or model.label
         model_supported_tools = model.profile.supported_builtin_tools
         supported_tool_ids = [t.kind for t in (model_supported_tools & builtin_tool_types)]
@@ -106,6 +111,9 @@ def create_web_app(
     models: ModelsParam = None,
     builtin_tools: list[AbstractBuiltinTool] | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    deps: AgentDepsT = None,
+    model_settings: ModelSettings | None = None,
+    instructions: str | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -119,6 +127,9 @@ def create_web_app(
         builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
         toolsets: Optional list of toolsets (e.g., MCP servers). These provide additional tools
             that work with any model.
+        deps: Optional dependencies to use for all requests.
+        model_settings: Optional settings to use for all model requests.
+        instructions: Optional extra instructions to pass to each agent run.
 
     Returns:
         A configured Starlette application ready to be served
@@ -129,10 +140,13 @@ def create_web_app(
 
     add_api_routes(
         app,
-        agent=agent,  # pyright: ignore[reportArgumentType]
+        agent=agent,
         models=resolved_models,
         builtin_tools=builtin_tools,
         toolsets=toolsets,
+        deps=deps,
+        model_settings=model_settings,
+        instructions=instructions,
     )
 
     async def index(request: Request) -> Response:
