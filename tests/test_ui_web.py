@@ -49,6 +49,49 @@ def test_agent_to_web_with_model_instances():
     assert isinstance(app, Starlette)
 
 
+@pytest.mark.anyio
+async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPatch):
+    """Test that model instances are preserved and used in dispatch, not reconstructed from string."""
+    from unittest.mock import AsyncMock
+
+    from starlette.responses import Response
+
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+    # Create a specific model instance
+    model_instance = TestModel(custom_output_text='Custom output')
+    agent = Agent(TestModel())
+    app = create_web_app(agent, models=[model_instance])
+
+    # Mock dispatch_request to capture the model parameter
+    mock_dispatch = AsyncMock(return_value=Response(content=b'', status_code=200))
+    monkeypatch.setattr(VercelAIAdapter, 'dispatch_request', mock_dispatch)
+
+    with TestClient(app) as client:
+        client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'test-id',
+                'messages': [
+                    {
+                        'id': 'msg-1',
+                        'role': 'user',
+                        'parts': [{'type': 'text', 'text': 'Hello'}],
+                    }
+                ],
+                'model': 'test:test',
+                'builtinTools': [],
+            },
+        )
+
+    # Verify dispatch_request was called with the original model instance
+    mock_dispatch.assert_called_once()
+    call_kwargs = mock_dispatch.call_args.kwargs
+    assert call_kwargs['model'] is model_instance, 'Model instance should be preserved, not reconstructed from string'
+
+
 def test_agent_to_web_with_deps():
     """Test to_web() accepts deps parameter."""
     from dataclasses import dataclass

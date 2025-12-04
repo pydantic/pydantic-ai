@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pydantic import ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -9,7 +8,6 @@ from pydantic_ai.builtin_tools import (
     DEPRECATED_BUILTIN_TOOL_TYPES,
     AbstractBuiltinTool,
 )
-from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import infer_model
 from pydantic_ai.ui._web import create_web_app
 
@@ -20,20 +18,19 @@ from . import load_agent
 UNSUPPORTED_CLI_TOOLS = DEPRECATED_BUILTIN_TOOL_TYPES | frozenset({'mcp_server', 'memory'})
 
 
-def run_web_command(  # noqa: C901
+# TODO add MCP support issue https://github.com/pydantic/pydantic-ai/issues/3635
+def run_web_command(
     agent_path: str | None = None,
     host: str = '127.0.0.1',
     port: int = 7932,
     models: list[str] | None = None,
     tools: list[str] | None = None,
     instructions: str | None = None,
-    mcp: str | None = None,
 ) -> int:
     """Run the web command to serve an agent via web UI.
 
     If an agent is provided, its model and builtin tools are used as defaults.
     CLI-specified models and tools are added on top. Duplicates are removed.
-    MCP servers are loaded as toolsets if specified.
 
     Args:
         agent_path: Agent path in 'module:variable' format. If None, creates generic agent.
@@ -44,7 +41,6 @@ def run_web_command(  # noqa: C901
         instructions: System instructions. For generic agent (no agent_path), these become
             the agent's instructions. With an agent, these are passed as extra instructions
             to each run.
-        mcp: Path to JSON file with MCP server configurations.
     """
     console = Console()
 
@@ -86,22 +82,6 @@ def run_web_command(  # noqa: C901
                 continue
             all_tool_instances.append(tool_cls())
 
-    # Load MCP servers as toolsets if specified
-    mcp_servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []
-    if mcp:
-        try:
-            mcp_servers = load_mcp_servers(mcp)
-            console.print(f'[dim]Loaded {len(mcp_servers)} MCP server(s) from {mcp}[/dim]')
-        except FileNotFoundError as e:
-            console.print(f'[red]Error: {e}[/red]')
-            return 1
-        except ValidationError as e:
-            console.print(f'[red]Error parsing MCP config: {e}[/red]')
-            return 1
-        except ValueError as e:  # pragma: no cover
-            console.print(f'[red]Error: {e}[/red]')
-            return 1
-
     # For generic agent, instructions are already in the agent.
     # For provided agent, pass instructions as extra instructions for each run.
     run_instructions = instructions if agent_path else None
@@ -110,7 +90,6 @@ def run_web_command(  # noqa: C901
         agent,
         models=models,
         builtin_tools=all_tool_instances or None,
-        toolsets=mcp_servers or None,
         instructions=run_instructions,
     )
 

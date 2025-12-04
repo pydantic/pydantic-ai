@@ -225,11 +225,6 @@ Special prompts:
     )
     web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     web_parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
-    web_parser.add_argument(
-        '--mcp',
-        help='Path to JSON file with MCP server configurations. '
-        'Format: {"mcpServers": {"id": {"url": "...", "headers": {...}}}}',
-    )
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
@@ -256,7 +251,6 @@ Special prompts:
             models=args.models,
             tools=args.tools,
             instructions=args.instructions,
-            mcp=args.mcp,
         )
 
     if args.command == 'chat':
