@@ -2,7 +2,6 @@ import sys
 import types
 from collections.abc import Callable
 from io import StringIO
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -399,7 +398,6 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=['web_search'],
         instructions=None,
-        mcp=None,
     )
 
 
@@ -420,7 +418,6 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         models=None,
         tools=None,
         instructions=None,
-        mcp=None,
     )
 
 
@@ -456,7 +453,6 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
         tools=None,
         instructions=None,
-        mcp=None,
     )
 
 
@@ -483,7 +479,6 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         models=None,
         tools=['web_search', 'code_execution'],
         instructions=None,
-        mcp=None,
     )
 
 
@@ -502,7 +497,6 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         models=['openai:gpt-5'],
         tools=None,
         instructions='You are a helpful coding assistant',
-        mcp=None,
     )
 
 
@@ -527,7 +521,6 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         models=None,
         tools=None,
         instructions=None,
-        mcp=None,
     )
 
 
@@ -635,30 +628,6 @@ def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixtur
     assert '"memory" requires configuration and cannot be enabled via CLI' in output
 
 
-def test_run_web_command_mcp_file_not_found(capfd: CaptureFixture[str]):
-    """Test run_web_command returns error when MCP file is missing."""
-
-    result = run_web_command(models=['test'], mcp='/nonexistent/path/mcp.json')
-
-    assert result == 1
-    output = capfd.readouterr().out
-    assert 'Config file' in output and 'not found' in output
-
-
-def test_run_web_command_mcp_validation_error(tmp_path: Path, capfd: CaptureFixture[str]):
-    """Test run_web_command returns error for invalid MCP JSON structure."""
-    import json
-
-    mcp_file = tmp_path / 'invalid_mcp.json'
-    mcp_file.write_text(json.dumps({'mcpServers': {'bad': {}}}))
-
-    result = run_web_command(models=['test'], mcp=str(mcp_file))
-
-    assert result == 1
-    output = capfd.readouterr().out
-    assert 'Error parsing MCP config' in output
-
-
 def test_run_web_command_agent_with_builtin_tools(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
@@ -684,24 +653,6 @@ def test_run_web_command_agent_with_builtin_tools(
     tool_kinds = {t.kind for t in builtin_tools}
     assert 'web_search' in tool_kinds
     assert 'code_execution' in tool_kinds
-
-
-def test_run_web_command_mcp_success(tmp_path: Path, mocker: MockerFixture, capfd: CaptureFixture[str]):
-    """Test run_web_command successfully loads MCP servers."""
-    import json
-
-    mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mocker.patch('pydantic_ai._cli.web.create_web_app')
-
-    mcp_file = tmp_path / 'mcp.json'
-    mcp_file.write_text(json.dumps({'mcpServers': {'test-server': {'url': 'https://example.com/mcp'}}}))
-
-    result = run_web_command(models=['test'], mcp=str(mcp_file))
-
-    assert result == 0
-    mock_uvicorn_run.assert_called_once()
-    output = capfd.readouterr().out
-    assert 'Loaded 1 MCP server(s)' in output
 
 
 def test_run_web_command_agent_model_merged_with_cli_models(

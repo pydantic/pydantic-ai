@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TypeVar
 
@@ -13,59 +13,16 @@ from starlette.responses import HTMLResponse, Response
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset
 
-from .api import ModelInfo, add_api_routes
+from .api import ModelsParam, create_api_routes
 
 DEFAULT_UI_VERSION = '0.0.4'
 CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
-
-# Type alias for models parameter - accepts model names/instances or a dict mapping labels to models
-ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | KnownModelName | str] | None
-
-
-def _resolve_models(
-    models: ModelsParam,
-    builtin_tools: list[AbstractBuiltinTool] | None,
-) -> list[ModelInfo]:
-    """Convert models parameter to list of ModelInfo objects.
-
-    Args:
-        models: Model names/instances or dict mapping labels to models
-        builtin_tools: Available builtin tools to check model support
-
-    Returns:
-        List of ModelInfo objects with resolved model IDs, display names, and supported tools
-    """
-    if models is None:
-        return []
-
-    builtin_tool_types = {type(tool) for tool in (builtin_tools or [])}
-    result: list[ModelInfo] = []
-
-    if isinstance(models, Mapping):
-        items = list(models.items())
-    else:
-        items = [(None, m) for m in models]
-
-    for label, model_ref in items:
-        model = infer_model(model_ref)
-        # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        if isinstance(model_ref, str):
-            model_id = model_ref
-        else:
-            model_id = f'{model.system}:{model.model_name}'
-        display_name = label or model.label
-        model_supported_tools = model.profile.supported_builtin_tools
-        supported_tool_ids = [t.kind for t in (model_supported_tools & builtin_tool_types)]
-        result.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
-
-    return result
 
 
 def _get_cache_dir() -> Path:
@@ -134,20 +91,17 @@ def create_web_app(
     Returns:
         A configured Starlette application ready to be served
     """
-    resolved_models = _resolve_models(models, builtin_tools)
-
-    app = Starlette()
-
-    add_api_routes(
-        app,
+    api_routes = create_api_routes(
         agent=agent,
-        models=resolved_models,
+        models=models,
         builtin_tools=builtin_tools,
         toolsets=toolsets,
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,
     )
+
+    app = Starlette(routes=api_routes)
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""

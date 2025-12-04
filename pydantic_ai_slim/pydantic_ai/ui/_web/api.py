@@ -1,22 +1,26 @@
 """API routes for the web chat UI."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TypeVar
 
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
-from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
+
+# Type alias for models parameter - accepts model names/instances or a dict mapping labels to models
+ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | KnownModelName | str] | None
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -72,33 +76,52 @@ def validate_request_options(
     return None
 
 
-# TODO remove the app arg and return a router instead (refactor the upstream logic to mount the router)
-# https://github.com/pydantic/pydantic-ai/pull/3456/files#r2582659204
-def add_api_routes(
-    app: Starlette,
+def create_api_routes(
     agent: Agent[AgentDepsT, OutputDataT],
-    models: list[ModelInfo] | None = None,
+    models: ModelsParam = None,
     builtin_tools: list[AbstractBuiltinTool] | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
-) -> None:
-    """Add API routes to a Starlette app.
+) -> list[Route]:
+    """Create API routes for the web chat UI.
 
     Args:
-        app: The Starlette app to add routes to.
         agent: Agent instance.
-        models: Optional list of AI models. If not provided, the UI will have no model options.
+        models: Models to make available in the UI. Can be:
+            - A sequence of model names/instances (e.g., `['openai:gpt-5', Model(...)]`)
+            - A dict mapping display labels to model names/instances
+            If not provided, the UI will have no model options.
         builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
         toolsets: Optional list of toolsets (e.g., MCP servers). These provide additional tools.
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
+
+    Returns:
+        A list of Starlette Route objects for the API endpoints.
     """
-    models = models or []
-    model_ids = {m.id for m in models}
+    # Build model ID → original reference mapping and ModelInfo list for frontend
+    model_id_to_ref: dict[str, Model | str] = {}
+    model_infos: list[ModelInfo] = []
     builtin_tools = builtin_tools or []
+    builtin_tool_types = {type(tool) for tool in builtin_tools}
+
+    if models is not None:
+        items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in models]
+        for label, model_ref in items:
+            model = infer_model(model_ref)
+            # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
+            model_id = model_ref if isinstance(model_ref, str) else f'{model.system}:{model.model_name}'
+            display_name = label or model.label
+            model_supported_tools = model.profile.supported_builtin_tools
+            supported_tool_ids = [t.kind for t in (model_supported_tools & builtin_tool_types)]
+
+            model_id_to_ref[model_id] = model_ref  # Store original reference
+            model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
+
+    model_ids = set(model_id_to_ref.keys())
     allowed_tool_ids = {tool.unique_id for tool in builtin_tools}
     toolsets = list(toolsets) if toolsets else None
 
@@ -109,7 +132,7 @@ def add_api_routes(
     async def configure_frontend(request: Request) -> Response:
         """Endpoint to configure the frontend with available models and tools."""
         config = ConfigureFrontend(
-            models=models,
+            models=model_infos,
             builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in builtin_tools],
         )
         return JSONResponse(config.model_dump(by_alias=True))
@@ -126,11 +149,12 @@ def add_api_routes(
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)
 
+        model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
         request_builtin_tools = [tool for tool in builtin_tools if tool.unique_id in extra_data.builtin_tools]
         streaming_response = await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
             request,
             agent=agent,
-            model=extra_data.model,
+            model=model_ref,
             builtin_tools=request_builtin_tools,
             toolsets=toolsets,
             deps=deps,
@@ -139,7 +163,9 @@ def add_api_routes(
         )
         return streaming_response
 
-    app.router.add_route('/api/chat', options_chat, methods=['OPTIONS'])
-    app.router.add_route('/api/chat', post_chat, methods=['POST'])
-    app.router.add_route('/api/configure', configure_frontend, methods=['GET'])
-    app.router.add_route('/api/health', health, methods=['GET'])
+    return [
+        Route('/api/chat', options_chat, methods=['OPTIONS']),
+        Route('/api/chat', post_chat, methods=['POST']),
+        Route('/api/configure', configure_frontend, methods=['GET']),
+        Route('/api/health', health, methods=['GET']),
+    ]
