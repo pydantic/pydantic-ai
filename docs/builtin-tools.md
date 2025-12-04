@@ -642,6 +642,7 @@ import asyncio
 from pydantic_ai import Agent, FileSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
+
 async def main():
     model = OpenAIResponsesModel('gpt-5')
 
@@ -675,6 +676,7 @@ import asyncio
 
 from pydantic_ai import Agent, FileSearchTool
 from pydantic_ai.models.google import GoogleModel
+
 
 async def main():
     model = GoogleModel('gemini-2.5-flash')
