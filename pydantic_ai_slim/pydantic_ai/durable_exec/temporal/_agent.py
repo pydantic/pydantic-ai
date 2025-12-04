@@ -946,8 +946,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                 )
 
-            # Note: Model selection is handled in _temporal_overrides context, not here
-            # since iter() is called within that context
             if toolsets is not None:
                 raise UserError(
                     'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
