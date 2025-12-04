@@ -100,3 +100,50 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
     unknown_model = provider.model_profile('unknown.unknown-model')
     assert unknown_model is None
+
+
+@pytest.mark.parametrize('prefix', ['us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.', 'us-gov.'])
+def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: str):
+    """Test that all cross-region inference geo prefixes are correctly handled.
+
+    This is critical for AWS GovCloud (us-gov.) and other regional deployments
+    where models use prefixes longer than 2 characters.
+    """
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+
+    # Test Anthropic model with geo prefix
+    model_name = f'{prefix}anthropic.claude-sonnet-4-5-20250929-v1:0'
+    profile = provider.model_profile(model_name)
+
+    assert profile is not None, f'model_profile returned None for {model_name}'
+    assert isinstance(profile, BedrockModelProfile)
+    assert profile.bedrock_supports_tool_choice is True
+    assert profile.bedrock_send_back_thinking_parts is True
+
+
+def test_bedrock_provider_model_profile_us_gov_anthropic(env: TestEnv, mocker: MockerFixture):
+    """Test that us-gov. prefixed Anthropic models get the correct profile.
+
+    This specifically tests the us-gov. prefix which was previously broken
+    because the provider only handled 2-character prefixes.
+    """
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+
+    ns = 'pydantic_ai.providers.bedrock'
+    anthropic_model_profile_mock = mocker.patch(f'{ns}.anthropic_model_profile', wraps=anthropic_model_profile)
+
+    # Test us-gov. prefix (AWS GovCloud cross-region inference)
+    profile = provider.model_profile('us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
+    assert isinstance(profile, BedrockModelProfile)
+    assert profile.bedrock_supports_tool_choice is True
+    assert profile.bedrock_send_back_thinking_parts is True
+
+    # Test global. prefix
+    profile = provider.model_profile('global.anthropic.claude-opus-4-5-20251101-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-5-20251101')
+    assert isinstance(profile, BedrockModelProfile)
+    assert profile.bedrock_supports_tool_choice is True
+    assert profile.bedrock_send_back_thinking_parts is True

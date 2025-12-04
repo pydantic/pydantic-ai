@@ -58,6 +58,23 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     return profile  # pragma: no cover
 
 
+# Known geo prefixes for cross-region inference profile IDs
+_BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.', 'us-gov.')
+
+
+def _strip_geo_prefix(model_name: str) -> str:
+    """Strip geographic/regional prefix from model name if present.
+
+    AWS Bedrock cross-region inference uses prefixes like 'us.', 'eu.', 'us-gov.', 'global.'
+    to route requests to specific regions. This function strips those prefixes so we can
+    identify the underlying provider and model.
+    """
+    for prefix in _BEDROCK_GEO_PREFIXES:
+        if model_name.startswith(prefix):
+            return model_name.removeprefix(prefix)
+    return model_name
+
+
 class BedrockProvider(Provider[BaseClient]):
     """Provider for AWS Bedrock."""
 
@@ -87,13 +104,11 @@ class BedrockProvider(Provider[BaseClient]):
             'deepseek': bedrock_deepseek_model_profile,
         }
 
-        # Split the model name into parts
-        parts = model_name.split('.', 2)
+        # Strip regional/geo prefix if present (e.g. "us.", "eu.", "us-gov.", "global.")
+        model_name = _strip_geo_prefix(model_name)
 
-        # Handle regional prefixes (e.g. "us.")
-        if len(parts) > 2 and len(parts[0]) == 2:
-            parts = parts[1:]
-
+        # Split the model name into provider and model parts
+        parts = model_name.split('.', 1)
         if len(parts) < 2:
             return None
 
