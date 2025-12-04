@@ -308,7 +308,10 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 
 
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
-    """Test that CachePoint correctly adds cache_control to content blocks."""
+    """Test that CachePoint correctly adds cache_control to content blocks.
+
+    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    """
     c = completion_message(
         [BetaTextBlock(text='response', type='text')],
         usage=BetaUsage(input_tokens=3, output_tokens=5),
@@ -317,10 +320,10 @@ async def test_cache_point_adds_cache_control(allow_model_requests: None):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    # Test with CachePoint after text content
+    # Test with CachePoint after text content (default ttl='5m')
     await agent.run(['Some context to cache', CachePoint(), 'Now the question'])
 
-    # Verify cache_control was added to the right content block
+    # Verify cache_control was added with default ttl='5m'
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     messages = completion_kwargs['messages']
     assert messages == snapshot(
@@ -355,6 +358,7 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
+    # Default ttl='5m' for non-Bedrock clients
     assert content == snapshot(
         [
             {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -402,6 +406,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
+    # Default ttl='5m' for non-Bedrock clients
     assert content == snapshot(
         [
             {
@@ -434,16 +439,127 @@ async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
 
 def test_cache_control_unsupported_param_type():
     """Test that cache control raises error for unsupported param types."""
+    from unittest.mock import MagicMock
 
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.models.anthropic import AnthropicModel
 
-    # Create a list with an unsupported param type (document)
-    # We'll use a mock document block param
+    # Create a mock model instance
+    mock_client = MagicMock()
+    mock_client.__class__.__name__ = 'AsyncAnthropic'
+    mock_client.base_url = 'https://api.anthropic.com'
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Create a list with an unsupported param type (thinking)
     params: list[dict[str, Any]] = [{'type': 'thinking', 'source': {'data': 'test'}}]
 
     with pytest.raises(UserError, match='Cache control not supported for param type: thinking'):
-        AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+        m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+
+
+def test_build_cache_control_bedrock_omits_ttl():
+    """Test that _build_cache_control automatically omits TTL for Bedrock clients."""
+    from unittest.mock import MagicMock
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # Create a mock client using spec=AsyncAnthropicBedrock for isinstance check
+    mock_bedrock_client = MagicMock(spec=AsyncAnthropicBedrock)
+    mock_bedrock_client.base_url = 'https://bedrock.amazonaws.com'
+
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
+
+    # Verify cache_control is built without TTL for Bedrock
+    cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control == {'type': 'ephemeral'}  # No 'ttl' field
+
+    cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control_1h == {'type': 'ephemeral'}  # TTL still omitted
+
+
+def test_build_cache_control_standard_client_includes_ttl():
+    """Test that _build_cache_control includes TTL for standard Anthropic clients."""
+    from unittest.mock import MagicMock
+
+    # Create a mock client that looks like standard AsyncAnthropic
+    mock_client = MagicMock()
+    mock_client.__class__.__name__ = 'AsyncAnthropic'
+    mock_client.base_url = 'https://api.anthropic.com'
+
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Verify cache_control includes TTL for standard clients
+    cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control == {'type': 'ephemeral', 'ttl': '5m'}
+
+    cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+async def test_cache_point_with_5m_ttl(allow_model_requests: None):
+    """Test that CachePoint with explicit ttl='5m' includes the ttl field."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with explicit CachePoint(ttl='5m')
+    await agent.run(['Some context to cache', CachePoint(ttl='5m'), 'Now the question'])
+
+    # Verify cache_control was added with 5m ttl
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_cache_point_with_1h_ttl(allow_model_requests: None):
+    """Test that CachePoint with ttl='1h' correctly sets the TTL."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with CachePoint(ttl='1h')
+    await agent.run(['Some context to cache', CachePoint(ttl='1h'), 'Now the question'])
+
+    # Verify cache_control was added with 1h ttl
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '1h'},
+                    },
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
 
 
 async def test_anthropic_cache_tools(allow_model_requests: None):

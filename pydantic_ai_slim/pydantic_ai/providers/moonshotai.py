@@ -57,6 +57,8 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_supports_tool_choice_required=False,
             supports_json_object_output=True,
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
         ).update(profile)
 
     @overload
