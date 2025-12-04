@@ -567,7 +567,7 @@ class OpenRouterModel(OpenAIChatModel):
             if item.provider_name == self._model.system:
                 if reasoning_detail := _into_reasoning_detail(item):  # pragma: lax no cover
                     self.reasoning_details.append(reasoning_detail.model_dump())
-            else:
+            else:  # pragma: lax no cover
                 super()._map_response_thinking_part(item)
 
     @property
