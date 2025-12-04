@@ -637,20 +637,28 @@ class OpenAIChatModel(Model):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        custom_field = profile.openai_chat_thinking_field
         items: list[ThinkingPart] = []
 
-        # The `reasoning_content` field is only present in DeepSeek models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-        if reasoning_content := getattr(message, 'reasoning_content', None):
-            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
+        # Prefer the configured custom reasoning field, if present in profile.
+        # Fall back to built-in fields if no custom field result was found.
 
-        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+
+        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(message, 'reasoning', None):
-            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+        for field_name in (custom_field, 'reasoning', 'reasoning_content'):
+            if not field_name:
+                continue
+            reasoning: str | None = getattr(message, field_name, None)
+            if reasoning:  # pragma: no branch
+                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
+                return items
 
-        return items
+        return items or None
 
     async def _process_streamed_response(
         self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
@@ -726,6 +734,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list)
+        thinkings: list[str] = field(default_factory=list)
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
@@ -753,10 +762,15 @@ class OpenAIChatModel(Model):
             Returns:
                 An OpenAI `ChatCompletionAssistantMessageParam` object representing the assistant's response.
             """
+            profile = OpenAIModelProfile.from_profile(self._model.profile)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+            # Note: model responses from this model should only have one text item, so the following
+            # shouldn't merge multiple texts into one unless you switch models between runs:
+            if profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
+                field = profile.openai_chat_thinking_field
+                if field:  # pragma: no branch (handled by profile validation)
+                    message_param[field] = '\n\n'.join(self.thinkings)
             if self.texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
                 message_param['content'] = None
@@ -778,11 +792,13 @@ class OpenAIChatModel(Model):
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for handling thinking parts.
             """
-            # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
-            # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
-            # If you need this changed, please file an issue.
-            start_tag, end_tag = self._model.profile.thinking_tags
-            self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            profile = OpenAIModelProfile.from_profile(self._model.profile)
+            include_method = profile.openai_chat_send_back_thinking_parts
+            if include_method == 'tags':
+                start_tag, end_tag = self._model.profile.thinking_tags
+                self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            elif include_method == 'field':
+                self.thinkings.append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -1890,26 +1906,30 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        # The `reasoning_content` field is only present in DeepSeek models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-        if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
-            yield self._parts_manager.handle_thinking_delta(
-                vendor_part_id='reasoning_content',
-                id='reasoning_content',
-                content=reasoning_content,
-                provider_name=self.provider_name,
-            )
+        profile = OpenAIModelProfile.from_profile(self._model_profile)
+        custom_field = profile.openai_chat_thinking_field
 
-        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # Prefer the configured custom reasoning field, if present in profile.
+        # Fall back to built-in fields if no custom field result was found.
+
+        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+
+        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
-            yield self._parts_manager.handle_thinking_delta(
-                vendor_part_id='reasoning',
-                id='reasoning',
-                content=reasoning,
-                provider_name=self.provider_name,
-            )
+        for field_name in (custom_field, 'reasoning', 'reasoning_content'):
+            if not field_name:
+                continue
+            reasoning: str | None = getattr(choice.delta, field_name, None)
+            if reasoning:  # pragma: no branch
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=field_name,
+                    id=field_name,
+                    content=reasoning,
+                    provider_name=self.provider_name,
+                )
+                break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
