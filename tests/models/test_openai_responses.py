@@ -7563,17 +7563,11 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
                             provider_name='openai',
                         ),
                         TextPart(
-                            content="""\
-I couldn't find any information about the Eiffel Tower in the provided documents. However, here's some general information:
-
-The Eiffel Tower is an iconic landmark located in Paris, France. It was designed by the engineer Gustave Eiffel and completed in 1889 for the World's Fair. Standing at 324 meters (1,063 feet), it was the tallest man-made structure in the world until the completion of the Chrysler Building in New York in 1930. The tower is a global cultural icon of France and one of the most recognizable structures in the world. It is also one of the most-visited paid monuments, attracting millions of tourists every year. \n\
-
-Would you like to know anything specific about the Eiffel Tower?\
-""",
+                            content='The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves as an iconic symbol of the city.',
                             id=IsStr(),
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=887, output_tokens=160, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(input_tokens=1188, output_tokens=55, details={'reasoning_tokens': 0}),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -7724,7 +7718,7 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
                             id=IsStr(),
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=1172, output_tokens=36, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(input_tokens=1177, output_tokens=37, details={'reasoning_tokens': 0}),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',

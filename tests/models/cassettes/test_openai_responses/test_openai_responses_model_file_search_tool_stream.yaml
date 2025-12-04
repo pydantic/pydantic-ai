@@ -1,8 +1,8 @@
 interactions:
 - request:
-    body: "--095b3f97e6f8b69c1d886b1b9aa8bedf\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--095b3f97e6f8b69c1d886b1b9aa8bedf\r\nContent-Disposition:
-      form-data; name=\"file\"; filename=\"tmp909bxy83.txt\"\r\nContent-Type: text/plain\r\n\r\nParis is the capital of France.
-      It is known for the Eiffel Tower.\r\n--095b3f97e6f8b69c1d886b1b9aa8bedf--\r\n"
+    body: "--48ec76c695218a593d30b86b27348479\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--48ec76c695218a593d30b86b27348479\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"tmp8l5_2pzy.txt\"\r\nContent-Type: text/plain\r\n\r\nParis is the capital of France.
+      It is known for the Eiffel Tower.\r\n--48ec76c695218a593d30b86b27348479--\r\n"
     headers:
       accept:
       - application/json
@@ -13,7 +13,7 @@ interactions:
       content-length:
       - '340'
       content-type:
-      - multipart/form-data; boundary=095b3f97e6f8b69c1d886b1b9aa8bedf
+      - multipart/form-data; boundary=48ec76c695218a593d30b86b27348479
       host:
       - api.openai.com
     method: POST
@@ -31,11 +31,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '241'
+      - '187'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -44,10 +44,10 @@ interactions:
       - chunked
     parsed_body:
       bytes: 65
-      created_at: 1764366849
+      created_at: 1764874066
       expires_at: null
-      filename: tmp909bxy83.txt
-      id: file-HZbQJdwo7a1H4G4aXfb3fh
+      filename: tmp8l5_2pzy.txt
+      id: file-9RhPAs9YqVajpGXRfcgavJ
       object: file
       purpose: assistants
       status: processed
@@ -68,8 +68,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=sOvSQfGKIbQGEdXERS96761xzc6fJ9UxOEG6W5n6ZUo-1764366850-1.0.1.1-ERoGFPWYgqIeWJTQVnB.Ak1IdgtCg0LlgJl4CjL4NTqWC4HdLtI9yU7RV9sY3vR8sNanJC1M_r1ScT8mB_34x1cu2G84tk1DoarfHUhMbgs;
-        _cfuvid=1iGfAvAXHuK4rF6yjxjdwR.ZYH7aoP6YqFG093gtEnM-1764366850021-0.0.1.1-604800000
+      - __cf_bm=LZUzlDcZepc_37Mtq7t37OCgL92SO5bVsAK1Qd6UMRc-1764874066-1.0.1.1-ta3FeDiPXWoJbgvAO_0nr2DbLUDWBEhRYFxOhYQaebYZ9KArPzhAOyPvSKcR0H6dVuK7j5I_0_RqKd.8v92BzcMzYx3xJALz25EKFFU_AnE;
+        _cfuvid=abg5ZnfnwjlpjpKjUKzrdli8AlYRqG1fuXPbjGI5FAk-1764874066398-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
@@ -89,11 +89,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '478'
+      - '488'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -101,7 +101,7 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1764366850
+      created_at: 1764874067
       description: null
       expires_after: null
       expires_at: null
@@ -111,8 +111,8 @@ interactions:
         failed: 0
         in_progress: 0
         total: 0
-      id: vs_692a1a0214e481919ac57917e67a6352
-      last_active_at: 1764366850
+      id: vs_6931d752e41c8191833fcaad1cf47055
+      last_active_at: 1764874067
       metadata: {}
       name: test-file-search-stream
       object: vector_store
@@ -134,16 +134,16 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=sOvSQfGKIbQGEdXERS96761xzc6fJ9UxOEG6W5n6ZUo-1764366850-1.0.1.1-ERoGFPWYgqIeWJTQVnB.Ak1IdgtCg0LlgJl4CjL4NTqWC4HdLtI9yU7RV9sY3vR8sNanJC1M_r1ScT8mB_34x1cu2G84tk1DoarfHUhMbgs;
-        _cfuvid=1iGfAvAXHuK4rF6yjxjdwR.ZYH7aoP6YqFG093gtEnM-1764366850021-0.0.1.1-604800000
+      - __cf_bm=LZUzlDcZepc_37Mtq7t37OCgL92SO5bVsAK1Qd6UMRc-1764874066-1.0.1.1-ta3FeDiPXWoJbgvAO_0nr2DbLUDWBEhRYFxOhYQaebYZ9KArPzhAOyPvSKcR0H6dVuK7j5I_0_RqKd.8v92BzcMzYx3xJALz25EKFFU_AnE;
+        _cfuvid=abg5ZnfnwjlpjpKjUKzrdli8AlYRqG1fuXPbjGI5FAk-1764874066398-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
       - assistants=v2
     method: POST
     parsed_body:
-      file_id: file-HZbQJdwo7a1H4G4aXfb3fh
-    uri: https://api.openai.com/v1/vector_stores/vs_692a1a0214e481919ac57917e67a6352/files
+      file_id: file-9RhPAs9YqVajpGXRfcgavJ
+    uri: https://api.openai.com/v1/vector_stores/vs_6931d752e41c8191833fcaad1cf47055/files
   response:
     headers:
       alt-svc:
@@ -155,11 +155,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '951'
+      - '961'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -173,13 +173,13 @@ interactions:
           chunk_overlap_tokens: 400
           max_chunk_size_tokens: 800
         type: static
-      created_at: 1764366851
-      id: file-HZbQJdwo7a1H4G4aXfb3fh
+      created_at: 1764874068
+      id: file-9RhPAs9YqVajpGXRfcgavJ
       last_error: null
       object: vector_store.file
       status: in_progress
       usage_bytes: 0
-      vector_store_id: vs_692a1a0214e481919ac57917e67a6352
+      vector_store_id: vs_6931d752e41c8191833fcaad1cf47055
     status:
       code: 200
       message: OK
@@ -192,12 +192,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '258'
+      - '260'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=sOvSQfGKIbQGEdXERS96761xzc6fJ9UxOEG6W5n6ZUo-1764366850-1.0.1.1-ERoGFPWYgqIeWJTQVnB.Ak1IdgtCg0LlgJl4CjL4NTqWC4HdLtI9yU7RV9sY3vR8sNanJC1M_r1ScT8mB_34x1cu2G84tk1DoarfHUhMbgs;
-        _cfuvid=1iGfAvAXHuK4rF6yjxjdwR.ZYH7aoP6YqFG093gtEnM-1764366850021-0.0.1.1-604800000
+      - __cf_bm=LZUzlDcZepc_37Mtq7t37OCgL92SO5bVsAK1Qd6UMRc-1764874066-1.0.1.1-ta3FeDiPXWoJbgvAO_0nr2DbLUDWBEhRYFxOhYQaebYZ9KArPzhAOyPvSKcR0H6dVuK7j5I_0_RqKd.8v92BzcMzYx3xJALz25EKFFU_AnE;
+        _cfuvid=abg5ZnfnwjlpjpKjUKzrdli8AlYRqG1fuXPbjGI5FAk-1764874066398-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -210,39 +210,98 @@ interactions:
       stream: true
       tool_choice: auto
       tools:
-      - file_store_ids:
-        - vs_692a1a0214e481919ac57917e67a6352
-        type: file_search
+      - type: file_search
+        vector_store_ids:
+        - vs_6931d752e41c8191833fcaad1cf47055
     uri: https://api.openai.com/v1/responses
   response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_006dcb10dc68b990006931d756c6fc819ba28a90e19a504ee0","object":"response","created_at":1764874070,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"file_search","filters":null,"max_num_results":20,"ranking_options":{"ranker":"auto","score_threshold":0.0},"vector_store_ids":["vs_6931d752e41c8191833fcaad1cf47055"]}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_006dcb10dc68b990006931d756c6fc819ba28a90e19a504ee0","object":"response","created_at":1764874070,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"file_search","filters":null,"max_num_results":20,"ranking_options":{"ranker":"auto","score_threshold":0.0},"vector_store_ids":["vs_6931d752e41c8191833fcaad1cf47055"]}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4","type":"file_search_call","status":"in_progress","queries":[],"results":null}}
+
+        event: response.file_search_call.in_progress
+        data: {"type":"response.file_search_call.in_progress","sequence_number":3,"output_index":0,"item_id":"fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4"}
+
+        event: response.file_search_call.searching
+        data: {"type":"response.file_search_call.searching","sequence_number":4,"output_index":0,"item_id":"fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4"}
+
+        event: response.file_search_call.completed
+        data: {"type":"response.file_search_call.completed","sequence_number":5,"output_index":0,"item_id":"fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4","type":"file_search_call","status":"completed","queries":["What is the capital of France?"],"results":null}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":7,"output_index":1,"item":{"id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","type":"message","status":"in_progress","content":[],"role":"assistant"}}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","sequence_number":8,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":9,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"delta":"The","logprobs":[],"obfuscation":"ccp2zCh6hoV22"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":10,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"delta":" capital","logprobs":[],"obfuscation":"bn64TSp5"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":11,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"delta":" of","logprobs":[],"obfuscation":"I7wn4psTFYuts"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":12,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"delta":" France","logprobs":[],"obfuscation":"lYlyfkIXn"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":13,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"delta":" is","logprobs":[],"obfuscation":"0sHGTT1tybZdH"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":14,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"delta":" Paris","logprobs":[],"obfuscation":"unmm9W3u8f"}
+
+        event: response.output_text.annotation.added
+        data: {"type":"response.output_text.annotation.added","sequence_number":15,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"annotation_index":0,"annotation":{"type":"file_citation","file_id":"file-9RhPAs9YqVajpGXRfcgavJ","filename":"tmp8l5_2pzy.txt","index":30}}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":16,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"delta":".","logprobs":[],"obfuscation":"AzWHihEu6zXVviP"}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","sequence_number":17,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"text":"The capital of France is Paris.","logprobs":[]}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","sequence_number":18,"item_id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[{"type":"file_citation","file_id":"file-9RhPAs9YqVajpGXRfcgavJ","filename":"tmp8l5_2pzy.txt","index":30}],"logprobs":[],"text":"The capital of France is Paris."}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":19,"output_index":1,"item":{"id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","type":"message","status":"completed","content":[{"type":"output_text","annotations":[{"type":"file_citation","file_id":"file-9RhPAs9YqVajpGXRfcgavJ","filename":"tmp8l5_2pzy.txt","index":30}],"logprobs":[],"text":"The capital of France is Paris."}],"role":"assistant"}}
+
+        event: response.completed
+        data: {"type":"response.completed","sequence_number":20,"response":{"id":"resp_006dcb10dc68b990006931d756c6fc819ba28a90e19a504ee0","object":"response","created_at":1764874070,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[{"id":"fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4","type":"file_search_call","status":"completed","queries":["What is the capital of France?"],"results":null},{"id":"msg_006dcb10dc68b990006931d75a58dc819bb156d745aff1ee2a","type":"message","status":"completed","content":[{"type":"output_text","annotations":[{"type":"file_citation","file_id":"file-9RhPAs9YqVajpGXRfcgavJ","filename":"tmp8l5_2pzy.txt","index":30}],"logprobs":[],"text":"The capital of France is Paris."}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"file_search","filters":null,"max_num_results":20,"ranking_options":{"ranker":"auto","score_threshold":0.0},"vector_store_ids":["vs_6931d752e41c8191833fcaad1cf47055"]}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":1177,"input_tokens_details":{"cached_tokens":0},"output_tokens":37,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":1214},"user":null,"metadata":{}}}
+
     headers:
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '215'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '18'
+      - '104'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
-    parsed_body:
-      error:
-        code: missing_required_parameter
-        message: 'Missing required parameter: ''tools[0].vector_store_ids''.'
-        param: tools[0].vector_store_ids
-        type: invalid_request_error
+      transfer-encoding:
+      - chunked
     status:
-      code: 400
-      message: Bad Request
+      code: 200
+      message: OK
 - request:
     body: ''
     headers:
@@ -255,12 +314,12 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=liUJmD5BdbuRmcHnAfU6ahrlB.AJEGZKyDCc9Yiyznc-1764366853-1.0.1.1-g3Ji0FcptC8QamnJPSxvwrkkNgu2EkMNDzHkzjiQI4I72HRzMSxbXtzYwI6E5xvU4vjmp8RcQfMMXGOTYmqIIvRO7Asj.3_5HBQ8Ds48M5U;
-        _cfuvid=xvStVf78EqOD91Es9QUfgrXJy4KUtqtJIuu3mNU8xII-1764366853715-0.0.1.1-604800000
+      - __cf_bm=F55LqIAvJQIXC_fptiOnwGdOWcC483O2.6RAZGqr2Fo-1764874071-1.0.1.1-QaQoqcscUDvS0Chhe.a7wjgqO8PQxwVH1ICTFmESgkOd1er9NTMThrGCPWNTSpwKETvLITpQn0HT4xLYJbh4e_T5ouL2iblfLsjcqYeX6qQ;
+        _cfuvid=6K_rE7Tt8PxgsNnGUb7ENvYAHIvd41mbeMeplTHTaro-1764874071033-0.0.1.1-604800000
       host:
       - api.openai.com
     method: DELETE
-    uri: https://api.openai.com/v1/files/file-HZbQJdwo7a1H4G4aXfb3fh
+    uri: https://api.openai.com/v1/files/file-9RhPAs9YqVajpGXRfcgavJ
   response:
     headers:
       access-control-allow-origin:
@@ -274,11 +333,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '584'
+      - '262'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -287,7 +346,7 @@ interactions:
       - chunked
     parsed_body:
       deleted: true
-      id: file-HZbQJdwo7a1H4G4aXfb3fh
+      id: file-9RhPAs9YqVajpGXRfcgavJ
       object: file
     status:
       code: 200
@@ -304,14 +363,14 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=AS85k.4XUSyB1JZw2ZrKwVBA6DwvcC8V8ITLn9Am4w0-1764366855-1.0.1.1-b5YLQX.pG80V7u68hujIWBIAcOstKO28XZaUFvqyPkYndQ_kilFX2B.KNFovM3_qPkPIbY6aJKTFOEii4q6vgcOjjoYL8UOJZI.A7FVtHig;
-        _cfuvid=czAzCsUUJ1hB4QdW5BSaGbBykc1lmoQmfuTafAr0Et8-1764366855185-0.0.1.1-604800000
+      - __cf_bm=yzRXpJt4nzHkNimNzLbewT.opH8C8nTT1wEKJP1WQD8-1764874079-1.0.1.1-91qjR4m8pXP6dIvCGI_6cjryQM08l1pUqZmIdVpFLYLEazXv.JA6lYdwvpVFmTLt79rpjYCGK6j4rDwOWMx.63u6KRsnV5Zu5t5aJ_0PFZk;
+        _cfuvid=iyyQay3sMDjBGuYMtys0u7.rohOsEGc6jFD0L2Wt6aQ-1764874079283-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
       - assistants=v2
     method: DELETE
-    uri: https://api.openai.com/v1/vector_stores/vs_692a1a0214e481919ac57917e67a6352
+    uri: https://api.openai.com/v1/vector_stores/vs_6931d752e41c8191833fcaad1cf47055
   response:
     headers:
       alt-svc:
@@ -323,11 +382,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '1390'
+      - '1196'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -336,9 +395,10 @@ interactions:
       - chunked
     parsed_body:
       deleted: true
-      id: vs_692a1a0214e481919ac57917e67a6352
+      id: vs_6931d752e41c8191833fcaad1cf47055
       object: vector_store.deleted
     status:
       code: 200
       message: OK
 version: 1
+...

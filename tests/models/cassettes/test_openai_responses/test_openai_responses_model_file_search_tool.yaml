@@ -1,8 +1,8 @@
 interactions:
 - request:
-    body: "--8c154b724f07d37b4e71e5818884042f\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--8c154b724f07d37b4e71e5818884042f\r\nContent-Disposition:
-      form-data; name=\"file\"; filename=\"tmp_2zmia5j.txt\"\r\nContent-Type: text/plain\r\n\r\nParis is the capital of France.
-      It is known for the Eiffel Tower.\r\n--8c154b724f07d37b4e71e5818884042f--\r\n"
+    body: "--e8131246d030eccf259f1df4b4e32241\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--e8131246d030eccf259f1df4b4e32241\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"tmp2zuepgia.txt\"\r\nContent-Type: text/plain\r\n\r\nParis is the capital of France.
+      It is known for the Eiffel Tower.\r\n--e8131246d030eccf259f1df4b4e32241--\r\n"
     headers:
       accept:
       - application/json
@@ -13,7 +13,7 @@ interactions:
       content-length:
       - '340'
       content-type:
-      - multipart/form-data; boundary=8c154b724f07d37b4e71e5818884042f
+      - multipart/form-data; boundary=e8131246d030eccf259f1df4b4e32241
       host:
       - api.openai.com
     method: POST
@@ -31,11 +31,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '405'
+      - '294'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -44,10 +44,10 @@ interactions:
       - chunked
     parsed_body:
       bytes: 65
-      created_at: 1764366837
+      created_at: 1764874025
       expires_at: null
-      filename: tmp_2zmia5j.txt
-      id: file-7HeTLq52K9sVtHF2ZBAXc1
+      filename: tmp2zuepgia.txt
+      id: file-U6Ke78qu8nkANsrCrjoYBr
       object: file
       purpose: assistants
       status: processed
@@ -68,8 +68,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=5oa1RnhDcZ8prIRZwezpNKNQoDtxHkb39xg_B_zE5Sk-1764366837-1.0.1.1-PfaAGqOpMOuTrTbBjOIs3EExmD37CbhDPORI89a7J9XBBAj8bWVNT0hLkQUMdbiEawFUbAQoNae5R2bE.scXyaUIdgOH0SO2Q3gFABJ31hc;
-        _cfuvid=qTSdWRe4aS6tsbz6nzCGBKDlIDA2AgT1.bYyEkSzdWA-1764366837828-0.0.1.1-604800000
+      - __cf_bm=ZoKc41zWDAS55ggIRvj8bzVlQrh6Sd6ZTl0HB8K1leU-1764874025-1.0.1.1-7GyVFrqLSS2HFRzniUmaQdgama7xYe8_Gon8TujwI3OdRLuSJlCtb7Mx0Dd6dBPSOR1E0pBgjQheqctPNrcsuqOsj3OxI6rFpfoVGXINVsQ;
+        _cfuvid=gJYOJdl01aEVJsjSa1h_7AVbIe_1mpvbpni3aFZX2xg-1764874025348-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
@@ -89,11 +89,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '466'
+      - '491'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -101,7 +101,7 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1764366839
+      created_at: 1764874026
       description: null
       expires_after: null
       expires_at: null
@@ -111,8 +111,8 @@ interactions:
         failed: 0
         in_progress: 0
         total: 0
-      id: vs_692a19f6b25c8191877f21725e0fa537
-      last_active_at: 1764366839
+      id: vs_6931d72a43048191bbe7518b93c1d8ed
+      last_active_at: 1764874026
       metadata: {}
       name: test-file-search
       object: vector_store
@@ -134,16 +134,16 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=5oa1RnhDcZ8prIRZwezpNKNQoDtxHkb39xg_B_zE5Sk-1764366837-1.0.1.1-PfaAGqOpMOuTrTbBjOIs3EExmD37CbhDPORI89a7J9XBBAj8bWVNT0hLkQUMdbiEawFUbAQoNae5R2bE.scXyaUIdgOH0SO2Q3gFABJ31hc;
-        _cfuvid=qTSdWRe4aS6tsbz6nzCGBKDlIDA2AgT1.bYyEkSzdWA-1764366837828-0.0.1.1-604800000
+      - __cf_bm=ZoKc41zWDAS55ggIRvj8bzVlQrh6Sd6ZTl0HB8K1leU-1764874025-1.0.1.1-7GyVFrqLSS2HFRzniUmaQdgama7xYe8_Gon8TujwI3OdRLuSJlCtb7Mx0Dd6dBPSOR1E0pBgjQheqctPNrcsuqOsj3OxI6rFpfoVGXINVsQ;
+        _cfuvid=gJYOJdl01aEVJsjSa1h_7AVbIe_1mpvbpni3aFZX2xg-1764874025348-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
       - assistants=v2
     method: POST
     parsed_body:
-      file_id: file-7HeTLq52K9sVtHF2ZBAXc1
-    uri: https://api.openai.com/v1/vector_stores/vs_692a19f6b25c8191877f21725e0fa537/files
+      file_id: file-U6Ke78qu8nkANsrCrjoYBr
+    uri: https://api.openai.com/v1/vector_stores/vs_6931d72a43048191bbe7518b93c1d8ed/files
   response:
     headers:
       alt-svc:
@@ -155,11 +155,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '966'
+      - '1174'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -173,13 +173,13 @@ interactions:
           chunk_overlap_tokens: 400
           max_chunk_size_tokens: 800
         type: static
-      created_at: 1764366839
-      id: file-7HeTLq52K9sVtHF2ZBAXc1
+      created_at: 1764874027
+      id: file-U6Ke78qu8nkANsrCrjoYBr
       last_error: null
       object: vector_store.file
       status: in_progress
       usage_bytes: 0
-      vector_store_id: vs_692a19f6b25c8191877f21725e0fa537
+      vector_store_id: vs_6931d72a43048191bbe7518b93c1d8ed
     status:
       code: 200
       message: OK
@@ -192,12 +192,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '259'
+      - '261'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=5oa1RnhDcZ8prIRZwezpNKNQoDtxHkb39xg_B_zE5Sk-1764366837-1.0.1.1-PfaAGqOpMOuTrTbBjOIs3EExmD37CbhDPORI89a7J9XBBAj8bWVNT0hLkQUMdbiEawFUbAQoNae5R2bE.scXyaUIdgOH0SO2Q3gFABJ31hc;
-        _cfuvid=qTSdWRe4aS6tsbz6nzCGBKDlIDA2AgT1.bYyEkSzdWA-1764366837828-0.0.1.1-604800000
+      - __cf_bm=ZoKc41zWDAS55ggIRvj8bzVlQrh6Sd6ZTl0HB8K1leU-1764874025-1.0.1.1-7GyVFrqLSS2HFRzniUmaQdgama7xYe8_Gon8TujwI3OdRLuSJlCtb7Mx0Dd6dBPSOR1E0pBgjQheqctPNrcsuqOsj3OxI6rFpfoVGXINVsQ;
+        _cfuvid=gJYOJdl01aEVJsjSa1h_7AVbIe_1mpvbpni3aFZX2xg-1764874025348-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -210,9 +210,9 @@ interactions:
       stream: false
       tool_choice: auto
       tools:
-      - file_store_ids:
-        - vs_692a19f6b25c8191877f21725e0fa537
-        type: file_search
+      - type: file_search
+        vector_store_ids:
+        - vs_6931d72a43048191bbe7518b93c1d8ed
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -221,28 +221,225 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '215'
+      - '2004'
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '10'
+      - '8268'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
     parsed_body:
-      error:
-        code: missing_required_parameter
-        message: 'Missing required parameter: ''tools[0].vector_store_ids''.'
-        param: tools[0].vector_store_ids
-        type: invalid_request_error
+      background: false
+      billing:
+        payer: developer
+      created_at: 1764874030
+      error: null
+      id: resp_0995dffd0769e0bd006931d72e620c8194a75a0c780aafdc39
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: fs_0995dffd0769e0bd006931d72fecf48194bf314348aa6b2494
+        queries:
+        - What is the capital of France?
+        results: null
+        status: completed
+        type: file_search_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The capital of France is Paris.
+          type: output_text
+        id: msg_0995dffd0769e0bd006931d730fb488194aded9cb56d4e4d66
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        max_num_results: 20
+        ranking_options:
+          ranker: auto
+          score_threshold: 0.0
+        type: file_search
+        vector_store_ids:
+        - vs_6931d72a43048191bbe7518b93c1d8ed
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 870
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 30
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 900
+      user: null
     status:
-      code: 400
-      message: Bad Request
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '386'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=RkGShITzOWJfAro5Q9t07Pe8z7GnL.2sjvzUI5kwCUM-1764874038-1.0.1.1-cQaUFKE8Bk9fZoPth4.VQyEhPFE4CBBirR79PXXQb2jvaTImvVP.MBQ0KI90XLMjQLXBM3z6BQkUi7ZluPq2iMb6HRw1wClqeZ.QqCWM56Y;
+        _cfuvid=q15OLMMMEc4Zg7INeUydT3CqqmBCXn3d3kU_chmpoTI-1764874038717-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of France?
+        role: user
+      - content: The capital of France is Paris.
+        role: assistant
+      - content: Tell me about the Eiffel Tower.
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: file_search
+        vector_store_ids:
+        - vs_6931d72a43048191bbe7518b93c1d8ed
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2301'
+      content-type:
+      - application/json
+      openai-organization:
+      - cakewalk-technologies-gmbh-exelup
+      openai-processing-ms:
+      - '6929'
+      openai-project:
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1764874039
+      error: null
+      id: resp_019d8541afd6ed8d006931d73741bc81999eb79a68b7622add
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: fs_019d8541afd6ed8d006931d7382ef481998c5cd3117a0ff8fe
+        queries:
+        - Eiffel Tower
+        results: null
+        status: completed
+        type: file_search_call
+      - content:
+        - annotations:
+          - file_id: file-U6Ke78qu8nkANsrCrjoYBr
+            filename: tmp2zuepgia.txt
+            index: 137
+            type: file_citation
+          logprobs: []
+          text: The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves
+            as an iconic symbol of the city.
+          type: output_text
+        id: msg_019d8541afd6ed8d006931d73a862c8199a0dbac16717a3da7
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        max_num_results: 20
+        ranking_options:
+          ranker: auto
+          score_threshold: 0.0
+        type: file_search
+        vector_store_ids:
+        - vs_6931d72a43048191bbe7518b93c1d8ed
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 1188
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 55
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 1243
+      user: null
+    status:
+      code: 200
+      message: OK
 - request:
     body: ''
     headers:
@@ -255,12 +452,12 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=A1S16YtddrA66aDp.OA9jnWhOJ_DDQudVN050rAApqk-1764366842-1.0.1.1-CLAQ6lSWqe80t_aDZcwzk0CWjjLe4SWrq7ceSnVyOyytwQ45z88Nrp_pGpn4P4NiJbgbAeLxwTPBy9wBG9Zl0BlcYRU3Su158Ik0q2yno3k;
-        _cfuvid=WuaR1RvAEz7FqrgkQL8J2fJN7Q55EQX_fG5iVVKOXdw-1764366842781-0.0.1.1-604800000
+      - __cf_bm=RkGShITzOWJfAro5Q9t07Pe8z7GnL.2sjvzUI5kwCUM-1764874038-1.0.1.1-cQaUFKE8Bk9fZoPth4.VQyEhPFE4CBBirR79PXXQb2jvaTImvVP.MBQ0KI90XLMjQLXBM3z6BQkUi7ZluPq2iMb6HRw1wClqeZ.QqCWM56Y;
+        _cfuvid=q15OLMMMEc4Zg7INeUydT3CqqmBCXn3d3kU_chmpoTI-1764874038717-0.0.1.1-604800000
       host:
       - api.openai.com
     method: DELETE
-    uri: https://api.openai.com/v1/files/file-7HeTLq52K9sVtHF2ZBAXc1
+    uri: https://api.openai.com/v1/files/file-U6Ke78qu8nkANsrCrjoYBr
   response:
     headers:
       access-control-allow-origin:
@@ -274,11 +471,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '708'
+      - '563'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -287,7 +484,7 @@ interactions:
       - chunked
     parsed_body:
       deleted: true
-      id: file-7HeTLq52K9sVtHF2ZBAXc1
+      id: file-U6Ke78qu8nkANsrCrjoYBr
       object: file
     status:
       code: 200
@@ -304,14 +501,14 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=Zv0CMrrkkP6qvIkpD2.0g5b0Y0xAib9FiwhLWXz793Y-1764366843-1.0.1.1-xh2X3cvLo3ecx_ptH1JhD2RGJTWaopl3_ZyvHNJQEJcVltLRgmXhxmpF9VZRb7V3uMEYlxY3UgqPd1fSo6HOQ.fDBQIKbadB46q3z6fuH0c;
-        _cfuvid=bD92Jan6T_0.n08cBWii_RMJK1R5f4IHAdA6HJ6Yb7o-1764366843565-0.0.1.1-604800000
+      - __cf_bm=pOFiohBcCSNEoTwVeKfMsURH2i_6iujII4wN0KAg3Ic-1764874047-1.0.1.1-4Mn3Val75JXx410hU759Lb8rP7Es3wsJhrb9JbHeRoKhRUYwGR23Vg5rGSzpQMVe.zVZnT9Y5Tj2dBqSpR.oblXC9y3iuqH5bLk_YDgwiZo;
+        _cfuvid=hDhEp5NY2clE8gCmtBf30EFrYpYMILKFQ3WjTnbzsK4-1764874047422-0.0.1.1-604800000
       host:
       - api.openai.com
       openai-beta:
       - assistants=v2
     method: DELETE
-    uri: https://api.openai.com/v1/vector_stores/vs_692a19f6b25c8191877f21725e0fa537
+    uri: https://api.openai.com/v1/vector_stores/vs_6931d72a43048191bbe7518b93c1d8ed
   response:
     headers:
       alt-svc:
@@ -323,11 +520,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - cakewalk-technologies-gmbh-exelup
       openai-processing-ms:
-      - '1070'
+      - '1039'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_KcWyWZeHlcio1nNFXqORaTwa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -336,7 +533,7 @@ interactions:
       - chunked
     parsed_body:
       deleted: true
-      id: vs_692a19f6b25c8191877f21725e0fa537
+      id: vs_6931d72a43048191bbe7518b93c1d8ed
       object: vector_store.deleted
     status:
       code: 200
