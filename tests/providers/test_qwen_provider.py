@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -63,3 +64,17 @@ def test_qwen_non_omni_profile_default():
     profile = provider.model_profile('qwen-max')
     assert isinstance(profile, OpenAIModelProfile)
     assert profile.openai_chat_audio_input_encoding == 'base64'
+
+
+def test_qwen_provider_with_openai_client():
+    client = openai.AsyncOpenAI(api_key='foo')
+    provider = QwenProvider(openai_client=client)
+    assert provider.client is client
+
+
+def test_qwen_provider_with_http_client():
+    http_client = httpx.AsyncClient()
+    provider = QwenProvider(api_key='foo', http_client=http_client)
+    assert provider.client.api_key == 'foo'
+    # The line `self._client = AsyncOpenAI(..., http_client=http_client)` is executed,
+    # which is enough for coverage.
