@@ -64,6 +64,9 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
+ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
+"""Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
+
 
 @dataclass(repr=False)
 class SystemPromptPart:
@@ -1525,7 +1528,7 @@ class ThinkingPartDelta:
     Signatures are only sent back to the same provider.
     """
 
-    provider_details: dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None = None
+    provider_details: ProviderDetailsDelta = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
     Can be a dict to merge with existing details, or a callable that takes
@@ -1582,10 +1585,25 @@ class ThinkingPartDelta:
             if self.provider_name is not None:
                 part = replace(part, provider_name=self.provider_name)
             if self.provider_details is not None:
-                # For delta-to-delta: merge dicts, but callables just replace
-                # (callable resolution happens when applying to actual ThinkingPart)
                 if callable(self.provider_details):
-                    part = replace(part, provider_details=self.provider_details)
+                    if callable(part.provider_details):
+                        existing_fn = part.provider_details
+                        new_fn = self.provider_details
+
+                        def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
+                            return new_fn(existing_fn(d))
+
+                        part = replace(part, provider_details=chained_both)
+                    else:
+                        part = replace(part, provider_details=self.provider_details)
+                elif callable(part.provider_details):
+                    existing_fn = part.provider_details
+                    new_dict = self.provider_details
+
+                    def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:
+                        return {**existing_fn(d), **new_dict}
+
+                    part = replace(part, provider_details=chained_dict)
                 else:
                     existing = part.provider_details if isinstance(part.provider_details, dict) else {}
                     part = replace(part, provider_details={**existing, **self.provider_details})

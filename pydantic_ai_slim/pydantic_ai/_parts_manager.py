@@ -13,9 +13,9 @@ event-emitting logic.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Hashable, Iterator
+from collections.abc import Hashable, Iterator
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelResponseStreamEvent,
     PartDeltaEvent,
     PartStartEvent,
+    ProviderDetailsDelta,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -47,9 +48,6 @@ this includes ToolCallPartDelta's in addition to the more fully-formed ModelResp
 """
 
 PartT = TypeVar('PartT', bound=ManagedPart)
-
-ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
-"""Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
 @dataclass
