@@ -25,7 +25,7 @@ export OPENAI_API_KEY='your-api-key-here'
 Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
 ```bash
-uvx clai
+uvx clai chat
 ```
 
 Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools), run:
@@ -33,7 +33,7 @@ Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools
 ```bash
 uv tool install clai
 ...
-clai
+clai chat
 ```
 
 Or with `pip`, run:
@@ -41,10 +41,10 @@ Or with `pip`, run:
 ```bash
 pip install clai
 ...
-clai
+clai chat
 ```
 
-Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Either way, running `clai chat` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
@@ -112,30 +112,17 @@ For full documentation, see [Web Chat UI](https://ai.pydantic.dev/ui/web/).
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt] {web} ...
+usage: clai [-h] [-l] [--version] {chat,web} ...
 
 Pydantic AI CLI v...
 
-Special prompts:
-* `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
-* `/markdown` - show the last markdown output of the last question
-* `/multiline` - toggle multiline mode
-* `/cp` - copy the last response to clipboard
-
 positional arguments:
-  prompt                AI Prompt, if omitted fall into interactive mode
-  {web}                 Available commands
-    web                 Launch web chat UI for an agent
+  {chat,web}         Available commands
+    chat             Interactive chat with an AI model
+    web              Launch web chat UI for an agent
 
 options:
-  -h, --help            show this help message and exit
-  -m [MODEL], --model [MODEL]
-                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "openai:gpt-5".
-  -a AGENT, --agent AGENT
-                        Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
-  -l, --list-models     List all available models and exit
-  -t [CODE_THEME], --code-theme [CODE_THEME]
-                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
-  --no-stream           Disable streaming from the model
-  --version             Show version and exit
+  -h, --help         show this help message and exit
+  -l, --list-models  List all available models and exit
+  --version          Show version and exit
 ```

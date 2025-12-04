@@ -483,7 +483,7 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None
 def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
     # builtin tools
     agent = Agent(llamacpp_model, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match='Builtin tool WebSearchTool is not supported by this model'):
+    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
         agent.run_sync('Hello')
 
     # function tools

@@ -36,7 +36,7 @@ def test_cli_version(capfd: CaptureFixture[str]):
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
-    assert cli(['--model', 'potato']) == 1
+    assert cli(['chat', '--model', 'potato']) == 1
     assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])
 
 
@@ -74,7 +74,7 @@ def test_agent_flag(
     mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
 
     # Test CLI with custom agent
-    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+    assert cli(['chat', '--agent', 'test_module:custom_agent', 'hello']) == 0
 
     # Verify the output contains the custom agent message
     assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
@@ -91,7 +91,7 @@ def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., Non
 
     msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
     with pytest.raises(OpenAIError, match=msg):
-        cli(['--agent', 'test_module:custom_agent', 'hello'])
+        cli(['chat', '--agent', 'test_module:custom_agent', 'hello'])
 
 
 def test_agent_flag_set_model(
@@ -108,7 +108,7 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
+    assert cli(['chat', '--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
@@ -121,13 +121,22 @@ def test_agent_flag_non_agent(
     test_agent = 'Not an Agent object'
     create_test_module(custom_agent=test_agent)
 
-    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
+    assert cli(['chat', '--agent', 'test_module:custom_agent', 'hello']) == 1
     assert 'Could not load agent from test_module:custom_agent' in capfd.readouterr().out
 
 
 def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
-    assert cli(['--agent', 'bad_path', 'hello']) == 1
+    assert cli(['chat', '--agent', 'bad_path', 'hello']) == 1
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
+
+
+def test_no_command_shows_help(capfd: CaptureFixture[str]):
+    """Test that running clai with no command shows help."""
+    assert cli([]) == 0
+    output = capfd.readouterr().out
+    assert 'usage:' in output
+    assert 'chat' in output
+    assert 'web' in output
 
 
 def test_list_models(capfd: CaptureFixture[str]):
@@ -161,9 +170,9 @@ def test_list_models(capfd: CaptureFixture[str]):
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
-        assert cli(['hello']) == 0
+        assert cli(['chat', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
-        assert cli(['--no-stream', 'hello']) == 0
+        assert cli(['chat', '--no-stream', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
@@ -186,7 +195,7 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
         m.return_value = session
         m = TestModel(custom_output_text='goodbye')
         with cli_agent.override(model=m):
-            assert cli([]) == 0
+            assert cli(['chat']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot(
             [
                 IsStr(),
@@ -265,21 +274,21 @@ def test_handle_slash_command_other():
 def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli([])
+    cli(['chat'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['--code-theme=light'])
+    cli(['chat', '--code-theme=light'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'pai')
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['--code-theme=dark'])
+    cli(['chat', '--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 

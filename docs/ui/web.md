@@ -50,11 +50,11 @@ Create a web app from an agent instance using [`Agent.to_web()`][pydantic_ai.age
     from pydantic_ai import Agent
     from pydantic_ai.builtin_tools import WebSearchTool
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
 
     # Create separate models with their own custom configuration
     anthropic_model = AnthropicModel('claude-sonnet-4-5')
-    openai_model = OpenAIModel('gpt-5', api_key='custom-key')
+    openai_model = OpenAIChatModel('gpt-5', provider='openai')
 
     agent = Agent(openai_model)
 
