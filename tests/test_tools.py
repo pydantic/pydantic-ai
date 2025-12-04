@@ -2675,5 +2675,5 @@ async def test_tool_timeout_exceeds_retry_limit():
         await asyncio.sleep(1.0)  # Always timeout
         return 'done'  # pragma: no cover
 
-    with pytest.raises(UnexpectedModelBehavior, match="exceeded max retries"):
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
         await agent.run('call always_slow_tool')
