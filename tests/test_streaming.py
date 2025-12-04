@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
@@ -1418,51 +1418,29 @@ class TestMultipleToolCalls:
             ]
         )
 
-    async def test_exhaustive_strategy_with_validation_error(self):
-        """Test that exhaustive strategy doesn't increment retries when one output has validation error but another is valid."""
-        output_tools_called: list[str] = []
+    async def test_exhaustive_raises_unexpected_model_behavior(self):
+        """Test that exhaustive strategy raises `UnexpectedModelBehavior` when all outputs have validation errors."""
 
-        class ValidOutput(BaseModel):
-            value: str
-
-        class InvalidOutput(BaseModel):
-            required_field: str  # This field is required
-
-        def process_valid(output: ValidOutput) -> ValidOutput:
-            """Process valid output - will succeed."""
-            output_tools_called.append('valid')
-            return output
-
-        def process_invalid(output: InvalidOutput) -> InvalidOutput:
-            """Process invalid output - will fail validation due to missing field."""
-            output_tools_called.append('invalid')
+        def process_output(output: OutputType) -> OutputType:
+            """Process output."""
             return output
 
         async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
             assert info.output_tools is not None
-            yield {1: DeltaToolCall('valid_output', '{"value": "valid"}')}
-            # Missing 'required_field' will cause validation error
-            yield {2: DeltaToolCall('invalid_output', '{"wrong_field": "invalid"}')}
+            # Missing 'value' field will cause validation error
+            yield {1: DeltaToolCall('output_tool', '{"invalid_field": "invalid"}')}
 
         agent = Agent(
             FunctionModel(stream_function=stream_function),
             output_type=[
-                ToolOutput(process_valid, name='valid_output'),
-                ToolOutput(process_invalid, name='invalid_output'),
+                ToolOutput(process_output, name='output_tool'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,  # No retries - should succeed with valid output
         )
 
-        async with agent.run_stream('test validation error with valid output') as result:
-            response = await result.get_output()
-
-        # Verify the result came from the valid output tool
-        assert isinstance(response, ValidOutput)
-        assert response.value == 'valid'
-
-        # Verify both output tools were called
-        assert output_tools_called == ['valid', 'invalid']
+        with pytest.raises(ValidationError, match='Field required'):
+            async with agent.run_stream('test') as result:
+                await result.get_output()
 
     async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
         """Test that 'early' strategy does not apply to tool calls when no output tool is called."""
