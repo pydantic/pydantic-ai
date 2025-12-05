@@ -8,8 +8,7 @@ from typing import Literal
 import pytest
 from inline_snapshot import snapshot
 from inline_snapshot.extra import warns
-from logfire_api import DEFAULT_LOGFIRE_INSTANCE
-from opentelemetry._events import NoOpEventLoggerProvider
+from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai import (
@@ -54,11 +53,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
     pytest.mark.anyio,
 ]
-
-requires_logfire_events = pytest.mark.skipif(
-    not hasattr(DEFAULT_LOGFIRE_INSTANCE.config, 'get_event_logger_provider'),
-    reason='old logfire without events/logs support',
-)
 
 
 class MyModel(Model):
@@ -136,7 +130,6 @@ class MyResponseStream(StreamedResponse):
         return datetime(2022, 1, 1)
 
 
-@requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
     assert model.system == 'openai'
@@ -218,7 +211,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
         [
             {
                 'body': {'role': 'system', 'content': 'system_prompt'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -233,7 +226,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
             },
             {
                 'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -248,7 +241,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
             },
             {
                 'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3', 'name': 'tool3'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -272,7 +265,7 @@ Fix the errors and try again.\
                     'id': 'tool_call_4',
                     'name': 'tool4',
                 },
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -295,7 +288,7 @@ Fix the errors and try again.\
 """,
                     'role': 'user',
                 },
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -310,7 +303,7 @@ Fix the errors and try again.\
             },
             {
                 'body': {'role': 'assistant', 'content': 'text3'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -343,7 +336,7 @@ Fix the errors and try again.\
                         ],
                     },
                 },
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'openai', 'event.name': 'gen_ai.choice'},
                 'timestamp': 14000000000,
@@ -359,7 +352,7 @@ Fix the errors and try again.\
 async def test_instrumented_model_not_recording():
     model = InstrumentedModel(
         MyModel(),
-        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()),
+        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), logger_provider=NoOpLoggerProvider()),
     )
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
@@ -376,7 +369,6 @@ async def test_instrumented_model_not_recording():
     )
 
 
-@requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
@@ -451,7 +443,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         [
             {
                 'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -466,7 +458,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
             },
             {
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'openai', 'event.name': 'gen_ai.choice'},
                 'timestamp': 4000000000,
@@ -479,7 +471,6 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
     )
 
 
-@requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
@@ -542,6 +533,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
+                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
                     'logfire.level_num': 17,
                 },
                 'events': [
@@ -564,7 +556,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
         [
             {
                 'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'openai',
@@ -579,7 +571,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
             },
             {
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'openai', 'event.name': 'gen_ai.choice'},
                 'timestamp': 4000000000,
