@@ -566,12 +566,16 @@ class OpenRouterModel(OpenAIChatModel):
             return super()._process_thinking(message)
 
     @override
-    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         assert isinstance(response, _OpenRouterChatCompletion)
 
         provider_details = super()._process_provider_details(response)
-        provider_details.update(_map_openrouter_provider_details(response))
-        return provider_details
+        openrouter_details = _map_openrouter_provider_details(response)
+        if openrouter_details:
+            if provider_details is None:
+                provider_details = {}
+            provider_details.update(openrouter_details)
+        return provider_details or None
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]

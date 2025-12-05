@@ -597,7 +597,7 @@ class OpenAIChatModel(Model):
         """
         return chat.ChatCompletion.model_validate(response.model_dump())
 
-    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
@@ -654,6 +654,8 @@ class OpenAIChatModel(Model):
 
         provider_details = self._process_provider_details(response)
         if response.created:  # pragma: no branch
+            if provider_details is None:
+                provider_details = {}
             provider_details['timestamp'] = number_to_datetime(response.created)
 
         return ModelResponse(
@@ -661,7 +663,7 @@ class OpenAIChatModel(Model):
             usage=self._map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_details=provider_details,
+            provider_details=provider_details or None,
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
@@ -1212,7 +1214,7 @@ class OpenAIResponsesModel(Model):
                             id=item.id,
                             signature=signature,
                             provider_name=self.system if (signature or provider_details) else None,
-                            provider_details=provider_details,
+                            provider_details=provider_details or None,
                         )
                     )
             elif isinstance(item, responses.ResponseOutputMessage):
@@ -2042,8 +2044,10 @@ class OpenAIStreamedResponse(StreamedResponse):
         """
         provider_details = _map_provider_details(chunk.choices[0])
         if self._provider_timestamp is not None:  # pragma: no branch
+            if provider_details is None:
+                provider_details = {}
             provider_details['timestamp'] = number_to_datetime(self._provider_timestamp)
-        return provider_details
+        return provider_details or None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
@@ -2499,7 +2503,7 @@ def _map_usage(
 
 def _map_provider_details(
     choice: chat_completion_chunk.Choice | chat_completion.Choice,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     provider_details: dict[str, Any] = {}
 
     # Add logprobs to vendor_details if available
@@ -2508,7 +2512,7 @@ def _map_provider_details(
     if raw_finish_reason := choice.finish_reason:
         provider_details['finish_reason'] = raw_finish_reason
 
-    return provider_details
+    return provider_details or None
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:

@@ -2703,7 +2703,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content='', id='rs_123', signature='123', provider_name='openai', provider_details={}),
+                    ThinkingPart(content='', id='rs_123', signature='123', provider_name='openai'),
                     TextPart(content='4', id='msg_123'),
                 ],
                 model_name='gpt-4o-123',
@@ -7917,7 +7917,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 40, 975876, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7983,7 +7983,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 98277, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8052,7 +8052,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 258551, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8115,7 +8115,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 400785, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8258,7 +8258,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 550367, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8293,7 +8293,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 550367, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8321,7 +8321,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 554648, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8364,7 +8364,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 550367, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8392,7 +8392,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 554648, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8428,7 +8428,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=datetime(2025, 12, 5, 17, 15, 41, 557492, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
