@@ -1188,8 +1188,10 @@ class OpenAIResponsesModel(Model):
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
                 # Handle raw CoT content from gpt-oss models
+                provider_details: dict[str, Any] = {}
                 raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
-                provider_details: dict[str, Any] | None = {'raw_content': raw_content} if raw_content else None
+                if raw_content:
+                    provider_details['raw_content'] = raw_content
 
                 if item.summary:
                     for summary in item.summary:
@@ -1200,12 +1202,9 @@ class OpenAIResponsesModel(Model):
                                 id=item.id,
                                 signature=signature,
                                 provider_name=self.system if (signature or provider_details) else None,
-                                provider_details=provider_details,
+                                provider_details=provider_details or None,
                             )
                         )
-                        # We only need to store the signature and raw_content once.
-                        signature = None
-                        provider_details = None
                 elif signature or provider_details:
                     items.append(
                         ThinkingPart(
