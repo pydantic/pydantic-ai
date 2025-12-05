@@ -876,6 +876,7 @@ class StreamedResponse(ABC):
             timestamp=self.timestamp,
             usage=self.usage(),
             provider_name=self.provider_name,
+            provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
@@ -896,6 +897,12 @@ class StreamedResponse(ABC):
     @abstractmethod
     def provider_name(self) -> str | None:
         """Get the provider name."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
         raise NotImplementedError()
 
     @property

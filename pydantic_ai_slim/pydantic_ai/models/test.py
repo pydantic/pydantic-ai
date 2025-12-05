@@ -297,6 +297,7 @@ class TestStreamedResponse(StreamedResponse):
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
     _provider_name: str
+    _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -344,6 +345,11 @@ class TestStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

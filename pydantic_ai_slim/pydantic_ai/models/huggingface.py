@@ -151,6 +151,11 @@ class HuggingFaceModel(Model):
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
+    def base_url(self) -> str:
+        """The base URL of the provider."""
+        return self._provider.base_url
+
+    @property
     def model_name(self) -> HuggingFaceModelName:
         """The model name."""
         return self._model_name
@@ -295,6 +300,7 @@ class HuggingFaceModel(Model):
             timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -317,6 +323,7 @@ class HuggingFaceModel(Model):
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -465,6 +472,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -514,6 +522,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
