@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
-from mimetypes import guess_type
+from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
@@ -27,25 +27,26 @@ from .usage import RequestUsage
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
-# Register manually MIME types that are not in the standard library
+_mime_types = MimeTypes(tuple(mimetypes.knownfiles))
+# Register manually MIME types that are not in the standard library or override standard ones
 # Document types
-mimetypes.add_type('text/markdown', '.mdx')
-mimetypes.add_type('text/x-asciidoc', '.asciidoc')
+_mime_types.add_type('text/markdown', '.mdx')
+_mime_types.add_type('text/x-asciidoc', '.asciidoc')
 
 # Video types
-mimetypes.add_type('video/3gpp', '.three_gp')
-mimetypes.add_type('video/x-flv', '.flv')
-mimetypes.add_type('video/x-matroska', '.mkv')
-mimetypes.add_type('video/x-ms-wmv', '.wmv')
+_mime_types.add_type('video/3gpp', '.three_gp')
+_mime_types.add_type('video/x-flv', '.flv')
+_mime_types.add_type('video/x-matroska', '.mkv')
+_mime_types.add_type('video/x-ms-wmv', '.wmv')
 
 # Audio types
-mimetypes.add_type('audio/flac', '.flac')
-mimetypes.add_type('audio/mpeg', '.mp3')
-mimetypes.add_type('audio/ogg', '.oga')
+_mime_types.add_type('audio/flac', '.flac')
+_mime_types.add_type('audio/mpeg', '.mp3')
+_mime_types.add_type('audio/ogg', '.oga')
 # override stdlib mimetypes that use x- prefix with standard types
-mimetypes.add_type('audio/aac', '.aac')
-mimetypes.add_type('audio/aiff', '.aiff')
-mimetypes.add_type('audio/wav', '.wav')
+_mime_types.add_type('audio/aac', '.aac')
+_mime_types.add_type('audio/aiff', '.aiff')
+_mime_types.add_type('audio/wav', '.wav')
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -256,7 +257,7 @@ class VideoUrl(FileUrl):
         if self.is_youtube:
             return 'video/mp4'
 
-        mime_type, _ = guess_type(self.url)
+        mime_type, _ = _mime_types.guess_type(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -319,7 +320,7 @@ class AudioUrl(FileUrl):
         References:
         - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
         """
-        mime_type, _ = guess_type(self.url)
+        mime_type, _ = _mime_types.guess_type(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -368,7 +369,7 @@ class ImageUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the image, based on the url."""
-        mime_type, _ = guess_type(self.url)
+        mime_type, _ = _mime_types.guess_type(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from image URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -420,7 +421,7 @@ class DocumentUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
-        mime_type, _ = guess_type(self.url)
+        mime_type, _ = _mime_types.guess_type(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -519,7 +520,7 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
-        media_type, _ = guess_type(path)
+        media_type, _ = _mime_types.guess_type(path)
         if media_type is None:
             media_type = 'application/octet-stream'
 
