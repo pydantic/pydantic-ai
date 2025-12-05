@@ -1,0 +1,86 @@
+from __future__ import annotations as _annotations
+
+import os
+from typing import overload
+
+import httpx
+from openai import AsyncOpenAI
+
+from pydantic_ai import ModelProfile
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.providers import Provider
+
+try:
+    from openai import AsyncOpenAI
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
+        'Please install the `openai` package to use the Qwen provider, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
+
+
+class QwenProvider(Provider[AsyncOpenAI]):
+    """Provider for Qwen / DashScope OpenAI-compatible API."""
+
+    @property
+    def name(self) -> str:
+        return 'qwen'
+
+    @property
+    def base_url(self) -> str:
+        # Using the international endpoint by default as it's more standard for global users
+        # Users in China region can override this via passing `openai_client` or implementing logic to check region
+        return 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        base_profile = qwen_model_profile(model_name)
+
+        # Wrap/merge into OpenAIModelProfile
+        openai_profile = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(base_profile)
+
+        # For Qwen Omni models, force URI audio input encoding
+        if 'omni' in model_name.lower():
+            openai_profile = OpenAIModelProfile(openai_chat_audio_input_encoding='uri').update(openai_profile)
+
+        return openai_profile
+
+    @overload
+    def __init__(self) -> None: ...
+
+    @overload
+    def __init__(self, *, api_key: str) -> None: ...
+
+    @overload
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+
+    @overload
+    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        openai_client: AsyncOpenAI | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        api_key = api_key or os.getenv('QWEN_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
+        if not api_key and openai_client is None:
+            raise UserError(
+                'Set the `QWEN_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable or pass it via '
+                '`QwenProvider(api_key=...)` to use the Qwen provider.'
+            )
+
+        if openai_client is not None:
+            self._client = openai_client
+        elif http_client is not None:
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+        else:
+            http_client = cached_async_http_client(provider='qwen')
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
