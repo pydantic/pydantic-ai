@@ -7887,6 +7887,7 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(
             parts=[TextPart(content='world')],
+            provider_name='anthropic',
             provider_details={'container_id': 'container_from_history'},
         ),
     ]
@@ -7910,6 +7911,7 @@ async def test_anthropic_container_setting_false_ignores_history(allow_model_req
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(
             parts=[TextPart(content='world')],
+            provider_name='anthropic',
             provider_details={'container_id': 'container_should_be_ignored'},
         ),
     ]
