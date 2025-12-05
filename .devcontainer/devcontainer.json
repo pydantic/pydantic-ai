@@ -1,0 +1,116 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/python
+{
+  "name": "Pydantic AI",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  // Features to add to the dev container. More info: https://containers.dev/features.
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/lukewiwa/features/shellcheck:0": {},
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installLsof": true,
+      "installBuildTools": true, // This option installs build-essential
+      "upgradePackages": true,
+      "installZsh": false,
+      "installOhMyZsh": false
+    },
+    "ghcr.io/devcontainers-community/features/deno:1": { // Required for https://github.com/pydantic/mcp-run-python
+      "version": "latest"
+    }
+  },
+  // Port forwarding for local services
+  "forwardPorts": [
+    8000,
+    8080,
+    11434,
+    54320
+  ],
+  "portsAttributes": {
+    "8000": {
+      "label": "MkDocs Server",
+      "onAutoForward": "notify"
+    },
+    "8080": {
+      "label": "FastAPI/Example Apps",
+      "onAutoForward": "notify"
+    },
+    "11434": {
+      "label": "Ollama",
+      "onAutoForward": "silent"
+    },
+    "54320": {
+      "label": "PostgreSQL",
+      "onAutoForward": "silent"
+    }
+  },
+  // Use 'containerEnv' to set environment variables in the container. Visible system-wide. For example when `docker exec` is used.
+  "containerEnv": {
+    "OLLAMA_HOST": "http://host.docker.internal:11434", // Connect to Ollama instance running on host machine.
+    "COLUMNS": "150",
+    "CI": "false",
+    "LOGFIRE_INSPECT_ARGUMENTS": "1",
+    "CMAKE_ARGS": "-DGGML_NATIVE=OFF", // Switch off native architecture optimization! Building llama-cpp-python on Apple Silicon fails otherwise.
+    "UV_FROZEN": "0",
+    "UV_LINK_MODE": "copy",
+    "UV_COMPILE_BYTECODE": "1", // uv will compile .py files to .pyc files. Speeds up startup time.
+    "PYTHONUNBUFFERED": "1" // Ensure stdout and stderr are unbuffered.
+  },
+  // Use 'remoteEnv' to set environment variables for the remote workspace. Visible to VS Code background process only.
+  "remoteEnv": {},
+  // Use 'postCreateCommand' to run commands after the container is created.
+  "postCreateCommand": [
+    "bash",
+    "-c",
+    "uv tool install pre-commit && make install"
+  ],
+  //"postStartCommand": "",
+  // Configure tool-specific properties.
+  // Please keep minimal. For further customizations, use .vscode and .cursor in the "mounts" section.
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": ".venv/bin/python"
+      },
+      "extensions": [
+        // Python
+        "ms-python.python",
+        "charliermarsh.ruff",
+        // yaml + toml
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml"
+      ]
+    },
+    "cursor": {
+      "settings": {
+        "python.defaultInterpreterPath": ".venv/bin/python"
+      },
+      "extensions": [
+        // Python
+        "anysphere.pyright",
+        "charliermarsh.ruff",
+        // yaml + toml
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml"
+      ]
+    }
+  }
+  // Uncomment to copy .env file into the container.
+  // "initializeCommand": "cp ../my-env/.env ./.env",
+  // Uncomment to mount .vscode and .cursor directories from other repositories or directories.
+  // "mounts": [
+  //   {
+  //     "source": "${localWorkspaceFolder}/../my-vscode-config/.vscode",
+  //     "target": "${containerWorkspaceFolder}/.vscode",
+  //     "type": "bind"
+  //   },
+  //   {
+  //     "source": "${localWorkspaceFolder}/../my-cursor-config/.cursor",
+  //     "target": "${containerWorkspaceFolder}/.cursor",
+  //     "type": "bind"
+  //   }
+  // ]
+  // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+  // "remoteUser": "root"
+}
