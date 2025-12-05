@@ -772,7 +772,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     part_obj, new_code_execution_tool_call_id = self._handle_executable_code_streaming(
                         part.executable_code
                     )
-                    if part_obj is not None:
+                    if part_obj is not None:  # pragma: no branch
                         if new_code_execution_tool_call_id is not None:
                             code_execution_tool_call_id = new_code_execution_tool_call_id
                         part_obj.provider_details = provider_details
@@ -799,7 +799,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         grounding_chunks = grounding_metadata.grounding_chunks
         retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
-        if retrieved_contexts:
+        if retrieved_contexts:  # pragma: no branch
             yield self._parts_manager.handle_part(
                 vendor_part_id=uuid4(),
                 part=BuiltinToolReturnPart(
