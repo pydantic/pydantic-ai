@@ -722,11 +722,14 @@ class GeminiStreamedResponse(StreamedResponse):
                 # Google returns thought_signature on the part FOLLOWING the thinking part.
                 # Apply it to the previous ThinkingPart if this is a non-thinking part with a signature.
                 if thought_signature and not part.thought:
-                    for event in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=None,
-                        signature=thought_signature,
-                    ):
-                        yield event
+                    # Only apply signature if the latest part is a ThinkingPart
+                    parts = self._parts_manager.get_parts()
+                    if parts and isinstance(parts[-1], ThinkingPart):
+                        for event in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=None,
+                            signature=thought_signature,
+                        ):
+                            yield event
 
                 if part.text is not None:
                     if len(part.text) == 0 and not provider_details:
