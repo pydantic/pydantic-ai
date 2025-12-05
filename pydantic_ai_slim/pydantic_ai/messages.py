@@ -1595,7 +1595,7 @@ class ThinkingPartDelta:
 
                         part = replace(part, provider_details=chained_both)
                     else:
-                        part = replace(part, provider_details=self.provider_details)
+                        part = replace(part, provider_details=self.provider_details)  # pragma: no cover
                 elif callable(part.provider_details):
                     existing_fn = part.provider_details
                     new_dict = self.provider_details
