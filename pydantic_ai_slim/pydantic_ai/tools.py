@@ -154,11 +154,11 @@ class DeferredToolRequests:
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
-    calls: list[ToolCallPart] = field(default_factory=list)
+    calls: list[ToolCallPart] = field(default_factory=lambda: list[ToolCallPart]())
     """Tool calls that require external execution."""
-    approvals: list[ToolCallPart] = field(default_factory=list)
+    approvals: list[ToolCallPart] = field(default_factory=lambda: list[ToolCallPart]())
     """Tool calls that require human-in-the-loop approval."""
-    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    metadata: dict[str, dict[str, Any]] = field(default_factory=lambda: dict[str, dict[str, Any]]())
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
 
@@ -220,9 +220,9 @@ class DeferredToolResults:
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
-    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict)
+    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=lambda: dict[str, DeferredToolCallResult | Any]())
     """Map of tool call IDs to results for tool calls that required external execution."""
-    approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=dict)
+    approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=lambda: dict[str, bool | DeferredToolApprovalResult]())
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
 
 
@@ -383,6 +383,7 @@ class Tool(Generic[ToolAgentDepsT]):
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
         sequential: bool = False,
+        requires_approval: bool = False,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -397,6 +398,7 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
 
         Returns:
             A Pydantic tool that calls the function
@@ -417,6 +419,7 @@ class Tool(Generic[ToolAgentDepsT]):
             description=description,
             function_schema=function_schema,
             sequential=sequential,
+            requires_approval=requires_approval,
         )
 
     @property
