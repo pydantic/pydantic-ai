@@ -3339,26 +3339,29 @@ async def test_openai_response_filter_error_sync(allow_model_requests: None):
     )
     # Simulate content filter finish reason
     c.choices[0].finish_reason = 'content_filter'
+    c.model = 'gpt-5-mini'
 
     mock_client = MockOpenAI.create_mock(c)
 
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    # The mock message uses 'gpt-4o-123' by default
-    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-4o-123'"):
+    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-5-mini'"):
         await agent.run('hello')
 
 
 async def test_openai_response_filter_error_stream(allow_model_requests: None):
     stream = [text_chunk('hello'), text_chunk('', finish_reason='content_filter')]
+
+    for chunk in stream:
+        chunk.model = 'gpt-5-mini'
+
     mock_client = MockOpenAI.create_mock_stream(stream)
 
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    # The mock chunks use 'gpt-4o-123' by default
-    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-4o-123'"):
+    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-5-mini'"):
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass

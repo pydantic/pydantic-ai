@@ -7912,10 +7912,9 @@ async def test_anthropic_response_filter_error_sync(allow_model_requests: None):
     c.stop_reason = 'refusal'
 
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-3-5-haiku-123', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    # Mock uses hardcoded 'claude-3-5-haiku-123'
     with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'claude-3-5-haiku-123'"):
         await agent.run('hello')
 
@@ -7943,7 +7942,7 @@ async def test_anthropic_response_filter_error_stream(allow_model_requests: None
     ]
 
     mock_client = MockAnthropic.create_stream_mock([stream])
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-3-5-haiku-123', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'claude-3-5-haiku-123'"):
