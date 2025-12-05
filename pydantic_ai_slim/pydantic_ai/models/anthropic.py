@@ -1129,25 +1129,26 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event_ in self._parts_manager.handle_text_delta(
                         vendor_part_id=event.index, content=current_block.text
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event_
                 elif isinstance(current_block, BetaThinkingBlock):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         content=current_block.thinking,
                         signature=current_block.signature,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(current_block, BetaRedactedThinkingBlock):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         id='redacted_thinking',
                         signature=current_block.data,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(current_block, BetaToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=event.index,
@@ -1208,23 +1209,24 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event_ in self._parts_manager.handle_text_delta(
                         vendor_part_id=event.index, content=event.delta.text
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event_
                 elif isinstance(event.delta, BetaThinkingDelta):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         content=event.delta.thinking,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(event.delta, BetaSignatureDelta):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event_ in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         signature=event.delta.signature,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield event_
                 elif isinstance(event.delta, BetaInputJSONDelta):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=event.index,
