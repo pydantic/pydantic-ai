@@ -1126,16 +1126,16 @@ def _extract_file_search_retrieved_contexts(
             mode='json', exclude_none=True, by_alias=False
         )
         file_search_store = getattr(chunk.retrieved_context, 'file_search_store', None)
-        if file_search_store is None:  # pragma: no cover
+        if file_search_store is None:
             file_search_store = getattr(chunk.retrieved_context, 'fileSearchStore', None)
-        if file_search_store is None:  # pragma: no cover
+        if file_search_store is None:
             file_search_store = context_dict.get('file_search_store')
-        if file_search_store is None:  # pragma: no cover
+        if file_search_store is None:
             context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
                 mode='json', exclude_none=False, by_alias=True
             )
             file_search_store = context_dict_with_aliases.get('fileSearchStore')
-        if file_search_store is not None:  # pragma: no cover
+        if file_search_store is not None:
             context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
