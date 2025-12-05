@@ -157,6 +157,24 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
 }
 
 
+def _check_azure_content_filter(e: APIStatusError, model_name: str) -> None:
+    """Check if the error is an Azure content filter error and raise PromptContentFilterError if so."""
+    if e.status_code == 400:
+        body_any: Any = e.body
+
+        if isinstance(body_any, dict):
+            body_dict = cast(dict[str, Any], body_any)
+
+            if (error := body_dict.get('error')) and isinstance(error, dict):
+                error_dict = cast(dict[str, Any], error)
+                if error_dict.get('code') == 'content_filter':
+                    raise PromptContentFilterError(
+                        status_code=e.status_code,
+                        model_name=model_name,
+                        body=body_dict,
+                    ) from e
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -552,27 +570,9 @@ class OpenAIChatModel(Model):
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                # Handle Azure Prompt Filter
-                err_body: Any = e.body
+                _check_azure_content_filter(e, self.model_name)
 
-                if status_code == 400 and isinstance(err_body, dict):
-                    err_dict = cast(dict[str, Any], err_body)
-                    error = err_dict.get('error')
-
-                    if isinstance(error, dict):
-                        error_dict = cast(dict[str, Any], error)
-                        if error_dict.get('code') == 'content_filter':
-                            raise PromptContentFilterError(
-                                status_code=status_code,
-                                model_name=self.model_name,
-                                body=cast(dict[str, Any], err_body),
-                            ) from e
-
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=cast(dict[str, Any], err_body),
-                ) from e
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
@@ -621,7 +621,6 @@ class OpenAIChatModel(Model):
 
         if choice.finish_reason == 'content_filter':
             raise ResponseContentFilterError(
-                f'Content filter triggered for model {response.model}',
                 model_name=response.model,
                 body=response.model_dump(),
             )
@@ -1264,7 +1263,6 @@ class OpenAIResponsesModel(Model):
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason == 'content_filter':
             raise ResponseContentFilterError(
-                f'Content filter triggered for model {response.model}',
                 model_name=response.model,
                 body=response.model_dump(),
             )
@@ -1424,27 +1422,10 @@ class OpenAIResponsesModel(Model):
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                # Handle Azure Prompt Filter
-                err_body: Any = e.body
+                _check_azure_content_filter(e, self.model_name)
 
-                if status_code == 400 and isinstance(err_body, dict):
-                    err_dict = cast(dict[str, Any], err_body)
-                    error = err_dict.get('error')
-
-                    if isinstance(error, dict):
-                        error_dict = cast(dict[str, Any], error)
-                        if error_dict.get('code') == 'content_filter':
-                            raise PromptContentFilterError(
-                                status_code=status_code,
-                                model_name=self.model_name,
-                                body=cast(dict[str, Any], err_body),
-                            ) from e
-
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=cast(dict[str, Any], err_body),
-                ) from e
+                # Reverted cast
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
@@ -1931,7 +1912,6 @@ class OpenAIStreamedResponse(StreamedResponse):
             if raw_finish_reason := choice.finish_reason:
                 if raw_finish_reason == 'content_filter':
                     raise ResponseContentFilterError(
-                        f'Content filter triggered for model {self.model_name}',
                         model_name=self.model_name,
                     )
                 self.finish_reason = self._map_finish_reason(raw_finish_reason)
@@ -2082,7 +2062,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 if raw_finish_reason == 'content_filter':
                     raise ResponseContentFilterError(
-                        f'Content filter triggered for model {self.model_name}',
                         model_name=self.model_name,
                     )
 

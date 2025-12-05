@@ -528,7 +528,6 @@ class AnthropicModel(Model):
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
             if finish_reason == 'content_filter':
                 raise ResponseContentFilterError(
-                    f'Content filter triggered for model {response.model}',
                     model_name=response.model,
                     body=response.model_dump(),
                 )
@@ -1249,7 +1248,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     if self.finish_reason == 'content_filter':
                         raise ResponseContentFilterError(
-                            f'Content filter triggered for model {self.model_name}',
                             model_name=self.model_name,
                         )
 

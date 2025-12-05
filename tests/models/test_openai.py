@@ -3307,14 +3307,13 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
             body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
         )
     )
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-    with pytest.raises(PromptContentFilterError) as exc_info:
-        agent.run_sync('bad prompt')
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'gpt-4o'
-    assert 'Prompt content filtered' in str(exc_info.value)
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # Asserting the full error message structure via match
+    with pytest.raises(PromptContentFilterError, match=r"Prompt content filtered by model 'gpt-5-mini'"):
+        agent.run_sync('bad prompt')
 
 
 async def test_openai_response_filter_error_sync(allow_model_requests: None):
@@ -3325,27 +3324,24 @@ async def test_openai_response_filter_error_sync(allow_model_requests: None):
     c.choices[0].finish_reason = 'content_filter'
 
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError) as exc_info:
+    # The mock message uses 'gpt-4o-123' by default
+    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-4o-123'"):
         await agent.run('hello')
-
-    # assertion: matches the mock's default model name
-    assert exc_info.value.model_name == 'gpt-4o-123'
-    assert 'Content filter triggered' in str(exc_info.value)
 
 
 async def test_openai_response_filter_error_stream(allow_model_requests: None):
     stream = [text_chunk('hello'), text_chunk('', finish_reason='content_filter')]
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError) as exc_info:
+    # The mock chunks use 'gpt-4o-123' by default
+    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-4o-123'"):
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass
-
-    assert exc_info.value.model_name == 'gpt-4o-123'
-    assert 'Content filter triggered' in str(exc_info.value)

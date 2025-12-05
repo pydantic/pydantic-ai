@@ -7872,12 +7872,9 @@ async def test_anthropic_response_filter_error_sync(allow_model_requests: None):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError) as exc_info:
+    # Mock uses hardcoded 'claude-3-5-haiku-123'
+    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'claude-3-5-haiku-123'"):
         await agent.run('hello')
-
-    # The mock completion_message uses this model name hardcoded
-    assert exc_info.value.model_name == 'claude-3-5-haiku-123'
-    assert 'Content filter triggered' in str(exc_info.value)
 
 
 async def test_anthropic_response_filter_error_stream(allow_model_requests: None):
@@ -7906,10 +7903,7 @@ async def test_anthropic_response_filter_error_stream(allow_model_requests: None
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError) as exc_info:
+    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'claude-3-5-haiku-123'"):
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass
-
-    assert exc_info.value.model_name == 'claude-3-5-haiku-123'
-    assert 'Content filter triggered' in str(exc_info.value)

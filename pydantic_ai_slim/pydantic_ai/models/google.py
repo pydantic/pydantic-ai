@@ -496,9 +496,7 @@ class GoogleModel(Model):
         if candidate.content is None or candidate.content.parts is None:
             if finish_reason == 'content_filter' and raw_finish_reason:
                 raise ResponseContentFilterError(
-                    f'Content filter {raw_finish_reason.value!r} triggered',
-                    model_name=response.model_version or self._model_name,
-                    body=response.model_dump_json(),
+                    model_name=response.model_version or self._model_name, body=response.model_dump_json()
                 )
             parts = []  # pragma: no cover
         else:
@@ -700,11 +698,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
             if candidate.content is None or candidate.content.parts is None:
                 if self.finish_reason == 'content_filter' and raw_finish_reason:
-                    raise ResponseContentFilterError(
-                        f'Content filter {raw_finish_reason.value!r} triggered',
-                        model_name=self.model_name,
-                        body=chunk.model_dump_json(),
-                    )
+                    raise ResponseContentFilterError(model_name=self.model_name, body=chunk.model_dump_json())
                 else:  # pragma: no cover
                     continue
 

@@ -182,26 +182,28 @@ class ModelHTTPError(ModelAPIError):
         super().__init__(model_name=model_name, message=message)
 
 
-class ContentFilterError(ModelAPIError):
+class ContentFilterError(ModelHTTPError):
     """Raised when content filtering is triggered by the model provider."""
 
+    def __init__(self, message: str, status_code: int, model_name: str, body: object | None = None):
+        super().__init__(status_code, model_name, body)
+        self.message = message
 
-class PromptContentFilterError(ContentFilterError, ModelHTTPError):
+
+class PromptContentFilterError(ContentFilterError):
     """Raised when the prompt triggers a content filter."""
 
     def __init__(self, status_code: int, model_name: str, body: object | None = None):
-        self.status_code = status_code
-        self.body = body
-        message = f'Prompt content filtered, status_code: {status_code}, model_name: {model_name}'
-        ModelAPIError.__init__(self, model_name, message)
+        message = f"Prompt content filtered by model '{model_name}'"
+        super().__init__(message, status_code, model_name, body)
 
 
 class ResponseContentFilterError(ContentFilterError):
     """Raised when the generated response triggers a content filter."""
 
-    def __init__(self, message: str, model_name: str, body: object | None = None):
-        self.body = body
-        super().__init__(model_name, message)
+    def __init__(self, model_name: str, body: object | None = None, status_code: int = 200):
+        message = f"Response content filtered by model '{model_name}'"
+        super().__init__(message, status_code, model_name, body)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
