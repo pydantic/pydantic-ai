@@ -229,7 +229,7 @@ contains all the exceptions encountered during the `run` execution.
 
 By default, the `FallbackModel` only moves on to the next model if the current model raises a
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which includes
-[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] and [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. You can customize this behavior by
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
