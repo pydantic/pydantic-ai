@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError
 from inline_snapshot import snapshot
-from mypy_boto3_bedrock_runtime.type_defs import ToolTypeDef
+from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -1880,6 +1880,85 @@ async def test_bedrock_cache_messages_does_not_duplicate(allow_model_requests: N
     # Should not add another cache point since one already exists
     cache_point_count = sum(1 for block in bedrock_messages[0]['content'] if 'cachePoint' in block)
     assert cache_point_count == 1
+
+
+async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages handles case with no user messages."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Only assistant message, no user message
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Assistant response')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should not crash, no cache point added since no user message
+    assert len(bedrock_messages) == 1
+    assert bedrock_messages[0]['role'] == 'assistant'
+
+
+async def test_get_last_user_message_content_non_dict_block(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test _get_last_user_message_content returns None when last block is not a dict."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Directly test the helper with a message that has non-dict content
+    messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': ['string content']}]  # type: ignore[list-item]
+    result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+async def test_get_last_user_message_content_empty_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test _get_last_user_message_content returns None when content is empty or not a list."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Test with empty content list
+    messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': []}]
+    result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+def test_limit_cache_points_filters_excess_cache_points(bedrock_provider: BedrockProvider):
+    """Test that _limit_cache_points filters out excess cache points beyond the limit of 4."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+
+    # Create system prompt (no cache points)
+    system_prompt: list[SystemContentBlockTypeDef] = [{'text': 'System prompt'}]
+
+    # Create messages with 5 standalone cachePoint blocks (limit is 4)
+    bedrock_messages: list[MessageUnionTypeDef] = [
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'Context 1'},
+                {'cachePoint': {'type': 'default'}},  # Will be filtered (oldest, over limit)
+                {'text': 'Context 2'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (4th newest)
+                {'text': 'Context 3'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (3rd newest)
+                {'text': 'Context 4'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (2nd newest)
+                {'text': 'Question'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (newest)
+            ],
+        },
+    ]
+
+    # Apply limit with no tools (max 4 cache points, we have 5)
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    # Verify only 4 cache points remain (the newest ones)
+    content = bedrock_messages[0]['content']
+    assert isinstance(content, list)
+
+    # Count remaining cache points
+    cache_points = [b for b in content if isinstance(b, dict) and 'cachePoint' in b]
+    assert len(cache_points) == 4  # Only 4 kept (the limit)
+
+    # Verify no empty blocks exist
+    empty_blocks = [b for b in content if isinstance(b, dict) and not b]
+    assert len(empty_blocks) == 0
 
 
 async def test_limit_cache_points_with_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):

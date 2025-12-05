@@ -832,28 +832,17 @@ class BedrockConverseModel(Model):
             if not content or not isinstance(content, list):  # pragma: no cover
                 continue
 
-            # Collect indices of blocks to remove (standalone CachePoints that exceed limit)
-            blocks_to_remove: list[int] = []
-
-            # Process content blocks in reverse order (newest first)
-            for i in range(len(content) - 1, -1, -1):
-                block = content[i]
-                if not isinstance(block, dict):  # pragma: no cover
-                    continue
-
-                if 'cachePoint' in block:
+            # Build a new content list, keeping only cache points within budget
+            new_content: list[Any] = []
+            for block in reversed(content):  # Process newest first
+                is_cache_point = isinstance(block, dict) and 'cachePoint' in block
+                if is_cache_point:
                     if remaining_budget > 0:
                         remaining_budget -= 1
-                    else:
-                        # Exceeded limit, remove this cache point
-                        del block['cachePoint']
-                        # If block is now empty (was a standalone CachePoint), mark for removal
-                        if not block:
-                            blocks_to_remove.append(i)
-
-            # Remove empty blocks (iterate in reverse to preserve indices)
-            for i in blocks_to_remove:
-                del content[i]
+                        new_content.append(block)
+                else:
+                    new_content.append(block)
+            message['content'] = list(reversed(new_content))  # Restore original order
 
     @staticmethod
     def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
