@@ -386,40 +386,38 @@ class GroqModel(Model):
 
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
 
-        if resolved is not None:
-            if resolved.mode == 'none':
-                if resolved.output_tools_fallback:
-                    output_tool_names = [t.name for t in model_request_parameters.output_tools]
-                    return ChatCompletionNamedToolChoiceParam(
-                        type='function',
-                        function={'name': output_tool_names[0]},
-                    )
-                return 'none'
-
-            if resolved.mode == 'auto':
-                return 'auto'
-
-            if resolved.mode == 'required':
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
                 return 'required'
+            return 'auto'
 
-            if resolved.mode == 'specific' and resolved.tool_names:  # pragma: no branch
-                if len(resolved.tool_names) == 1:
-                    return ChatCompletionNamedToolChoiceParam(
-                        type='function',
-                        function={'name': resolved.tool_names[0]},
-                    )
-                else:
-                    warnings.warn(
-                        "Groq only supports forcing a single tool. Falling back to 'required' for multiple tools.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    return 'required'
+        if resolved.mode in ('auto', 'required'):
+            return resolved.mode
 
-        # Default behavior: infer from allow_text_output
-        if not model_request_parameters.allow_text_output:
+        if resolved.mode == 'none':
+            if not resolved.output_tools_fallback:
+                return 'none'
+            output_tool_names = [t.name for t in model_request_parameters.output_tools]
+            return ChatCompletionNamedToolChoiceParam(
+                type='function',
+                function={'name': output_tool_names[0]},
+            )
+
+        if resolved.tool_names:
+            if len(resolved.tool_names) == 1:
+                return ChatCompletionNamedToolChoiceParam(
+                    type='function',
+                    function={'name': resolved.tool_names[0]},
+                )
+            warnings.warn(
+                "Groq only supports forcing a single tool. Falling back to 'required' for multiple function tools.",
+                UserWarning,
+                stacklevel=6,
+            )
             return 'required'
-        return 'auto'
+
+        return None  # pragma: no cover
 
     def _get_builtin_tools(
         self, model_request_parameters: ModelRequestParameters

@@ -8075,7 +8075,7 @@ async def test_tool_choice_none_with_multiple_output_tools_falls_back_to_auto(al
         warning_messages = {str(warning.message) for warning in w}
         assert {
             "tool_choice='none' is set but output tools are required for structured output. "
-            'The output tools will remain available. Consider using native or prompted output modes '
+            'The output tools will remain available. Consider using `NativeOutput` or `PromptedOutput` '
             "if you need tool_choice='none' with structured output.",
             "Anthropic only supports forcing a single tool. Falling back to 'auto' for multiple output tools.",
         } <= warning_messages

@@ -557,8 +557,8 @@ class ResolvedToolChoice:
     mode: Literal['none', 'auto', 'required', 'specific']
     """The resolved tool choice mode."""
 
-    tool_names: list[str] | None = None
-    """For 'specific' mode, the list of tool names to force."""
+    tool_names: list[str] = field(default_factory=list)
+    """For 'specific' mode, the list of tool names to force. Empty for other modes."""
 
     output_tools_fallback: bool = False
     """True if we need to fall back to output tools only (when 'none' was requested but output tools exist)."""
@@ -566,11 +566,12 @@ class ResolvedToolChoice:
 
 _TOOL_CHOICE_NONE_WITH_OUTPUT_TOOLS_WARNING = (
     "tool_choice='none' is set but output tools are required for structured output. "
-    'The output tools will remain available. Consider using native or prompted output modes '
+    'The output tools will remain available. Consider using `NativeOutput` or `PromptedOutput` '
     "if you need tool_choice='none' with structured output."
 )
 
 
+# NOTE: for PR discussion: should this be a private method? a Model.method? Perhaps a ModelRequestParameters.method?
 def resolve_tool_choice(
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
@@ -607,11 +608,8 @@ def resolve_tool_choice(
             return ResolvedToolChoice(mode='none', output_tools_fallback=True)
         return ResolvedToolChoice(mode='none')
 
-    if user_tool_choice == 'auto':
-        return ResolvedToolChoice(mode='auto')
-
-    if user_tool_choice == 'required':
-        return ResolvedToolChoice(mode='required')
+    if user_tool_choice in ('auto', 'required'):
+        return ResolvedToolChoice(mode=user_tool_choice)
 
     if isinstance(user_tool_choice, list):
         if not user_tool_choice:

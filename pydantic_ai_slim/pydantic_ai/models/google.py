@@ -375,55 +375,57 @@ class GoogleModel(Model):
 
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
 
-        if resolved is not None:
-            if resolved.mode == 'none':
-                if resolved.output_tools_fallback:
-                    output_tool_names = [t.name for t in model_request_parameters.output_tools]
-                    return ToolConfigDict(
-                        function_calling_config=FunctionCallingConfigDict(
-                            mode=FunctionCallingConfigMode.ANY,
-                            allowed_function_names=output_tool_names,
-                        )
-                    )
-                return ToolConfigDict(
-                    function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.NONE)
-                )
-
-            if resolved.mode == 'auto':
-                return ToolConfigDict(
-                    function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.AUTO)
-                )
-
-            if resolved.mode == 'required':
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
                 names: list[str] = []
                 for tool in tools:
                     for function_declaration in tool.get('function_declarations') or []:
                         if name := function_declaration.get('name'):  # pragma: no branch
                             names.append(name)
-                return ToolConfigDict(
-                    function_calling_config=FunctionCallingConfigDict(
-                        mode=FunctionCallingConfigMode.ANY,
-                        allowed_function_names=names,
-                    )
-                )
+                return _tool_config(names)
+            return None
 
-            if resolved.mode == 'specific' and resolved.tool_names:  # pragma: no branch
-                return ToolConfigDict(
-                    function_calling_config=FunctionCallingConfigDict(
-                        mode=FunctionCallingConfigMode.ANY,
-                        allowed_function_names=resolved.tool_names,
-                    )
-                )
+        if resolved.mode == 'auto':
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.AUTO)
+            )
 
-        # Default behavior: infer from allow_text_output
-        if not model_request_parameters.allow_text_output:
+        if resolved.mode == 'required':
             names = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
                     if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
-            return _tool_config(names)
-        return None
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=names,
+                )
+            )
+
+        if resolved.mode == 'none':
+            if not resolved.output_tools_fallback:
+                return ToolConfigDict(
+                    function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.NONE)
+                )
+            output_tool_names = [t.name for t in model_request_parameters.output_tools]
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=output_tool_names,
+                )
+            )
+
+        if resolved.tool_names:
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=resolved.tool_names,
+                )
+            )
+
+        return None  # pragma: no cover
 
     @overload
     async def _generate_content(

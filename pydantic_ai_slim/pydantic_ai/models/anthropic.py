@@ -658,65 +658,69 @@ class AnthropicModel(Model):
 
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
 
-        if resolved is not None:
-            if resolved.mode == 'none':
-                if resolved.output_tools_fallback:
-                    output_tool_names = [t.name for t in model_request_parameters.output_tools]
-                    if len(output_tool_names) == 1:
-                        tool_choice = {'type': 'tool', 'name': output_tool_names[0]}
-                    else:
-                        warnings.warn(
-                            'Anthropic only supports forcing a single tool. '
-                            "Falling back to 'auto' for multiple output tools.",
-                            UserWarning,
-                            stacklevel=6,
-                        )
-                        tool_choice = {'type': 'auto'}
-                else:
-                    tool_choice = {'type': 'none'}
-
-            elif resolved.mode == 'auto':
-                tool_choice = {'type': 'auto'}
-
-            elif resolved.mode == 'required':
-                if thinking_enabled:
-                    warnings.warn(
-                        "tool_choice='required' is not supported with Anthropic thinking mode. Falling back to 'auto'.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    tool_choice = {'type': 'auto'}
-                else:
-                    tool_choice = {'type': 'any'}
-
-            elif resolved.mode == 'specific':
-                assert resolved.tool_names  # Guaranteed non-empty by resolve_tool_choice()
-                if thinking_enabled:
-                    warnings.warn(
-                        "Forcing specific tools is not supported with Anthropic thinking mode. Falling back to 'auto'.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    tool_choice = {'type': 'auto'}
-                elif len(resolved.tool_names) == 1:
-                    tool_choice = {'type': 'tool', 'name': resolved.tool_names[0]}
-                else:
-                    warnings.warn(
-                        'Anthropic only supports forcing a single tool. '
-                        "Falling back to 'any' (required) for multiple tools.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    tool_choice = {'type': 'any'}
-            else:
-                assert_never(resolved.mode)
-
-        else:
+        if resolved is None:
             # Default behavior: infer from allow_text_output
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
+
+        elif resolved.mode == 'auto':
+            tool_choice = {'type': 'auto'}
+
+        elif resolved.mode == 'required':
+            if thinking_enabled:
+                warnings.warn(
+                    "tool_choice='required' is not supported with Anthropic thinking mode. Falling back to 'auto'.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'type': 'auto'}
+            else:
+                tool_choice = {'type': 'any'}
+
+        elif resolved.mode == 'none':
+            if not resolved.output_tools_fallback:
+                tool_choice = {'type': 'none'}
+            else:
+                output_tool_names = [t.name for t in model_request_parameters.output_tools]
+                if len(output_tool_names) == 1:
+                    tool_choice = {'type': 'tool', 'name': output_tool_names[0]}
+                else:
+                    # Anthropic's tool_choice only supports forcing a single tool via {"type": "tool", "name": "..."}
+                    # See: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+                    warnings.warn(
+                        'Anthropic only supports forcing a single tool. '
+                        "Falling back to 'auto' for multiple output tools.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    tool_choice = {'type': 'auto'}
+
+        elif resolved.mode == 'specific':
+            if not resolved.tool_names:  # pragma: no cover
+                # tool_names will always be filled out when mode=='specific' i.e. 'specific' will only be set when there are tool names
+                raise RuntimeError('Internal error: resolved.tool_names is empty for specific tool choice.')
+            if thinking_enabled:
+                warnings.warn(
+                    "Forcing specific tools is not supported with Anthropic thinking mode. Falling back to 'auto'.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'type': 'auto'}
+            elif len(resolved.tool_names) == 1:
+                tool_choice = {'type': 'tool', 'name': resolved.tool_names[0]}
+            else:
+                warnings.warn(
+                    'Anthropic only supports forcing a single tool. '
+                    "Falling back to 'any' (required) for multiple function tools.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'type': 'any'}
+
+        else:
+            assert_never(resolved.mode)
 
         if 'parallel_tool_calls' in model_settings and tool_choice.get('type') != 'none':
             # only `BetaToolChoiceNoneParam` doesn't have this field

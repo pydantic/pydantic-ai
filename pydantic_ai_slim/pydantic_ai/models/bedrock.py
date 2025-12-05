@@ -498,41 +498,44 @@ class BedrockConverseModel(Model):
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
         tool_choice: ToolChoiceTypeDef
 
-        if resolved is not None:
-            if resolved.mode == 'none':
-                warnings.warn(
-                    "Bedrock does not support tool_choice='none'. Falling back to 'auto'.",
-                    UserWarning,
-                    stacklevel=6,
-                )
-                tool_choice = {'auto': {}}
-
-            elif resolved.mode == 'auto':
-                tool_choice = {'auto': {}}
-
-            elif resolved.mode == 'required':
-                tool_choice = {'any': {}}
-
-            elif resolved.mode == 'specific':
-                assert resolved.tool_names  # Guaranteed non-empty by resolve_tool_choice()
-                if len(resolved.tool_names) == 1:
-                    tool_choice = {'tool': {'name': resolved.tool_names[0]}}
-                else:
-                    warnings.warn(
-                        'Bedrock only supports forcing a single tool. '
-                        "Falling back to 'any' (required) for multiple tools.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    tool_choice = {'any': {}}
-            else:
-                assert_never(resolved.mode)
-        else:
+        if resolved is None:
             # Default behavior: infer from allow_text_output
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'any': {}}
             else:
                 tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'auto':
+            tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'required':
+            tool_choice = {'any': {}}
+
+        elif resolved.mode == 'none':
+            warnings.warn(
+                "Bedrock does not support tool_choice='none'. Falling back to 'auto'.",
+                UserWarning,
+                stacklevel=6,
+            )
+            tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'specific':
+            if not resolved.tool_names:  # pragma: no cover
+                # tool_names will always be filled out when mode=='specific' i.e. 'specific' will only be set when there are tool names
+                raise RuntimeError('Internal error: resolved.tool_names is empty for specific tool choice.')
+            if len(resolved.tool_names) == 1:
+                tool_choice = {'tool': {'name': resolved.tool_names[0]}}
+            else:
+                warnings.warn(
+                    'Bedrock only supports forcing a single tool. '
+                    "Falling back to 'any' (required) for multiple function tools.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'any': {}}
+
+        else:
+            assert_never(resolved.mode)
 
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
         if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:

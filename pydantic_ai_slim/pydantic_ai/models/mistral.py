@@ -331,30 +331,29 @@ class MistralModel(Model):
 
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
 
-        if resolved is not None:
-            if resolved.mode == 'none':
-                if resolved.output_tools_fallback:
-                    return 'required'
-                return 'none'
-
-            if resolved.mode == 'auto':
-                return 'auto'
-
-            if resolved.mode == 'required':
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
                 return 'required'
+            return 'auto'
 
-            if resolved.mode == 'specific':  # pragma: no branch
-                warnings.warn(
-                    "Mistral does not support forcing specific tools. Falling back to 'required'.",
-                    UserWarning,
-                    stacklevel=6,
-                )
+        if resolved.mode in ('auto', 'required'):
+            return resolved.mode
+
+        if resolved.mode == 'none':
+            if resolved.output_tools_fallback:
                 return 'required'
+            return 'none'
 
-        # Default behavior: infer from allow_text_output
-        if not model_request_parameters.allow_text_output:
+        if resolved.tool_names:
+            warnings.warn(
+                "Mistral does not support forcing specific tools. Falling back to 'required'.",
+                UserWarning,
+                stacklevel=6,
+            )
             return 'required'
-        return 'auto'
+
+        return None  # pragma: no cover
 
     def _map_function_and_output_tools_definition(
         self, model_request_parameters: ModelRequestParameters
