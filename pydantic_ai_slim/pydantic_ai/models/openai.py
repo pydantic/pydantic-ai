@@ -179,14 +179,17 @@ class _OpenAIToolChoiceResult:
     kind: Literal['literal', 'single_tool', 'allowed_tools']
     """The kind of tool choice result."""
 
-    value: str | None = None
-    """For 'literal': the literal value ('auto', 'required', 'none'). For 'single_tool': the tool name."""
+    literal_value: Literal['auto', 'required', 'none'] | None = None
+    """For 'literal' kind: the literal value to pass to the API."""
+
+    tool_name: str | None = None
+    """For 'single_tool' kind: the specific tool name."""
 
     tool_names: list[str] | None = None
-    """For 'allowed_tools': the list of allowed tool names."""
+    """For 'allowed_tools' kind: the list of allowed tool names."""
 
     allowed_mode: Literal['auto', 'required'] = 'required'
-    """For 'allowed_tools': whether the model must use one of the tools or can choose not to."""
+    """For 'allowed_tools' kind: whether the model must use one of the tools or can choose not to."""
 
 
 def _resolve_openai_tool_choice(
@@ -205,11 +208,11 @@ def _resolve_openai_tool_choice(
     if resolved is None:
         # Default behavior: infer from allow_text_output
         if not model_request_parameters.allow_text_output and openai_profile.openai_supports_tool_choice_required:
-            return _OpenAIToolChoiceResult(kind='literal', value='required')
-        return _OpenAIToolChoiceResult(kind='literal', value='auto')
+            return _OpenAIToolChoiceResult(kind='literal', literal_value='required')
+        return _OpenAIToolChoiceResult(kind='literal', literal_value='auto')
 
     if resolved.mode == 'auto':
-        return _OpenAIToolChoiceResult(kind='literal', value='auto')
+        return _OpenAIToolChoiceResult(kind='literal', literal_value='auto')
 
     if resolved.mode == 'required':
         if not openai_profile.openai_supports_tool_choice_required:
@@ -218,24 +221,24 @@ def _resolve_openai_tool_choice(
                 UserWarning,
                 stacklevel=7,
             )
-            return _OpenAIToolChoiceResult(kind='literal', value='auto')
-        return _OpenAIToolChoiceResult(kind='literal', value='required')
+            return _OpenAIToolChoiceResult(kind='literal', literal_value='auto')
+        return _OpenAIToolChoiceResult(kind='literal', literal_value='required')
 
     if resolved.mode == 'none':
         if not resolved.output_tools_fallback:
-            return _OpenAIToolChoiceResult(kind='literal', value='none')
+            return _OpenAIToolChoiceResult(kind='literal', literal_value='none')
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
         allowed_mode: Literal['auto', 'required'] = (
             'required' if not model_request_parameters.allow_text_output else 'auto'
         )
         if len(output_tool_names) == 1:
-            return _OpenAIToolChoiceResult(kind='single_tool', value=output_tool_names[0])
+            return _OpenAIToolChoiceResult(kind='single_tool', tool_name=output_tool_names[0])
         return _OpenAIToolChoiceResult(kind='allowed_tools', tool_names=output_tool_names, allowed_mode=allowed_mode)
 
     if resolved.tool_names:
         allowed_mode = 'required' if not model_request_parameters.allow_text_output else 'auto'
         if len(resolved.tool_names) == 1:
-            return _OpenAIToolChoiceResult(kind='single_tool', value=resolved.tool_names[0])
+            return _OpenAIToolChoiceResult(kind='single_tool', tool_name=resolved.tool_names[0])
         return _OpenAIToolChoiceResult(kind='allowed_tools', tool_names=resolved.tool_names, allowed_mode=allowed_mode)
 
     return None  # pragma: no cover
@@ -789,10 +792,10 @@ class OpenAIChatModel(Model):
             return None
 
         if resolved.kind == 'literal':
-            return cast(ChatCompletionToolChoiceOptionParam, resolved.value)
+            return resolved.literal_value
 
         if resolved.kind == 'single_tool':
-            return ChatCompletionNamedToolChoiceParam(type='function', function={'name': resolved.value or ''})
+            return ChatCompletionNamedToolChoiceParam(type='function', function={'name': resolved.tool_name or ''})
 
         if resolved.kind == 'allowed_tools' and resolved.tool_names:
             return ChatCompletionAllowedToolChoiceParam(
@@ -1532,10 +1535,10 @@ class OpenAIResponsesModel(Model):
             return None
 
         if resolved.kind == 'literal':
-            return cast(ResponsesToolChoice, resolved.value)
+            return resolved.literal_value
 
         if resolved.kind == 'single_tool':
-            return ToolChoiceFunctionParam(type='function', name=resolved.value or '')
+            return ToolChoiceFunctionParam(type='function', name=resolved.tool_name or '')
 
         if resolved.kind == 'allowed_tools' and resolved.tool_names:
             return ToolChoiceAllowedParam(
