@@ -1931,7 +1931,11 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -1968,7 +1972,11 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -2077,7 +2085,7 @@ async def test_google_model_thinking_part_from_other_model(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), signature=IsStr(), provider_name='google-gla'),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -2133,7 +2141,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), signature=IsStr(), provider_name='google-gla'),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -2155,10 +2163,11 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
+            PartStartEvent(index=0, part=ThinkingPart(content=IsStr(), provider_name='google-gla')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr(), provider_name='google-gla')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr(), provider_name='google-gla')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr(), provider_name='google-gla')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr())),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
@@ -2183,7 +2192,9 @@ I've revised the procedure's initial step, emphasizing safe crossing zones (cros
 I've identified the core user intent: to learn safe street-crossing. Now, I'm focusing on crafting universally applicable steps. Finding safe crossing locations and looking-listening for traffic remain paramount. I'm prioritizing direct, clear language, addressing my limitations as an AI. I'm crafting advice that works generally, regardless of specific circumstances or locations.
 
 
-"""
+""",
+                    signature=IsStr(),
+                    provider_name='google-gla',
                 ),
                 next_part_kind='text',
             ),
