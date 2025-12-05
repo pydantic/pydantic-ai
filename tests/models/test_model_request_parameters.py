@@ -68,6 +68,7 @@ def test_model_request_parameters_are_serializable():
                     'sequential': False,
                     'kind': 'function',
                     'metadata': None,
+                    'timeout': None,
                 }
             ],
             'builtin_tools': [
@@ -131,6 +132,7 @@ def test_model_request_parameters_are_serializable():
                     'sequential': False,
                     'kind': 'function',
                     'metadata': None,
+                    'timeout': None,
                 }
             ],
             'prompted_output_template': None,

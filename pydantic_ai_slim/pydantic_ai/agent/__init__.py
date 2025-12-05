@@ -148,6 +148,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
+    _tool_timeout: float | None = dataclasses.field(repr=False)
     _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -180,6 +181,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
     ) -> None: ...
 
     @overload
@@ -207,6 +209,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
     ) -> None: ...
 
     def __init__(
@@ -232,6 +235,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -286,6 +290,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
+            tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
+                a retry prompt is returned to the model. Individual tools can override this with their own timeout.
+                Defaults to None (no timeout).
         """
         if model is None or defer_model_check:
             self._model = model
@@ -319,6 +326,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
+        self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
 
@@ -332,7 +340,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = _AgentFunctionToolset(
-            tools, max_retries=self._max_tool_retries, output_schema=self._output_schema
+            tools,
+            max_retries=self._max_tool_retries,
+            default_timeout=self._tool_timeout,
+            output_schema=self._output_schema,
         )
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
@@ -1032,6 +1043,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1050,6 +1062,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1099,6 +1112,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
 
         def tool_decorator(
@@ -1119,6 +1134,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                timeout=timeout,
             )
             return func_
 
@@ -1143,6 +1159,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1161,6 +1178,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1210,6 +1228,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1228,6 +1248,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                timeout=timeout,
             )
             return func_
 
@@ -1405,7 +1426,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if some_tools := self._override_tools.get():
             function_toolset = _AgentFunctionToolset(
-                some_tools.value, max_retries=self._max_tool_retries, output_schema=self._output_schema
+                some_tools.value,
+                max_retries=self._max_tool_retries,
+                default_timeout=self._tool_timeout,
+                output_schema=self._output_schema,
             )
         else:
             function_toolset = self._function_toolset
@@ -1512,11 +1536,12 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,
+        default_timeout: float | None = None,
         id: str | None = None,
         output_schema: _output.OutputSchema[Any],
     ):
         self.output_schema = output_schema
-        super().__init__(tools, max_retries=max_retries, id=id)
+        super().__init__(tools, max_retries=max_retries, default_timeout=default_timeout, id=id)
 
     @property
     def id(self) -> str:
