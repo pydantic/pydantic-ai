@@ -1249,6 +1249,9 @@ class ModelResponse:
     provider_name: str | None = None
     """The name of the LLM provider that generated the response."""
 
+    provider_url: str | None = None
+    """The base URL of the LLM provider that generated the response."""
+
     provider_details: Annotated[
         dict[str, Any] | None,
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
@@ -1341,6 +1344,7 @@ class ModelResponse:
             self.usage,
             self.model_name,
             provider_id=self.provider_name,
+            provider_api_url=self.provider_url,
             genai_request_timestamp=self.timestamp,
         )
 
