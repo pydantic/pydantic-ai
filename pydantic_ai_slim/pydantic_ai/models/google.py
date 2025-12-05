@@ -19,7 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
-    CachePoint,
+    DocumentUrl,
     FilePart,
     FileUrl,
     FinishReason,
@@ -602,17 +602,44 @@ class GoogleModel(Model):
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
-                    inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
-                    part_dict: PartDict = {'inline_data': inline_data_dict}
-                    if item.vendor_metadata:
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                    content.append(part_dict)
+                    if BinaryContent.is_text_like_media_type(item.media_type):
+                        part_dict = BinaryContent.inline_text_file_part(
+                          item.data.decode('utf-8'),
+                          media_type=item.media_type,
+                          identifier=item.identifier,
+                        )
+                        content.append({'text': part_dict['text']})
+                    else:
+                        inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
+                        part_dict: PartDict = {'inline_data': inline_data_dict}
+                        if item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)
+
+                elif isinstance(item, DocumentUrl):
+                    if DocumentUrl.is_text_like_media_type(item.media_type):
+                        downloaded_text = await download_item(item, data_format='text')
+                        part_dict = DocumentUrl.inline_text_file_part(
+                          downloaded_text['data'],
+                          media_type=item.media_type,
+                          identifier=item.identifier,
+                        )
+                        content.append({'text': part_dict['text']})
+                    else:
+                        downloaded_item = await download_item(item, data_format='bytes')
+                        inline_data_dict: BlobDict = {
+                            'data': downloaded_item['data'],
+                            'mime_type': downloaded_item['data_type'],
+                        }
+                        content.append({'inline_data': inline_data_dict})
+
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
                     if item.vendor_metadata:  # pragma: no branch
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
+
                 elif isinstance(item, FileUrl):
                     if item.force_download or (
                         # google-gla does not support passing file urls directly, except for youtube videos
@@ -634,7 +661,8 @@ class GoogleModel(Model):
                     pass
                 else:
                     assert_never(item)
-        return content
+
+            return content
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()
