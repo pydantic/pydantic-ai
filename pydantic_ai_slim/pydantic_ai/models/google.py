@@ -1125,17 +1125,18 @@ def _extract_file_search_retrieved_contexts(
         context_dict: dict[str, Any] = chunk.retrieved_context.model_dump(
             mode='json', exclude_none=True, by_alias=False
         )
+        # Try multiple ways to get file_search_store since API response format may vary
         file_search_store = getattr(chunk.retrieved_context, 'file_search_store', None)
-        if file_search_store is None:
+        if file_search_store is None:  # pragma: lax no cover
             file_search_store = getattr(chunk.retrieved_context, 'fileSearchStore', None)
-        if file_search_store is None:
+        if file_search_store is None:  # pragma: lax no cover
             file_search_store = context_dict.get('file_search_store')
-        if file_search_store is None:
+        if file_search_store is None:  # pragma: lax no cover
             context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
                 mode='json', exclude_none=False, by_alias=True
             )
             file_search_store = context_dict_with_aliases.get('fileSearchStore')
-        if file_search_store is not None:
+        if file_search_store is not None:  # pragma: lax no cover
             context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts

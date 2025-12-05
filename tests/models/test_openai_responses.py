@@ -78,7 +78,7 @@ pytestmark = [
 ]
 
 
-async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:
+async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up OpenAI file search resources if they exist."""
     if file is not None:
         await async_client.files.delete(file.id)

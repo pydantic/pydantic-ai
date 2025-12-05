@@ -4032,7 +4032,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
-async def _cleanup_file_search_store(store: Any, client: Any) -> None:
+async def _cleanup_file_search_store(store: Any, client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up a file search store if it exists."""
     if store is not None and store.name is not None:
         await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
