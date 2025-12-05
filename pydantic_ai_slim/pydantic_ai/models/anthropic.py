@@ -459,7 +459,7 @@ class AnthropicModel(Model):
         if (container := model_settings.get('anthropic_container')) is not None:
             return None if container is False else container
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_details:
+            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
                     return BetaContainerParams(id=cid)
         return None
