@@ -545,14 +545,13 @@ class OutlinesStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for event in self._response:
-            event = self._parts_manager.handle_text_delta(
+        async for content in self._response:
+            for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
-                content=event,
+                content=content,
                 thinking_tags=self._model_profile.thinking_tags,
                 ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-            )
-            if event is not None:  # pragma: no branch
+            ):
                 yield event
 
     @property
