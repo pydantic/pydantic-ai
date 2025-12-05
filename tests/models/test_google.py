@@ -2076,18 +2076,26 @@ async def test_google_model_thinking_part_from_other_model(
                     ThinkingPart(
                         content=IsStr(),
                         id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        signature=IsStr(),
+                        provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
                         id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        signature=IsStr(),
+                        provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
                         id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        signature=IsStr(),
+                        provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
                         id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        signature=IsStr(),
+                        provider_name='openai',
                     ),
                     TextPart(content=IsStr(), id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689'),
                 ],
