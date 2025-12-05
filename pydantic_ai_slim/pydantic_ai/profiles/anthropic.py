@@ -62,7 +62,12 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
         # https://github.com/pydantic/pydantic-ai/issues/3541
         self.is_strict_compatible = self.strict is True  # not compatible when strict is False/None
 
-        return transform_schema(schema) if self.strict is True else schema
+        if self.strict is True:
+            from anthropic import transform_schema
+
+            return transform_schema(schema)
+        else:
+            return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
