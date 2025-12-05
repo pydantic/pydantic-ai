@@ -1343,7 +1343,6 @@ class ModelResponse:
         return calc_price(
             self.usage,
             self.model_name,
-            provider_id=self.provider_name,
             provider_api_url=self.provider_url,
             genai_request_timestamp=self.timestamp,
         )
