@@ -490,6 +490,7 @@ def test_file_part_serialization_roundtrip():
                             'data': 'ZmFrZQ==',
                             'media_type': 'image/jpeg',
                             'identifier': 'c053ec',
+                            'metadata': None,
                             'vendor_metadata': None,
                             'kind': 'binary',
                         },
@@ -638,6 +639,7 @@ def test_binary_content_validation_with_optional_identifier():
             'data': b'fake',
             'vendor_metadata': None,
             'kind': 'binary',
+            'metadata': None,
             'media_type': 'image/jpeg',
             'identifier': 'c053ec',
         }
@@ -654,6 +656,7 @@ def test_binary_content_validation_with_optional_identifier():
             'data': b'fake',
             'vendor_metadata': None,
             'kind': 'binary',
+            'metadata': None,
             'media_type': 'image/png',
             'identifier': 'foo',
         }
