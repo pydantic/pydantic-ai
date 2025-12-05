@@ -3131,6 +3131,48 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
+async def test_tool_choice_required_explicit_unsupported(allow_model_requests: None) -> None:
+    """Ensure explicit tool_choice='required' warns and falls back to 'auto' when unsupported."""
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=True)
+    settings: OpenAIChatModelSettings = {'tool_choice': 'required'}
+
+    with pytest.warns(UserWarning, match="tool_choice='required' is not supported by this model"):
+        await model._completions_create(  # pyright: ignore[reportPrivateUsage]
+            messages=[],
+            stream=False,
+            model_settings=settings,
+            model_request_parameters=params,
+        )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
+
+
+async def test_tool_choice_required_explicit_unsupported_responses_api(allow_model_requests: None) -> None:
+    """Ensure explicit tool_choice='required' warns and falls back for Responses API when unsupported."""
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=True)
+    settings: OpenAIResponsesModelSettings = {'tool_choice': 'required'}
+
+    with pytest.warns(UserWarning, match="tool_choice='required' is not supported by this model"):
+        await model._responses_create(  # pyright: ignore[reportPrivateUsage]
+            messages=[],
+            stream=False,
+            model_settings=settings,
+            model_request_parameters=params,
+        )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
+
+
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
