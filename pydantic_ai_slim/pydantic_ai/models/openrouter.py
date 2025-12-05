@@ -650,7 +650,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                 # This is required for Gemini 3 Pro which returns multiple reasoning
                 # detail types that must be preserved separately for thought_signature handling.
                 vendor_id = f'reasoning_detail_{detail.type}_{i}'
-                yield self._parts_manager.handle_thinking_delta(
+                yield from self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     id=thinking_part.id,
                     content=thinking_part.content,
