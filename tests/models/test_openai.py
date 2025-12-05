@@ -3299,6 +3299,23 @@ response\
     )
 
 
+def test_openai_generic_400_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'bad request',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
+        )
+    )
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert not isinstance(exc_info.value, PromptContentFilterError)
+    assert exc_info.value.status_code == 400
+
+
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
