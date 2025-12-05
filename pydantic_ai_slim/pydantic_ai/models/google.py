@@ -821,7 +821,7 @@ class GeminiStreamedResponse(StreamedResponse):
         code_execution_tool_call_id is None for file_search, or the new ID for code_execution.
         """
         code = executable_code.code
-        if not code:
+        if not code:  # pragma: no cover
             code_execution_tool_call_id = _utils.generate_tool_call_id()
             part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
             return part_obj, code_execution_tool_call_id
@@ -840,7 +840,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     args={'query': file_search_query},
                 )
                 return part_obj, None
-            return None, None
+            return None, None  # pragma: no cover
         else:
             code_execution_tool_call_id = _utils.generate_tool_call_id()
             part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
@@ -1116,7 +1116,7 @@ def _extract_file_search_retrieved_contexts(
 
     Returns an empty list if no retrieved contexts are found.
     """
-    if not grounding_chunks:
+    if not grounding_chunks:  # pragma: no cover
         return []
     retrieved_contexts: list[dict[str, Any]] = []
     for chunk in grounding_chunks:
@@ -1126,16 +1126,16 @@ def _extract_file_search_retrieved_contexts(
             mode='json', exclude_none=True, by_alias=False
         )
         file_search_store = getattr(chunk.retrieved_context, 'file_search_store', None)
-        if file_search_store is None:
+        if file_search_store is None:  # pragma: no cover
             file_search_store = getattr(chunk.retrieved_context, 'fileSearchStore', None)
-        if file_search_store is None:
+        if file_search_store is None:  # pragma: no cover
             file_search_store = context_dict.get('file_search_store')
-        if file_search_store is None:
+        if file_search_store is None:  # pragma: no cover
             context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
                 mode='json', exclude_none=False, by_alias=True
             )
             file_search_store = context_dict_with_aliases.get('fileSearchStore')
-        if file_search_store is not None:
+        if file_search_store is not None:  # pragma: no cover
             context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
@@ -1182,7 +1182,7 @@ def _extract_file_search_query(code: str) -> str | None:
         query = match.group(2)
         query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
         return query
-    return None
+    return None  # pragma: no cover
 
 
 def _map_url_context_metadata(

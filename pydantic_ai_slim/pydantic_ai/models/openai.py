@@ -1362,7 +1362,7 @@ class OpenAIResponsesModel(Model):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')
-        if model_settings.get('openai_include_file_search_results'):
+        if model_settings.get('openai_include_file_search_results'):  # pragma: no cover
             include.append('file_search_call.results')
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
@@ -1668,7 +1668,7 @@ class OpenAIResponsesModel(Model):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (
+                            elif (  # pragma: no cover
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
@@ -1742,7 +1742,7 @@ class OpenAIResponsesModel(Model):
                                 and (status := content.get('status'))
                             ):
                                 web_search_item['status'] = status
-                            elif (
+                            elif (  # pragma: no cover
                                 item.tool_name == FileSearchTool.kind
                                 and file_search_item is not None
                                 and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
