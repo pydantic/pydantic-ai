@@ -1,11 +1,14 @@
 from __future__ import annotations as _annotations
 
-from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+from pydantic_ai._json_schema import JsonSchemaTransformer
 
 from . import ModelProfile
 
 
-def anthropic_model_profile(model_name: str) -> ModelProfile | None:
+def anthropic_model_profile(
+    model_name: str,
+    anthropic_json_schema_transformer: type[JsonSchemaTransformer] | None = None,
+) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
     models_that_support_json_schema_output = ('claude-sonnet-4-5', 'claude-opus-4-1', 'claude-opus-4-5')
     """These models support both structured outputs and strict tool calling."""
@@ -15,6 +18,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
     return ModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
-        supports_json_schema_output=supports_json_schema_output,
-        json_schema_transformer=AnthropicJsonSchemaTransformer,
+        supports_json_schema_output=supports_json_schema_output and anthropic_json_schema_transformer is not None,
+        json_schema_transformer=anthropic_json_schema_transformer,
     )
