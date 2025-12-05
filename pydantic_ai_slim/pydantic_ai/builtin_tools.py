@@ -18,6 +18,7 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'FileSearchTool',
 )
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -393,6 +394,30 @@ class MCPServerTool(AbstractBuiltinTool):
     @property
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
+
+
+@dataclass(kw_only=True)
+class FileSearchTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to search through uploaded files using vector search.
+
+    This tool provides a fully managed Retrieval-Augmented Generation (RAG) system that handles
+    file storage, chunking, embedding generation, and context injection into prompts.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Google (Gemini)
+    """
+
+    file_store_ids: set[str]
+    """Set of file store IDs to search through.
+
+    For OpenAI, these are the IDs of vector stores created via the OpenAI API.
+    For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
+    """
+
+    kind: str = 'file_search'
+    """The kind of tool."""
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
