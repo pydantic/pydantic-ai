@@ -1207,6 +1207,9 @@ class OpenAIResponsesModel(Model):
                                 provider_details=provider_details or None,
                             )
                         )
+                        # We only need to store the signature and raw_content once.
+                        signature = None
+                        provider_details = None
                 elif signature or provider_details:
                     items.append(
                         ThinkingPart(
