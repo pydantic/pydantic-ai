@@ -8,7 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -1032,6 +1032,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] = False,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1050,6 +1051,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1099,6 +1101,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            programmatically_callable: Whether this tool can be called from code execution.
+                Set to `True` to allow both direct model calls and calls from code execution.
+                Set to `'only'` to only allow calls from code execution.
+                Defaults to `False`. See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(
@@ -1119,6 +1125,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                programmatically_callable=programmatically_callable,
             )
             return func_
 
@@ -1143,6 +1150,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1161,6 +1169,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        programmatically_callable: bool | Literal['only'] = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1210,6 +1219,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            programmatically_callable: Whether this tool can be called from code execution.
+                Set to `True` to allow both direct model calls and calls from code execution.
+                Set to `'only'` to only allow calls from code execution.
+                Defaults to `False`. See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1228,6 +1241,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                programmatically_callable=programmatically_callable,
             )
             return func_
 
