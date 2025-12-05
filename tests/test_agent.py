@@ -289,7 +289,7 @@ def test_prompt_templates():
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        pre_compiled="Custom retry message 630a3726-d848-4328-9824-035676e55100 [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
+                        retry_template="Custom retry message 630a3726-d848-4328-9824-035676e55100 [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
                     )
                 ],
                 run_id=IsStr(),
@@ -5429,9 +5429,15 @@ async def test_thinking_only_response_retry():
             )
 
     model = FunctionModel(model_function)
-    agent = Agent(model, system_prompt='You are a helpful assistant.')
+    prompt_templates = PromptTemplates(validation_retry_prompt='HENLU')
+    agent = Agent(model, system_prompt='You are a helpful assistant.', prompt_templates=prompt_templates)
 
     result = await agent.run('Hello')
+    retry_part = result.all_messages()[2].parts[0]
+
+    response = retry_part.model_response()
+
+    assert response == snapshot('HENLU')
 
     assert result.all_messages() == snapshot(
         [

@@ -933,12 +933,12 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    pre_compiled: str | None = None
+    retry_template: str | None = None
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
-        if self.pre_compiled:
-            return self.pre_compiled
+        if self.retry_template:
+            return self.retry_template
 
         if isinstance(self.content, str):
             if self.tool_name is None:
@@ -1953,9 +1953,9 @@ class PromptTemplates:
         elif isinstance(message, RetryPromptPart):
             if self.retry_prompt:
                 if isinstance(self.retry_prompt, str):
-                    message.pre_compiled = self.retry_prompt
+                    message.retry_template = self.retry_prompt
                 else:
-                    message.pre_compiled = self.retry_prompt(message, ctx)
+                    message.retry_template = self.retry_prompt(message, ctx)
 
     def _apply_tool_template(
         self, message: ToolReturnPart, ctx: _RunContext[Any], template: str | Callable[[Any, _RunContext[Any]], str]
