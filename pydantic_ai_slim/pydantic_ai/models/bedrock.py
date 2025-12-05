@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
+import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -41,7 +42,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item, resolve_tool_choice
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -429,7 +430,7 @@ class BedrockConverseModel(Model):
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters)
+        tool_config = self._map_tool_config(model_request_parameters, model_settings)
         if tool_config:
             params['toolConfig'] = tool_config
 
@@ -485,16 +486,56 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
+    def _map_tool_config(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: BedrockModelSettings | None,
+    ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
         if not tools:
             return None
 
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
         tool_choice: ToolChoiceTypeDef
-        if not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}
-        else:
+
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                tool_choice = {'any': {}}
+            else:
+                tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'auto':
             tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'required':
+            tool_choice = {'any': {}}
+
+        elif resolved.mode == 'none':
+            warnings.warn(
+                "Bedrock does not support tool_choice='none'. Falling back to 'auto'.",
+                UserWarning,
+                stacklevel=6,
+            )
+            tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'specific':
+            if not resolved.tool_names:  # pragma: no cover
+                # tool_names will always be filled out when mode=='specific' i.e. 'specific' will only be set when there are tool names
+                raise RuntimeError('Internal error: resolved.tool_names is empty for specific tool choice.')
+            if len(resolved.tool_names) == 1:
+                tool_choice = {'tool': {'name': resolved.tool_names[0]}}
+            else:
+                warnings.warn(
+                    'Bedrock only supports forcing a single tool. '
+                    "Falling back to 'any' (required) for multiple function tools.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'any': {}}
+
+        else:
+            assert_never(resolved.mode)
 
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
         if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:

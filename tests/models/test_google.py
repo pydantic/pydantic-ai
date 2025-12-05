@@ -59,6 +59,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
@@ -68,12 +69,15 @@ with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
         FinishReason as GoogleFinishReason,
+        FunctionCallingConfigMode,
+        FunctionDeclarationDict,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
         MediaModality,
         ModalityTokenCount,
+        ToolDict,
     )
 
     from pydantic_ai.models.google import (
@@ -4425,3 +4429,120 @@ def test_google_missing_tool_call_thought_signature():
             ],
         }
     )
+
+
+def test_tool_choice_string_value_none(google_provider: GoogleProvider) -> None:
+    """Test that tool_choice='none' maps to FunctionCallingConfigMode.NONE."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+    tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool', description='Test tool')])]
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'none'}
+    result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    fcc = result.get('function_calling_config')
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.NONE})
+
+
+def test_tool_choice_string_value_auto(google_provider: GoogleProvider) -> None:
+    """Test that tool_choice='auto' maps to FunctionCallingConfigMode.AUTO."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+    tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool', description='Test tool')])]
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'auto'}
+    result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    fcc = result.get('function_calling_config')
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.AUTO})
+
+
+def test_tool_choice_required_maps_to_any(google_provider: GoogleProvider) -> None:
+    """Test that 'required' maps to ANY mode with all tool names."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+    tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool', description='Test tool')])]
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'required'}
+    result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    fcc = result.get('function_calling_config')
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['my_tool']})
+
+
+def test_tool_choice_specific_tool_single(google_provider: GoogleProvider) -> None:
+    """Specific tool names become allowed_function_names."""
+    tool_a = ToolDefinition(
+        name='tool_a',
+        description='Test tool A',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    tool_b = ToolDefinition(
+        name='tool_b',
+        description='Test tool B',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
+    )
+    tools = [
+        ToolDict(function_declarations=[FunctionDeclarationDict(name='tool_a', description='Test tool A')]),
+        ToolDict(function_declarations=[FunctionDeclarationDict(name='tool_b', description='Test tool B')]),
+    ]
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': ['tool_a']}
+    result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    fcc = result.get('function_calling_config')
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['tool_a']})
+
+
+def test_tool_choice_none_with_output_tools_warns(google_provider: GoogleProvider) -> None:
+    """tool_choice='none' still allows the required output tool."""
+    func_tool = ToolDefinition(
+        name='func_tool',
+        description='Function tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool = ToolDefinition(
+        name='output_tool',
+        description='Output tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[func_tool], allow_text_output=False, output_tools=[output_tool]
+    )
+    tools = [
+        ToolDict(function_declarations=[FunctionDeclarationDict(name='func_tool', description='Function tool')]),
+        ToolDict(function_declarations=[FunctionDeclarationDict(name='output_tool', description='Output tool')]),
+    ]
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'none'}
+
+    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
+        result = model._get_tool_config(mrp, tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    fcc = result.get('function_calling_config')
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['output_tool']})

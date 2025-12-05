@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -46,16 +47,19 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     check_allow_model_requests,
+    resolve_tool_choice,
 )
 
 try:
     import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
+        ChatCompletionInputFunctionName,
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
         ChatCompletionInputTool,
         ChatCompletionInputToolCall,
+        ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
@@ -221,13 +225,7 @@ class HuggingFaceModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ChatCompletionOutput | AsyncIterable[ChatCompletionStreamOutput]:
         tools = self._get_tools(model_request_parameters)
-
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tool_choice = self._get_tool_choice(tools, model_settings, model_request_parameters)
 
         if model_request_parameters.builtin_tools:
             raise UserError('HuggingFace does not support built-in tools')
@@ -321,6 +319,49 @@ class HuggingFaceModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    def _get_tool_choice(
+        self,
+        tools: list[ChatCompletionInputTool],
+        model_settings: HuggingFaceModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None:
+        if not tools:
+            return None
+
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                return 'required'
+            return 'auto'
+
+        if resolved.mode in ('auto', 'required'):
+            return resolved.mode
+
+        if resolved.mode == 'none':
+            if not resolved.output_tools_fallback:
+                return 'none'
+            output_tool_names = [t.name for t in model_request_parameters.output_tools]
+            return ChatCompletionInputToolChoiceClass(
+                function=ChatCompletionInputFunctionName(name=output_tool_names[0])  # pyright: ignore[reportCallIssue]
+            )
+
+        if resolved.tool_names:
+            if len(resolved.tool_names) == 1:
+                return ChatCompletionInputToolChoiceClass(
+                    function=ChatCompletionInputFunctionName(name=resolved.tool_names[0])  # pyright: ignore[reportCallIssue]
+                )
+            warnings.warn(
+                'HuggingFace only supports forcing a single tool. '
+                "Falling back to 'required' for multiple function tools.",
+                UserWarning,
+                stacklevel=6,
+            )
+            return 'required'
+
+        return None  # pragma: no cover
 
     async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters

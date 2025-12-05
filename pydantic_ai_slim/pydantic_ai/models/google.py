@@ -49,6 +49,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    resolve_tool_choice,
 )
 
 try:
@@ -364,17 +365,67 @@ class GoogleModel(Model):
         return tools or None
 
     def _get_tool_config(
-        self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
+        self,
+        model_request_parameters: ModelRequestParameters,
+        tools: list[ToolDict] | None,
+        model_settings: GoogleModelSettings,
     ) -> ToolConfigDict | None:
-        if not model_request_parameters.allow_text_output and tools:
-            names: list[str] = []
+        if not tools:
+            return None
+
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                names: list[str] = []
+                for tool in tools:
+                    for function_declaration in tool.get('function_declarations') or []:
+                        if name := function_declaration.get('name'):  # pragma: no branch
+                            names.append(name)
+                return _tool_config(names)
+            return None
+
+        if resolved.mode == 'auto':
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.AUTO)
+            )
+
+        if resolved.mode == 'required':
+            names = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
                     if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
-            return _tool_config(names)
-        else:
-            return None
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=names,
+                )
+            )
+
+        if resolved.mode == 'none':
+            if not resolved.output_tools_fallback:
+                return ToolConfigDict(
+                    function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.NONE)
+                )
+            output_tool_names = [t.name for t in model_request_parameters.output_tools]
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=output_tool_names,
+                )
+            )
+
+        if resolved.tool_names:
+            return ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=resolved.tool_names,
+                )
+            )
+
+        return None  # pragma: no cover
 
     @overload
     async def _generate_content(
@@ -440,7 +491,7 @@ class GoogleModel(Model):
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
 
-        tool_config = self._get_tool_config(model_request_parameters, tools)
+        tool_config = self._get_tool_config(model_request_parameters, tools, model_settings)
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities = [Modality.TEXT.value]

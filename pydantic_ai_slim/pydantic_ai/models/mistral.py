@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -47,6 +48,7 @@ from . import (
     StreamedResponse,
     check_allow_model_requests,
     get_user_agent,
+    resolve_tool_choice,
 )
 
 try:
@@ -233,7 +235,7 @@ class MistralModel(Model):
                 messages=self._map_messages(messages, model_request_parameters),
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tool_choice=self._get_tool_choice(model_request_parameters, model_settings),
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 temperature=model_settings.get('temperature', UNSET),
@@ -273,7 +275,7 @@ class MistralModel(Model):
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tool_choice=self._get_tool_choice(model_request_parameters, model_settings),
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -312,7 +314,11 @@ class MistralModel(Model):
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
-    def _get_tool_choice(self, model_request_parameters: ModelRequestParameters) -> MistralToolChoiceEnum | None:
+    def _get_tool_choice(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: MistralModelSettings,
+    ) -> MistralToolChoiceEnum | None:
         """Get tool choice for the model.
 
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -322,10 +328,32 @@ class MistralModel(Model):
         """
         if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
             return None
-        elif not model_request_parameters.allow_text_output:
-            return 'required'
-        else:
+
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                return 'required'
             return 'auto'
+
+        if resolved.mode in ('auto', 'required'):
+            return resolved.mode
+
+        if resolved.mode == 'none':
+            if resolved.output_tools_fallback:
+                return 'required'
+            return 'none'
+
+        if resolved.tool_names:
+            warnings.warn(
+                "Mistral does not support forcing specific tools. Falling back to 'required'.",
+                UserWarning,
+                stacklevel=6,
+            )
+            return 'required'
+
+        return None  # pragma: no cover
 
     def _map_function_and_output_tools_definition(
         self, model_request_parameters: ModelRequestParameters

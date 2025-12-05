@@ -29,6 +29,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
@@ -55,7 +57,7 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
+    from pydantic_ai.models.mistral import MistralModel, MistralModelSettings, MistralStreamedResponse
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -2345,3 +2347,73 @@ By following these steps, you can ensure a safe crossing.\
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'tool_choice,expected',
+    [
+        pytest.param('none', 'none', id='none'),
+        pytest.param('auto', 'auto', id='auto'),
+        pytest.param('required', 'required', id='required'),
+    ],
+)
+def test_tool_choice_string_values(tool_choice: str, expected: str) -> None:
+    """Ensure Mistral string values pass through untouched."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': tool_choice}  # type: ignore[assignment]
+    result = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == expected
+
+
+def test_tool_choice_specific_tool_falls_back_to_required() -> None:
+    """Specific tool forcing is unsupported and falls back to required."""
+    tool_a = ToolDefinition(
+        name='tool_a',
+        description='Test tool A',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[tool_a], allow_text_output=True, output_tools=[])
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': ['tool_a']}
+
+    with pytest.warns(UserWarning, match="Mistral does not support forcing specific tools. Falling back to 'required'"):
+        result = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == 'required'
+
+
+def test_tool_choice_none_with_output_tools_warns() -> None:
+    """tool_choice='none' still forces required when output tools exist."""
+    func_tool = ToolDefinition(
+        name='func_tool',
+        description='Function tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool = ToolDefinition(
+        name='output_tool',
+        description='Output tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[func_tool], allow_text_output=False, output_tools=[output_tool]
+    )
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': 'none'}
+
+    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
+        result = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == 'required'

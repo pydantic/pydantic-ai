@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -42,7 +43,15 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+    resolve_tool_choice,
+)
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -643,18 +652,81 @@ class AnthropicModel(Model):
     ) -> BetaToolChoiceParam | None:
         if not tools:
             return None
-        else:
-            tool_choice: BetaToolChoiceParam
 
+        thinking_enabled = model_settings.get('anthropic_thinking') is not None
+        tool_choice: BetaToolChoiceParam
+
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
 
-            if 'parallel_tool_calls' in model_settings:
-                tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']
+        elif resolved.mode == 'auto':
+            tool_choice = {'type': 'auto'}
 
-            return tool_choice
+        elif resolved.mode == 'required':
+            if thinking_enabled:
+                warnings.warn(
+                    "tool_choice='required' is not supported with Anthropic thinking mode. Falling back to 'auto'.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'type': 'auto'}
+            else:
+                tool_choice = {'type': 'any'}
+
+        elif resolved.mode == 'none':
+            if not resolved.output_tools_fallback:
+                tool_choice = {'type': 'none'}
+            else:
+                output_tool_names = [t.name for t in model_request_parameters.output_tools]
+                if len(output_tool_names) == 1:
+                    tool_choice = {'type': 'tool', 'name': output_tool_names[0]}
+                else:
+                    # Anthropic's tool_choice only supports forcing a single tool via {"type": "tool", "name": "..."}
+                    # See: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+                    warnings.warn(
+                        'Anthropic only supports forcing a single tool. '
+                        "Falling back to 'auto' for multiple output tools.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
+                    tool_choice = {'type': 'auto'}
+
+        elif resolved.mode == 'specific':
+            if not resolved.tool_names:  # pragma: no cover
+                # tool_names will always be filled out when mode=='specific' i.e. 'specific' will only be set when there are tool names
+                raise RuntimeError('Internal error: resolved.tool_names is empty for specific tool choice.')
+            if thinking_enabled:
+                warnings.warn(
+                    "Forcing specific tools is not supported with Anthropic thinking mode. Falling back to 'auto'.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'type': 'auto'}
+            elif len(resolved.tool_names) == 1:
+                tool_choice = {'type': 'tool', 'name': resolved.tool_names[0]}
+            else:
+                warnings.warn(
+                    'Anthropic only supports forcing a single tool. '
+                    "Falling back to 'any' (required) for multiple function tools.",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = {'type': 'any'}
+
+        else:
+            assert_never(resolved.mode)
+
+        if 'parallel_tool_calls' in model_settings and tool_choice.get('type') != 'none':
+            # only `BetaToolChoiceNoneParam` doesn't have this field
+            tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']  # pyright: ignore[reportGeneralTypeIssues]
+
+        return tool_choice
 
     async def _map_message(  # noqa: C901
         self,
@@ -859,9 +931,10 @@ class AnthropicModel(Model):
             system_prompt_parts.insert(0, instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
+        ttl: Literal['5m', '1h']
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
         if anthropic_messages and (cache_messages := model_settings.get('anthropic_cache_messages')):
-            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
+            ttl = '5m' if cache_messages is True else cache_messages
             m = anthropic_messages[-1]
             content = m['content']
             if isinstance(content, str):
@@ -881,7 +954,7 @@ class AnthropicModel(Model):
         # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
         if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
             # If True, use '5m'; otherwise use the specified ttl value
-            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+            ttl = '5m' if cache_instructions is True else cache_instructions
             system_prompt_blocks = [
                 BetaTextBlockParam(
                     type='text',

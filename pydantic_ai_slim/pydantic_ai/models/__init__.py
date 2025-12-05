@@ -546,6 +546,86 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class ResolvedToolChoice:
+    """Provider-agnostic resolved tool choice.
+
+    This is the result of validating and resolving the user's `tool_choice` setting.
+    Providers should map this to their API-specific format.
+    """
+
+    mode: Literal['none', 'auto', 'required', 'specific']
+    """The resolved tool choice mode."""
+
+    tool_names: list[str] = field(default_factory=list)
+    """For 'specific' mode, the list of tool names to force. Empty for other modes."""
+
+    output_tools_fallback: bool = False
+    """True if we need to fall back to output tools only (when 'none' was requested but output tools exist)."""
+
+
+_TOOL_CHOICE_NONE_WITH_OUTPUT_TOOLS_WARNING = (
+    "tool_choice='none' is set but output tools are required for structured output. "
+    'The output tools will remain available. Consider using `NativeOutput` or `PromptedOutput` '
+    "if you need tool_choice='none' with structured output."
+)
+
+
+# NOTE: for PR discussion: should this be a private method? a Model.method? Perhaps a ModelRequestParameters.method?
+def resolve_tool_choice(
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    *,
+    stacklevel: int = 6,
+) -> ResolvedToolChoice | None:
+    """Resolve and validate tool_choice from model settings.
+
+    This centralizes the common logic for handling tool_choice across all providers:
+    - Validates tool names in list[str] against available function_tools
+    - Issues warnings for conflicting settings (tool_choice='none' with output tools)
+    - Returns a provider-agnostic ResolvedToolChoice for the provider to map to their API format
+
+    Args:
+        model_settings: The model settings containing tool_choice.
+        model_request_parameters: The request parameters containing tool definitions.
+        stacklevel: The stack level for warnings (default 6 works for most provider call stacks).
+
+    Returns:
+        ResolvedToolChoice if an explicit tool_choice was provided and validated,
+        None if tool_choice was not set (provider should use default behavior based on allow_text_output).
+
+    Raises:
+        UserError: If tool names in list[str] are invalid.
+    """
+    user_tool_choice = (model_settings or {}).get('tool_choice')
+
+    if user_tool_choice is None:
+        return None
+
+    if user_tool_choice == 'none':
+        if model_request_parameters.output_tools:
+            warnings.warn(_TOOL_CHOICE_NONE_WITH_OUTPUT_TOOLS_WARNING, UserWarning, stacklevel=stacklevel)
+            return ResolvedToolChoice(mode='none', output_tools_fallback=True)
+        return ResolvedToolChoice(mode='none')
+
+    if user_tool_choice in ('auto', 'required'):
+        return ResolvedToolChoice(mode=user_tool_choice)
+
+    if isinstance(user_tool_choice, list):
+        if not user_tool_choice:
+            raise UserError('tool_choice cannot be an empty list. Use None for default behavior.')
+        function_tool_names = {t.name for t in model_request_parameters.function_tools}
+        invalid_names = set(user_tool_choice) - function_tool_names
+        if invalid_names:
+            raise UserError(
+                f'Invalid tool names in tool_choice: {invalid_names}. '
+                f'Available function tools: {function_tool_names or "none"}'
+            )
+        return ResolvedToolChoice(mode='specific', tool_names=list(user_tool_choice))
+
+    return None  # pragma: no cover
+
+
 class Model(ABC):
     """Abstract class for a model."""
 

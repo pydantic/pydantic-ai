@@ -1324,7 +1324,7 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     ]
 
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1445,7 +1445,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Models other than Mistral support toolResult.content with text, not json
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
 
     assert bedrock_messages == snapshot(
         [
@@ -1461,7 +1461,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Mistral requires toolResult.content to hold json, not text
     model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
 
     assert bedrock_messages == snapshot(
         [
@@ -1485,7 +1485,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Amazon Nova supports tool_choice
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, None)  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1506,7 +1506,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Anthropic supports tool_choice
     model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, None)  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1527,7 +1527,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Other models don't support tool_choice
     model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, None)  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1624,3 +1624,148 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out, message should still be valid
     assert len(messages) == 1
     assert messages[0]['role'] == 'user'
+
+
+@pytest.mark.parametrize(
+    'tool_choice,expected_tool_choice',
+    [
+        pytest.param('auto', {'auto': {}}, id='auto'),
+        pytest.param('required', {'any': {}}, id='required-maps-to-any'),
+    ],
+)
+async def test_tool_choice_string_values(
+    bedrock_provider: BedrockProvider, tool_choice: str, expected_tool_choice: dict[str, Any]
+) -> None:
+    """Ensure simple string tool_choice values map to Bedrock's schema."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    settings: BedrockModelSettings = {'tool_choice': tool_choice}  # type: ignore[assignment]
+    tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config.get('toolChoice') == expected_tool_choice
+
+
+async def test_tool_choice_none_falls_back_to_auto(bedrock_provider: BedrockProvider) -> None:
+    """Bedrock lacks 'none' support, so we fall back to auto with a warning."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    settings: BedrockModelSettings = {'tool_choice': 'none'}
+    with pytest.warns(UserWarning, match="Bedrock does not support tool_choice='none'. Falling back to 'auto'"):
+        tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'Test tool',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                    }
+                }
+            ],
+            'toolChoice': {'auto': {}},
+        }
+    )
+
+
+async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvider) -> None:
+    """Single tool names should emit the {tool: {name}} payload."""
+    tool_a = ToolDefinition(
+        name='tool_a',
+        description='Test tool A',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    tool_b = ToolDefinition(
+        name='tool_b',
+        description='Test tool B',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
+    )
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    settings: BedrockModelSettings = {'tool_choice': ['tool_a']}
+    tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'tool_a',
+                        'description': 'Test tool A',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                    }
+                },
+                {
+                    'toolSpec': {
+                        'name': 'tool_b',
+                        'description': 'Test tool B',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                    }
+                },
+            ],
+            'toolChoice': {'tool': {'name': 'tool_a'}},
+        }
+    )
+
+
+async def test_tool_choice_multiple_tools_falls_back_to_any(bedrock_provider: BedrockProvider) -> None:
+    """Multiple tool names fall back to the 'any' configuration."""
+    tool_a = ToolDefinition(
+        name='tool_a',
+        description='Test tool A',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    tool_b = ToolDefinition(
+        name='tool_b',
+        description='Test tool B',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
+    )
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    settings: BedrockModelSettings = {'tool_choice': ['tool_a', 'tool_b']}
+
+    with pytest.warns(UserWarning, match='Bedrock only supports forcing a single tool'):
+        tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'tool_a',
+                        'description': 'Test tool A',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                    }
+                },
+                {
+                    'toolSpec': {
+                        'name': 'tool_b',
+                        'description': 'Test tool B',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                    }
+                },
+            ],
+            'toolChoice': {'any': {}},
+        }
+    )
