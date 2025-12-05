@@ -21,6 +21,47 @@ These tools are passed to the agent via the `builtin_tools` parameter and are ex
 
     If a provider supports a built-in tool that is not currently supported by Pydantic AI, please file an issue.
 
+## Dynamic Configuration
+
+Sometimes you need to configure a built-in tool dynamically based on the [run context][pydantic_ai.tools.RunContext] (e.g., user dependencies), or conditionally omit it. You can achieve this by passing a function to `builtin_tools` that takes [`RunContext`][pydantic_ai.tools.RunContext] as an argument and returns an [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] or `None`.
+
+This is particularly useful for tools like [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] where you might want to set the user's location based on the current request, or disable the tool if the user provides no location.
+
+```python {title="dynamic_builtin_tool.py"}
+from pydantic_ai import Agent, RunContext, WebSearchTool
+
+
+async def prepared_web_search(ctx: RunContext[dict]) -> WebSearchTool | None:
+    if not ctx.deps.get('location'):
+        return None
+
+    return WebSearchTool(
+        user_location={'city': ctx.deps['location']},
+    )
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[prepared_web_search],
+    deps_type=dict,
+)
+
+# Run with location
+result = agent.run_sync(
+    'What is the weather like?',
+    deps={'location': 'London'},
+)
+print(result.output)
+#> It's currently raining in London.
+
+# Run without location (tool will be omitted)
+result = agent.run_sync(
+    'What is the capital of France?',
+    deps={'location': None},
+)
+print(result.output)
+#> The capital of France is Paris.
+```
+
 ## Web Search Tool
 
 The [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] allows your agent to search the web,

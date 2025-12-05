@@ -1372,7 +1372,7 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "2.0.0"
+version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
@@ -1382,9 +1382,9 @@ dependencies = [
     { name = "typer-slim" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/fa/30e82a440601fe01c4e4edd1ba1c60534d3af364ca16896db68c459fbabc/dbos-2.0.0.tar.gz", hash = "sha256:91c7ce2da4c7de4614a19546e496d1c9ac6160338c0faeed35caa72803ef5cd7", size = 208612, upload-time = "2025-09-25T15:22:58.895Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/86/e0c4d2ba5f063150edab296e7c566a693660ec53a2f030a5652b805fb490/dbos-2.5.0.tar.gz", hash = "sha256:6e13b1ddefbbc4143152f23d6c87ce36307e98d1fdabb83a027223161ece2b4d", size = 214272, upload-time = "2025-11-17T17:23:09.61Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/38/c0ebffc1ac4bb6b37d19bffa19d67ffda3372ba5229ba5076fc98b788288/dbos-2.0.0-py3-none-any.whl", hash = "sha256:5e0d91a00c94e6dfad79eb158acb900045d5e9f727b875375be3bbd489bc00b9", size = 134240, upload-time = "2025-09-25T15:22:56.711Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/f9/c1e1a9745dcf1c15fbebc5437bec1bc4533426d1a729101a07fb54221d96/dbos-2.5.0-py3-none-any.whl", hash = "sha256:476936ee4ef9fbb7ce9cbf52e944ff6f69b49c11a43270774591c742622fac5c", size = 136847, upload-time = "2025-11-17T17:23:07.971Z" },
 ]
 
 [[package]]
@@ -5429,6 +5429,7 @@ docs = [
     { name = "mkdocs-redirects" },
     { name = "mkdocstrings-python" },
     { name = "pydantic-ai", extra = ["a2a"] },
+    { name = "pydantic-docs" },
 ]
 docs-upload = [
     { name = "algoliasearch" },
@@ -5487,6 +5488,7 @@ docs = [
     { name = "mkdocs-redirects", specifier = ">=1.2.2" },
     { name = "mkdocstrings-python", specifier = ">=1.12.2" },
     { name = "pydantic-ai", extras = ["a2a"], editable = "." },
+    { name = "pydantic-docs", git = "https://github.com/pydantic/pydantic-docs" },
 ]
 docs-upload = [
     { name = "algoliasearch", specifier = ">=4.12.0" },
@@ -5794,6 +5796,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b8/e9/1f7efbe20d0b2b10f6718944b5d8ece9152390904f29a78e68d4e7961159/pydantic_core-2.33.2-pp311-pypy311_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:de4b83bb311557e439b9e186f733f6c645b9417c84e2eb8203f3f820a4b988bf", size = 2239013, upload-time = "2025-04-23T18:33:26.621Z" },
     { url = "https://files.pythonhosted.org/packages/3c/b2/5309c905a93811524a49b4e031e9851a6b00ff0fb668794472ea7746b448/pydantic_core-2.33.2-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:82f68293f055f51b51ea42fafc74b6aad03e70e191799430b90c13d643059ebb", size = 2238715, upload-time = "2025-04-23T18:33:28.656Z" },
     { url = "https://files.pythonhosted.org/packages/32/56/8a7ca5d2cd2cda1d245d34b1c9a942920a718082ae8e54e5f3e5a58b7add/pydantic_core-2.33.2-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:329467cecfb529c925cf2bbd4d60d2c509bc2fb52a20c1045bf09bb70971a9c1", size = 2066757, upload-time = "2025-04-23T18:33:30.645Z" },
+]
+
+[[package]]
+name = "pydantic-docs"
+version = "0.0.1"
+source = { git = "https://github.com/pydantic/pydantic-docs#142645b6ec056bbe2f39cc313aff781fba15e326" }
+dependencies = [
+    { name = "click" },
+    { name = "markdown" },
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "pymdown-extensions" },
+    { name = "ruamel-yaml" },
 ]
 
 [[package]]
