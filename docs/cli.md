@@ -22,7 +22,7 @@ export OPENAI_API_KEY='your-api-key-here'
 Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
 ```bash
-uvx clai
+uvx clai chat
 ```
 
 Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools), run:
@@ -30,7 +30,7 @@ Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools
 ```bash
 uv tool install clai
 ...
-clai
+clai chat
 ```
 
 Or with `pip`, run:
@@ -38,15 +38,72 @@ Or with `pip`, run:
 ```bash
 pip install clai
 ...
-clai
+clai chat
 ```
 
-Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Either way, running `clai chat` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
+
+### Web Chat UI
+
+Launch a web-based chat interface for your agent:
+
+```bash
+clai web --agent module:agent_variable
+```
+
+For example, if you have an agent defined in `my_agent.py`:
+
+```python
+from pydantic_ai import Agent
+
+my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
+```
+
+Launch the web UI with:
+
+```bash
+clai web --agent my_agent:my_agent
+```
+
+This will start a web server (default: http://127.0.0.1:7932) with a chat interface for your agent.
+
+#### CLI Options
+
+```bash
+# With a custom agent
+clai web --agent my_module:my_agent
+
+# With specific models (first is default when no --agent)
+clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5
+
+# With builtin tools
+clai web -m openai:gpt-5 -t web_search -t code_execution
+
+# Generic agent with system instructions
+clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
+
+# Custom agent with extra instructions for each run
+clai web --agent my_module:my_agent -i 'Always respond in Spanish'
+```
+
+| Option | Description |
+|--------|-------------|
+| `--agent`, `-a` | Agent to serve in `module:variable` format |
+| `--model`, `-m` | Model to make available (repeatable, agent's model is default if present) |
+| `--tool`, `-t` | [Builtin tool](builtin-tools.md) to enable (repeatable). See [available tools](ui/web.md#builtin-tool-support). |
+| `--instructions`, `-i` | System instructions. In generic mode (no `--agent`), these are the agent instructions. With `--agent`, these are passed as extra instructions to each run. |
+| `--host` | Host to bind server (default: 127.0.0.1) |
+| `--port` | Port to bind server (default: 7932) |
+
+!!! note "Memory Tool"
+    The `memory` tool requires the agent to have memory configured and cannot be enabled via `-t memory` alone. An agent with memory must be provided via `--agent`.
+
+For programmatic usage with `Agent.to_web()`, see the [Web UI documentation](ui/web.md).
 
 ### Help
 
@@ -54,6 +111,8 @@ To get help on the CLI, use the `--help` flag:
 
 ```bash
 uvx clai --help
+uvx clai chat --help
+uvx clai web --help
 ```
 
 ### Choose a model
@@ -61,7 +120,7 @@ uvx clai --help
 You can specify which model to use with the `--model` flag:
 
 ```bash
-uvx clai --model anthropic:claude-sonnet-4-0
+uvx clai chat --model anthropic:claude-sonnet-4-0
 ```
 
 (a full list of models available can be printed with `uvx clai --list-models`)
@@ -79,7 +138,7 @@ agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 Then run:
 
 ```bash
-uvx clai --agent custom_agent:agent "What's the weather today?"
+uvx clai chat --agent custom_agent:agent "What's the weather today?"
 ```
 
 The format must be `module:variable` where:

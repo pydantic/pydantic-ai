@@ -40,7 +40,7 @@ from pydantic_ai import (
     usage,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
@@ -432,9 +432,6 @@ class BedrockConverseModel(Model):
         tool_config = self._map_tool_config(model_request_parameters)
         if tool_config:
             params['toolConfig'] = tool_config
-
-        if model_request_parameters.builtin_tools:
-            raise UserError('Bedrock does not support built-in tools')
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:

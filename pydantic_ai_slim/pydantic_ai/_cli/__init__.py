@@ -2,8 +2,6 @@ from __future__ import annotations as _annotations
 
 import argparse
 import asyncio
-import importlib
-import os
 import sys
 from asyncio import CancelledError
 from collections.abc import Sequence
@@ -12,15 +10,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
 
-from . import __version__
-from ._run_context import AgentDepsT
-from .agent import AbstractAgent, Agent
-from .exceptions import UserError
-from .messages import ModelMessage, ModelResponse
-from .models import KnownModelName, infer_model
-from .output import OutputDataT
+from .. import __version__
+from .._run_context import AgentDepsT
+from ..agent import AbstractAgent, Agent
+from ..builtin_tools import get_builtin_tool_types
+from ..exceptions import UserError
+from ..messages import ModelMessage, ModelResponse
+from ..models import KnownModelName, infer_model
+from ..output import OutputDataT
 
 try:
     import argcomplete
@@ -55,6 +55,11 @@ This folder is used to store the prompt history and configuration.
 
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
+# CLI-supported tool IDs (excludes deprecated and config-requiring tools)
+_CLI_TOOL_IDS = sorted(
+    k.kind for k in get_builtin_tool_types() if k not in {'mcp_server', 'memory', 'unknown_builtin_tool'}
+)
+
 
 class SimpleCodeBlock(CodeBlock):
     """Customized code blocks in markdown.
@@ -85,6 +90,27 @@ Markdown.elements.update(
 
 cli_agent = Agent()
 
+_import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
+
+
+def load_agent(agent_path: str) -> Agent[Any, Any] | None:
+    """Load an agent from module path in uvicorn style.
+
+    Args:
+        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
+
+    Returns:
+        Agent instance or None if loading fails
+    """
+    sys.path.insert(0, str(Path.cwd()))
+    try:
+        obj = _import_string_adapter.validate_python(agent_path)
+        if not isinstance(obj, Agent):
+            return None
+        return obj  # pyright: ignore[reportUnknownVariableType]
+    except ValidationError:
+        return None
+
 
 @cli_agent.system_prompt
 def cli_system_prompt() -> str:
@@ -102,14 +128,34 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(  # noqa: C901
-    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5'
-) -> int:
+def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
+    # we don't want to autocomplete or list models that don't include the provider,
+    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+
     parser = argparse.ArgumentParser(
         prog=prog_name,
-        description=f"""\
-Pydantic AI CLI v{__version__}\n\n
+        description=f'Pydantic AI CLI v{__version__}',
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    parser.add_argument(
+        '-l',
+        '--list-models',
+        action='store_true',
+        help='List all available models and exit',
+    )
+    parser.add_argument('--version', action='store_true', help='Show version and exit')
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Chat subcommand
+    chat_parser = subparsers.add_parser(
+        'chat',
+        help='Interactive chat with an AI model',
+        description="""\
+Interactive chat mode with an AI model.
 
 Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
@@ -119,43 +165,73 @@ Special prompts:
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
-    arg = parser.add_argument(
+    chat_parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
+    chat_model_arg = chat_parser.add_argument(
         '-m',
         '--model',
         nargs='?',
         help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
     )
-    # we don't want to autocomplete or list models that don't include the provider,
-    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
-    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
-    arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
-    parser.add_argument(
+    chat_model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
+    chat_parser.add_argument(
         '-a',
         '--agent',
         help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
     )
-    parser.add_argument(
-        '-l',
-        '--list-models',
-        action='store_true',
-        help='List all available models and exit',
-    )
-    parser.add_argument(
+    chat_parser.add_argument(
         '-t',
         '--code-theme',
         nargs='?',
         help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
         default='dark',
     )
-    parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
-    parser.add_argument('--version', action='store_true', help='Show version and exit')
+    chat_parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+
+    # Web subcommand
+    web_parser = subparsers.add_parser(
+        'web',
+        help='Launch web chat UI for an agent',
+        description='Start a web-based chat interface for the specified agent',
+    )
+    web_parser.add_argument(
+        '--agent',
+        '-a',
+        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+        'If omitted, creates a generic agent with the first specified model as default.',
+    )
+    web_parser.add_argument(
+        '-m',
+        '--model',
+        choices=KnownModelName.__value__.__args__,
+        action='append',
+        dest='models',
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+        'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
+    )
+    web_parser.add_argument(
+        '-t',
+        '--tool',
+        choices=_CLI_TOOL_IDS,
+        action='append',
+        dest='tools',
+        help=f'Builtin tool to enable (can be repeated, e.g., -t web_search -t code_execution). '
+        f'Available: {", ".join(_CLI_TOOL_IDS)}.',
+    )
+    web_parser.add_argument(
+        '-i',
+        '--instructions',
+        help='System instructions for the agent. In generic mode (no --agent), these are the agent instructions. '
+        'With --agent, these are passed as extra instructions to each run.',
+    )
+    web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
+    web_parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
     console = Console()
     name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
+
     if args.version:
         console.print(name_version, highlight=False)
         return 0
@@ -165,20 +241,37 @@ Special prompts:
             console.print(f'  {model}', highlight=False)
         return 0
 
+    if args.command == 'web':
+        from .web import run_web_command
+
+        return run_web_command(
+            agent_path=args.agent,
+            host=args.host,
+            port=args.port,
+            models=args.models,
+            tools=args.tools,
+            instructions=args.instructions,
+        )
+
+    if args.command == 'chat':
+        return _run_chat_command(args, console, name_version, default_model, prog_name)
+
+    # No command specified - show help
+    parser.print_help()
+    return 0
+
+
+def _run_chat_command(
+    args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
+) -> int:
+    """Handle the chat subcommand."""
     agent: Agent[None, str] = cli_agent
     if args.agent:
-        sys.path.append(os.getcwd())
-        try:
-            module_path, variable_name = args.agent.split(':')
-        except ValueError:
-            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
+        loaded = load_agent(args.agent)
+        if loaded is None:
+            console.print(f'[red]Error: Could not load agent from {args.agent}[/red]')
             return 1
-
-        module = importlib.import_module(module_path)
-        agent = getattr(module, variable_name)
-        if not isinstance(agent, Agent):
-            console.print(f'[red]Error: {args.agent} is not an Agent instance[/red]')
-            return 1
+        agent = loaded
 
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:
