@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
+from warnings import warn
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -34,6 +36,10 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'TextFormat',
+    'FreeformText',
+    'RegexGrammar',
+    'LarkGrammar',
 )
 
 
@@ -227,6 +233,134 @@ class DeferredToolResults:
 
 
 A = TypeVar('A')
+
+
+@dataclass
+class FreeformText:
+    """Marker for freeform text input without grammar constraints.
+
+    Use this annotation to indicate a tool parameter should receive raw text
+    input via freeform function calling, without any grammar constraints.
+
+    Calling a function in this way prevents parallel tool calling.
+
+    Example:
+        ```python
+        from typing import Annotated
+
+        from pydantic_ai import Agent, FreeformText
+
+        agent = Agent('openai:gpt-5')
+
+        @agent.tool_plain
+        def run_code(code: Annotated[str, FreeformText()]) -> str:
+            return f'Executed: {code}'
+        ```
+
+    Note: this is currently only supported by OpenAI GPT-5 models.
+    """
+
+
+@dataclass
+class RegexGrammar:
+    r"""Grammar constraint using regular expression pattern matching.
+
+    Use this annotation to constrain tool input to match a regex pattern
+    via freeform function calling.
+
+    Calling a function in this way prevents parallel tool calling.
+
+    Example:
+        ```python
+        from typing import Annotated
+
+        from pydantic_ai import Agent, RegexGrammar
+
+        agent = Agent('openai:gpt-5')
+
+        @agent.tool_plain
+        def parse_phone(phone: Annotated[str, RegexGrammar(r'\\d{3}-\\d{4}')]) -> str:
+            return f'Parsed phone: {phone}'
+        ```
+
+    Note: this is currently only supported by OpenAI GPT-5 models.
+    """
+
+    pattern: str
+    """The regular expression pattern that the text must conform to."""
+
+    def __post_init__(self) -> None:
+        try:
+            re.compile(self.pattern)
+        except re.error as e:
+            raise ValueError('Regex pattern is invalid') from e
+
+
+@dataclass
+class LarkGrammar:
+    """Grammar constraint using Lark parser grammar.
+
+    Use this annotation to constrain tool input to match a Lark grammar
+    via freeform function calling.
+
+    Requires the `lark` package to be installed for validation during tool definition.
+
+    Calling a function in this way prevents parallel tool calling.
+
+    Example:
+        ```python
+        from typing import Annotated
+
+        from pydantic_ai import Agent, LarkGrammar
+
+        agent = Agent('openai:gpt-5')
+
+        grammar = '''
+        start: "hello" name
+        name: /[A-Za-z]+/
+        '''
+
+        @agent.tool_plain
+        def greet(text: Annotated[str, LarkGrammar(grammar)]) -> str:
+            return f'Greeting: {text}'
+        ```
+
+    Note: this is currently only supported by OpenAI GPT-5 models.
+    """
+
+    definition: str
+    """The Lark grammar definition that the text must conform to."""
+
+    def __post_init__(self) -> None:
+        try:
+            import lark
+            from lark.exceptions import GrammarError
+
+            try:
+                lark.Lark(self.definition)
+            except GrammarError as e:
+                raise ValueError('Lark grammar is invalid') from e
+        except ImportError:
+            warn(
+                'Cannot validate lark grammar as the lark optional dependency group has not been installed',
+                stacklevel=2,
+            )  # pragma: no cover
+
+
+TextFormat: TypeAlias = FreeformText | RegexGrammar | LarkGrammar
+"""Union of all supported text format types for freeform function calling.
+
+These types are used as annotations on string parameters to enable freeform function calling:
+
+- [`FreeformText`][pydantic_ai.tools.FreeformText]: Unconstrained text input
+- [`RegexGrammar`][pydantic_ai.tools.RegexGrammar]: Text constrained by a regex pattern
+- [`LarkGrammar`][pydantic_ai.tools.LarkGrammar]: Text constrained by a Lark grammar
+
+When a tool parameter is annotated with one of these types, the tool will use freeform
+function calling instead of JSON-based function calling. This prevents parallel tool calling.
+
+Note: Support varies by model. Currently only OpenAI GPT-5 models support this feature.
+"""
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
@@ -426,6 +560,7 @@ class Tool(Generic[ToolAgentDepsT]):
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
+            text_format=self.function_schema.text_format,
             sequential=self.sequential,
             metadata=self.metadata,
             kind='unapproved' if self.requires_approval else 'function',
@@ -494,6 +629,18 @@ class ToolDefinition:
     Note: this is currently supported by OpenAI and Anthropic models.
     """
 
+    text_format: TextFormat | None = None
+    """Text format annotation for freeform function calling.
+
+    When set, the tool will use freeform function calling instead of JSON-based function calling.
+    This prevents parallel tool calling but allows passing raw text payloads to your custom tool
+    without wrapping the data in JSON. The function must take a single string argument.
+
+    When `None` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
+
+    Note: this is currently only supported by OpenAI GPT-5 models.
+    """
+
     sequential: bool = False
     """Whether this tool requires a sequential/serial execution environment."""
 
@@ -513,6 +660,28 @@ class ToolDefinition:
 
     For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
     """
+
+    @property
+    def only_takes_string_argument(self) -> bool:
+        # true if the parameters_json_schema looks like:
+        # {"additionalProperties": False, "properties": {NAME: {"type": "string"}}, "required": ["NAME"], "type": "object"}
+        return self.single_string_argument_name is not None
+
+    @property
+    def single_string_argument_name(self) -> str | None:
+        # returns the name of the single argument that is a string
+        # used for freeform function calling
+        # will return None if there is more or less than one argument,
+        # or if the argument is not a string
+        schema = self.parameters_json_schema
+        if len(schema['required']) != 1:
+            return None
+        if len(schema['properties']) != 1:
+            return None
+        property_name: str = schema['required'][0]
+        if not schema['properties'][property_name].get('type', None) == 'string':
+            return None
+        return property_name
 
     @property
     def defer(self) -> bool:
