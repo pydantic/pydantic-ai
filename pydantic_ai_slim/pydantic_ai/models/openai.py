@@ -44,6 +44,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -56,7 +57,7 @@ from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
-    from openai.types import AllModels, chat, responses
+    from openai.types import AllModels, FileObject, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
         ChatCompletionContentPartImageParam,
@@ -1001,6 +1002,9 @@ class OpenAIChatModel(Model):
                                 type='file',
                             )
                         )
+                elif isinstance(item, UploadedFile):
+                    file_id = _map_uploaded_file(item, self._provider)
+                    content.append(File(file=FileFile(file_id=file_id), type='file'))
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 elif isinstance(item, CachePoint):
@@ -1788,8 +1792,7 @@ class OpenAIResponsesModel(Model):
             response_format_param['strict'] = o.strict
         return response_format_param
 
-    @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
+    async def _map_user_prompt(self, part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1862,6 +1865,9 @@ class OpenAIResponsesModel(Model):
                             filename=f'filename.{downloaded_item["data_type"]}',
                         )
                     )
+                elif isinstance(item, UploadedFile):
+                    file_id = _map_uploaded_file(item, self._provider)
+                    content.append(responses.ResponseInputFileParam(file_id=file_id, type='input_file'))
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 elif isinstance(item, CachePoint):
@@ -2435,6 +2441,21 @@ def _map_usage(
         api_flavor=api_flavor,
         details=details,
     )
+
+
+def _map_uploaded_file(uploaded_file: UploadedFile, _provider: Provider[Any]) -> str:
+    """Map an UploadedFile to a file ID understood by OpenAI-compatible APIs."""
+    file = uploaded_file.file
+    if isinstance(file, str):
+        return file
+    if isinstance(file, FileObject):
+        return file.id
+
+    file_id = getattr(file, 'id', None)
+    if isinstance(file_id, str):
+        return file_id
+
+    raise UserError('UploadedFile.file must be a file ID string or an object with an `id` attribute')
 
 
 def _map_provider_details(

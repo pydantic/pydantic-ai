@@ -43,12 +43,20 @@ class BinaryDataPart(TypedDict):
     content: NotRequired[str]
 
 
+class UploadedFilePart(TypedDict):
+    type: Literal['uploaded-file']
+    identifier: NotRequired[str]
+    file: NotRequired[str]
+
+
 class ThinkingPart(TypedDict):
     type: Literal['thinking']
     content: NotRequired[str]
 
 
-MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | BinaryDataPart | ThinkingPart'
+MessagePart: TypeAlias = (
+    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | BinaryDataPart | UploadedFilePart | ThinkingPart'
+)
 
 
 Role = Literal['system', 'user', 'assistant']

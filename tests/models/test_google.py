@@ -39,6 +39,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UsageLimitExceeded,
     UserPromptPart,
     VideoUrl,
@@ -67,6 +68,7 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        File,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
@@ -3029,6 +3031,64 @@ def test_map_usage():
                 'audio_candidates_tokens': 9400,
             },
         )
+    )
+
+
+def test_google_uploaded_file_accepts_uri_string():
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/123'
+
+    assert GoogleModel._map_uploaded_file(UploadedFile(file=file_uri)) == {'file_uri': file_uri}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_uploaded_file_requires_valid_type():
+    with pytest.raises(UserError, match='genai\\.types\\.File or file URI string'):
+        GoogleModel._map_uploaded_file(UploadedFile(file=object()))  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_uploaded_file_requires_uri():
+    with pytest.raises(UserError, match='include a file URI'):
+        GoogleModel._map_uploaded_file(UploadedFile(file=''))  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_uploaded_file_includes_display_name():
+    google_file = File(
+        name='files/123',
+        uri='https://generativelanguage.googleapis.com/v1beta/files/123',
+        mime_type='application/pdf',
+        display_name='resume.pdf',
+    )
+
+    assert GoogleModel._map_uploaded_file(UploadedFile(file=google_file)) == {  # pyright: ignore[reportPrivateUsage]
+        'file_uri': google_file.uri,
+        'mime_type': 'application/pdf',
+        'display_name': 'resume.pdf',
+    }
+
+
+async def test_uploaded_file_input(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    # VCR recording breaks when dealing with openai file upload request due to
+    # binary contents. For that reason, we have manually run once the upload
+    # and rebuild the FileObject manually (from the print command output).
+    # client = google_provider.client
+    # with open('tests/assets/dummy.pdf', 'rb') as f:
+    #     google_file = client.files.upload(
+    #         file=f,
+    #         config={
+    #             'mime_type': 'application/pdf',
+    #         },
+    #     )
+    # print(google_file)
+    google_file = File(
+        name='files/9b7dfki4eo1b',
+        mime_type='application/pdf',
+        uri='https://generativelanguage.googleapis.com/v1beta/files/9b7dfki4eo1b',
+    )
+    agent = Agent(m)
+
+    result = await agent.run(['Give me a short description of this image', UploadedFile(file=google_file)])
+    assert result.output == snapshot(
+        'The image displays a plain white page with the bold black text "Dummy PDF file" centered at the top-left. The rest of the page is blank.'
     )
 
 
