@@ -216,6 +216,18 @@ class BedrockModelSettings(ModelSettings, total=False):
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
+    bedrock_cache_messages: bool
+    """Convenience setting to enable caching for the last user message.
+
+    When enabled, this automatically adds a cache point to the last content block
+    in the final user message, which is useful for caching conversation history
+    or context in multi-turn conversations.
+
+    Note: Uses 1 of Bedrock's 4 available cache points per request. Any additional CachePoint
+    markers in messages will be automatically limited to respect the 4-cache-point maximum.
+    See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
 
 @dataclass(init=False)
 class BedrockConverseModel(Model):
@@ -447,6 +459,9 @@ class BedrockConverseModel(Model):
         if tool_config:
             params['toolConfig'] = tool_config
 
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
+
         if model_request_parameters.builtin_tools:
             raise UserError('Bedrock does not support built-in tools')
 
@@ -646,7 +661,42 @@ class BedrockConverseModel(Model):
         if system_prompt and settings.get('bedrock_cache_instructions'):
             system_prompt.append({'cachePoint': {'type': 'default'}})
 
+        if processed_messages and settings.get('bedrock_cache_messages'):
+            last_user_content = self._get_last_user_message_content(processed_messages)
+            if last_user_content is not None:
+                # AWS currently rejects cache points that directly follow non-text content.
+                # Insert a newline text block as a workaround.
+                if 'text' not in last_user_content[-1]:
+                    last_user_content.append({'text': '\n'})
+                last_user_content.append({'cachePoint': {'type': 'default'}})
+
         return system_prompt, processed_messages
+
+    @staticmethod
+    def _get_last_user_message_content(messages: list[MessageUnionTypeDef]) -> list[Any] | None:
+        """Get the content list from the last user message that can receive a cache point.
+
+        Returns the content list if:
+        - A user message exists
+        - It has a non-empty content list
+        - The last content block doesn't already have a cache point
+
+        Returns None otherwise.
+        """
+        user_messages = [msg for msg in messages if msg.get('role') == 'user']
+        if not user_messages:
+            return None
+
+        content = user_messages[-1].get('content')  # Last user message
+        if not content or not isinstance(content, list) or len(content) == 0:
+            return None
+
+        last_block = content[-1]
+        if not isinstance(last_block, dict):
+            return None
+        if 'cachePoint' in last_block:  # Skip if already has a cache point
+            return None
+        return content
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:  # noqa: C901
@@ -727,6 +777,83 @@ class BedrockConverseModel(Model):
         return {
             'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
         }
+
+    @staticmethod
+    def _limit_cache_points(
+        system_prompt: list[SystemContentBlockTypeDef],
+        bedrock_messages: list[MessageUnionTypeDef],
+        tools: list[ToolTypeDef],
+    ) -> None:
+        """Limit the number of cache points in the request to Bedrock's maximum.
+
+        Bedrock enforces a maximum of 4 cache points per request. This method ensures
+        compliance by counting existing cache points and removing excess ones from messages.
+
+        Strategy:
+        1. Count cache points in system_prompt
+        2. Count cache points in tools
+        3. Raise UserError if system + tools already exceed MAX_CACHE_POINTS
+        4. Calculate remaining budget for message cache points
+        5. Traverse messages from newest to oldest, keeping the most recent cache points
+           within the remaining budget
+        6. Remove excess cache points from older messages to stay within limit
+
+        Cache point priority (always preserved):
+        - System prompt cache points
+        - Tool definition cache points
+        - Message cache points (newest first, oldest removed if needed)
+
+        Raises:
+            UserError: If system_prompt and tools combined already exceed MAX_CACHE_POINTS (4).
+                      This indicates a configuration error that cannot be auto-fixed.
+        """
+        MAX_CACHE_POINTS = 4
+
+        # Count existing cache points in system prompt
+        used_cache_points = sum(1 for block in system_prompt if 'cachePoint' in block)
+
+        # Count existing cache points in tools
+        for tool in tools:
+            if 'cachePoint' in tool:
+                used_cache_points += 1
+
+        # Calculate remaining cache points budget for messages
+        remaining_budget = MAX_CACHE_POINTS - used_cache_points
+        if remaining_budget < 0:  # pragma: no cover
+            raise UserError(
+                f'Too many cache points for Bedrock request. '
+                f'System prompt and tool definitions already use {used_cache_points} cache points, '
+                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
+            )
+
+        # Remove excess cache points from messages (newest to oldest)
+        for message in reversed(bedrock_messages):
+            content = message.get('content')
+            if not content or not isinstance(content, list):  # pragma: no cover
+                continue
+
+            # Collect indices of blocks to remove (standalone CachePoints that exceed limit)
+            blocks_to_remove: list[int] = []
+
+            # Process content blocks in reverse order (newest first)
+            for i in range(len(content) - 1, -1, -1):
+                block = content[i]
+                if not isinstance(block, dict):  # pragma: no cover
+                    continue
+
+                if 'cachePoint' in block:
+                    if remaining_budget > 0:
+                        remaining_budget -= 1
+                    else:
+                        # Exceeded limit, remove this cache point
+                        del block['cachePoint']
+                        # If block is now empty (was a standalone CachePoint), mark for removal
+                        if not block:
+                            blocks_to_remove.append(i)
+
+            # Remove empty blocks (iterate in reverse to preserve indices)
+            for i in blocks_to_remove:
+                del content[i]
 
     @staticmethod
     def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:

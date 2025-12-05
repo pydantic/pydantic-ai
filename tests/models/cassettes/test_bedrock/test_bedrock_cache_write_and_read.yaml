@@ -4,10 +4,9 @@ interactions:
       response with something except single number\nNewer response with something except single number\nNewer response with
       something except single number\nNewer response with something except single number\nNewer response with something except
       single number\nNewer response with something except single number\nNewer response with something except single number\nNewer
-      response with something except single number\nNewer response with something except single number\n"}, {"cachePoint":
-      {"type": "default"}}, {"document": {"name": "Document 1", "format": "txt", "source": {"bytes": "WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4="}}},
-      {"text": "\n"}, {"cachePoint": {"type": "default"}}, {"text": "What is 10 + 11?"}]}], "system": [{"text": "YOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
+      response with something except single number\nNewer response with something except single number\n"}, {"document": {"name":
+      "Document 1", "format": "txt", "source": {"bytes": "WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4="}}}, {"text": "\n"}, {"cachePoint":
+      {"type": "default"}}, {"text": "What is 10 + 11?"}, {"cachePoint": {"type": "default"}}]}], "system": [{"text": "YOU
       MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
       NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
       WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
@@ -24,15 +23,16 @@ interactions:
       ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
       RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
       MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n"}, {"cachePoint": {"type":
-      "default"}}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "catalog_lookup", "inputSchema":
+      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
+      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n"}, {"cachePoint":
+      {"type": "default"}}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "catalog_lookup", "inputSchema":
       {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"toolSpec": {"name": "diagnostics",
       "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"cachePoint": {"type":
       "default"}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MTNhZTU1NTctNmMwNC00Y2Q3LTg5YzQtZGJiMmQ4OWQ2NzBl
+        YjlmZjc1ODgtNGRhNi00YWFjLTg0NWUtMGRmMDJlOGMyMGY0
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -48,12 +48,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '322'
+      - '321'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2053
+        latencyMs: 2023
       output:
         message:
           content:
@@ -63,9 +63,9 @@ interactions:
       usage:
         cacheReadInputTokenCount: 0
         cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 1313
-        cacheWriteInputTokens: 1313
-        inputTokens: 11
+        cacheWriteInputTokenCount: 1322
+        cacheWriteInputTokens: 1322
+        inputTokens: 2
         outputTokens: 5
         serverToolUsage: {}
         totalTokens: 1329
@@ -77,10 +77,9 @@ interactions:
       response with something except single number\nNewer response with something except single number\nNewer response with
       something except single number\nNewer response with something except single number\nNewer response with something except
       single number\nNewer response with something except single number\nNewer response with something except single number\nNewer
-      response with something except single number\nNewer response with something except single number\n"}, {"cachePoint":
-      {"type": "default"}}, {"document": {"name": "Document 1", "format": "txt", "source": {"bytes": "WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4="}}},
-      {"text": "\n"}, {"cachePoint": {"type": "default"}}, {"text": "What is 10 + 11?"}]}], "system": [{"text": "YOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
+      response with something except single number\nNewer response with something except single number\n"}, {"document": {"name":
+      "Document 1", "format": "txt", "source": {"bytes": "WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4="}}}, {"text": "\n"}, {"cachePoint":
+      {"type": "default"}}, {"text": "What is 10 + 11?"}, {"cachePoint": {"type": "default"}}]}], "system": [{"text": "YOU
       MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
       NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
       WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
@@ -97,15 +96,16 @@ interactions:
       ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
       RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
       MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n"}, {"cachePoint": {"type":
-      "default"}}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "catalog_lookup", "inputSchema":
+      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
+      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n"}, {"cachePoint":
+      {"type": "default"}}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "catalog_lookup", "inputSchema":
       {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"toolSpec": {"name": "diagnostics",
       "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"cachePoint": {"type":
       "default"}}], "toolChoice": {"auto": {}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MTVjNDBlYzYtZjE1OC00MWRkLWJjNzItYWJkZjExZWVmZTBk
+        NWVlODQ1M2EtYmY4Ny00ZTIyLThkNTEtNzNlOWQ5Y2E0NDUz
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -121,12 +121,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '322'
+      - '321'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 2030
+        latencyMs: 1990
       output:
         message:
           content:
@@ -134,11 +134,11 @@ interactions:
           role: assistant
       stopReason: end_turn
       usage:
-        cacheReadInputTokenCount: 1313
-        cacheReadInputTokens: 1313
+        cacheReadInputTokenCount: 1322
+        cacheReadInputTokens: 1322
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
-        inputTokens: 11
+        inputTokens: 2
         outputTokens: 5
         serverToolUsage: {}
         totalTokens: 1329
