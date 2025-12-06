@@ -1355,7 +1355,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> _messages.PromptTemplates | None:
         """Get prompt_templates for a run.
 
-        If we've overridden prompt_templates via `_override_prompt_templates`, use that, 
+        If we've overridden prompt_templates via `_override_prompt_templates`, use that,
         otherwise use the prompt_templates passed to the call, falling back to the agent default.
         """
         if some_prompt_templates := self._override_prompt_templates.get():

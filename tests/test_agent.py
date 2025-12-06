@@ -238,7 +238,7 @@ def test_result_pydantic_model_retry():
 def test_prompt_templates_callable():
     """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
-    def my_function_tool() -> str: # pragma: no cover
+    def my_function_tool() -> str:  # pragma: no cover
         return 'function executed'
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -358,7 +358,7 @@ def test_prompt_templates_callable():
 def test_prompt_templates_string():
     """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
-    def my_function_tool() -> str: # pragma: no cover
+    def my_function_tool() -> str:  # pragma: no cover
         return 'function executed'
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -538,6 +538,7 @@ def test_result_pydantic_model_validation_error():
 ```
 
 Fix the errors and try again.""")
+
 
 def test_output_validator():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
