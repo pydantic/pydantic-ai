@@ -1968,25 +1968,25 @@ class PromptTemplates:
 
     retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
     """Message sent to the model after validation failures or invalid responses.
-    
+
     Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
     """
 
     final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
     """Confirmation message sent when a final result is successfully processed.
-    
+
     Default: "Final result processed."
     """
 
     output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
     """Message sent when an output tool call is skipped because a result was already found.
-    
+
     Default: "Output tool not used - a final result was already processed."
     """
 
     function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
     """Message sent when a function tool call is skipped because a result was already found.
-    
+
     Default: "Tool not executed - a final result was already processed."
     """
 

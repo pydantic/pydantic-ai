@@ -414,6 +414,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
