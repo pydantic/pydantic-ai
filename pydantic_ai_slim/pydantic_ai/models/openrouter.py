@@ -453,7 +453,8 @@ def _map_openrouter_provider_details(
     provider_details: dict[str, Any] = {}
 
     provider_details['downstream_provider'] = response.provider
-    provider_details['finish_reason'] = response.choices[0].native_finish_reason
+    if native_finish_reason := response.choices[0].native_finish_reason:
+        provider_details['finish_reason'] = native_finish_reason
 
     if usage := response.usage:
         if cost := usage.cost:
@@ -547,12 +548,16 @@ class OpenRouterModel(OpenAIChatModel):
             return super()._process_thinking(message)
 
     @override
-    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         assert isinstance(response, _OpenRouterChatCompletion)
 
         provider_details = super()._process_provider_details(response)
-        provider_details.update(_map_openrouter_provider_details(response))
-        return provider_details
+        openrouter_details = _map_openrouter_provider_details(response)
+        if openrouter_details:
+            if provider_details is None:
+                provider_details = {}
+            provider_details.update(openrouter_details)
+        return provider_details or None
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
@@ -665,8 +670,16 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
         assert isinstance(chunk, _OpenRouterChatCompletionChunk)
 
-        if provider_details := super()._map_provider_details(chunk):
+        if provider_details := super()._map_provider_details(chunk):  # pragma: no branch
             provider_details.update(_map_openrouter_provider_details(chunk))
+            # Preserve finish_reason from previous chunk if the current chunk doesn't have one.
+            # After the chunk with native_finish_reason 'completed', OpenRouter sends one more
+            # chunk with usage data (see cassette test_openrouter_stream_with_native_options.yaml)
+            # which has native_finish_reason: null. Since provider_details is replaced on each
+            # chunk, we need to carry forward the finish_reason from the previous chunk.
+            if 'finish_reason' not in provider_details and self.provider_details:  # pragma: no branch
+                if previous_finish_reason := self.provider_details.get('finish_reason'):
+                    provider_details['finish_reason'] = previous_finish_reason
             return provider_details
 
     @override

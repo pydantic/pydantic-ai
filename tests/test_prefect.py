@@ -68,7 +68,7 @@ except ImportError:  # pragma: lax no cover
 
 from inline_snapshot import snapshot
 
-from .conftest import IsStr
+from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1037,7 +1037,9 @@ async def test_cache_policy_custom():
 
     # First set of messages
     messages1 = [
-        ModelRequest(parts=[UserPromptPart(content='What is the capital of France?', timestamp=time1)]),
+        ModelRequest(
+            parts=[UserPromptPart(content='What is the capital of France?', timestamp=time1)], timestamp=IsDatetime()
+        ),
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
             usage=RequestUsage(input_tokens=10, output_tokens=10),
@@ -1048,7 +1050,9 @@ async def test_cache_policy_custom():
 
     # Second set of messages - same content, different timestamps
     messages2 = [
-        ModelRequest(parts=[UserPromptPart(content='What is the capital of France?', timestamp=time2)]),
+        ModelRequest(
+            parts=[UserPromptPart(content='What is the capital of France?', timestamp=time2)], timestamp=IsDatetime()
+        ),
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
             usage=RequestUsage(input_tokens=10, output_tokens=10),
@@ -1077,7 +1081,9 @@ async def test_cache_policy_custom():
 
     # Also test that different content produces different hashes
     messages3 = [
-        ModelRequest(parts=[UserPromptPart(content='What is the capital of Spain?', timestamp=time1)]),
+        ModelRequest(
+            parts=[UserPromptPart(content='What is the capital of Spain?', timestamp=time1)], timestamp=IsDatetime()
+        ),
         ModelResponse(
             parts=[TextPart(content='The capital of Spain is Madrid.')],
             usage=RequestUsage(input_tokens=10, output_tokens=10),

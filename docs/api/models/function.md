@@ -30,6 +30,7 @@ async def model_function(
                     timestamp=datetime.datetime(...),
                 )
             ],
+            timestamp=datetime.datetime(...),
             run_id='...',
         )
     ]

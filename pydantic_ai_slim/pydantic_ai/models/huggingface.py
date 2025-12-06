@@ -267,10 +267,7 @@ class HuggingFaceModel(Model):
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        if response.created:
-            timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
-        else:
-            timestamp = _now_utc()
+        timestamp = _now_utc()
 
         choice = response.choices[0]
         content = choice.message.content
@@ -285,7 +282,9 @@ class HuggingFaceModel(Model):
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
 
         raw_finish_reason = choice.finish_reason
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if response.created:  # pragma: no branch
+            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
         finish_reason = _FINISH_REASON_MAP.get(cast(TextGenerationOutputFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
@@ -315,8 +314,8 @@ class HuggingFaceModel(Model):
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
             _provider_name=self._provider.name,
+            _provider_timestamp=first_chunk.created,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -463,8 +462,9 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
-    _timestamp: datetime
     _provider_name: str
+    _provider_timestamp: int | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -478,11 +478,16 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             except IndexError:
                 continue
 
+            provider_details_dict: dict[str, Any] = {}
             if raw_finish_reason := choice.finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason}
+                provider_details_dict['finish_reason'] = raw_finish_reason
                 self.finish_reason = _FINISH_REASON_MAP.get(
                     cast(TextGenerationOutputFinishReason, raw_finish_reason), None
                 )
+            if self._provider_timestamp is not None:  # pragma: no branch
+                provider_details_dict['timestamp'] = datetime.fromtimestamp(self._provider_timestamp, tz=timezone.utc)
+            if provider_details_dict:  # pragma: no branch
+                self.provider_details = provider_details_dict
 
             # Handle the text part of the response
             content = choice.delta.content

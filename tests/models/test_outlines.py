@@ -322,6 +322,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -338,6 +339,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -349,6 +351,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -370,6 +373,7 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -400,6 +404,7 @@ async def test_request_async_model(mock_async_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -435,6 +440,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -466,6 +472,7 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -522,6 +529,7 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -540,7 +548,8 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
                 SystemPromptPart(content='You are a helpful assistance'),
                 UserPromptPart(content='Hello'),
                 RetryPromptPart(content='Failure'),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -562,7 +571,8 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
                         AudioUrl('https://example.com/audio.mp3'),
                     ]
                 )
-            ]
+            ],
+            timestamp=IsDatetime(),
         )
     ]
     with pytest.raises(
@@ -573,14 +583,18 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
     # unsupported: tool calls
     tool_call_message_history: list[ModelMessage] = [
         ModelResponse(parts=[ToolCallPart(tool_call_id='1', tool_name='get_location')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')], timestamp=IsDatetime()
+        ),
     ]
     with pytest.raises(UserError, match='Tool calls are not supported for Outlines models yet.'):
         agent.run_sync('How are you doing?', message_history=tool_call_message_history)
 
     # unsupported: tool returns
     tool_return_message_history: list[ModelMessage] = [
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')])
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')], timestamp=IsDatetime()
+        )
     ]
     with pytest.raises(UserError, match='Tool calls are not supported for Outlines models yet.'):
         agent.run_sync('How are you doing?', message_history=tool_return_message_history)
