@@ -3431,3 +3431,42 @@ async def test_responses_response_filter_error_stream(allow_model_requests: None
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass
+
+
+def test_openai_400_non_content_filter(allow_model_requests: None) -> None:
+    """Test a standard 400 error (not content filter) raises ModelHTTPError."""
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'Bad Request',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://api.openai.com/v1')),
+            body={'error': {'code': 'invalid_parameter', 'message': 'Invalid parameter'}},
+        )
+    )
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert exc_info.value.status_code == 400
+
+    assert not isinstance(exc_info.value, PromptContentFilterError)
+
+
+def test_openai_400_non_dict_body(allow_model_requests: None) -> None:
+    """Test a 400 error with a non-dict body raises ModelHTTPError."""
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'Bad Request',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://api.openai.com/v1')),
+            body='Raw string body',
+        )
+    )
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert exc_info.value.status_code == 400
+    assert not isinstance(exc_info.value, PromptContentFilterError)
