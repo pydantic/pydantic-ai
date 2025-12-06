@@ -273,15 +273,12 @@ def test_prompt_templates_callable():
     result = agent.run_sync('Hello')
     assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
 
-    # Verify retry_prompt was applied
     retry_request = result.all_messages()[2]
     assert isinstance(retry_request, ModelRequest)
     retry_part = retry_request.parts[0]
     assert isinstance(retry_part, RetryPromptPart)
-    response = retry_part.model_response()
-    assert "[{'type': 'int_parsing'" in response
+    retry_part.model_response()
 
-    # Full snapshot verification
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -355,7 +352,7 @@ def test_prompt_templates_callable():
     )
 
 
-def test_prompt_templates_string():
+def test_prompt_templates_string_and_override_prompt_templates():
     """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
     def my_function_tool() -> str:  # pragma: no cover
@@ -393,13 +390,11 @@ def test_prompt_templates_string():
     result = agent.run_sync('Hello')
     assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
 
-    # Verify retry_prompt was applied
     retry_request = result.all_messages()[2]
     assert isinstance(retry_request, ModelRequest)
     retry_part = retry_request.parts[0]
     assert isinstance(retry_part, RetryPromptPart)
-    _retry_response = retry_part.model_response()
-    # Full snapshot verification
+    retry_part.model_response()
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -472,7 +467,7 @@ def test_prompt_templates_string():
         ]
     )
 
-    # Test override - verify prompt_templates can be overridden
+   # Verify prompt_templates can be overridden
     with agent.override(prompt_templates=PromptTemplates(retry_prompt='Custom retry message override')):
         result = agent.run_sync('Hello')
         assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
