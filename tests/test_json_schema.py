@@ -7,7 +7,7 @@ from typing import Any
 from pydantic_ai._json_schema import JsonSchemaTransformer
 
 
-def test_simplify_nullable_unions():
+def test_simplify_nullable_unions() -> None:
     """Test the simplify_nullable_unions feature (deprecated, to be removed in v2)."""
 
     # Create a concrete subclass for testing
@@ -49,3 +49,25 @@ def test_simplify_nullable_unions():
     # Should keep anyOf since it's not nullable
     assert 'anyOf' in result3
     assert len(result3['anyOf']) == 2
+
+
+def test_handle_object_preserves_non_mapping_properties_sections() -> None:
+    """Ensures properties/patternProperties that are present but not mappings are left untouched (cov 204-211, 217)."""
+
+    class IdentityTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': ['unexpected-list-shape'],
+        'patternProperties': ['still-not-a-dict'],
+        'additionalProperties': True,
+    }
+
+    transformer = IdentityTransformer(schema)
+    result = transformer.walk()
+
+    assert result['properties'] == ['unexpected-list-shape']
+    assert result['patternProperties'] == ['still-not-a-dict']
+    assert result['additionalProperties'] is True
