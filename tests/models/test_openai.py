@@ -203,6 +203,41 @@ async def test_request_simple_usage(allow_model_requests: None):
     )
 
 
+async def test_response_with_created_timestamp_but_no_provider_details(allow_model_requests: None):
+    class MinimalOpenAIChatModel(OpenAIChatModel):
+        def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
+            return None
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = MinimalOpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='openai',
+                provider_details={
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='done', role='assistant'),

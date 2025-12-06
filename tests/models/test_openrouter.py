@@ -341,6 +341,40 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
     )
 
 
+async def test_openrouter_with_provider_details_but_no_parent_details(openrouter_api_key: str) -> None:
+    from typing import Any
+
+    class TestOpenRouterModel(OpenRouterModel):
+        def _process_provider_details(self, response: ChatCompletion) -> dict[str, Any] | None:
+            from pydantic_ai.models.openrouter import (
+                _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
+                _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+            )
+
+            assert isinstance(response, _OpenRouterChatCompletion)
+            openrouter_details = _map_openrouter_provider_details(response)
+            return openrouter_details or None
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = TestOpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    assert result.provider_details == snapshot(
+        {
+            'downstream_provider': 'TestProvider',
+            'finish_reason': 'stop',
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-3.7-sonnet:thinking', provider=provider)
