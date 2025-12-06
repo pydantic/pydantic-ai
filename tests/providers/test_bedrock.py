@@ -135,7 +135,8 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
             if geo_prefix not in BEDROCK_GEO_PREFIXES:
                 missing_prefixes.add(geo_prefix)
 
-    assert not missing_prefixes, (
-        f'Found geo prefixes in LatestBedrockModelNames that are not in BEDROCK_GEO_PREFIXES: {missing_prefixes}. '
-        f'Please add them to BEDROCK_GEO_PREFIXES'
-    )
+    if missing_prefixes:  # pragma: no cover
+        pytest.fail(
+            f'Found geo prefixes in LatestBedrockModelNames that are not in BEDROCK_GEO_PREFIXES: {missing_prefixes}. '
+            f'Please add them to BEDROCK_GEO_PREFIXES'
+        )
