@@ -230,16 +230,27 @@ def test_result_pydantic_model_retry():
     assert result.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
 
 
-def test_prompt_templates():
-    """Test both retry_prompt and final_result_processed templates."""
+def test_prompt_templates_callable():
+    """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
+
+    def my_function_tool() -> str:
+        return 'function executed'
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
+
         if len(messages) == 1:
-            args_json = '{"a": "wrong", "b": "foo"}'
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": "wrong", "b": "foo"}')])
+
         else:
-            args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+            assert info.function_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(info.output_tools[0].name, '{"a": 42, "b": "foo"}'),  # Succeeds
+                    ToolCallPart(info.output_tools[0].name, '{"a": 99, "b": "bar"}'),  # Not executed
+                    ToolCallPart(info.function_tools[0].name, '{}'),  # Not executed
+                ]
+            )
 
     agent = Agent(
         FunctionModel(return_model),
@@ -247,20 +258,25 @@ def test_prompt_templates():
         prompt_templates=PromptTemplates(
             retry_prompt=lambda part, ctx: f'Custom retry message {part.content}',
             final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
+            output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
+            function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
         ),
     )
+
+    agent.tool_plain(my_function_tool)
 
     result = agent.run_sync('Hello')
     assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
 
+    # Verify retry_prompt was applied
     retry_request = result.all_messages()[2]
     assert isinstance(retry_request, ModelRequest)
     retry_part = retry_request.parts[0]
     assert isinstance(retry_part, RetryPromptPart)
-    # Verify the custom template includes run_id and content
     response = retry_part.model_response()
     assert "[{'type': 'int_parsing'" in response
 
+    # Full snapshot verification
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -294,8 +310,12 @@ def test_prompt_templates():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=75, output_tokens=14),
+                parts=[
+                    ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=75, output_tokens=23),  # More tokens for 3 tool calls
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -308,7 +328,139 @@ def test_prompt_templates():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                         return_kind='final-result-processed',
+                    ),
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Custom output not executed: final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='output-tool-not-executed',
+                    ),
+                    ToolReturnPart(
+                        tool_name='my_function_tool',
+                        content='Custom function not executed: my_function_tool',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='function-tool-not-executed',
+                    ),
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_prompt_templates_string():
+    """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
+
+    def my_function_tool() -> str:
+        return 'function executed'
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": "wrong", "b": "foo"}')])
+
+        else:
+            assert info.function_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(info.output_tools[0].name, '{"a": 42, "b": "foo"}'),  # Succeeds
+                    ToolCallPart(info.output_tools[0].name, '{"a": 99, "b": "bar"}'),  # Not executed
+                    ToolCallPart(info.function_tools[0].name, '{}'),  # Not executed
+                ]
+            )
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Foo,
+        prompt_templates=PromptTemplates(
+            retry_prompt='Custom retry message',
+            final_result_processed='Custom final result',
+            output_tool_not_executed='Custom output not executed:',
+            function_tool_not_executed='Custom function not executed',
+        ),
+    )
+
+    agent.tool_plain(my_function_tool)
+
+    result = agent.run_sync('Hello')
+    assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
+
+    # Verify retry_prompt was applied
+    retry_request = result.all_messages()[2]
+    assert isinstance(retry_request, ModelRequest)
+    retry_part = retry_request.parts[0]
+    assert isinstance(retry_part, RetryPromptPart)
+    _retry_response = retry_part.model_response()
+    # Full snapshot verification
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
+                model_name='function:return_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='final_result',
+                        content=[
+                            {
+                                'type': 'int_parsing',
+                                'loc': ('a',),
+                                'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                'input': 'wrong',
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        retry_template='Custom retry message',
                     )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=54, output_tokens=23),  # More tokens for 3 tool calls
+                model_name='function:return_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Custom final result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
+                    ),
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Custom output not executed:',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='output-tool-not-executed',
+                    ),
+                    ToolReturnPart(
+                        tool_name='my_function_tool',
+                        content='Custom function not executed',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='function-tool-not-executed',
+                    ),
                 ],
                 run_id=IsStr(),
             ),

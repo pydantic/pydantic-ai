@@ -466,6 +466,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
