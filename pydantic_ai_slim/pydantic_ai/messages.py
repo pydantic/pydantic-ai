@@ -2007,7 +2007,10 @@ class PromptTemplates:
                     message.retry_template = self.retry_prompt(message, ctx)
 
     def _apply_tool_template(
-        self, message: ToolReturnPart, ctx: _RunContext[Any], template: str | Callable[[Any, _RunContext[Any]], str]
+        self,
+        message: ToolReturnPart,
+        ctx: _RunContext[Any],
+        template: str | Callable[[ToolReturnPart, _RunContext[Any]], str],
     ):
         if isinstance(template, str):
             message.content = template
