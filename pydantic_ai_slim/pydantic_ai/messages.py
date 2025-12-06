@@ -956,14 +956,14 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    retry_template: str | None = None
-    """Message compiled using the provided prompt template. This message will be sent to the model to retry if present."""
+    retry_message: str | None = None
+    """The retry message rendered using the user's prompt template. Used instead of the default retry message when present."""
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
-        if self.retry_template:
+        if self.retry_message:
             # We added this based on a provided prompt template so let us use this instead of our usual string
-            return self.retry_template
+            return self.retry_message
 
         if isinstance(self.content, str):
             if self.tool_name is None:
@@ -2001,9 +2001,9 @@ class PromptTemplates:
 
         elif isinstance(message, RetryPromptPart) and self.retry_prompt:
             if isinstance(self.retry_prompt, str):
-                message.retry_template = self.retry_prompt
+                message.retry_message = self.retry_prompt
             else:
-                message.retry_template = self.retry_prompt(message, ctx)
+                message.retry_message = self.retry_prompt(message, ctx)
 
     def _apply_tool_template(
         self,

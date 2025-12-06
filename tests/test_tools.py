@@ -2309,7 +2309,7 @@ def test_deferred_tool_results_serializable():
                     'tool_call_id': 'foo',
                     'timestamp': IsDatetime(),
                     'part_kind': 'retry-prompt',
-                    'retry_template': None,
+                    'retry_message': None,
                 },
                 'any': {'foo': 'bar'},
             },

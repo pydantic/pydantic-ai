@@ -306,7 +306,7 @@ def test_prompt_templates_callable():
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_template="Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
+                        retry_message="Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
                     )
                 ],
                 run_id=IsStr(),
@@ -422,7 +422,7 @@ def test_prompt_templates_string_and_override_prompt_templates():
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_template='Custom retry message',
+                        retry_message='Custom retry message',
                     )
                 ],
                 run_id=IsStr(),
@@ -4763,7 +4763,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_call_id': IsStr(),
                     'timestamp': IsStr(),
                     'part_kind': 'retry-prompt',
-                    'retry_template': None,
+                    'retry_message': None,
                 }
             ],
             'instructions': None,
