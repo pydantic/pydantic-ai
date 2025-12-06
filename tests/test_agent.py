@@ -318,7 +318,7 @@ def test_prompt_templates_callable():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='regular_tool', args='{}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=75, output_tokens=23),  # More tokens for 3 tool calls
                 model_name='function:return_model:',
