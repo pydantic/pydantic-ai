@@ -1966,31 +1966,31 @@ class PromptTemplates:
     Each template can be a static string or a callable that receives context and returns a string.
     """
 
-    retry_prompt: str | Callable[[RetryPromptPart, _RunContext], str] | None = None
+    retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
     """Message sent to the model after validation failures or invalid responses.
 
     Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
     """
 
-    final_result_processed: str | Callable[[ToolReturnPart, _RunContext], str] | None = None
+    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
     """Confirmation message sent when a final result is successfully processed.
 
     Default: "Final result processed."
     """
 
-    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext], str] | None = None
+    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
     """Message sent when an output tool call is skipped because a result was already found.
 
     Default: "Output tool not used - a final result was already processed."
     """
 
-    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext], str] | None = None
+    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
     """Message sent when a function tool call is skipped because a result was already found.
 
     Default: "Tool not executed - a final result was already processed."
     """
 
-    def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext):
+    def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
         if isinstance(message, ToolReturnPart):
             if message.return_kind == 'final-result-processed' and self.final_result_processed:
                 self._apply_tool_template(message, ctx, self.final_result_processed)
