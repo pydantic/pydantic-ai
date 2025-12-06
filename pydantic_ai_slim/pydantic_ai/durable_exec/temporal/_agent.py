@@ -267,6 +267,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -287,6 +288,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -306,6 +308,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -341,6 +344,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -366,6 +370,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
+                prompt_templates=prompt_templates,
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=infer_name,
@@ -387,6 +392,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -408,6 +414,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -426,6 +433,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -460,6 +468,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -484,6 +493,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
@@ -505,6 +515,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -525,6 +536,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -545,6 +557,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -577,6 +590,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -602,6 +616,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
@@ -624,6 +639,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -643,6 +659,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -661,6 +678,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -711,6 +729,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -736,6 +755,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
@@ -755,6 +775,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -775,6 +796,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -795,6 +817,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -872,6 +895,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are phrased for
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -906,6 +930,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
@@ -925,6 +950,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        prompt_templates: _messages.PromptTemplates | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -938,6 +964,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            prompt_templates: The prompt templates to use instead of the prompt templates registered with the agent.
         """
         if workflow.in_workflow():
             if _utils.is_set(model):
@@ -960,5 +987,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             tools=tools,
             instructions=instructions,
+            prompt_templates=prompt_templates,
         ):
             yield

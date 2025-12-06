@@ -138,6 +138,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
+    prompt_templates: _messages.PromptTemplates | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -509,6 +510,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
 
+        prompt_templates = ctx.deps.prompt_templates
+        if prompt_templates:
+            _apply_prompt_templates(message_history, prompt_templates, run_context)
+
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
@@ -783,6 +788,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
+        if tool_responses and ctx.deps.prompt_templates:
+            run_ctx = build_run_context(ctx)
+            for part in tool_responses:
+                ctx.deps.prompt_templates.apply_template(part, run_ctx)
+
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
@@ -871,6 +881,7 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
+                    return_kind='final-result-processed',
                 )
             else:
                 yield _messages.FunctionToolCallEvent(call)
@@ -878,6 +889,7 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Output tool not used - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
+                    return_kind='output-tool-not-executed',
                 )
                 yield _messages.FunctionToolResultEvent(part)
 
@@ -902,6 +914,7 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
+                    return_kind='final-result-processed',
                 )
                 output_parts.append(part)
                 final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
@@ -915,6 +928,7 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
+                    return_kind='function-tool-not-executed',
                 )
             )
     else:
@@ -973,6 +987,7 @@ async def process_tool_calls(  # noqa: C901
                             tool_name=call.tool_name,
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=call.tool_call_id,
+                            return_kind='function-tool-not-executed',
                         )
                     )
         elif calls:
@@ -1129,6 +1144,7 @@ async def _call_tool(
                 tool_name=tool_call.tool_name,
                 content=tool_call_result.message,
                 tool_call_id=tool_call.tool_call_id,
+                return_kind='tool-denied',
             ), None
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
@@ -1191,6 +1207,7 @@ async def _call_tool(
         tool_call_id=tool_call.tool_call_id,
         content=tool_return.return_value,  # type: ignore
         metadata=tool_return.metadata,
+        return_kind='tool-executed',
     )
 
     return return_part, tool_return.content or None
@@ -1361,3 +1378,11 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+def _apply_prompt_templates(
+    messages: list[_messages.ModelMessage], prompt_templates: _messages.PromptTemplates, ctx: RunContext[Any]
+):
+    for msg in messages:
+        for msg_part in msg.parts:
+            prompt_templates.apply_template(msg_part, ctx)

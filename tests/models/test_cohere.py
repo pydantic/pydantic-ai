@@ -224,6 +224,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -343,6 +344,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),

@@ -23,6 +23,7 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext as _RunContext
     from .models.instrumented import InstrumentationSettings
 
 
@@ -873,6 +874,26 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    return_kind: (
+        Literal[
+            'final-result-processed',
+            'output-tool-not-executed',
+            'function-tool-not-executed',
+            'tool-executed',
+            'tool-denied',
+        ]
+        | None
+    ) = None
+    """How the tool call was resolved, used for disambiguating return parts.
+
+    * `tool-executed`: the tool ran successfully and produced a return value
+    * `final-result-processed`: an output tool produced the run's final result
+    * `output-tool-not-executed`: an output tool was skipped because a final result already existed
+    * `function-tool-not-executed`: a function tool was skipped due to early termination after a final result
+    * `tool-denied`: the tool call was rejected by an approval handler
+
+    """
+
 
 @dataclass(repr=False)
 class BuiltinToolReturnPart(BaseToolReturnPart):
@@ -935,8 +956,15 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    retry_message: str | None = None
+    """The retry message rendered using the user's prompt template. Used instead of the default retry message when present."""
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
+        if self.retry_message:
+            # We added this based on a provided prompt template so let us use this instead of our usual string
+            return self.retry_message
+
         if isinstance(self.content, str):
             if self.tool_name is None:
                 description = f'Validation feedback:\n{self.content}'
@@ -1929,3 +1957,61 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
+
+
+@dataclass
+class PromptTemplates:
+    """Templates for customizing messages that Pydantic AI sends to models.
+
+    Each template can be a static string or a callable that receives context and returns a string.
+    """
+
+    retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    """Message sent to the model after validation failures or invalid responses.
+
+    Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
+    """
+
+    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Confirmation message sent when a final result is successfully processed.
+
+    Default: "Final result processed."
+    """
+
+    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when an output tool call is skipped because a result was already found.
+
+    Default: "Output tool not used - a final result was already processed."
+    """
+
+    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when a function tool call is skipped because a result was already found.
+
+    Default: "Tool not executed - a final result was already processed."
+    """
+
+    def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
+        if isinstance(message, ToolReturnPart):
+            if message.return_kind == 'final-result-processed' and self.final_result_processed:
+                self._apply_tool_template(message, ctx, self.final_result_processed)
+            elif message.return_kind == 'output-tool-not-executed' and self.output_tool_not_executed:
+                self._apply_tool_template(message, ctx, self.output_tool_not_executed)
+            elif message.return_kind == 'function-tool-not-executed' and self.function_tool_not_executed:
+                self._apply_tool_template(message, ctx, self.function_tool_not_executed)
+
+        elif isinstance(message, RetryPromptPart) and self.retry_prompt:
+            if isinstance(self.retry_prompt, str):
+                message.retry_message = self.retry_prompt
+            else:
+                message.retry_message = self.retry_prompt(message, ctx)
+
+    def _apply_tool_template(
+        self,
+        message: ToolReturnPart,
+        ctx: _RunContext[Any],
+        template: str | Callable[[ToolReturnPart, _RunContext[Any]], str],
+    ):
+        if isinstance(template, str):
+            message.content = template
+        else:
+            message.content = template(message, ctx)

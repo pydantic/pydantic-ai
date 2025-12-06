@@ -125,6 +125,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
+    prompt_templates: _messages.PromptTemplates | None
+    """Optional prompt templates used to customize the system-injected messages for this agent."""
+
     _output_type: OutputSpec[OutputDataT]
 
     instrument: InstrumentationSettings | bool | None
@@ -167,6 +170,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -219,6 +223,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -252,6 +257,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
+            prompt_templates: Optional prompt templates to customize how system-injected messages
+                (like retry prompts or tool return wrappers) are rendered for this agent.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
@@ -295,6 +302,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = name
         self.end_strategy = end_strategy
         self.model_settings = model_settings
+        self.prompt_templates = prompt_templates
 
         self._output_type = output_type
         self.instrument = instrument
@@ -357,6 +365,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
+        self._override_prompt_templates: ContextVar[_utils.Option[_messages.PromptTemplates]] = ContextVar(
+            '_override_prompt_templates', default=None
+        )
 
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -410,7 +421,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self._event_stream_handler
 
     def __repr__(self) -> str:
-        return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r}, instrument={self.instrument!r})'
+        return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, prompt_templates={self.prompt_templates!r},output_type={self.output_type!r}, instrument={self.instrument!r})'
 
     @overload
     def iter(
@@ -424,6 +435,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -443,6 +455,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -462,6 +475,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
+        prompt_templates: _messages.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -538,6 +552,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
+            prompt_templates: Optional prompt templates to override how system-generated parts are
+                phrased for this specific run, falling back to the agent's defaults if omitted.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
@@ -588,6 +604,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         merged_settings = merge_model_settings(model_used.settings, self.model_settings)
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
+        prompt_templates = self._get_prompt_templates(prompt_templates)
 
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
@@ -615,6 +632,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             new_message_index=len(message_history) if message_history else 0,
             model=model_used,
             model_settings=model_settings,
+            prompt_templates=prompt_templates,
             usage_limits=usage_limits,
             max_result_retries=self._max_result_retries,
             end_strategy=self.end_strategy,
@@ -749,6 +767,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        prompt_templates: _messages.PromptTemplates | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -762,6 +781,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            prompt_templates: The prompt templates to use instead of the prompt templates passed to the agent constructor and agent run.
         """
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -794,6 +814,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instructions_token = None
 
+        if _utils.is_set(prompt_templates):
+            prompt_templates_token = self._override_prompt_templates.set(_utils.Some(prompt_templates))
+        else:
+            prompt_templates_token = None
+
         try:
             yield
         finally:
@@ -809,6 +834,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_tools.reset(tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
+            if prompt_templates_token is not None:
+                self._override_prompt_templates.reset(prompt_templates_token)
 
     @overload
     def instructions(
@@ -1322,6 +1349,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    def _get_prompt_templates(
+        self, prompt_templates: _messages.PromptTemplates | None
+    ) -> _messages.PromptTemplates | None:
+        """Get prompt_templates for a run.
+
+        If we've overridden prompt_templates via `_override_prompt_templates`, use that,
+        otherwise use the prompt_templates passed to the call, falling back to the agent default.
+        """
+        if some_prompt_templates := self._override_prompt_templates.get():
+            return some_prompt_templates.value
+        else:
+            return prompt_templates or self.prompt_templates
 
     def _normalize_instructions(
         self,

@@ -260,6 +260,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -382,6 +383,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -521,6 +523,7 @@ async def test_stream_structured(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -627,6 +630,7 @@ async def test_image_as_binary_content_tool_response(
                         content='See file 1c8566',
                         tool_call_id='call_wkpd',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content=[
@@ -5381,6 +5385,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         content='Something with name: nonexistent',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
@@ -5507,6 +5512,7 @@ We need to output the call.\
                         content='Something with name: test_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',

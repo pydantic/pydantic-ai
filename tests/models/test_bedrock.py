@@ -332,6 +332,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         content='30°C',
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -362,6 +363,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         content='Final result processed.',
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -628,6 +630,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
                     content='30°C',
                     tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA',
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='The')),
