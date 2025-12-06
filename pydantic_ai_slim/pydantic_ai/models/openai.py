@@ -20,7 +20,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import PromptContentFilterError, ResponseContentFilterError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -158,6 +158,24 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'cancelled': 'error',
     'failed': 'error',
 }
+
+
+def _check_azure_content_filter(e: APIStatusError, model_name: str) -> None:
+    """Check if the error is an Azure content filter error and raise PromptContentFilterError if so."""
+    if e.status_code == 400:
+        body_any: Any = e.body
+
+        if isinstance(body_any, dict):
+            body_dict = cast(dict[str, Any], body_any)
+
+            if (error := body_dict.get('error')) and isinstance(error, dict):
+                error_dict = cast(dict[str, Any], error)
+                if error_dict.get('code') == 'content_filter':
+                    raise PromptContentFilterError(
+                        status_code=e.status_code,
+                        model_name=model_name,
+                        body=body_dict,
+                    ) from e
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -555,6 +573,8 @@ class OpenAIChatModel(Model):
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
+                _check_azure_content_filter(e, self.model_name)
+
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
@@ -601,6 +621,13 @@ class OpenAIChatModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+
+        if choice.finish_reason == 'content_filter':
+            raise ResponseContentFilterError(
+                model_name=response.model,
+                body=response.model_dump(),
+            )
+
         items: list[ModelResponsePart] = []
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -1242,6 +1269,11 @@ class OpenAIResponsesModel(Model):
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
+        if raw_finish_reason == 'content_filter':
+            raise ResponseContentFilterError(
+                model_name=response.model,
+                body=response.model_dump(),
+            )
         if raw_finish_reason:
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
@@ -1398,6 +1430,8 @@ class OpenAIResponsesModel(Model):
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
+                _check_azure_content_filter(e, self.model_name)
+
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
@@ -1903,6 +1937,10 @@ class OpenAIStreamedResponse(StreamedResponse):
                 continue
 
             if raw_finish_reason := choice.finish_reason:
+                if raw_finish_reason == 'content_filter':
+                    raise ResponseContentFilterError(
+                        model_name=self.model_name,
+                    )
                 self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
             if provider_details := self._map_provider_details(chunk):
@@ -2047,6 +2085,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
+
+                if raw_finish_reason == 'content_filter':
+                    raise ResponseContentFilterError(
+                        model_name=self.model_name,
+                    )
+
                 if raw_finish_reason:  # pragma: no branch
                     self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
