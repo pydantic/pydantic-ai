@@ -128,17 +128,14 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
     """
     model_names = get_args(LatestBedrockModelNames)
 
-    # Known providers that appear after the geo prefix
-    known_providers = ('anthropic', 'amazon', 'meta', 'mistral', 'cohere', 'deepseek')
-
     missing_prefixes: set[str] = set()
 
     for model_name in model_names:
-        # Check if this model name has a geo prefix by seeing if it has 3+ dot-separated parts
-        # and the second part is a known provider
+        # Model names with geo prefixes have 3+ dot-separated parts:
+        # - No prefix: "anthropic.claude-xxx" (2 parts)
+        # - With prefix: "us.anthropic.claude-xxx" (3 parts)
         parts = model_name.split('.')
-        if len(parts) >= 3 and parts[1] in known_providers:
-            # This model has a geo prefix (e.g., "us.anthropic.claude...")
+        if len(parts) >= 3:
             geo_prefix = parts[0] + '.'
             if geo_prefix not in BEDROCK_GEO_PREFIXES:
                 missing_prefixes.add(geo_prefix)
