@@ -238,7 +238,7 @@ def test_result_pydantic_model_retry():
 def test_prompt_templates_callable():
     """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
-    def my_function_tool() -> str:
+    def my_function_tool() -> str: # pragma: no cover
         return 'function executed'
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -318,7 +318,7 @@ def test_prompt_templates_callable():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='regular_tool', args='{}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=75, output_tokens=23),  # More tokens for 3 tool calls
                 model_name='function:return_model:',
@@ -358,7 +358,7 @@ def test_prompt_templates_callable():
 def test_prompt_templates_string():
     """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
-    def my_function_tool() -> str:
+    def my_function_tool() -> str: # pragma: no cover
         return 'function executed'
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -472,6 +472,16 @@ def test_prompt_templates_string():
         ]
     )
 
+    # Test override - verify prompt_templates can be overridden
+    with agent.override(prompt_templates=PromptTemplates(retry_prompt='Custom retry message override')):
+        result = agent.run_sync('Hello')
+        assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
+        retry_request = result.all_messages()[2]
+        assert isinstance(retry_request, ModelRequest)
+        retry_part = retry_request.parts[0]
+        assert isinstance(retry_part, RetryPromptPart)
+        assert retry_part.model_response() == 'Custom retry message override'
+
 
 def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -528,56 +538,6 @@ def test_result_pydantic_model_validation_error():
 ```
 
 Fix the errors and try again.""")
-
-
-def test_result_pydantic_model_validation_error_prompt_templates():
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools is not None
-        if len(messages) == 1:
-            args_json = '{"a": 1, "b": "foo"}'
-        else:
-            args_json = '{"a": 1, "b": "bar"}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
-
-    class Bar(BaseModel):
-        a: int
-        b: str
-
-        @field_validator('b')
-        def check_b(cls, v: str) -> str:
-            if v == 'foo':
-                raise ValueError('must not be foo')
-            return v
-
-    prompt_templates = PromptTemplates(retry_prompt=lambda msg, _: f'IMPORTANT: {msg.content}')
-
-    agent = Agent(FunctionModel(return_model), output_type=Bar, prompt_templates=prompt_templates)
-
-    print('\nAgent prompt templates', agent.prompt_templates)
-
-    result = agent.run_sync('Hello')
-    assert isinstance(result.output, Bar)
-    assert result.output.model_dump() == snapshot({'a': 1, 'b': 'bar'})
-    messages_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result.all_messages()]
-    assert messages_part_kinds == snapshot(
-        [
-            ('request', ['user-prompt']),
-            ('response', ['tool-call']),
-            ('request', ['retry-prompt']),
-            ('response', ['tool-call']),
-            ('request', ['tool-return']),
-        ]
-    )
-
-    user_retry = result.all_messages()[2]
-    assert isinstance(user_retry, ModelRequest)
-    retry_prompt = user_retry.parts[0]
-    assert isinstance(retry_prompt, RetryPromptPart)
-    print('\n Retry Prompt ', retry_prompt)
-    assert retry_prompt.model_response() == snapshot(
-        "IMPORTANT: [{'type': 'value_error', 'loc': ('b',), 'msg': 'Value error, must not be foo', 'input': 'foo'}]"
-    )
-
 
 def test_output_validator():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

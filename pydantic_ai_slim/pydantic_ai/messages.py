@@ -1999,12 +1999,11 @@ class PromptTemplates:
             elif message.return_kind == 'function-tool-not-executed' and self.function_tool_not_executed:
                 self._apply_tool_template(message, ctx, self.function_tool_not_executed)
 
-        elif isinstance(message, RetryPromptPart):
-            if self.retry_prompt:
-                if isinstance(self.retry_prompt, str):
-                    message.retry_template = self.retry_prompt
-                else:
-                    message.retry_template = self.retry_prompt(message, ctx)
+        elif isinstance(message, RetryPromptPart) and self.retry_prompt:
+            if isinstance(self.retry_prompt, str):
+                message.retry_template = self.retry_prompt
+            else:
+                message.retry_template = self.retry_prompt(message, ctx)
 
     def _apply_tool_template(
         self,

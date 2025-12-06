@@ -604,7 +604,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         merged_settings = merge_model_settings(model_used.settings, self.model_settings)
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
-        prompt_templates = prompt_templates or self.prompt_templates
+        prompt_templates = self._get_prompt_templates(prompt_templates)
 
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
@@ -1349,6 +1349,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    def _get_prompt_templates(
+        self, prompt_templates: _messages.PromptTemplates | None
+    ) -> _messages.PromptTemplates | None:
+        """Get prompt_templates for a run.
+
+        If we've overridden prompt_templates via `_override_prompt_templates`, use that, 
+        otherwise use the prompt_templates passed to the call, falling back to the agent default.
+        """
+        if some_prompt_templates := self._override_prompt_templates.get():
+            return some_prompt_templates.value
+        else:
+            return prompt_templates or self.prompt_templates
 
     def _normalize_instructions(
         self,
