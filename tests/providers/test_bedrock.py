@@ -105,15 +105,10 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
 @pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
 def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: str):
-    """Test that all cross-region inference geo prefixes are correctly handled.
-
-    This is critical for AWS GovCloud (us-gov.) and other regional deployments
-    where models use prefixes longer than 2 characters.
-    """
+    """Test that all cross-region inference geo prefixes are correctly handled."""
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     provider = BedrockProvider()
 
-    # Test Anthropic model with geo prefix
     model_name = f'{prefix}anthropic.claude-sonnet-4-5-20250929-v1:0'
     profile = provider.model_profile(model_name)
 
@@ -142,5 +137,5 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
 
     assert not missing_prefixes, (
         f'Found geo prefixes in LatestBedrockModelNames that are not in BEDROCK_GEO_PREFIXES: {missing_prefixes}. '
-        f'Please add them to BEDROCK_GEO_PREFIXES in pydantic_ai/providers/bedrock.py'
+        f'Please add them to BEDROCK_GEO_PREFIXES'
     )
