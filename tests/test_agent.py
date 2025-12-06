@@ -220,6 +220,7 @@ def test_result_pydantic_model_retry():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -230,7 +231,7 @@ def test_result_pydantic_model_retry():
 
 
 def test_prompt_templates():
-    """Test both retry_prompt and tool_final_result templates."""
+    """Test both retry_prompt and final_result_processed templates."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
@@ -244,8 +245,8 @@ def test_prompt_templates():
         FunctionModel(return_model),
         output_type=Foo,
         prompt_templates=PromptTemplates(
-            retry_prompt=lambda part, ctx: f'Custom retry message {ctx.run_id} {part.content}',
-            tool_final_result=lambda part, ctx: f'Custom final result {ctx.run_id} {part.content}',
+            retry_prompt=lambda part, ctx: f'Custom retry message {part.content}',
+            final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
         ),
     )
 
@@ -258,8 +259,6 @@ def test_prompt_templates():
     assert isinstance(retry_part, RetryPromptPart)
     # Verify the custom template includes run_id and content
     response = retry_part.model_response()
-    assert response.startswith('Custom retry message ')
-    assert result.run_id in response
     assert "[{'type': 'int_parsing'" in response
 
     assert result.all_messages() == snapshot(
@@ -289,14 +288,14 @@ def test_prompt_templates():
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_template="Custom retry message 630a3726-d848-4328-9824-035676e55100 [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
+                        retry_template="Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
                     )
                 ],
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=76, output_tokens=14),
+                usage=RequestUsage(input_tokens=75, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -305,9 +304,10 @@ def test_prompt_templates():
                 parts=[
                     ToolReturnPart(
                         tool_name='final_result',
-                        content='Custom final result',
+                        content='Custom final result Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -482,6 +482,7 @@ def test_output_validator():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -627,6 +628,7 @@ def test_plain_response_then_tuple():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -638,7 +640,11 @@ def test_plain_response_then_tuple():
         ModelRequest(
             parts=[
                 ToolReturnPart(
-                    tool_name='final_result', content='foobar', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    tool_name='final_result',
+                    content='foobar',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                    return_kind='final-result-processed',
                 )
             ],
             run_id=IsStr(),
@@ -652,6 +658,7 @@ def test_plain_response_then_tuple():
                     content='Final result processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='final-result-processed',
                 )
             ],
             run_id=IsStr(),
@@ -1226,6 +1233,7 @@ def test_output_type_function_with_retry():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1537,6 +1545,7 @@ def test_output_type_handoff_to_agent():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1575,6 +1584,7 @@ def test_output_type_handoff_to_agent():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2205,7 +2215,11 @@ def test_run_with_history_new():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='ret_a',
+                        content='a-apple',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2241,7 +2255,11 @@ def test_run_with_history_new():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='ret_a',
+                        content='a-apple',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2306,7 +2324,11 @@ def test_run_with_history_new():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='ret_a',
+                        content='a-apple',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2370,7 +2392,11 @@ def test_run_with_history_new_structured():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='ret_a',
+                        content='a-apple',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2395,6 +2421,7 @@ def test_run_with_history_new_structured():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2422,7 +2449,11 @@ def test_run_with_history_new_structured():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='ret_a',
+                        content='a-apple',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2441,6 +2472,7 @@ def test_run_with_history_new_structured():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     ),
                 ],
                 run_id=IsStr(),
@@ -2466,6 +2498,7 @@ def test_run_with_history_new_structured():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     ),
                 ],
                 run_id=IsStr(),
@@ -2591,6 +2624,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                         content='Test response',
                         tool_call_id='call_123',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -3130,24 +3164,28 @@ class TestMultipleToolCalls:
                     content='Final result processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='final-result-processed',
                 ),
                 ToolReturnPart(
                     tool_name='regular_tool',
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='function-tool-not-executed',
                 ),
                 ToolReturnPart(
                     tool_name='another_tool',
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='function-tool-not-executed',
                 ),
                 ToolReturnPart(
                     tool_name='deferred_tool',
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='function-tool-not-executed',
                 ),
             ]
         )
@@ -3178,12 +3216,14 @@ class TestMultipleToolCalls:
                     content='Final result processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='final-result-processed',
                 ),
                 ToolReturnPart(
                     tool_name='final_result',
                     content='Output tool not used - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='output-tool-not-executed',
                 ),
             ]
         )
@@ -3266,21 +3306,28 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='output-tool-not-executed',
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='tool-executed',
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                            return_kind='tool-executed',
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
@@ -3293,6 +3340,7 @@ class TestMultipleToolCalls:
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -3377,18 +3425,21 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            return_kind='function-tool-not-executed',
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
@@ -3401,6 +3452,7 @@ class TestMultipleToolCalls:
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -3459,6 +3511,7 @@ class TestMultipleToolCalls:
                     content='Final result processed.',
                     timestamp=IsNow(tz=timezone.utc),
                     tool_call_id='second',
+                    return_kind='final-result-processed',
                 ),
             ]
         )
@@ -3540,6 +3593,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -3852,6 +3906,7 @@ def test_capture_run_messages_tool_agent() -> None:
                         content='inner agent result',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4170,6 +4225,7 @@ def test_tool_returning_binary_content_with_identifier():
                     content='See file image_id_1',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 ),
                 UserPromptPart(
                     content=[
@@ -4218,6 +4274,7 @@ def test_tool_returning_file_url_with_identifier():
                     content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 ),
                 UserPromptPart(
                     content=[
@@ -4445,6 +4502,7 @@ def test_multi_agent_instructions_with_structured_output():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4494,7 +4552,11 @@ def test_empty_final_response():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='my_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='my_tool',
+                        content=2,
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4512,7 +4574,11 @@ def test_empty_final_response():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='my_tool', content=4, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='my_tool',
+                        content=4,
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4544,7 +4610,7 @@ def test_agent_run_result_serialization() -> None:
 def test_agent_repr() -> None:
     agent = Agent()
     assert repr(agent) == snapshot(
-        "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
+        "Agent(model=None, name=None, end_strategy='early', model_settings=None, prompt_templates=None,output_type=<class 'str'>, instrument=None)"
     )
 
 
@@ -4584,6 +4650,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_call_id': IsStr(),
                     'timestamp': IsStr(),
                     'part_kind': 'retry-prompt',
+                    'retry_template': None,
                 }
             ],
             'instructions': None,
@@ -4682,6 +4749,7 @@ def test_multimodal_tool_response():
                         tool_call_id=IsStr(),
                         metadata={'foo': 'bar'},
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content=[
@@ -4763,6 +4831,7 @@ def test_plain_tool_response():
                         tool_call_id=IsStr(),
                         metadata={'foo': 'bar'},
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     ),
                 ],
                 run_id=IsStr(),
@@ -5059,6 +5128,7 @@ def test_adding_tools_during_run():
                         content='foo tool added',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -5077,6 +5147,7 @@ def test_adding_tools_during_run():
                         content='Hello from foo',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -5156,6 +5227,7 @@ def test_prepare_output_tools():
                         content='a',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -5180,6 +5252,7 @@ def test_prepare_output_tools():
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -5554,6 +5627,7 @@ async def test_hitl_tool_approval():
                         content='File \'new_file.py\' created with content: print("Hello, world!")',
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -5612,6 +5686,7 @@ async def test_hitl_tool_approval():
                         content='File \'new_file.py\' created with content: print("Hello, world!")',
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -5623,12 +5698,14 @@ async def test_hitl_tool_approval():
                         content="File 'ok_to_delete.py' deleted",
                         tool_call_id='ok_to_delete',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='delete_file',
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        return_kind='tool-denied',
                     ),
                 ],
                 run_id=IsStr(),
@@ -5653,12 +5730,14 @@ async def test_hitl_tool_approval():
                         content="File 'ok_to_delete.py' deleted",
                         tool_call_id='ok_to_delete',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='delete_file',
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        return_kind='tool-denied',
                     ),
                 ],
                 run_id=IsStr(),
@@ -5843,6 +5922,7 @@ async def test_user_prompt_with_deferred_tool_results():
                         content="File '.env' updated",
                         tool_call_id='update_file_1',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(content='continue with the operation', timestamp=IsDatetime()),
                 ],
@@ -6255,6 +6335,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         content=4,
                         tool_call_id='pyd_ai_tool_call_id__roll_dice',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -6279,6 +6360,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -6313,6 +6395,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         content=4,
                         tool_call_id='pyd_ai_tool_call_id__roll_dice',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -6337,6 +6420,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),

@@ -871,6 +871,18 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    return_kind: (
+        Literal[
+            'final-result-processed',
+            'output-tool-not-executed',
+            'function-tool-not-executed',
+            'tool-executed',
+            'tool-denied',
+        ]
+        | None
+    ) = None
+    """The kind of tool return such as final result processed, output tool not executed, etc. This is available on all parts as a discriminator."""
+
 
 @dataclass(repr=False)
 class BuiltinToolReturnPart(BaseToolReturnPart):
@@ -934,10 +946,12 @@ class RetryPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     retry_template: str | None = None
+    """Message compiled using the provided prompt template. This message will be sent to the model to retry if present."""
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if self.retry_template:
+            # We added this based on a provided prompt template so let us use this instead of our usual string
             return self.retry_template
 
         if isinstance(self.content, str):
@@ -1917,7 +1931,7 @@ class PromptTemplates:
     Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
     """
 
-    tool_final_result: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
     """Confirmation message sent when a final result is successfully processed.
     
     Default: "Final result processed."
@@ -1937,17 +1951,11 @@ class PromptTemplates:
 
     def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
         if isinstance(message, ToolReturnPart):
-            if message.content == 'Final result processed.' and self.tool_final_result:
-                self._apply_tool_template(message, ctx, self.tool_final_result)
-            elif (
-                message.content == 'Output tool not used - a final result was already processed.'
-                and self.output_tool_not_executed
-            ):
+            if message.return_kind == 'final-result-processed' and self.final_result_processed:
+                self._apply_tool_template(message, ctx, self.final_result_processed)
+            elif message.return_kind == 'output-tool-not-executed' and self.output_tool_not_executed:
                 self._apply_tool_template(message, ctx, self.output_tool_not_executed)
-            elif (
-                message.content == 'Tool not executed - a final result was already processed.'
-                and self.function_tool_not_executed
-            ):
+            elif message.return_kind == 'function-tool-not-executed' and self.function_tool_not_executed:
                 self._apply_tool_template(message, ctx, self.function_tool_not_executed)
 
         elif isinstance(message, RetryPromptPart):

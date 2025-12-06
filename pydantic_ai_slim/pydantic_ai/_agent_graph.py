@@ -866,6 +866,7 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
+                    return_kind='final-result-processed',
                 )
             else:
                 yield _messages.FunctionToolCallEvent(call)
@@ -873,6 +874,7 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Output tool not used - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
+                    return_kind='output-tool-not-executed',
                 )
                 yield _messages.FunctionToolResultEvent(part)
 
@@ -897,6 +899,7 @@ async def process_tool_calls(  # noqa: C901
                     tool_name=call.tool_name,
                     content='Final result processed.',
                     tool_call_id=call.tool_call_id,
+                    return_kind='final-result-processed',
                 )
                 output_parts.append(part)
                 final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
@@ -909,6 +912,7 @@ async def process_tool_calls(  # noqa: C901
                 tool_name=call.tool_name,
                 content='Tool not executed - a final result was already processed.',
                 tool_call_id=call.tool_call_id,
+                return_kind='function-tool-not-executed',
             )
             output_parts.append(part)
     else:
@@ -966,6 +970,7 @@ async def process_tool_calls(  # noqa: C901
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=call.tool_call_id,
+                        return_kind='function-tool-not-executed',
                     )
                     output_parts.append(part)
         elif calls:
@@ -1122,6 +1127,7 @@ async def _call_tool(
                 tool_name=tool_call.tool_name,
                 content=tool_call_result.message,
                 tool_call_id=tool_call.tool_call_id,
+                return_kind='tool-denied',
             ), None
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
@@ -1184,6 +1190,7 @@ async def _call_tool(
         tool_call_id=tool_call.tool_call_id,
         content=tool_return.return_value,  # type: ignore
         metadata=tool_return.metadata,
+        return_kind='tool-executed',
     )
 
     return return_part, tool_return.content or None
