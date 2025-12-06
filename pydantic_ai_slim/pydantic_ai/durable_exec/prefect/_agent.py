@@ -886,6 +886,12 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         with super().override(
-            name=name, deps=deps, model=model, toolsets=toolsets, tools=tools, instructions=instructions, prompt_templates=prompt_templates
+            name=name,
+            deps=deps,
+            model=model,
+            toolsets=toolsets,
+            tools=tools,
+            instructions=instructions,
+            prompt_templates=prompt_templates,
         ):
             yield
