@@ -194,7 +194,7 @@ class PromptContentFilterError(ContentFilterError):
     """Raised when the prompt triggers a content filter."""
 
     def __init__(self, status_code: int, model_name: str, body: object | None = None):
-        message = f"Prompt content filtered by model '{model_name}'"
+        message = f"Model '{model_name}' content filter was triggered by the user's prompt"
         super().__init__(message, status_code, model_name, body)
 
 
@@ -202,7 +202,7 @@ class ResponseContentFilterError(ContentFilterError):
     """Raised when the generated response triggers a content filter."""
 
     def __init__(self, model_name: str, body: object | None = None, status_code: int = 200):
-        message = f"Response content filtered by model '{model_name}'"
+        message = f"Model '{model_name}' triggered its content filter while generating a response"
         super().__init__(message, status_code, model_name, body)
 
 

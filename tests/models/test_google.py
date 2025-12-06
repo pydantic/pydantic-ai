@@ -989,7 +989,10 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
     # Changed expected exception from UnexpectedModelBehavior to ResponseContentFilterError
-    with pytest.raises(ResponseContentFilterError, match="Response content filtered by model 'gemini-1.5-flash'"):
+    with pytest.raises(
+        ResponseContentFilterError,
+        match="Model 'gemini-1.5-flash' triggered its content filter while generating a response",
+    ):
         await agent.run('Tell me a joke about a Brazilians.')
 
 
@@ -4456,7 +4459,10 @@ async def test_google_response_filter_error_sync(
     agent = Agent(model=model)
 
     #  Verify the  exception is raised
-    with pytest.raises(ResponseContentFilterError, match=f"Response content filtered by model '{model_name}'"):
+    with pytest.raises(
+        ResponseContentFilterError,
+        match="Model 'gemini-2.5-flash' triggered its content filter while generating a response",
+    ):
         await agent.run('bad content')
 
 
@@ -4484,7 +4490,10 @@ async def test_google_response_filter_error_stream(
 
     agent = Agent(model=model)
 
-    with pytest.raises(ResponseContentFilterError, match=f"Response content filtered by model '{model_name}'"):
+    with pytest.raises(
+        ResponseContentFilterError,
+        match="Model 'gemini-2.5-flash' triggered its content filter while generating a response",
+    ):
         async with agent.run_stream('bad content') as result:
             async for _ in result.stream_text():
                 pass

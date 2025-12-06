@@ -7915,7 +7915,10 @@ async def test_anthropic_response_filter_error_sync(allow_model_requests: None):
     m = AnthropicModel('claude-3-5-haiku-123', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'claude-3-5-haiku-123'"):
+    with pytest.raises(
+        ResponseContentFilterError,
+        match=r"Model 'claude-3-5-haiku-123' triggered its content filter while generating a response",
+    ):
         await agent.run('hello')
 
 
@@ -7945,7 +7948,10 @@ async def test_anthropic_response_filter_error_stream(allow_model_requests: None
     m = AnthropicModel('claude-3-5-haiku-123', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'claude-3-5-haiku-123'"):
+    with pytest.raises(
+        ResponseContentFilterError,
+        match=r"Model 'claude-3-5-haiku-123' triggered its content filter while generating a response",
+    ):
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass

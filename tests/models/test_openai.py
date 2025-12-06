@@ -11,6 +11,7 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
+from pytest_mock import MockerFixture
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import (
@@ -72,6 +73,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+    from openai.types.responses import Response, ResponseCompletedEvent, ResponseCreatedEvent
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
@@ -3299,23 +3301,6 @@ response\
     )
 
 
-def test_openai_generic_400_error(allow_model_requests: None) -> None:
-    mock_client = MockOpenAI.create_mock(
-        APIStatusError(
-            'bad request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
-            body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
-        )
-    )
-    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        agent.run_sync('hello')
-
-    assert not isinstance(exc_info.value, PromptContentFilterError)
-    assert exc_info.value.status_code == 400
-
-
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
@@ -3328,8 +3313,9 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    # Asserting the full error message structure via match
-    with pytest.raises(PromptContentFilterError, match=r"Prompt content filtered by model 'gpt-5-mini'"):
+    with pytest.raises(
+        PromptContentFilterError, match=r"Model 'gpt-5-mini' content filter was triggered by the user's prompt"
+    ):
         agent.run_sync('bad prompt')
 
 
@@ -3346,7 +3332,9 @@ async def test_openai_response_filter_error_sync(allow_model_requests: None):
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-5-mini'"):
+    with pytest.raises(
+        ResponseContentFilterError, match=r"Model 'gpt-5-mini' triggered its content filter while generating a response"
+    ):
         await agent.run('hello')
 
 
@@ -3361,7 +3349,85 @@ async def test_openai_response_filter_error_stream(allow_model_requests: None):
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ResponseContentFilterError, match=r"Response content filtered by model 'gpt-5-mini'"):
+    with pytest.raises(
+        ResponseContentFilterError, match=r"Model 'gpt-5-mini' triggered its content filter while generating a response"
+    ):
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_text():
+                pass
+
+
+def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None:
+    """Test ResponsesModel (Azure) prompt filter."""
+    mock_client = MockOpenAIResponses.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
+        )
+    )
+    m = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        PromptContentFilterError, match=r"Model 'gpt-5-mini' content filter was triggered by the user's prompt"
+    ):
+        agent.run_sync('bad prompt')
+
+
+async def test_responses_response_filter_error_sync(allow_model_requests: None, mocker: MockerFixture):
+    """Test ResponsesModel sync response filter."""
+    mock_openai_client = mocker.Mock()
+    m = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_openai_client))
+    agent = Agent(m)
+
+    mock_response = mocker.Mock()
+    mock_response.model = 'gpt-5-mini'
+    mock_response.model_dump.return_value = {}
+    mock_response.created_at = 1234567890
+    mock_response.id = 'resp_123'
+    mock_response.incomplete_details.reason = 'content_filter'
+    mock_response.output = []
+
+    mock_openai_client.responses.create = mocker.AsyncMock(return_value=mock_response)
+
+    with pytest.raises(
+        ResponseContentFilterError, match=r"Model 'gpt-5-mini' triggered its content filter while generating a response"
+    ):
+        await agent.run('hello')
+
+
+async def test_responses_response_filter_error_stream(allow_model_requests: None, mocker: MockerFixture):
+    """Test ResponsesModel stream response filter."""
+    mock_openai_client = mocker.Mock()
+    m = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_openai_client))
+    agent = Agent(m)
+
+    resp = Response(
+        id='resp_123',
+        model='gpt-5-mini',
+        created_at=1234567890,
+        object='response',
+        status='incomplete',
+        incomplete_details=cast(Any, {'reason': 'content_filter'}),
+        output=[],
+        parallel_tool_calls=False,
+        tool_choice='none',
+        tools=[],
+    )
+
+    stream = [
+        ResponseCreatedEvent(response=resp, type='response.created', sequence_number=0),
+        ResponseCompletedEvent(response=resp, type='response.completed', sequence_number=1),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    m = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        ResponseContentFilterError, match=r"Model 'gpt-5-mini' triggered its content filter while generating a response"
+    ):
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass

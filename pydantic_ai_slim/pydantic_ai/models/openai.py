@@ -1432,7 +1432,6 @@ class OpenAIResponsesModel(Model):
             if (status_code := e.status_code) >= 400:
                 _check_azure_content_filter(e, self.model_name)
 
-                # Reverted cast
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
