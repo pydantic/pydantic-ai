@@ -170,6 +170,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                                 tool_call_id=tool_call_id,
                                 tool_name=tool_name,
                                 content='Final result processed.',
+                                return_kind='final-result-processed',
                             )
                         )
                         async for e in self.handle_function_tool_result(output_tool_result_event):

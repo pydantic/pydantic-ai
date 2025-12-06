@@ -881,7 +881,15 @@ class ToolReturnPart(BaseToolReturnPart):
         ]
         | None
     ) = None
-    """The kind of tool return such as final result processed, output tool not executed, etc. This is available on all parts as a discriminator."""
+    """How the tool call was resolved, used for disambiguating return parts.
+
+    * `tool-executed`: the tool ran successfully and produced a return value
+    * `final-result-processed`: an output tool produced the run's final result
+    * `output-tool-not-executed`: an output tool was skipped because a final result already existed
+    * `function-tool-not-executed`: a function tool was skipped due to early termination after a final result
+    * `tool-denied`: the tool call was rejected by an approval handler
+
+    """
 
 
 @dataclass(repr=False)
