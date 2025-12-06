@@ -43,7 +43,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BedrockModelProfile
+from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -154,22 +154,6 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
-
-_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = (
-    'us.',
-    'eu.',
-    'apac.',
-    'jp.',
-    'au.',
-    'ca.',
-    'global.',
-    'us-gov.',
-)
-"""Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.', 'us-gov.').
-
-Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
-which does not accept profile IDs.
-"""
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -702,7 +686,7 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
         """Remove inference geographic prefix from model ID if present."""
-        for prefix in _AWS_BEDROCK_INFERENCE_GEO_PREFIXES:
+        for prefix in BEDROCK_GEO_PREFIXES:
             if model_name.startswith(prefix):
                 return model_name.removeprefix(prefix)
         return model_name
