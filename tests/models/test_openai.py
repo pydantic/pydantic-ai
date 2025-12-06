@@ -3216,3 +3216,98 @@ async def test_cache_point_filtering_responses_model():
     assert len(msg['content']) == 2
     assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
     assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='tags',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {
+            'role': 'assistant',
+            'content': """\
+<think>
+reasoning
+</think>
+
+response\
+""",
+        }
+    )
+
+
+async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
+    )
+
+
+async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts=False,
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'content': 'response'}
+    )
+
+
+async def test_openai_reasoning_in_thinking_tags(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='<think>reasoning</think>response', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='tags'),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {
+            'role': 'assistant',
+            'content': """\
+<think>
+reasoning
+</think>
+
+response\
+""",
+        }
+    )

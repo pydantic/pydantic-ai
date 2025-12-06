@@ -1911,13 +1911,13 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='utZJMAZN4')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='GJYBCIkcS')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='fce6d16a4e5940edb24ae16dd0369947',
+                provider_response_id='412174432ea945889703eac58b44ae35',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1926,7 +1926,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='utZJMAZN4',
+                        tool_call_id='GJYBCIkcS',
                         timestamp=IsDatetime(),
                         return_kind='tool-executed',
                     ),
@@ -1943,15 +1943,15 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi. Kiwis are small, brown, oval-shaped fruits with a bright green flesh inside that is dotted with tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
+                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi fruit that has been cut in half. The kiwi is known for its bright green flesh with tiny black seeds and a central white core. It is a popular fruit known for its sweet taste and nutritional benefits.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=2931, output_tokens=70),
+                usage=RequestUsage(input_tokens=2931, output_tokens=66),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='26e7de193646460e8904f8e604a60dc1',
+                provider_response_id='049b5c7704554d3396e727a95cb6d947',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2321,52 +2321,36 @@ async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mist
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-Okay, the user is asking a very basic question about how to cross the street. This seems like a straightforward query, but I need to make sure I provide clear and safe instructions. Crossing the street safely involves a few key steps that are generally taught to children and are important for everyone to follow.
-
-First, I recall that the basic steps involve looking both ways for oncoming traffic, using designated crosswalks if available, and following traffic signals if there are any. But I should break it down into clear, actionable steps.
-
-1. **Find a Safe Place to Cross**: Ideally, you should cross at a designated crosswalk or intersection. These are typically marked with white lines on the road and may have traffic signals or signs.
-
-2. **Look Both Ways**: Before stepping off the curb, look left, right, and then left again to check for oncoming traffic. This is because in many places, traffic comes from the left first (depending on the country's driving side).
-
-3. **Wait for a Safe Gap**: Make sure there is enough time to cross the street before any vehicles approach. If there's a traffic light, wait for the pedestrian signal to indicate it's safe to cross.
-
-4. **Cross with Caution**: Walk briskly across the street while keeping an eye out for any unexpected vehicles. Avoid running unless absolutely necessary.
-
-5. **Continue Looking**: Even while crossing, continue to look for vehicles to ensure your safety.
-
-6. **Follow Traffic Signals**: If there are traffic lights or pedestrian signals, obey them. Only cross when the signal indicates it's safe to do so.
-
-Additionally, it's important to make eye contact with drivers if possible, to ensure they see you before you cross. Avoid distractions like using your phone while crossing the street.
-
-But wait, does the user need any specific context? For example, are they in a country where cars drive on the left or the right? That might affect the direction they should look first. However, since the user hasn't specified a location, I'll provide a general answer that should work in most places.
-
-Also, if the user is asking this question, they might be very young or unfamiliar with urban environments, so I should keep the instructions simple and clear.
-
-Here's a concise response based on this thinking:\
-"""
+                        content='Okay, the user is asking how to cross the street. I know that crossing the street safely involves a few key steps: first, look both ways to check for oncoming traffic; second, use a crosswalk if one is available; third, obey any traffic signals or signs that may be present; and finally, proceed with caution until you have safely reached the other side. Let me compile this information into a clear and concise response.'
                     ),
                     TextPart(
                         content="""\
 To cross the street safely, follow these steps:
 
-1. Find a designated crosswalk or intersection if possible.
-2. Look left, right, and then left again to check for oncoming traffic.
-3. Wait for a safe gap in traffic or for the pedestrian signal to indicate it's safe to cross.
-4. Cross the street briskly while continuing to look for vehicles.
-5. Follow any traffic signals and always be cautious of your surroundings.
+1. Look both ways to check for oncoming traffic.
+2. Use a crosswalk if one is available.
+3. Obey any traffic signals or signs that may be present.
+4. Proceed with caution until you have safely reached the other side.
 
-If you're in a country where cars drive on the left (like the UK or Japan), remember to look right first instead of left. Always prioritize your safety and make sure drivers see you before crossing.\
+```markdown
+To cross the street safely, follow these steps:
+
+1. Look both ways to check for oncoming traffic.
+2. Use a crosswalk if one is available.
+3. Obey any traffic signals or signs that may be present.
+4. Proceed with caution until you have safely reached the other side.
+```
+
+By following these steps, you can ensure a safe crossing.\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=602),
+                usage=RequestUsage(input_tokens=10, output_tokens=232),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='9faf4309c1d743d189f16b29211d8b45',
+                provider_response_id='9f9d90210f194076abeee223863eaaf0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
