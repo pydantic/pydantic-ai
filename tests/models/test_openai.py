@@ -2246,12 +2246,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a',
-                        signature='gAAAAABowfofynE_bcBtlQwnphMqkyKvkV8Sr35i7mAX3iK-nK_d2usOyX9bxTqTs2rO9Q-rWy_925tvvxVDftIty6WSJYgydfLk3_2n4aNnc--vX7aUT5db_qTyH_367MTbp_Qr_Wcu_QkOwTuMfF5wU0RxF5PNqKwg1Owpteut0jDGs0haA6SHMMskH0sezDb9VXSTHaIq2EQuaB2n5nAVi6hy5Z6OCScNnC4aBzSnTbPOFi2qMGf4vZwyGpl-mPZn6_kEtuN0ov7K0_vj3MyT02QHrk7ADk1aWu1GFvQHunYJ8LPV1jqZnwP6ovVI080lTTBXEkwvvjJxSmt2UE-0JJ3rlKDXVEC6U-k6_wL95LbXc0MqrFSO_yLNOnytNnTctYSF6i5mwID994MvNhF_L7zRLllV4uf_XrTSBD_oHmcL8R9E5Po=',
-                        provider_name='openai',
-                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a'),
                     TextPart(content=IsStr(), id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a'),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1915, details={'reasoning_tokens': 1600}),
