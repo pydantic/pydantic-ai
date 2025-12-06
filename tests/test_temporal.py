@@ -805,6 +805,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     content='Mexico',
                     tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             FunctionToolResultEvent(
@@ -813,6 +814,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(
@@ -854,6 +856,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(
@@ -1868,12 +1871,14 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             content=True,
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                         ToolReturnPart(
                             tool_name='create_file',
                             content='Success',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                     ],
                     instructions='Just call tools without asking for confirmation.',
@@ -2024,6 +2029,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             content='sunny',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
