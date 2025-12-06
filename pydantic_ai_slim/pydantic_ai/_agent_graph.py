@@ -981,13 +981,13 @@ async def process_tool_calls(  # noqa: C901
             # we shouldn't insert return parts as the deferred tools will still get a real result.
             if not isinstance(final_result.output, _output.DeferredToolRequests):
                 for call in calls:
-                    part = _messages.ToolReturnPart(
+                    output_parts.append(_messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=call.tool_call_id,
                         return_kind='function-tool-not-executed',
                     )
-                    output_parts.append(part)
+                )
         elif calls:
             deferred_calls['external'].extend(tool_calls_by_kind['external'])
             deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
