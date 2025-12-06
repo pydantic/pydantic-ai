@@ -467,7 +467,7 @@ def test_prompt_templates_string_and_override_prompt_templates():
         ]
     )
 
-   # Verify prompt_templates can be overridden
+    # Verify prompt_templates can be overridden
     with agent.override(prompt_templates=PromptTemplates(retry_prompt='Custom retry message override')):
         result = agent.run_sync('Hello')
         assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
