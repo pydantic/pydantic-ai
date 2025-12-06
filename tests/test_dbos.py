@@ -598,6 +598,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 )
                             ],
                         ),
+                        BasicSpan(content='running tool: output tool'),
                     ],
                 )
             ],
