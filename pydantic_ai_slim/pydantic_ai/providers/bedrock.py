@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
+
+__all__ = ('BedrockModelProfile', 'BedrockProvider', 'BEDROCK_GEO_PREFIXES')
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -59,7 +61,7 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
 
 
 # Known geo prefixes for cross-region inference profile IDs
-_BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.', 'us-gov.')
+BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.', 'us-gov.')
 
 
 def _strip_geo_prefix(model_name: str) -> str:
@@ -69,7 +71,7 @@ def _strip_geo_prefix(model_name: str) -> str:
     to route requests to specific regions. This function strips those prefixes so we can
     identify the underlying provider and model.
     """
-    for prefix in _BEDROCK_GEO_PREFIXES:
+    for prefix in BEDROCK_GEO_PREFIXES:
         if model_name.startswith(prefix):
             return model_name.removeprefix(prefix)
     return model_name
@@ -104,7 +106,6 @@ class BedrockProvider(Provider[BaseClient]):
             'deepseek': bedrock_deepseek_model_profile,
         }
 
-        # Strip regional/geo prefix if present (e.g. "us.", "eu.", "us-gov.", "global.")
         model_name = _strip_geo_prefix(model_name)
 
         # Split the model name into provider and model parts

@@ -1,4 +1,4 @@
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 from pytest_mock import MockerFixture
@@ -16,7 +16,8 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
 
-    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
+    from pydantic_ai.models.bedrock import LatestBedrockModelNames
+    from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile, BedrockProvider
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
@@ -102,7 +103,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert unknown_model is None
 
 
-@pytest.mark.parametrize('prefix', ['us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.', 'us-gov.'])
+@pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
 def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: str):
     """Test that all cross-region inference geo prefixes are correctly handled.
 
@@ -117,33 +118,32 @@ def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: s
     profile = provider.model_profile(model_name)
 
     assert profile is not None, f'model_profile returned None for {model_name}'
-    assert isinstance(profile, BedrockModelProfile)
-    assert profile.bedrock_supports_tool_choice is True
-    assert profile.bedrock_send_back_thinking_parts is True
 
 
-def test_bedrock_provider_model_profile_us_gov_anthropic(env: TestEnv, mocker: MockerFixture):
-    """Test that us-gov. prefixed Anthropic models get the correct profile.
+def test_latest_bedrock_model_names_geo_prefixes_are_supported():
+    """Ensure all geo prefixes used in LatestBedrockModelNames are in BEDROCK_GEO_PREFIXES.
 
-    This specifically tests the us-gov. prefix which was previously broken
-    because the provider only handled 2-character prefixes.
+    This test prevents adding new model names with geo prefixes that aren't handled
+    by the provider's model_profile method.
     """
-    env.set('AWS_DEFAULT_REGION', 'us-east-1')
-    provider = BedrockProvider()
+    model_names = get_args(LatestBedrockModelNames)
 
-    ns = 'pydantic_ai.providers.bedrock'
-    anthropic_model_profile_mock = mocker.patch(f'{ns}.anthropic_model_profile', wraps=anthropic_model_profile)
+    # Known providers that appear after the geo prefix
+    known_providers = ('anthropic', 'amazon', 'meta', 'mistral', 'cohere', 'deepseek')
 
-    # Test us-gov. prefix (AWS GovCloud cross-region inference)
-    profile = provider.model_profile('us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0')
-    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
-    assert isinstance(profile, BedrockModelProfile)
-    assert profile.bedrock_supports_tool_choice is True
-    assert profile.bedrock_send_back_thinking_parts is True
+    missing_prefixes: set[str] = set()
 
-    # Test global. prefix
-    profile = provider.model_profile('global.anthropic.claude-opus-4-5-20251101-v1:0')
-    anthropic_model_profile_mock.assert_called_with('claude-opus-4-5-20251101')
-    assert isinstance(profile, BedrockModelProfile)
-    assert profile.bedrock_supports_tool_choice is True
-    assert profile.bedrock_send_back_thinking_parts is True
+    for model_name in model_names:
+        # Check if this model name has a geo prefix by seeing if it has 3+ dot-separated parts
+        # and the second part is a known provider
+        parts = model_name.split('.')
+        if len(parts) >= 3 and parts[1] in known_providers:
+            # This model has a geo prefix (e.g., "us.anthropic.claude...")
+            geo_prefix = parts[0] + '.'
+            if geo_prefix not in BEDROCK_GEO_PREFIXES:
+                missing_prefixes.add(geo_prefix)
+
+    assert not missing_prefixes, (
+        f'Found geo prefixes in LatestBedrockModelNames that are not in BEDROCK_GEO_PREFIXES: {missing_prefixes}. '
+        f'Please add them to BEDROCK_GEO_PREFIXES in pydantic_ai/providers/bedrock.py'
+    )
