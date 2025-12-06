@@ -923,13 +923,13 @@ async def process_tool_calls(  # noqa: C901
     calls_to_run: list[_messages.ToolCallPart] = []
     if final_result and ctx.deps.end_strategy == 'early':
         for call in tool_calls_by_kind['function']:
-            part = _messages.ToolReturnPart(
+            output_parts.append(_messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Tool not executed - a final result was already processed.',
-                tool_call_id=call.tool_call_id,
-                return_kind='function-tool-not-executed',
+                    tool_call_id=call.tool_call_id,
+                    return_kind='function-tool-not-executed',
+                )
             )
-            output_parts.append(part)
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
