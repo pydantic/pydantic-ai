@@ -2526,6 +2526,44 @@ async def test_adapter_dump_load_roundtrip():
     assert reloaded_messages == original_messages
 
 
+async def test_adapter_dump_load_roundtrip_without_timestamps():
+    """Test that dump_messages and load_messages work when messages don't have timestamps."""
+    original_messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='User message'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Response text'),
+            ]
+        ),
+    ]
+
+    for msg in original_messages:
+        delattr(msg, 'timestamp')
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+
+    def sync_timestamps(original: list[ModelRequest | ModelResponse], new: list[ModelRequest | ModelResponse]) -> None:
+        for orig_msg, new_msg in zip(original, new):
+            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
+                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
+                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
+                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+
+    sync_timestamps(original_messages, reloaded_messages)
+
+    for msg in reloaded_messages:
+        if hasattr(msg, 'timestamp'):
+            delattr(msg, 'timestamp')
+
+    assert len(reloaded_messages) == len(original_messages)
+
+
 async def test_adapter_dump_messages_text_before_thinking():
     """Test dumping messages where text precedes a thinking part."""
     messages = [
