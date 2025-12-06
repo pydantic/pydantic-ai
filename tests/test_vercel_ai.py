@@ -236,6 +236,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         content="[Scrubbed due to 'API Key']",
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ]
             ),
@@ -256,6 +257,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ]
             ),
@@ -1868,6 +1870,7 @@ async def test_adapter_load_messages():
                         content="[Scrubbed due to 'API Key']",
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ]
             ),
@@ -1888,6 +1891,7 @@ async def test_adapter_load_messages():
                         content="[Scrubbed due to 'API Key']",
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ]
             ),

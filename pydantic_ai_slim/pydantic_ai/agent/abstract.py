@@ -1093,6 +1093,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        prompt_templates: _messages.PromptTemplates | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -1106,6 +1107,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            prompt_templates: The prompt templates to use instead of the prompt templates registered with the agent.
         """
         raise NotImplementedError
         yield

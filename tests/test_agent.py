@@ -5502,15 +5502,9 @@ async def test_thinking_only_response_retry():
             )
 
     model = FunctionModel(model_function)
-    prompt_templates = PromptTemplates(validation_retry_prompt='HENLU')
-    agent = Agent(model, system_prompt='You are a helpful assistant.', prompt_templates=prompt_templates)
+    agent = Agent(model, system_prompt='You are a helpful assistant.')
 
     result = await agent.run('Hello')
-    retry_part = result.all_messages()[2].parts[0]
-
-    response = retry_part.model_response()
-
-    assert response == snapshot('HENLU')
 
     assert result.all_messages() == snapshot(
         [

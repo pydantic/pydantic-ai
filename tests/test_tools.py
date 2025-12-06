@@ -1380,6 +1380,7 @@ def test_tool_raises_approval_required():
                         content=84,
                         tool_call_id='my_tool',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1780,6 +1781,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: banana',
@@ -1793,6 +1795,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: grape',
@@ -1873,6 +1876,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: banana',
@@ -1886,6 +1890,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: grape',
@@ -1918,6 +1923,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='The purchase of pears was denied.',
@@ -1958,6 +1964,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='The purchase of pears was denied.',
@@ -2016,6 +2023,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: banana',
@@ -2029,6 +2037,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='Unknown fruit: grape',
@@ -2048,6 +2057,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     RetryPromptPart(
                         content='The purchase of pears was denied.',
@@ -2168,6 +2178,7 @@ async def test_approval_required_toolset():
                         content=9,
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2221,6 +2232,7 @@ async def test_approval_required_toolset():
                         content=9,
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2232,12 +2244,14 @@ async def test_approval_required_toolset():
                         content=2,
                         tool_call_id='foo1',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='foo',
                         content='The tool call was denied.',
                         tool_call_id='foo2',
                         timestamp=IsDatetime(),
+                        return_kind='tool-denied',
                     ),
                 ],
                 run_id=IsStr(),
@@ -2295,6 +2309,7 @@ def test_deferred_tool_results_serializable():
                     'tool_call_id': 'foo',
                     'timestamp': IsDatetime(),
                     'part_kind': 'retry-prompt',
+                    'retry_template': None,
                 },
                 'any': {'foo': 'bar'},
             },
@@ -2439,6 +2454,7 @@ def test_retry_tool_until_last_attempt():
                         content='I guess you never learn',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),

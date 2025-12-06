@@ -921,6 +921,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1019,6 +1020,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1135,6 +1137,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
                 content="alice is bob's wife",
                 tool_call_id=IsStr(),
                 timestamp=IsDatetime(),
+                return_kind='tool-executed',
                 part_kind='tool-return',
             ),
             ToolReturnPart(
@@ -1142,6 +1145,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
                 content="bob is alice's husband",
                 tool_call_id=IsStr(),
                 timestamp=IsDatetime(),
+                return_kind='tool-executed',
                 part_kind='tool-return',
             ),
             ToolReturnPart(
@@ -1149,6 +1153,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
                 content="charlie is alice's son",
                 tool_call_id=IsStr(),
                 timestamp=IsDatetime(),
+                return_kind='tool-executed',
                 part_kind='tool-return',
             ),
             ToolReturnPart(
@@ -1156,6 +1161,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
                 content="daisy is bob's daughter and charlie's younger sister",
                 tool_call_id=IsStr(),
                 timestamp=IsDatetime(),
+                return_kind='tool-executed',
                 part_kind='tool-return',
             ),
         ]
@@ -1407,6 +1413,7 @@ async def test_image_as_binary_content_tool_response(
                         content='See file 1c8566',
                         tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content=[
@@ -6224,6 +6231,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         content='Mexico',
                         tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -6261,6 +6269,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         content='Final result processed.',
                         tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -6331,6 +6340,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         content='Mexico',
                         tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -6422,6 +6432,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         content='Mexico',
                         tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),

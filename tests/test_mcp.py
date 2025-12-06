@@ -260,6 +260,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             content=32.0,
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -429,6 +430,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             content='The weather in Mexico City is sunny and 26 degrees Celsius.',
                             tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -509,6 +511,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             content='Pydantic AI',
                             tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -585,6 +588,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             content='Pydantic AI\n',
                             tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -663,6 +667,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             content='See file 1c8566',
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
                     ],
@@ -748,6 +753,7 @@ async def test_tool_returning_image_resource_link(
                             content='See file 1c8566',
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
                     ],
@@ -814,6 +820,7 @@ async def test_tool_returning_audio_resource(
                             content='See file 2d36ae',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                         UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
                     ],
@@ -884,6 +891,7 @@ async def test_tool_returning_audio_resource_link(
                             content='See file 2d36ae',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                         UserPromptPart(
                             content=[
@@ -963,6 +971,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             content='See file 1c8566',
                             tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                         UserPromptPart(
                             content=[
@@ -1040,6 +1049,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             content={'foo': 'bar', 'baz': 123},
                             tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -1114,6 +1124,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                             content={'foo': 'bar', 'baz': 123},
                             tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -1229,6 +1240,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             content='This is not an error',
                             tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -1303,6 +1315,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             content=[],
                             tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -1386,6 +1399,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             ],
                             tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         ),
                         UserPromptPart(
                             content=[

@@ -1555,12 +1555,14 @@ async def test_messages() -> None:
                         content='Tool message',
                         tool_call_id='tool_call_1',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='tool_call_2',
                         content='Tool message',
                         tool_call_id='tool_call_2',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content='User message',

@@ -638,6 +638,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -726,12 +727,14 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         content='{"lat": 51, "lng": 0}',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
                         content='{"lat": 41, "lng": -74}',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                 ],
                 run_id=IsStr(),
@@ -908,10 +911,18 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='foo', content='a', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='foo',
+                        content='a',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
-                        tool_name='bar', content='b', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='bar',
+                        content='b',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                 ],
                 run_id=IsStr(),
@@ -931,6 +942,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1003,6 +1015,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                         content='Tool not executed - a final result was already processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='function-tool-not-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1211,6 +1224,7 @@ async def test_image_as_binary_content_tool_response(
                         content='See file 1c8566',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content=[
@@ -1718,6 +1732,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         content='hello',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1746,6 +1761,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1800,6 +1816,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -1828,6 +1845,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2107,6 +2125,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
