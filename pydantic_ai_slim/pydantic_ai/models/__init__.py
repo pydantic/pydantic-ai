@@ -1017,11 +1017,7 @@ def infer_model(  # noqa: C901
     elif model_kind in ('google-gla', 'google-vertex'):
         model_kind = 'google'
 
-    if model_kind == 'cerebras':
-        from .cerebras import CerebrasModel
-
-        return CerebrasModel(model_name, provider=provider)
-    elif model_kind == 'openai-chat':
+    if model_kind == 'openai-chat':
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
@@ -1045,6 +1041,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1057,6 +1057,10 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
