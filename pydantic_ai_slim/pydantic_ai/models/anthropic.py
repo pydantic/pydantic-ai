@@ -1207,7 +1207,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id=event.index,
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )
-<<<<<<< HEAD
                 elif isinstance(current_block, BetaBashCodeExecutionToolResultBlock):
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
@@ -1324,7 +1323,6 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-<<<<<<< HEAD
     elif item.name == 'bash_code_execution':
         return BuiltinToolCallPart(
             provider_name=provider_name,
