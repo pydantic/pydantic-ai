@@ -59,7 +59,8 @@ async def test_code_execution_with_skills(allow_model_requests: None):
         ]
     )
     assert 'skills' not in tools[0]
-    assert 'skills-2025-10-02' in extra_headers['anthropic-beta']
+    betas = completion_kwargs.get('betas', [])
+    assert 'skills-2025-10-02' in betas
     assert container == snapshot({
         'skills': [
             {'type': 'anthropic', 'skill_id': 'pptx', 'version': 'latest'},

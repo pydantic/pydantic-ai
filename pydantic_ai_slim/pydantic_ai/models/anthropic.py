@@ -506,6 +506,7 @@ class AnthropicModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
+                container=container or OMIT,
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
