@@ -7,6 +7,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -65,9 +66,17 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
                 profile = profile_func(model_name)
 
-                # As AzureProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-                # we need to maintain that behavior unless json_schema_transformer is set explicitly
-                return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+                # As AzureProvider is always used with OpenAIChatModel (Azure OpenAI API),
+                # we need to use OpenAIJsonSchemaTransformer for most models.
+                # Exception: Models that require InlineDefsJsonSchemaTransformer (e.g. Meta/Llama models)
+                if profile and profile.json_schema_transformer == InlineDefsJsonSchemaTransformer:
+                    # Keep InlineDefsJsonSchemaTransformer for models that need it (Meta, Amazon, Qwen)
+                    return OpenAIModelProfile().update(profile)
+                else:
+                    # Use OpenAI transformer for all other models (Mistral, DeepSeek, Cohere, Grok, etc.)
+                    merged = OpenAIModelProfile().update(profile)
+                    merged.json_schema_transformer = OpenAIJsonSchemaTransformer
+                    return merged
 
         # OpenAI models are unprefixed
         return openai_model_profile(model_name)
