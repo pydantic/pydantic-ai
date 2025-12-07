@@ -1212,12 +1212,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
                         part=_map_bash_code_execution_tool_result_block(current_block, self.provider_name),
-=======
                 elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
                         part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
->>>>>>> upstream/main
                     )
                 elif isinstance(current_block, BetaMCPToolUseBlock):
                     call_part = _map_mcp_server_use_block(current_block, self.provider_name)
@@ -1335,7 +1333,6 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
         )
     elif item.name in ('web_fetch', 'text_editor_code_execution'):  # pragma: no cover
-=======
     elif item.name == 'web_fetch':
         return BuiltinToolCallPart(
             provider_name=provider_name,
@@ -1347,7 +1344,6 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
         # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
->>>>>>> upstream/main
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
