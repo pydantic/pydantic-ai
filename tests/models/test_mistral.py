@@ -70,10 +70,20 @@ pytestmark = [
 
 
 @dataclass
+class MockSdkConfiguration:
+    def get_server_details(self) -> tuple[str, ...]:
+        return ('https://api.mistral.ai/v1',)
+
+
+@dataclass
 class MockMistralAI:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]] | None = None
     index: int = 0
+
+    @cached_property
+    def sdk_configuration(self) -> MockSdkConfiguration:
+        return MockSdkConfiguration()
 
     @cached_property
     def chat(self) -> Any:

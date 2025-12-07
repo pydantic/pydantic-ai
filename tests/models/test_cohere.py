@@ -63,9 +63,19 @@ def test_init():
 
 
 @dataclass
+class MockClientWrapper:
+    def get_base_url(self) -> str:
+        return 'https://api.cohere.com'
+
+
+@dataclass
 class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
+    _client_wrapper: MockClientWrapper = None  # type: ignore
+
+    def __post_init__(self):
+        self._client_wrapper = MockClientWrapper()
 
     @classmethod
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:

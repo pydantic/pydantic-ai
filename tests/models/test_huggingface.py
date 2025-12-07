@@ -80,6 +80,7 @@ class MockHuggingFace:
     stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    model: str = 'hf-model'
 
     @cached_property
     def chat(self) -> Any:
