@@ -1324,7 +1324,6 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
         # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
->>>>>>> upstream/main
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
