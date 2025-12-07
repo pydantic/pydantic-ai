@@ -1,0 +1,234 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '789'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Give me complete details about Tokyo
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      output_format:
+        schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        type: json_schema
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: lookup_country
+        strict: true
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_founded_year
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '597'
+      content-type:
+      - application/json
+      retry-after:
+      - '59'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01KCWvriJsuFsmTnovktbWYC
+        input:
+          city: Tokyo
+        name: lookup_country
+        type: tool_use
+      - id: toolu_01EZRUqkThpxFVpSmH3pg2t2
+        input:
+          city: Tokyo
+        name: get_founded_year
+        type: tool_use
+      id: msg_016o1gkvM1DPYV7S77Z3UWoX
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 797
+        output_tokens: 91
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1275'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Give me complete details about Tokyo
+          type: text
+        role: user
+      - content:
+        - id: toolu_01KCWvriJsuFsmTnovktbWYC
+          input:
+            city: Tokyo
+          name: lookup_country
+          type: tool_use
+        - id: toolu_01EZRUqkThpxFVpSmH3pg2t2
+          input:
+            city: Tokyo
+          name: get_founded_year
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Japan
+          is_error: false
+          tool_use_id: toolu_01KCWvriJsuFsmTnovktbWYC
+          type: tool_result
+        - content: '1457'
+          is_error: false
+          tool_use_id: toolu_01EZRUqkThpxFVpSmH3pg2t2
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      output_format:
+        schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+            population:
+              type: integer
+          required:
+          - city
+          - country
+          - population
+          type: object
+        type: json_schema
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: lookup_country
+        strict: true
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_founded_year
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '478'
+      content-type:
+      - application/json
+      retry-after:
+      - '41'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: '{"city": "Tokyo", "country": "Japan", "population": 13960000}'
+        type: text
+      id: msg_01PBmg5uHcJXFZZBnbPFyCUC
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 957
+        output_tokens: 23
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
