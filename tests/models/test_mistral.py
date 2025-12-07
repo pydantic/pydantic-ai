@@ -29,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.output import NativeOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
@@ -2345,3 +2346,148 @@ By following these steps, you can ensure a safe crossing.\
             ),
         ]
     )
+
+
+#####################
+## Native Output
+#####################
+
+
+async def test_mistral_native_output(allow_model_requests: None):
+    """Test Mistral native JSON schema output with a simple model."""
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    completion = completion_message(
+        MistralAssistantMessage(
+            content='{"city": "Mexico City", "country": "Mexico"}',
+            role='assistant',
+        ),
+        usage=MistralUsageInfo(prompt_tokens=10, completion_tokens=15, total_tokens=25),
+    )
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+
+    assert result.output == CityLocation(city='Mexico City', country='Mexico')
+    assert result.usage().input_tokens == 10
+    assert result.usage().output_tokens == 15
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=15),
+                model_name='mistral-large-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_mistral_native_output_multiple_schemas(allow_model_requests: None):
+    """Test Mistral native JSON schema output with multiple possible schemas."""
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    class CountryLanguage(BaseModel):
+        country: str
+        language: str
+
+    completion = completion_message(
+        MistralAssistantMessage(
+            content='{"result": {"kind": "CountryLanguage", "data": {"country": "Mexico", "language": "Spanish"}}}',
+            role='assistant',
+        ),
+        usage=MistralUsageInfo(prompt_tokens=12, completion_tokens=18, total_tokens=30),
+    )
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=NativeOutput([CityLocation, CountryLanguage]))
+
+    result = await agent.run('What is the primary language spoken in Mexico?')
+
+    assert result.output == CountryLanguage(country='Mexico', language='Spanish')
+    assert result.usage().input_tokens == 12
+    assert result.usage().output_tokens == 18
+
+
+async def test_mistral_native_output_streaming(allow_model_requests: None):
+    """Test Mistral native JSON schema output with streaming."""
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    stream_events = [
+        text_chunk('{"city": '),
+        text_chunk('"Paris", '),
+        text_chunk('"country": '),
+        text_chunk('"France"}', finish_reason='stop'),
+    ]
+    mock_client = MockMistralAI.create_stream_mock(stream_events)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        assert not result.is_complete
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+    assert result.is_complete
+    final_output = await result.get_output()
+    assert final_output == CityLocation(city='Paris', country='France')
+    # Verify that partial outputs were streamed
+    assert len(outputs) > 0
+    assert outputs[-1] == CityLocation(city='Paris', country='France')
+
+
+async def test_mistral_native_output_with_nested_model(allow_model_requests: None):
+    """Test Mistral native JSON schema output with nested models."""
+
+    class Address(BaseModel):
+        street: str
+        city: str
+
+    class Person(BaseModel):
+        name: str
+        address: Address
+
+    completion = completion_message(
+        MistralAssistantMessage(
+            content='{"name": "John Doe", "address": {"street": "123 Main St", "city": "Paris"}}',
+            role='assistant',
+        ),
+        usage=MistralUsageInfo(prompt_tokens=15, completion_tokens=25, total_tokens=40),
+    )
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=NativeOutput(Person))
+
+    result = await agent.run('Create a person')
+
+    assert result.output == Person(name='John Doe', address=Address(street='123 Main St', city='Paris'))
+    assert result.usage().input_tokens == 15
+    assert result.usage().output_tokens == 25
