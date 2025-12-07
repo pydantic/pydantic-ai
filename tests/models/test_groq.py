@@ -97,7 +97,7 @@ class MockGroq:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
-    base_url: str = 'https://api.groq.com/openai/v1'
+    base_url: str = 'https://api.groq.com'
 
     @cached_property
     def chat(self) -> Any:

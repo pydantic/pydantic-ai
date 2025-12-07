@@ -72,7 +72,7 @@ pytestmark = [
 @dataclass
 class MockSdkConfiguration:
     def get_server_details(self) -> tuple[str, ...]:
-        return ('https://api.mistral.ai/v1',)
+        return ('https://api.mistral.ai',)
 
 
 @dataclass
