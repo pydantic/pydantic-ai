@@ -161,6 +161,14 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     """
 
+    skills: list[str] | None = None
+    """List of skills to enable for the code execution tool.
+
+    Supported by:
+
+    * Anthropic
+    """
+
     kind: str = 'code_execution'
     """The kind of tool."""
 
