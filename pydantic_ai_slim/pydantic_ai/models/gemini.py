@@ -148,8 +148,8 @@ class GeminiModel(Model):
 
     @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'  # pragma: no cover
-        return self._url  # pragma: no cover
+        assert self._url is not None, 'URL not initialized'
+        return self._url
 
     @property
     def model_name(self) -> GeminiModelName:
