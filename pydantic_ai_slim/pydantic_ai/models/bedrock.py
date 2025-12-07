@@ -733,12 +733,17 @@ class BedrockConverseModel(Model):
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                    format = downloaded_item['data_type']
+                    source: dict[str, Any]
+                    if item.url.startswith('s3://'):
+                        source = {'s3Location': {'uri': item.url}}
+                    else:
+                        downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
+                        source = {'bytes': downloaded_item['data']}
+
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
+                        image: ImageBlockTypeDef = {'format': format, 'source': cast(Any, source)}
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
@@ -746,7 +751,7 @@ class BedrockConverseModel(Model):
                         document: DocumentBlockTypeDef = {
                             'name': name,
                             'format': item.format,
-                            'source': {'bytes': downloaded_item['data']},
+                            'source': cast(Any, source),
                         }
                         content.append({'document': document})
 
@@ -763,7 +768,7 @@ class BedrockConverseModel(Model):
                             'wmv',
                             'three_gp',
                         ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
+                        video: VideoBlockTypeDef = {'format': format, 'source': cast(Any, source)}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
