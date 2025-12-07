@@ -21,6 +21,9 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 @pytest.mark.filterwarnings('ignore::UserWarning')
