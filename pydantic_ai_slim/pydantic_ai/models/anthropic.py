@@ -1331,7 +1331,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('web_fetch', 'text_editor_code_execution'):  # pragma: no cover
+
     elif item.name == 'web_fetch':
         return BuiltinToolCallPart(
             provider_name=provider_name,
