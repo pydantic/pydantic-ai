@@ -57,7 +57,12 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -5583,15 +5588,6 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
-    with pytest.raises(
-        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
-    ):
-        await agent.run(
-            'Hello again',
-            message_history=message_history,
-            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
-        )
-
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
@@ -5626,6 +5622,103 @@ async def test_run_with_deferred_tool_results_errors():
                 calls={'run_me_too': 'Success', 'defer_me': 'Failure'},
             ),
         )
+
+
+async def test_user_prompt_with_deferred_tool_results():
+    """Test that user_prompt can be provided alongside deferred_tool_results."""
+    from pydantic_ai.exceptions import ApprovalRequired
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # First call: model requests tool approval
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='update_file', tool_call_id='update_file_1', args={'path': '.env', 'content': ''}
+                    ),
+                ]
+            )
+        # Second call: model responds to tool results and user prompt
+        else:
+            # Verify we received both tool results and user prompt
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+            has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
+            has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
+            assert has_tool_return, 'Expected tool return part in request'
+            assert has_user_prompt, 'Expected user prompt part in request'
+
+            # Get user prompt content
+            user_prompt_content = next(p.content for p in last_request.parts if isinstance(p, UserPromptPart))
+            return ModelResponse(parts=[TextPart(f'Approved and {user_prompt_content}')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def update_file(ctx: RunContext, path: str, content: str) -> str:
+        if path == '.env' and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return f'File {path!r} updated'
+
+    # First run: get deferred tool requests
+    result = await agent.run('Update .env file')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    messages = result.all_messages()
+    # Snapshot the message history after first run to show the state before deferred tool results
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Update .env file', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='update_file', tool_call_id='update_file_1', args={'path': '.env', 'content': ''}
+                    )
+                ],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second run: provide approvals AND user prompt
+    results = DeferredToolResults(approvals={result.output.approvals[0].tool_call_id: True})
+    result2 = await agent.run('continue with the operation', message_history=messages, deferred_tool_results=results)
+
+    assert isinstance(result2.output, str)
+    assert 'continue with the operation' in result2.output
+
+    # Snapshot the new messages to show how tool results and user prompt are combined
+    new_messages = result2.new_messages()
+    assert new_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='update_file',
+                        content="File '.env' updated",
+                        tool_call_id='update_file_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content='continue with the operation', timestamp=IsDatetime()),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Approved and continue with the operation')],
+                usage=RequestUsage(input_tokens=61, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_tool_requires_approval_error():
@@ -6225,3 +6318,115 @@ async def test_message_history():
             ]
         )
         assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+
+
+@dataclass
+class UserContext:
+    location: str | None
+
+
+async def prepared_web_search(ctx: RunContext[UserContext]) -> WebSearchTool | None:
+    if not ctx.deps.location:
+        return None
+
+    return WebSearchTool(
+        search_context_size='medium',
+        user_location=WebSearchUserLocation(city=ctx.deps.location),
+    )
+
+
+async def test_dynamic_builtin_tool_configured():
+    model = TestModel()
+    agent = Agent(model, builtin_tools=[prepared_web_search], deps_type=UserContext)
+
+    user_context = UserContext(location='London')
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=user_context)
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    tool = tools[0]
+    assert isinstance(tool, WebSearchTool)
+    assert tool.user_location is not None
+    assert tool.user_location.get('city') == 'London'
+    assert tool.search_context_size == 'medium'
+
+
+async def test_dynamic_builtin_tool_omitted():
+    model = TestModel()
+    agent = Agent(model, builtin_tools=[prepared_web_search], deps_type=UserContext)
+
+    user_context = UserContext(location=None)
+
+    await agent.run('Hello', deps=user_context)
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 0
+
+
+async def test_mixed_static_and_dynamic_builtin_tools():
+    model = TestModel()
+
+    static_tool = CodeExecutionTool()
+    agent = Agent(model, builtin_tools=[static_tool, prepared_web_search], deps_type=UserContext)
+
+    # Case 1: Dynamic tool returns None
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location=None))
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    assert tools[0] == static_tool
+
+    # Case 2: Dynamic tool returns a tool
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location='Paris'))
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 2
+    assert tools[0] == static_tool
+    dynamic_tool = tools[1]
+    assert isinstance(dynamic_tool, WebSearchTool)
+    assert dynamic_tool.user_location is not None
+    assert dynamic_tool.user_location.get('city') == 'Paris'
+
+
+def sync_dynamic_tool(ctx: RunContext[UserContext]) -> WebSearchTool:
+    """Verify that synchronous functions work."""
+    return WebSearchTool(search_context_size='low')
+
+
+async def test_sync_dynamic_tool():
+    model = TestModel()
+    agent = Agent(model, builtin_tools=[sync_dynamic_tool], deps_type=UserContext)
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location='London'))
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    assert isinstance(tools[0], WebSearchTool)
+    assert tools[0].search_context_size == 'low'
+
+
+async def test_dynamic_tool_in_run_call():
+    """Verify dynamic tools can be passed to agent.run()."""
+    model = TestModel()
+    agent = Agent(model, deps_type=UserContext)
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location='Berlin'), builtin_tools=[prepared_web_search])
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    tool = tools[0]
+    assert isinstance(tool, WebSearchTool)
+    assert tool.user_location is not None
+    assert tool.user_location.get('city') == 'Berlin'
