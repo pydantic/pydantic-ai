@@ -8,12 +8,12 @@ from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Any, TypeVar, cast
+from typing import Annotated, Any, TypeVar, cast
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -45,7 +45,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -69,6 +69,7 @@ with try_import() as imports_successful:
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
+        BetaDirectCaller,
         BetaInputJSONDelta,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
@@ -78,6 +79,7 @@ with try_import() as imports_successful:
         BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
+        BetaMessageTokensCount,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -181,10 +183,15 @@ class MockAnthropic:
         self.index += 1
         return response
 
-    async def messages_count_tokens(self, *_args: Any, **_kwargs: Any) -> Any:
+    async def messages_count_tokens(self, *_args: Any, **kwargs: Any) -> BetaMessageTokensCount:
+        # check if we are configured to raise an exception
         if self.messages_ is not None:
             raise_if_exception(self.messages_ if not isinstance(self.messages_, Sequence) else self.messages_[0])
-        return None  # pragma: no cover
+
+        # record the kwargs used
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+
+        return BetaMessageTokensCount(input_tokens=10)
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
@@ -301,7 +308,10 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 
 
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
-    """Test that CachePoint correctly adds cache_control to content blocks."""
+    """Test that CachePoint correctly adds cache_control to content blocks.
+
+    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    """
     c = completion_message(
         [BetaTextBlock(text='response', type='text')],
         usage=BetaUsage(input_tokens=3, output_tokens=5),
@@ -310,10 +320,10 @@ async def test_cache_point_adds_cache_control(allow_model_requests: None):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    # Test with CachePoint after text content
+    # Test with CachePoint after text content (default ttl='5m')
     await agent.run(['Some context to cache', CachePoint(), 'Now the question'])
 
-    # Verify cache_control was added to the right content block
+    # Verify cache_control was added with default ttl='5m'
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     messages = completion_kwargs['messages']
     assert messages == snapshot(
@@ -348,6 +358,7 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
+    # Default ttl='5m' for non-Bedrock clients
     assert content == snapshot(
         [
             {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -395,6 +406,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
+    # Default ttl='5m' for non-Bedrock clients
     assert content == snapshot(
         [
             {
@@ -427,16 +439,127 @@ async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
 
 def test_cache_control_unsupported_param_type():
     """Test that cache control raises error for unsupported param types."""
+    from unittest.mock import MagicMock
 
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.models.anthropic import AnthropicModel
 
-    # Create a list with an unsupported param type (document)
-    # We'll use a mock document block param
+    # Create a mock model instance
+    mock_client = MagicMock()
+    mock_client.__class__.__name__ = 'AsyncAnthropic'
+    mock_client.base_url = 'https://api.anthropic.com'
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Create a list with an unsupported param type (thinking)
     params: list[dict[str, Any]] = [{'type': 'thinking', 'source': {'data': 'test'}}]
 
     with pytest.raises(UserError, match='Cache control not supported for param type: thinking'):
-        AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+        m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+
+
+def test_build_cache_control_bedrock_omits_ttl():
+    """Test that _build_cache_control automatically omits TTL for Bedrock clients."""
+    from unittest.mock import MagicMock
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # Create a mock client using spec=AsyncAnthropicBedrock for isinstance check
+    mock_bedrock_client = MagicMock(spec=AsyncAnthropicBedrock)
+    mock_bedrock_client.base_url = 'https://bedrock.amazonaws.com'
+
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
+
+    # Verify cache_control is built without TTL for Bedrock
+    cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control == {'type': 'ephemeral'}  # No 'ttl' field
+
+    cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control_1h == {'type': 'ephemeral'}  # TTL still omitted
+
+
+def test_build_cache_control_standard_client_includes_ttl():
+    """Test that _build_cache_control includes TTL for standard Anthropic clients."""
+    from unittest.mock import MagicMock
+
+    # Create a mock client that looks like standard AsyncAnthropic
+    mock_client = MagicMock()
+    mock_client.__class__.__name__ = 'AsyncAnthropic'
+    mock_client.base_url = 'https://api.anthropic.com'
+
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Verify cache_control includes TTL for standard clients
+    cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control == {'type': 'ephemeral', 'ttl': '5m'}
+
+    cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
+    assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+async def test_cache_point_with_5m_ttl(allow_model_requests: None):
+    """Test that CachePoint with explicit ttl='5m' includes the ttl field."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with explicit CachePoint(ttl='5m')
+    await agent.run(['Some context to cache', CachePoint(ttl='5m'), 'Now the question'])
+
+    # Verify cache_control was added with 5m ttl
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_cache_point_with_1h_ttl(allow_model_requests: None):
+    """Test that CachePoint with ttl='1h' correctly sets the TTL."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with CachePoint(ttl='1h')
+    await agent.run(['Some context to cache', CachePoint(ttl='1h'), 'Now the question'])
+
+    # Verify cache_control was added with 1h ttl
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '1h'},
+                    },
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
 
 
 async def test_anthropic_cache_tools(allow_model_requests: None):
@@ -466,6 +589,8 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
     # Verify cache_control was added to the last tool
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
+    has_strict_tools = any('strict' in tool for tool in tools)  # we only ever set strict: True
+    assert has_strict_tools is False  # ensure strict is not set for haiku-4-5
     assert tools == snapshot(
         [
             {
@@ -540,6 +665,8 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = completion_kwargs['tools']
     system = completion_kwargs['system']
+    has_strict_tools = any('strict' in tool for tool in tools)  # we only ever set strict: True
+    assert has_strict_tools is False  # ensure strict is not set for haiku-4-5
     assert tools == snapshot(
         [
             {
@@ -592,6 +719,303 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
     # System instructions should have 5m TTL
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
+async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
+    """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
+    c = completion_message(
+        [BetaTextBlock(text='Done', type='text')],
+        usage=BetaUsage(input_tokens=8, output_tokens=3),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def constrained_tool(value: Annotated[str, Field(min_length=2)]) -> str:  # pragma: no cover
+        return value
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'strict' not in completion_kwargs['tools'][0]
+
+
+async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_requests: None):
+    """Verify beta headers merge from custom headers, builtin tools, and native output."""
+    c = completion_message(
+        [BetaTextBlock(text='{"city": "Mexico City", "country": "Mexico"}', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2'}),
+    )
+
+    agent = Agent(
+        model,
+        builtin_tools=[MemoryTool()],
+        output_type=NativeOutput(CityLocation),
+    )
+
+    @agent.tool_plain
+    def memory(**command: Any) -> Any:  # pragma: no cover
+        return 'memory response'
+
+    await agent.run('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs['betas']
+
+    assert betas == snapshot(
+        [
+            'context-management-2025-06-27',
+            'custom-feature-1',
+            'custom-feature-2',
+            'structured-outputs-2025-11-13',
+        ]
+    )
+
+
+async def test_model_settings_reusable_with_beta_headers(allow_model_requests: None):
+    """Verify that model_settings with extra_headers can be reused across multiple runs.
+
+    This test ensures that the beta header extraction doesn't mutate the original model_settings,
+    allowing the same settings to be used for multiple agent runs.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model_settings = AnthropicModelSettings(extra_headers={'anthropic-beta': 'custom-feature-1, custom-feature-2'})
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=model_settings,
+    )
+
+    agent = Agent(model)
+
+    # First run
+    await agent.run('Hello')
+
+    # Verify the original model_settings is not mutated
+    assert model_settings.get('extra_headers') == {'anthropic-beta': 'custom-feature-1, custom-feature-2'}
+
+    # Second run should work with the same beta headers
+    await agent.run('Hello again')
+
+    # Verify again after second run
+    assert model_settings.get('extra_headers') == {'anthropic-beta': 'custom-feature-1, custom-feature-2'}
+
+    # Verify both runs had the correct betas
+    all_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert len(all_kwargs) == 2
+    for completion_kwargs in all_kwargs:
+        betas = completion_kwargs['betas']
+        assert 'custom-feature-1' in betas
+        assert 'custom-feature-2' in betas
+
+
+async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
+    """Exercise both strict=True and strict=False tool definitions against the live API."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
+    )
+
+    @agent.tool_plain(strict=True)
+    async def country_source() -> str:
+        return 'Japan'
+
+    capital_called = {'value': False}
+
+    @agent.tool_plain(strict=False)
+    async def capital_lookup(country: str) -> str:
+        capital_called['value'] = True
+        if country == 'Japan':
+            return 'Tokyo'
+        return f'Unknown capital for {country}'  # pragma: no cover
+
+    result = await agent.run('Use the registered tools and respond exactly as `Capital: <city>`.')
+    assert capital_called['value'] is True
+    assert result.output.startswith('Capital:')
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'capital_lookup'
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    )
+
+
+async def test_anthropic_cache_messages(allow_model_requests: None):
+    """Test that anthropic_cache_messages caches only the last message."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages=True,
+        ),
+    )
+
+    await agent.run('User message')
+
+    # Verify only last message has cache_control, not system
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    messages = completion_kwargs['messages']
+
+    # System should NOT have cache_control (should be a plain string)
+    assert system == snapshot('System instructions to cache.')
+
+    # Last message content should have cache_control
+    assert messages[-1]['content'][-1] == snapshot(
+        {'type': 'text', 'text': 'User message', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
+    )
+
+
+async def test_anthropic_cache_messages_with_custom_ttl(allow_model_requests: None):
+    """Test that anthropic_cache_messages supports custom TTL values."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages='1h',  # Custom 1h TTL
+        ),
+    )
+
+    await agent.run('User message')
+
+    # Verify use 1h TTL
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+
+    assert messages[-1]['content'][-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
+
+
+async def test_limit_cache_points_with_cache_messages(allow_model_requests: None):
+    """Test that cache points are limited when using cache_messages + CachePoint markers."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages=True,  # Uses 1 cache point
+        ),
+    )
+
+    # Add 4 CachePoint markers (total would be 5: 1 from cache_messages + 4 from markers)
+    # Only 3 CachePoint markers should be kept (newest ones)
+    await agent.run(
+        [
+            'Context 1',
+            CachePoint(),  # Oldest, should be removed
+            'Context 2',
+            CachePoint(),  # Should be kept
+            'Context 3',
+            CachePoint(),  # Should be kept
+            'Context 4',
+            CachePoint(),  # Should be kept
+            'Question',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+
+    # Count cache_control occurrences in messages
+    cache_count = 0
+    for msg in messages:
+        for block in msg['content']:
+            if 'cache_control' in block:
+                cache_count += 1
+
+    # anthropic_cache_messages uses 1 cache point (last message only)
+    # With 4 CachePoint markers, we'd have 5 total
+    # Limit is 4, so 1 oldest CachePoint should be removed
+    # Result: 3 cache points from CachePoint markers + 1 from cache_messages = 4 total
+    assert cache_count == 4
+
+
+async def test_limit_cache_points_all_settings(allow_model_requests: None):
+    """Test cache point limiting with all cache settings enabled."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(
+        m,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_instructions=True,  # 1 cache point
+            anthropic_cache_tool_definitions=True,  # 1 cache point
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    # Add 3 CachePoint markers (total would be 5: 2 from settings + 3 from markers)
+    # Only 2 CachePoint markers should be kept
+    await agent.run(
+        [
+            'Context 1',
+            CachePoint(),  # Oldest, should be removed
+            'Context 2',
+            CachePoint(),  # Should be kept
+            'Context 3',
+            CachePoint(),  # Should be kept
+            'Question',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+
+    # Count cache_control in messages (excluding system and tools)
+    cache_count = 0
+    for msg in messages:
+        for block in msg['content']:
+            if 'cache_control' in block:
+                cache_count += 1
+
+    # Should have exactly 2 cache points in messages
+    # (4 total - 1 system - 1 tool = 2 available for messages)
+    assert cache_count == 2
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -3686,6 +4110,864 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
     )
 
 
+@pytest.mark.vcr()
+async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+
+    assert result.output == snapshot(
+        'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+    )
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to fetch the content from https://ai.pydantic.dev and return only the first sentence on that page. I need to use the web_fetch tool to get the content from this URL, then identify the first sentence and return only that sentence.
+
+Let me fetch the page first.\
+""",
+                        signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_fetch',
+                        args={'url': 'https://ai.pydantic.dev'},
+                        tool_call_id=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_fetch',
+                        content={
+                            'content': {
+                                'citations': None,
+                                'source': {
+                                    'data': IsStr(),
+                                    'media_type': 'text/plain',
+                                    'type': 'text',
+                                },
+                                'title': 'Pydantic AI',
+                                'type': 'document',
+                            },
+                            'retrieved_at': IsStr(),
+                            'type': 'web_fetch_result',
+                            'url': 'https://ai.pydantic.dev',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=7262,
+                    output_tokens=171,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 7262,
+                        'output_tokens': 171,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second run to test message replay (multi-turn conversation)
+    result2 = await agent.run(
+        'Based on the page you just fetched, what framework does it mention?',
+        message_history=result.all_messages(),
+    )
+
+    assert 'Pydantic AI' in result2.output or 'pydantic' in result2.output.lower()
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to fetch the content from https://ai.pydantic.dev and return only the first sentence on that page. I need to use the web_fetch tool to get the content from this URL, then identify the first sentence and return only that sentence.
+
+Let me fetch the page first.\
+""",
+                        signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_fetch',
+                        args={'url': 'https://ai.pydantic.dev'},
+                        tool_call_id=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_fetch',
+                        content={
+                            'content': {
+                                'citations': None,
+                                'source': {
+                                    'data': IsStr(),
+                                    'media_type': 'text/plain',
+                                    'type': 'text',
+                                },
+                                'title': 'Pydantic AI',
+                                'type': 'document',
+                            },
+                            'retrieved_at': IsStr(),
+                            'type': 'web_fetch_result',
+                            'url': 'https://ai.pydantic.dev',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=7262,
+                    output_tokens=171,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 7262,
+                        'output_tokens': 171,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Based on the page you just fetched, what framework does it mention?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking about what framework is mentioned on the Pydantic AI page that I just fetched. Looking at the content, I can see several frameworks mentioned:
+
+1. Pydantic AI itself - described as "a Python agent framework"
+2. FastAPI - mentioned as having "revolutionized web development by offering an innovative and ergonomic design"
+3. Various other frameworks/libraries mentioned like LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor
+4. Pydantic Validation is mentioned as being used by many frameworks
+5. OpenTelemetry is mentioned in relation to observability
+
+But the most prominently featured framework that seems to be the main comparison point is FastAPI, as the page talks about bringing "that FastAPI feeling to GenAI app and agent development."\
+""",
+                        signature='ErIHCkYICRgCKkDZrwipmaxoEat4WffzPSjVzIuSQWM2sHE6FLC2wt5S2qiJN2MQh//EImuLE9I2ssZjTMxGXZV+esnf5ipnzbvnEgxfcXs2ax8vnLdroxMaDCpqvdPKpCP3Qi0txCIw55NdOjY30P3/yRL9RF8sPGioyitlzkhSpf+PuC3YXwz4N0hoy8zVY1MHecwc60vcKpkGxtZsfqmAuJwjeGRr/Ugxcxd69+0X/Y9pojMiklNHq9otW+ehDX0rR0EzfdN/2jNOs3bOrzfy9jmvYE5FU2c5e0JpMP3LH0LrFvZYkSh7RkbhYuHvrOqohlE3BhpflrszowmiozUk+aG4wSqx5Dtxo9W7jfeU4wduy6OyEFdIqdYdTMR8VVf9Qnd5bLX4rY09xcGQc4JcX2mFjdSR2WgEJM7p5lytlN5unH3selWBVPbCj7ogU8DbT9zhY3zkDW1dMt2vNbWNaY4gVrLwi42qBJvjC5eJTADckvXAt+MCT9AAe1kmH9NlsgBnRy13O4lhXv9SPNDfk2tU5Tdco4h/I/fXh+WuPe6/MKk+tJuoBQTGVQ5ryFmomsNiwhwtLbQ44fLVHhyqEKSEdo/107xvbzhjmY/MAzn1Pmc9rd+OhFsjUCvgqI8cWNc/E694eJqg3J2S+I6YRzG3d2tR7laUivf+J38c2XmwSyXfdRoJpyZ9TixubpPk04WSchdFlEkxPBGEWLDkWOVL1PG5ztY48di7EzM1tvAwiT1BOxl4WRZ78Ewc+C5BVHwT658rIrcKJXXI/zBMsoReQT9xsRhpozbb576wNXggJdZsd2ysQY0O6Pihz54emwigm+zPbO5n8HvlrGKf6dSsrwusUJ1BIY4wI6qjz7gweRryReDEvEzMT8Ul4mIrigRy4yL2w+03qAclz8oGwxinMvcu8vJzXg+uRm/WbOgyco4gTPQiN4NcXbzwhVtJlNWZYXCiiMb/i6IXuOzZmSjI7LqxLubD9RgOy/2890RLvVJQBBVnOowW8q+iE93CoVBr1l5D54opLS9fHYcM7ezV0Ul34qMu6K0uoBG0+aLVlZHKEecN2/VE4fh0zYEDaeqRZfNH2gnAGmokdmPtEHlp33pvJ0IFDAbxKq2CVFFdB+lCGlaLQuZ5v6Mhq4b6H8DjaGZqo/vcB/MK4pr/F1SRjLzSHyh7Ey4ogBYSOXWfaeXQiZZFoEfxIUG9PzofIA1CCFk+eZSG7bGY4wXe2Whhh5bs+cJ3duYI9SL+49WBABgB',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+Based on the page I fetched, the main framework it mentions and compares itself to is **FastAPI**. The page states that "FastAPI revolutionized web development by offering an innovative and ergonomic design" and that Pydantic AI was built with the aim "to bring that FastAPI feeling to GenAI app and agent development."
+
+The page also mentions several other frameworks and libraries including:
+- LangChain
+- LlamaIndex  \n\
+- AutoGPT
+- Transformers
+- CrewAI
+- Instructor
+
+It notes that "virtually every Python agent framework and LLM library" uses Pydantic Validation, which is the foundation that Pydantic AI builds upon.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=6346,
+                    output_tokens=354,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 6346,
+                        'output_tokens': 354,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_web_fetch_tool_stream(
+    allow_model_requests: None, anthropic_api_key: str
+):  # pragma: lax no cover
+    from pydantic_ai.messages import PartDeltaEvent, PartStartEvent
+
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+
+    # Iterate through the stream to ensure streaming code paths are covered
+    event_parts: list[Any] = []
+    async with agent.iter(  # pragma: lax no cover
+        user_prompt='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    ) as agent_run:
+        async for node in agent_run:  # pragma: lax no cover
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):  # pragma: lax no cover
+                async with node.stream(agent_run.ctx) as request_stream:  # pragma: lax no cover
+                    async for event in request_stream:  # pragma: lax no cover
+                        if (  # pragma: lax no cover
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                        ) or isinstance(event, PartDeltaEvent):
+                            event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(
+        'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+    )
+
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user wants me to fetch the content from the URL https://ai.pydantic.dev and provide only the first sentence from that page. I need to use the web_fetch tool to get the content from this URL.',
+                        signature='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_fetch',
+                        args='{"url": "https://ai.pydantic.dev"}',
+                        tool_call_id=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_fetch',
+                        content={
+                            'content': {
+                                'citations': None,
+                                'source': {
+                                    'data': IsStr(),
+                                    'media_type': 'text/plain',
+                                    'type': 'text',
+                                },
+                                'title': 'Pydantic AI',
+                                'type': 'document',
+                            },
+                            'retrieved_at': IsStr(),
+                            'type': 'web_fetch_result',
+                            'url': 'https://ai.pydantic.dev',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=7244,
+                    output_tokens=153,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 7244,
+                        'output_tokens': 153,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' from the URL https', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' get the content from', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"url": "', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='https://ai', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='.p', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='antic.dev"}', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_fetch',
+                    content={
+                        'content': {
+                            'citations': None,
+                            'source': {
+                                'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                'media_type': 'text/plain',
+                                'type': 'text',
+                            },
+                            'title': 'Pydantic AI',
+                            'type': 'document',
+                        },
+                        'retrieved_at': IsStr(),
+                        'type': 'web_fetch_result',
+                        'url': 'https://ai.pydantic.dev',
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ydantic AI is a')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Python')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agent')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' designe')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d to help')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' you quickly')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' confi')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='dently,')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and pain')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='lessly build production')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' grade')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' applications')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' an')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d workflows')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gener')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ative AI.')),
+        ]
+    )
+
+
+async def test_anthropic_web_fetch_tool_message_replay():
+    """Test that BuiltinToolCallPart and BuiltinToolReturnPart for WebFetchTool are correctly serialized."""
+    from typing import cast
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create message history with BuiltinToolCallPart and BuiltinToolReturnPart
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Test')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name=WebFetchTool.kind,
+                    args={'url': 'https://example.com'},
+                    tool_call_id='test_id_1',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name=WebFetchTool.kind,
+                    content={
+                        'content': {'type': 'document'},
+                        'type': 'web_fetch_result',
+                        'url': 'https://example.com',
+                        'retrieved_at': '2025-01-01T00:00:00Z',
+                    },
+                    tool_call_id='test_id_1',
+                ),
+            ],
+            model_name='claude-sonnet-4-0',
+        ),
+    ]
+
+    # Call _map_message to trigger serialization
+    model_settings = {}
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[WebFetchTool()],
+        output_tools=[],
+    )
+
+    system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, model_settings)  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+    # Verify the messages were serialized correctly
+    assert system_prompt is None or isinstance(system_prompt, (list | str))
+    assert len(anthropic_messages) == 2
+    assert anthropic_messages[1]['role'] == 'assistant'
+
+    # Check that server_tool_use block is present
+    content = anthropic_messages[1]['content']
+    assert any(
+        isinstance(item, dict) and item.get('type') == 'server_tool_use' and item.get('name') == 'web_fetch'
+        for item in content
+    )
+
+    # Check that web_fetch_tool_result block is present and contains URL and retrieved_at
+    web_fetch_result = next(
+        item for item in content if isinstance(item, dict) and item.get('type') == 'web_fetch_tool_result'
+    )
+    assert 'content' in web_fetch_result
+    result_content = web_fetch_result['content']
+    assert isinstance(result_content, dict)  # Type narrowing for mypy
+    assert result_content['type'] == 'web_fetch_result'  # type: ignore[typeddict-item]
+    assert result_content['url'] == 'https://example.com'  # type: ignore[typeddict-item]
+    # retrieved_at is optional - cast to avoid complex union type issues
+    assert cast(dict, result_content).get('retrieved_at') == '2025-01-01T00:00:00Z'  # pyright: ignore[reportUnknownMemberType,reportMissingTypeArgument]
+    assert 'content' in result_content  # The actual document content
+
+
+async def test_anthropic_web_fetch_tool_with_parameters():
+    """Test that WebFetchTool parameters are correctly passed to Anthropic API."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create WebFetchTool with all parameters
+    web_fetch_tool = WebFetchTool(
+        max_uses=5,
+        allowed_domains=['example.com', 'ai.pydantic.dev'],
+        enable_citations=True,
+        max_content_tokens=50000,
+    )
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[web_fetch_tool],
+        output_tools=[],
+    )
+
+    # Get tools from model
+    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Find the web_fetch tool
+    web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
+    assert web_fetch_tool_param is not None
+
+    # Verify all parameters are passed correctly
+    assert web_fetch_tool_param.get('type') == 'web_fetch_20250910'
+    assert web_fetch_tool_param.get('max_uses') == 5
+    assert web_fetch_tool_param.get('allowed_domains') == ['example.com', 'ai.pydantic.dev']
+    assert web_fetch_tool_param.get('blocked_domains') is None
+    assert web_fetch_tool_param.get('citations') == {'enabled': True}
+    assert web_fetch_tool_param.get('max_content_tokens') == 50000
+
+
+async def test_anthropic_web_fetch_tool_domain_filtering():
+    """Test that blocked_domains work and are mutually exclusive with allowed_domains."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Test with blocked_domains
+    web_fetch_tool = WebFetchTool(blocked_domains=['private.example.com', 'internal.example.com'])
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[web_fetch_tool],
+        output_tools=[],
+    )
+
+    # Get tools from model
+    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Find the web_fetch tool
+    web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
+    assert web_fetch_tool_param is not None
+
+    # Verify blocked_domains is passed correctly
+    assert web_fetch_tool_param.get('blocked_domains') == ['private.example.com', 'internal.example.com']
+    assert web_fetch_tool_param.get('allowed_domains') is None
+
+
+@pytest.mark.vcr()
 async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
@@ -3784,8 +5066,10 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
         ]
     )
 
-    result = await agent.run('How about the pydantic repo in the same org?', message_history=messages)
-    messages = result.new_messages()
+    result = await agent.run(
+        'How about the pydantic repo in the same org?', message_history=messages
+    )  # pragma: lax no cover
+    messages = result.new_messages()  # pragma: lax no cover
     assert messages == snapshot(
         [
             ModelRequest(
@@ -4142,7 +5426,7 @@ Agents support various execution methods:
 The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace.  Each model integration follows a consistent settings pattern with provider-specific prefixes (e.g., `google_*`, `anthropic_*`). \n\
 
 Examples of supported models and their capabilities include:
-*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `UrlContextTool`, `CodeExecutionTool`, and native JSON schema output. \n\
+*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `WebFetchTool`, `CodeExecutionTool`, and native JSON schema output. \n\
 *   `AnthropicModel`: Uses Anthropic's beta API for advanced features like "Thinking Blocks" and built-in tools. \n\
 *   `GroqModel`: Offers high-speed inference and specialized reasoning support with configurable reasoning formats. \n\
 *   `MistralModel`: Supports customizable JSON schema prompting and thinking support. \n\
@@ -4159,7 +5443,7 @@ Function tools enable models to perform actions and retrieve additional informat
 
 Tools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\
 
-Built-in tools like `UrlContextTool` allow agents to pull web content into their context. \n\
+Built-in tools like `WebFetchTool` allow agents to pull web content into their context. \n\
 
 ### 5. Output Handling
 The framework supports various output types:
@@ -4948,21 +6232,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
-    assert result.output == snapshot("""\
-Based on the search results, today is Thursday, August 14, 2025. Here are some additional details about the date:
-
-It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year.
-
-Some interesting observances for today include:
-It's being celebrated as:
-- Color Book Day
-- National Creamsicle Day
-- National Financial Awareness Day
-- National Navajo Code Talkers Day
-- National Tattoo Removal Day
-- National Wiffle Ball Day
-- Social Security Day\
-""")
+    assert result.output == snapshot('Today is November 19, 2025.')
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
@@ -4973,16 +6243,16 @@ It's being celebrated as:
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Tomorrow will be **Friday, August 15, 2025**.',
-                        id='msg_689dc4acfa488196a6b1ec0ebd3bd9520afe80ec3d42722e',
+                        content='Tomorrow is November 20, 2025.',
+                        id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
                     )
                 ],
-                usage=RequestUsage(input_tokens=458, output_tokens=17, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5252,6 +6522,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
     )
 
 
+@pytest.mark.vcr()
 async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -5393,19 +6664,6 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
     )
 
 
-async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-
-    class CityLocation(BaseModel):
-        city: str
-        country: str
-
-    agent = Agent(m, output_type=NativeOutput(CityLocation))
-
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
-        await agent.run('What is the largest city in the user country?')
-
-
 async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel(
         'claude-sonnet-4-0',
@@ -5456,26 +6714,34 @@ Mexico City serves as the country's capital and is the political, economic, and 
 async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Test passing web search tool history back to Anthropic."""
     # Create the first mock response with server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me search for the current date.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_123',
+            name='web_search',
+            input={'query': 'current date today'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaWebSearchToolResultBlock(
+            tool_use_id='server_tool_123',
+            type='web_search_tool_result',
+            content=[
+                BetaWebSearchResultBlock(
+                    title='Current Date and Time',
+                    url='https://example.com/date',
+                    type='web_search_result',
+                    encrypted_content='dummy_encrypted_content',
+                )
+            ],
+        ),
+    )
+    content.append(BetaTextBlock(text='Today is January 2, 2025.', type='text'))
     first_response = completion_message(
-        [
-            BetaTextBlock(text='Let me search for the current date.', type='text'),
-            BetaServerToolUseBlock(
-                id='server_tool_123', name='web_search', input={'query': 'current date today'}, type='server_tool_use'
-            ),
-            BetaWebSearchToolResultBlock(
-                tool_use_id='server_tool_123',
-                type='web_search_tool_result',
-                content=[
-                    BetaWebSearchResultBlock(
-                        title='Current Date and Time',
-                        url='https://example.com/date',
-                        type='web_search_result',
-                        encrypted_content='dummy_encrypted_content',
-                    )
-                ],
-            ),
-            BetaTextBlock(text='Today is January 2, 2025.', type='text'),
-        ],
+        content,
         BetaUsage(input_tokens=10, output_tokens=20),
     )
 
@@ -5509,25 +6775,33 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Test passing code execution tool history back to Anthropic."""
     # Create the first mock response with server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me calculate 2 + 2.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_456',
+            name='code_execution',
+            input={'code': 'print(2 + 2)'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_456',
+            type='code_execution_tool_result',
+            content=BetaCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='4\n',
+                type='code_execution_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The result is 4.', type='text'))
     first_response = completion_message(
-        [
-            BetaTextBlock(text='Let me calculate 2 + 2.', type='text'),
-            BetaServerToolUseBlock(
-                id='server_tool_456', name='code_execution', input={'code': 'print(2 + 2)'}, type='server_tool_use'
-            ),
-            BetaCodeExecutionToolResultBlock(
-                tool_use_id='server_tool_456',
-                type='code_execution_tool_result',
-                content=BetaCodeExecutionResultBlock(
-                    content=[],
-                    return_code=0,
-                    stderr='',
-                    stdout='4\n',
-                    type='code_execution_result',
-                ),
-            ),
-            BetaTextBlock(text='The result is 4.', type='text'),
-        ],
+        content,
         BetaUsage(input_tokens=10, output_tokens=20),
     )
 
@@ -6407,8 +7681,10 @@ Based on yesterday's date (September 16, 2025), Asian markets rose higher as Fed
         "Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat."
     )
 
-    async with agent.run_stream('Briefly mention 1 event that happened the day after tomorrow in history?') as result:
-        chunks = [c async for c in result.stream_text(debounce_by=None, delta=True)]
+    async with agent.run_stream(
+        'Briefly mention 1 event that happened the day after tomorrow in history?'
+    ) as result:  # pragma: lax no cover
+        chunks = [c async for c in result.stream_text(debounce_by=None, delta=True)]  # pragma: lax no cover
         assert chunks == snapshot(
             [
                 'Let',
@@ -6523,6 +7799,37 @@ This sentence is often used for testing typewriters, fonts, and keyboards becaus
     )
 
 
+async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
+    """Test that count_tokens is called on the mock client."""
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    assert result.output == 'hello world'
+    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert 'model' in count_tokens_kwargs
+    assert 'messages' in count_tokens_kwargs
+
+
+async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: None):
+    """Test count_tokens when messages_ is None (no exception configured)."""
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    result = await m.count_tokens(
+        [ModelRequest.user_text_prompt('hello')],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == 10
+
+
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
     """Test that errors convert to ModelHTTPError."""
@@ -6552,3 +7859,45 @@ async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
 
     with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+
+@pytest.mark.vcr()
+async def test_anthropic_cache_messages_real_api(allow_model_requests: None, anthropic_api_key: str):
+    """Test that anthropic_cache_messages setting adds cache_control and produces cache usage metrics.
+
+    This test uses a cassette to verify the cache behavior without making real API calls in CI.
+    When run with real API credentials, it demonstrates that:
+    1. The first call with a long context creates a cache (cache_write_tokens > 0)
+    2. Follow-up messages in the same conversation can read from that cache (cache_read_tokens > 0)
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='You are a helpful assistant.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_messages=True,
+        ),
+    )
+
+    # First call with a longer message - this will cache the message content
+    result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
+    usage1 = result1.usage()
+
+    # With anthropic_cache_messages, the first call should write cache for the last message
+    # (cache_write_tokens > 0 indicates that caching occurred)
+    assert usage1.requests == 1
+    assert usage1.cache_write_tokens > 0
+    assert usage1.output_tokens > 0
+
+    # Continue the conversation - this message appends to history
+    # The previous cached message should still be in the request
+    result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
+    usage2 = result2.usage()
+
+    # The second call should potentially read from cache if the previous message is still cached
+    # (cache_read_tokens > 0 when cache hit occurs)
+    # (cache_write_tokens > 0 as new message is added to cache)
+    assert usage2.requests == 1
+    assert usage2.cache_read_tokens > 0
+    assert usage2.cache_write_tokens > 0
+    assert usage2.output_tokens > 0

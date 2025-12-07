@@ -9,7 +9,7 @@ Pydantic AI supports the following built-in tools:
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
-- **[`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool]**: Enables agents to pull URL contents into their context
+- **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 
@@ -19,6 +19,47 @@ These tools are passed to the agent via the `builtin_tools` parameter and are ex
     Not all model providers support built-in tools. If you use a built-in tool with an unsupported provider, Pydantic AI will raise a [`UserError`][pydantic_ai.exceptions.UserError] when you try to run the agent.
 
     If a provider supports a built-in tool that is not currently supported by Pydantic AI, please file an issue.
+
+## Dynamic Configuration
+
+Sometimes you need to configure a built-in tool dynamically based on the [run context][pydantic_ai.tools.RunContext] (e.g., user dependencies), or conditionally omit it. You can achieve this by passing a function to `builtin_tools` that takes [`RunContext`][pydantic_ai.tools.RunContext] as an argument and returns an [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] or `None`.
+
+This is particularly useful for tools like [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] where you might want to set the user's location based on the current request, or disable the tool if the user provides no location.
+
+```python {title="dynamic_builtin_tool.py"}
+from pydantic_ai import Agent, RunContext, WebSearchTool
+
+
+async def prepared_web_search(ctx: RunContext[dict]) -> WebSearchTool | None:
+    if not ctx.deps.get('location'):
+        return None
+
+    return WebSearchTool(
+        user_location={'city': ctx.deps['location']},
+    )
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[prepared_web_search],
+    deps_type=dict,
+)
+
+# Run with location
+result = agent.run_sync(
+    'What is the weather like?',
+    deps={'location': 'London'},
+)
+print(result.output)
+#> It's currently raining in London.
+
+# Run without location (tool will be omitted)
+result = agent.run_sync(
+    'What is the capital of France?',
+    deps={'location': None},
+)
+print(result.output)
+#> The capital of France is Paris.
+```
 
 ## Web Search Tool
 
@@ -202,7 +243,7 @@ The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enabl
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Only supported by models newer than `gpt-5`. Metadata about the generated image, like the [`revised_prompt`](https://platform.openai.com/docs/guides/tools-image-generation#revised-prompt) sent to the underlying image model, is available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. |
-| Google | ✅ | No parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-2.5-flash-image`. These models do not support [structured output](output.md) or [function tools](tools.md). These models will always generate images, even if this built-in tool is not explicitly specified. |
+| Google | ✅ | No parameter support. Only supported by [image generation models](https://ai.google.dev/gemini-api/docs/image-generation) like `gemini-2.5-flash-image` and `gemini-3-pro-image-preview`. These models do not support [function tools](tools.md). These models will always have the option of generating images, even if this built-in tool is not explicitly specified. |
 | Anthropic | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
@@ -306,18 +347,18 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `quality` | ✅ | ❌ |
 | `size` | ✅ | ❌ |
 
-## URL Context Tool
+## Web Fetch Tool
 
-The [`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool] enables your agent to pull URL contents into its context,
+The [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] enables your agent to pull URL contents into its context,
 allowing it to pull up-to-date information from the web.
 
 ### Provider Support
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| Google | ✅ | No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is currently generated; please submit an issue if you need this. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Anthropic | ✅ | Full feature support. Uses Anthropic's [Web Fetch Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-fetch-tool) internally to retrieve URL contents. |
+| Google | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | OpenAI | ❌ | |
-| Anthropic | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
 | Mistral | ❌ | |
@@ -327,10 +368,10 @@ allowing it to pull up-to-date information from the web.
 
 ### Usage
 
-```py {title="url_context_basic.py"}
-from pydantic_ai import Agent, UrlContextTool
+```py {title="web_fetch_basic.py"}
+from pydantic_ai import Agent, WebFetchTool
 
-agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[UrlContextTool()])
+agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[WebFetchTool()])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
 print(result.output)
@@ -338,6 +379,49 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Configuration Options
+
+The `WebFetchTool` supports several configuration parameters:
+
+```py {title="web_fetch_configured.py"}
+from pydantic_ai import Agent, WebFetchTool
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-0',
+    builtin_tools=[
+        WebFetchTool(
+            allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
+            max_uses=10,
+            enable_citations=True,
+            max_content_tokens=50000,
+        )
+    ],
+)
+
+result = agent.run_sync(
+    'Compare the documentation at https://ai.pydantic.dev and https://docs.pydantic.dev'
+)
+print(result.output)
+"""
+Both sites provide comprehensive documentation for Pydantic projects. ai.pydantic.dev focuses on PydanticAI, a framework for building AI agents, while docs.pydantic.dev covers Pydantic, the data validation library. They share similar documentation styles and both emphasize type safety and developer experience.
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+#### Provider Support
+
+| Parameter | Anthropic | Google |
+|-----------|-----------|--------|
+| `max_uses` | ✅ | ❌ |
+| `allowed_domains` | ✅ | ❌ |
+| `blocked_domains` | ✅ | ❌ |
+| `enable_citations` | ✅ | ❌ |
+| `max_content_tokens` | ✅ | ❌ |
+
+!!! note "Anthropic Domain Filtering"
+    With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
 ## Memory Tool
 

@@ -127,7 +127,7 @@ async def get_product_name_link() -> ResourceLink:
     annotations=Annotations(audience=['user', 'assistant'], priority=0.5),
 )
 async def product_name_resource() -> str:
-    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text()
+    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text(encoding='utf-8')
 
 
 @mcp.resource('resource://greeting/{name}', mime_type='text/plain')
@@ -233,6 +233,19 @@ async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> s
         return f'User responded: {result.data.response}'
     else:
         return f'User {result.action}ed the elicitation'
+
+
+async def hidden_tool() -> str:
+    """A tool that is hidden by default."""
+    return 'I was hidden!'
+
+
+@mcp.tool()
+async def enable_hidden_tool(ctx: Context[ServerSession, None]) -> str:
+    """Enable the hidden tool, triggering a ToolListChangedNotification."""
+    mcp._tool_manager.add_tool(hidden_tool)  # pyright: ignore[reportPrivateUsage]
+    await ctx.session.send_tool_list_changed()
+    return 'Hidden tool enabled'
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]
