@@ -2516,7 +2516,7 @@ async def test_adapter_dump_load_roundtrip():
             for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
                 if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                     new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
+            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):  # pragma: no branch
                 new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
     # Load back to Pydantic AI format
@@ -2558,7 +2558,7 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
     sync_timestamps(original_messages, reloaded_messages)
 
     for msg in reloaded_messages:
-        if hasattr(msg, 'timestamp'):
+        if hasattr(msg, 'timestamp'):  # pragma: no branch
             delattr(msg, 'timestamp')
 
     assert len(reloaded_messages) == len(original_messages)

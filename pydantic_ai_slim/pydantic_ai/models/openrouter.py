@@ -570,11 +570,8 @@ class OpenRouterModel(OpenAIChatModel):
         assert isinstance(response, _OpenRouterChatCompletion)
 
         provider_details = super()._process_provider_details(response)
-        openrouter_details = _map_openrouter_provider_details(response)
-        if openrouter_details:
-            if provider_details is None:
-                provider_details = {}
-            provider_details.update(openrouter_details)
+        if openrouter_details := _map_openrouter_provider_details(response):
+            provider_details = {**(provider_details or {}), **openrouter_details}
         return provider_details or None
 
     @dataclass
