@@ -8,9 +8,12 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
+from ..builtin_tools import ImageGenerationTool
 from ..exceptions import ModelHTTPError
 from ..messages import (
     BinaryImage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FilePart,
     FinishReason,
     ModelResponsePart,
@@ -498,11 +501,14 @@ def _map_openrouter_provider_details(
     return provider_details
 
 
-def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
+def _openrouter_settings_to_openai_settings(
+    model_settings: OpenRouterModelSettings, model_request_parameters: ModelRequestParameters
+) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:
         model_settings: The 'OpenRouterModelSettings' object to transform.
+        model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -525,6 +531,13 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
         extra_body['modalities'] = modalities
     if image_config := model_settings.pop('openrouter_image_config', None):
         extra_body['image_config'] = image_config
+
+    for builtin_tool in model_request_parameters.builtin_tools:
+        if isinstance(builtin_tool, ImageGenerationTool):
+            extra_body['modalities'] = ['text', 'image']
+
+    if isinstance(model_request_parameters.output_object, BinaryImage):
+        extra_body['modalities'] = ['text', 'image']
 
     model_settings['extra_body'] = extra_body
 
@@ -559,8 +572,15 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
+        new_settings = _openrouter_settings_to_openai_settings(
+            cast(OpenRouterModelSettings, merged_settings or {}), model_request_parameters
+        )
         return new_settings, customized_parameters
+
+    @override
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters):
+        """This method is nullified because OpenRouter handles web search through a different parameter."""
+        return None
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
@@ -623,6 +643,12 @@ class OpenRouterModel(OpenAIChatModel):
                 self.texts.append('\n'.join([start_tag, content, end_tag]))
             else:
                 pass
+
+        def _map_response_builtin_part(self, item: BuiltinToolCallPart | BuiltinToolReturnPart) -> None:
+            if isinstance(item, ImageGenerationTool):
+                pass
+
+            pass
 
     @property
     @override
