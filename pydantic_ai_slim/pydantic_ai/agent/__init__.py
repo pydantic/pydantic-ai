@@ -984,16 +984,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         json_schemas: list[JsonSchema] = []
         for output_spec in flat_output_type:
             json_schema = TypeAdapter(output_spec).json_schema(mode='serialization')
-
-            if output_spec == _messages.BinaryImage:
-                properties = json_schema.get('properties', {})
-                kept_properties = {}
-                for key, value in properties.items():
-                    if key in ['data', 'media_type']:
-                        kept_properties[key] = value
-                json_schema['properties'] = kept_properties
-                json_schema.pop('required', None)
-
             if json_schema not in json_schemas:
                 json_schemas.append(json_schema)
 
