@@ -157,7 +157,7 @@ class OutlinesModel(Model):
     @classmethod
     def from_mlxlm(  # pragma: no cover
         cls,
-        mlx_model: nn.Module,  # pyright: ignore[reportUnknownParameterType]
+        mlx_model: nn.Module,  # pyright: ignore[reportUnknownParameterType, reportUnknownMemberType]
         mlx_tokenizer: transformers.tokenization_utils.PreTrainedTokenizer,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',

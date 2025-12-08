@@ -111,15 +111,15 @@ def mock_async_model() -> OutlinesModel:
             for _ in range(2):
                 yield 'test'
 
-        async def generate(  # pyright: ignore[reportIncompatibleMethodOverride]
+        async def generate(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
             self, model_input: Any, output_type: Any, **inference_kwargs: Any
         ): ...
 
-        async def generate_batch(  # pyright: ignore[reportIncompatibleMethodOverride]
+        async def generate_batch(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
             self, model_input: Any, output_type: Any, **inference_kwargs: Any
         ): ...
 
-        async def generate_stream(  # pyright: ignore[reportIncompatibleMethodOverride]
+        async def generate_stream(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
             self, model_input: Any, output_type: Any, **inference_kwargs: Any
         ): ...
 
