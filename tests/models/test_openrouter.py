@@ -430,3 +430,67 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
                 TextPart(content='2 + 2 = 4'),
             ]
         )
+
+
+async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
+
+    This verifies the fix for https://github.com/pydantic/pydantic-ai/issues/3617
+    where OpenRouter's translation layer didn't support modern JSON Schema features.
+    """
+    from enum import Enum
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+
+    class LevelType(str, Enum):
+        ground = 'ground'
+        basement = 'basement'
+        floor = 'floor'
+        attic = 'attic'
+
+    class SpaceType(str, Enum):
+        entryway = 'entryway'
+        living_room = 'living-room'
+        kitchen = 'kitchen'
+        bedroom = 'bedroom'
+        bathroom = 'bathroom'
+        garage = 'garage'
+
+    class InsertLevelArg(BaseModel):
+        level_name: str
+        level_type: LevelType
+
+    class SpaceArg(BaseModel):
+        space_name: str
+        space_type: SpaceType
+
+    class InsertedLevel(BaseModel):
+        """Result of inserting a level."""
+
+        level_name: str
+        level_type: LevelType
+        space_count: int
+
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent: Agent[None, InsertedLevel] = Agent(model, output_type=InsertedLevel)
+
+    @agent.tool_plain
+    def insert_level_with_spaces(level: InsertLevelArg | None, spaces: list[SpaceArg]) -> str:
+        """Insert a level with its spaces."""
+        return f'Inserted level {level} with {len(spaces)} spaces'
+
+    result = await agent.run("It's a house with a ground floor that has an entryway, a living room and a garage.")
+
+    tool_call_message = result.all_messages()[1]
+    assert tool_call_message.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='insert_level_with_spaces',
+                args='{"spaces":[{"space_type":"entryway","space_name":"entryway"},{"space_name":"living_room","space_type":"living-room"},{"space_name":"garage","space_type":"garage"}],"level":{"level_type":"ground","level_name":"ground_floor"}}',
+                tool_call_id='tool_insert_level_with_spaces_3ZiChYzj8xER8HixJe7W',
+            )
+        ]
+    )
+
+    assert result.output.level_type == LevelType.ground
+    assert result.output.space_count == 3
