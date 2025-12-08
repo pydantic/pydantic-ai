@@ -5429,6 +5429,7 @@ docs = [
     { name = "mkdocs-redirects" },
     { name = "mkdocstrings-python" },
     { name = "pydantic-ai", extra = ["a2a"] },
+    { name = "pydantic-docs" },
 ]
 docs-upload = [
     { name = "algoliasearch" },
@@ -5487,6 +5488,7 @@ docs = [
     { name = "mkdocs-redirects", specifier = ">=1.2.2" },
     { name = "mkdocstrings-python", specifier = ">=1.12.2" },
     { name = "pydantic-ai", extras = ["a2a"], editable = "." },
+    { name = "pydantic-docs", git = "https://github.com/pydantic/pydantic-docs" },
 ]
 docs-upload = [
     { name = "algoliasearch", specifier = ">=4.12.0" },
@@ -5794,6 +5796,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b8/e9/1f7efbe20d0b2b10f6718944b5d8ece9152390904f29a78e68d4e7961159/pydantic_core-2.33.2-pp311-pypy311_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:de4b83bb311557e439b9e186f733f6c645b9417c84e2eb8203f3f820a4b988bf", size = 2239013, upload-time = "2025-04-23T18:33:26.621Z" },
     { url = "https://files.pythonhosted.org/packages/3c/b2/5309c905a93811524a49b4e031e9851a6b00ff0fb668794472ea7746b448/pydantic_core-2.33.2-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:82f68293f055f51b51ea42fafc74b6aad03e70e191799430b90c13d643059ebb", size = 2238715, upload-time = "2025-04-23T18:33:28.656Z" },
     { url = "https://files.pythonhosted.org/packages/32/56/8a7ca5d2cd2cda1d245d34b1c9a942920a718082ae8e54e5f3e5a58b7add/pydantic_core-2.33.2-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:329467cecfb529c925cf2bbd4d60d2c509bc2fb52a20c1045bf09bb70971a9c1", size = 2066757, upload-time = "2025-04-23T18:33:30.645Z" },
+]
+
+[[package]]
+name = "pydantic-docs"
+version = "0.0.1"
+source = { git = "https://github.com/pydantic/pydantic-docs#142645b6ec056bbe2f39cc313aff781fba15e326" }
+dependencies = [
+    { name = "click" },
+    { name = "markdown" },
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "pymdown-extensions" },
+    { name = "ruamel-yaml" },
 ]
 
 [[package]]
