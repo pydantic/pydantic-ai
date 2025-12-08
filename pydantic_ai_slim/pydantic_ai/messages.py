@@ -643,7 +643,7 @@ class BinaryImage(BinaryContent):
         cls, core_schema: pydantic_core.core_schema.CoreSchema, handler: pydantic.GetJsonSchemaHandler
     ) -> pydantic.json_schema.JsonSchemaValue:
         json_schema = handler(core_schema)
-        if handler.mode == 'serialization':
+        if handler.mode == 'serialization':  # pragma: no branch
             json_schema = cls._remove_json_schema_property(json_schema, 'identifier')
             json_schema = cls._remove_json_schema_property(json_schema, 'vendor_metadata')
         return json_schema
@@ -652,9 +652,9 @@ class BinaryImage(BinaryContent):
     def _remove_json_schema_property(
         cls, json_schema: pydantic.json_schema.JsonSchemaValue, property_name: str
     ) -> pydantic.json_schema.JsonSchemaValue:
-        if 'properties' in json_schema:
+        if 'properties' in json_schema:  # pragma: no branch
             json_schema['properties'].pop(property_name, None)
-        if 'required' in json_schema:
+        if 'required' in json_schema:  # pragma: no branch
             json_schema['required'] = [x for x in json_schema['required'] if x != property_name]
         return json_schema
 
