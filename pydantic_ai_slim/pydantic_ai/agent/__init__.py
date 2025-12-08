@@ -148,7 +148,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
-    _max_unknown_tool_retries: int = dataclasses.field(repr=False)
     _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -320,7 +319,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
-        self._max_unknown_tool_retries = retries
 
         self._validation_context = validation_context
 
@@ -572,7 +570,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, max_unknown_tool_retries=self._max_unknown_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)

@@ -67,13 +67,6 @@ class ModelRetry(Exception):
         )
 
 
-class UnknownToolNameRetry(ModelRetry):
-    """Exception to raise when a tool name is not recognized."""
-
-    def __init__(self, name: str, msg: str):
-        super().__init__(f'Unknown tool name: {name!r}. {msg}')
-
-
 class CallDeferred(Exception):
     """Exception to raise when a tool call should be deferred.
 

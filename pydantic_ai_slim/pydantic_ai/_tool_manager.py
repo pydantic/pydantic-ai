@@ -14,7 +14,7 @@ from typing_extensions import assert_never
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UnknownToolNameRetry
+from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -35,8 +35,8 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
-    max_unknown_tool_retries: int = 1
-    """Maximum number of times to retry after an unknown tool is proposed"""
+    default_max_retries: int = 1
+    """Default number of times to retry a tool"""
 
     @classmethod
     @contextmanager
@@ -148,7 +148,7 @@ class ToolManager(Generic[AgentDepsT]):
                     msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
                 else:
                     msg = 'No tools available.'
-                raise UnknownToolNameRetry(name, msg)
+                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
             if tool.tool_def.kind == 'external':
                 raise RuntimeError('External tools cannot be called')
@@ -178,10 +178,7 @@ class ToolManager(Generic[AgentDepsT]):
 
             return result
         except (ValidationError, ModelRetry) as e:
-            if isinstance(e, UnknownToolNameRetry):
-                max_retries = self.max_unknown_tool_retries
-            else:
-                max_retries = tool.max_retries if tool is not None else 1
+            max_retries = tool.max_retries if tool is not None else self.default_max_retries
             current_retry = self.ctx.retries.get(name, 0)
 
             if current_retry == max_retries:
