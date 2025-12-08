@@ -428,7 +428,7 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools, image_config = self._get_tools(model_request_parameters)
-        if tools and not self.profile.supports_tools:
+        if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
         response_mime_type = None
