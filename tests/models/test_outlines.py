@@ -69,7 +69,7 @@ with try_import() as sglang_imports_successful:
     import openai
 
 with try_import() as mlxlm_imports_successful:
-    import mlx_lm
+    import mlx_lm  # pyright: ignore[reportMissingImports]
 
 
 pytestmark = [
@@ -171,7 +171,7 @@ def llamacpp_model() -> OutlinesModel:
 
 @pytest.fixture
 def mlxlm_model() -> OutlinesModel:  # pragma: no cover
-    outlines_model = outlines.models.mlxlm.from_mlxlm(*mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'))  # pyright: ignore[reportUnknownMemberType, reportArgumentType]
+    outlines_model = outlines.models.mlxlm.from_mlxlm(*mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'))  # pyright: ignore[reportUnknownMemberType, reportArgumentType, reportUnknownArgumentType]
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
@@ -220,7 +220,7 @@ outlines_parameters = [
     ),
     pytest.param(
         'from_mlxlm',
-        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # pyright: ignore[reportUnknownMemberType]
+        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # pyright: ignore[reportUnknownMemberType, reportUnknownLambdaType]
         marks=skip_if_mlxlm_imports_unsuccessful,
     ),
     pytest.param(
@@ -279,7 +279,7 @@ pydantic_ai_parameters = [
     ),
     pytest.param(
         'from_mlxlm',
-        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # pyright: ignore[reportUnknownMemberType]
+        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # pyright: ignore[reportUnknownMemberType, reportUnknownLambdaType]
         marks=skip_if_mlxlm_imports_unsuccessful,
     ),
     pytest.param(

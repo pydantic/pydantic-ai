@@ -52,7 +52,7 @@ try:
     from outlines.inputs import Chat, Image
     from outlines.models.base import AsyncModel as OutlinesAsyncBaseModel, Model as OutlinesBaseModel
     from outlines.models.llamacpp import LlamaCpp, from_llamacpp
-    from outlines.models.mlxlm import MLXLM, from_mlxlm
+    from outlines.models.mlxlm import MLXLM, from_mlxlm  # pyright: ignore[reportUnknownVariableType]
     from outlines.models.sglang import AsyncSGLang, SGLang, from_sglang
     from outlines.models.transformers import (
         Transformers,
@@ -72,7 +72,7 @@ except ImportError as _import_error:
 
 if TYPE_CHECKING:
     import llama_cpp
-    import mlx.nn as nn
+    import mlx.nn as nn  # pyright: ignore[reportMissingImports]
     import transformers
 
 
@@ -157,7 +157,7 @@ class OutlinesModel(Model):
     @classmethod
     def from_mlxlm(  # pragma: no cover
         cls,
-        mlx_model: nn.Module,
+        mlx_model: nn.Module,  # pyright: ignore[reportUnknownParameterType]
         mlx_tokenizer: transformers.tokenization_utils.PreTrainedTokenizer,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
@@ -174,7 +174,7 @@ class OutlinesModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider.
             settings: Default model settings for this model instance.
         """
-        outlines_model: OutlinesBaseModel = from_mlxlm(mlx_model, mlx_tokenizer)
+        outlines_model: OutlinesBaseModel = from_mlxlm(mlx_model, mlx_tokenizer)  # pyright: ignore[reportUnknownArgumentType]
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
