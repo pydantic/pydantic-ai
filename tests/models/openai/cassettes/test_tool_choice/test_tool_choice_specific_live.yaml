@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '338'
+      - '635'
       content-type:
       - application/json
       host:
@@ -16,21 +16,40 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content:
-        - text: What food is in the image you can get from the get_image tool?
-          type: text
+      - content: What is 2+2?
         role: user
-      model: gpt-4o
+      model: gpt-4o-mini
       stream: false
-      tool_choice: auto
+      tool_choice:
+        function:
+          name: get_weather
+        type: function
       tools:
       - function:
-          description: ''
-          name: get_image
+          description: Get the weather for a city.
+          name: get_weather
           parameters:
             additionalProperties: false
-            properties: {}
+            properties:
+              city:
+                type: string
+            required:
+            - city
             type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current time in a city.
+          name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
         type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
@@ -42,129 +61,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1059'
+      - '1080'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '356'
-      openai-project:
-      - proj_FYsIItHHgnSPdHBVMzhNBWGa
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        logprobs: null
-        message:
-          annotations: []
-          content: null
-          refusal: null
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{}'
-              name: get_image
-            id: call_Xn7ZD27IylZB66yw2n38IWXe
-            type: function
-      created: 1765216833
-      id: chatcmpl-CkZpBs2uAOr90Y3bazEGxLfYjrJgJ
-      model: gpt-4o-2024-08-06
-      object: chat.completion
-      service_tier: default
-      system_fingerprint: fp_e5bb698939
-      usage:
-        completion_tokens: 10
-        completion_tokens_details:
-          accepted_prediction_tokens: 0
-          audio_tokens: 0
-          reasoning_tokens: 0
-          rejected_prediction_tokens: 0
-        prompt_tokens: 46
-        prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 0
-        total_tokens: 56
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '792'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=vPgKiJqpcKFzgDkIX8ulUwInFUACX879aARRorhKjUY-1765216833-1.0.1.1-grWt61jAxHgVn8jEkPPM7gZgouPzhJNCnVRi2xs4JIzHBd5MezsJYuXsmCvsCxMZu0y8eeW7JLpOK75HeGhvUs78wDu4v.UDXpmKlYzVc0E;
-        _cfuvid=FbemPHGOS.s47WgNJknQvM0LCa3j23gJ88DjgJDcl6g-1765216833540-0.0.1.1-604800000
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content:
-        - text: What food is in the image you can get from the get_image tool?
-          type: text
-        role: user
-      - content: null
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{}'
-            name: get_image
-          id: call_Xn7ZD27IylZB66yw2n38IWXe
-          type: function
-      - content: See file bd38f5
-        role: tool
-        tool_call_id: call_Xn7ZD27IylZB66yw2n38IWXe
-      - content:
-        - text: 'This is file bd38f5:'
-          type: text
-        - image_url:
-            url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
-          type: image_url
-        role: user
-      model: gpt-4o
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_image
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '828'
-      content-type:
-      - application/json
-      openai-organization:
-      - user-grnwlxd1653lxdzp921aoihz
-      openai-processing-ms:
-      - '1342'
+      - '362'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -180,27 +83,161 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: The image shows a potato.
+          content: null
           refusal: null
           role: assistant
-      created: 1765216835
-      id: chatcmpl-CkZpD3JSLa7qZKvU5yYhrf7L3wOxA
-      model: gpt-4o-2024-08-06
+          tool_calls:
+          - function:
+              arguments: '{"city":"New York"}'
+              name: get_weather
+            id: call_x6dySyY6x3UHkxT8rCcpRJ3P
+            type: function
+      created: 1765230491
+      id: chatcmpl-CkdNTlUCHuORaFmmom39ISb9OcYdB
+      model: gpt-4o-mini-2024-07-18
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_83554c687e
+      system_fingerprint: fp_11f3029f6b
       usage:
-        completion_tokens: 7
+        completion_tokens: 6
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 507
+        prompt_tokens: 82
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 514
+        total_tokens: 88
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '934'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Q_TnYFttbCTZuXy_cZV9xLWw4ZkRAQ2P_zjtKrO_x4I-1765230492-1.0.1.1-riMaIV2zaHGQDgFtmNpwQ8V83wDbpOGmFlDW6i45HspM.ZkxjbJD9quf3xkpKAwOYUWzPx0W7JSXLpXqDG5vai4DElZN4Ez4AM.3.viZn2Q;
+        _cfuvid=mm5iI5bMUefqv4O3fueqDg4lM.q4w8TuWJp3yrf.bDE-1765230492024-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"New York"}'
+            name: get_weather
+          id: call_x6dySyY6x3UHkxT8rCcpRJ3P
+          type: function
+      - content: The weather in New York is sunny and 72°F.
+        role: tool
+        tool_call_id: call_x6dySyY6x3UHkxT8rCcpRJ3P
+      model: gpt-4o-mini
+      stream: false
+      tool_choice:
+        function:
+          name: get_weather
+        type: function
+      tools:
+      - function:
+          description: Get the weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current time in a city.
+          name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1085'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '546'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Los Angeles"}'
+              name: get_weather
+            id: call_gUr0BcwtIhg3R9e1y0ZPV2ft
+            type: function
+      created: 1765230492
+      id: chatcmpl-CkdNUdXFIB7BzPmbHDL5rzvxQEdnm
+      model: gpt-4o-mini-2024-07-18
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_b547601dbd
+      usage:
+        completion_tokens: 6
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 117
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 123
     status:
       code: 200
       message: OK

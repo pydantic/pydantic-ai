@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '337'
+      - '593'
       content-type:
       - application/json
       host:
@@ -16,21 +16,35 @@ interactions:
     method: POST
     parsed_body:
       input:
-      - content: What is the capital of PotatoLand?
+      - content: What is 2+2?
         role: user
-      model: gpt-4o
+      model: gpt-4o-mini
       stream: false
-      tool_choice: auto
+      tool_choice:
+        name: get_weather
+        type: function
       tools:
-      - description: null
-        name: get_capital
+      - description: Get the weather for a city.
+        name: get_weather
         parameters:
           additionalProperties: false
           properties:
-            country:
+            city:
               type: string
           required:
-          - country
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
           type: object
         strict: true
         type: function
@@ -42,13 +56,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1754'
+      - '2201'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2123'
+      - '2127'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -61,21 +75,21 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1765216837
+      created_at: 1765230497
       error: null
-      id: resp_0098e6898ef1de50006937124569a481a3bda8b1b858020932
+      id: resp_0756229e814099d200693747a1ccd481a29943512ebfa3a82f
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4o-2024-08-06
+      model: gpt-4o-mini-2024-07-18
       object: response
       output:
-      - arguments: '{"country":"PotatoLand"}'
-        call_id: call_kcWh9j9hyUL1tNm1GIKH0nZX
-        id: fc_0098e6898ef1de500069371246676881a38f9192ffdd2416bd
-        name: get_capital
+      - arguments: '{"city":"Paris"}'
+        call_id: call_N0tkjzP0cYAXTig7NTEGM0CI
+        id: fc_0756229e814099d200693747a2564c81a2b33d8e4e521fb3ca
+        name: get_weather
         status: completed
         type: function_call
       parallel_tool_calls: true
@@ -94,17 +108,31 @@ interactions:
         format:
           type: text
         verbosity: medium
-      tool_choice: auto
+      tool_choice:
+        name: get_weather
+        type: function
       tools:
-      - description: null
-        name: get_capital
+      - description: Get the weather for a city.
+        name: get_weather
         parameters:
           additionalProperties: false
           properties:
-            country:
+            city:
               type: string
           required:
-          - country
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
           type: object
         strict: true
         type: function
@@ -112,13 +140,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 40
+        input_tokens: 76
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 18
+        output_tokens: 6
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 58
+        total_tokens: 82
       user: null
     status:
       code: 200
@@ -132,39 +160,53 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '565'
+      - '842'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=rNFW2HXvBcwKYFTyo2r9Kn6xEgVWiRCwuofw_Y7MgnU-1765216839-1.0.1.1-EomCcZa_DuoXHdeLvTDDqvgfVjx6EO2ePh26V1z54f6IZVzCT6ZLLWEYSSQKFrCT9k2D5FAoUvaWTDWelXEPtKYJhYzXIg1KrGaW_EL0F14;
-        _cfuvid=xaAIsidmbLe4Yt5wP4pfjvOB.UZq7mRODDOhHtWv1u4-1765216839552-0.0.1.1-604800000
+      - __cf_bm=SDkYdUiKtRux714oXy3iX2z_ix_GcyEI9X0n91sVCUQ-1765230499-1.0.1.1-ZC4fTL4DoezNEK4RQRn8R9NrqS4hH5XNv9AxbltGnJWPag9vgec3ox8SUbVoD72G44EaEOgfGM0WPTRRr3acBR9ZA6dEJDzy71oJip4MS9U;
+        _cfuvid=cjma8PLuHRPvk8jOApwJQO9ECoHNeiFhbp3lbvE2UyM-1765230499921-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - content: What is the capital of PotatoLand?
+      - content: What is 2+2?
         role: user
-      - arguments: '{"country":"PotatoLand"}'
-        call_id: call_kcWh9j9hyUL1tNm1GIKH0nZX
-        name: get_capital
+      - arguments: '{"city":"Paris"}'
+        call_id: call_N0tkjzP0cYAXTig7NTEGM0CI
+        name: get_weather
         type: function_call
-      - call_id: call_kcWh9j9hyUL1tNm1GIKH0nZX
-        output: Potato City
+      - call_id: call_N0tkjzP0cYAXTig7NTEGM0CI
+        output: The weather in Paris is sunny and 72°F.
         type: function_call_output
-      model: gpt-4o
+      model: gpt-4o-mini
       stream: false
-      tool_choice: auto
+      tool_choice:
+        name: get_weather
+        type: function
       tools:
-      - description: null
-        name: get_capital
+      - description: Get the weather for a city.
+        name: get_weather
         parameters:
           additionalProperties: false
           properties:
-            country:
+            city:
               type: string
           required:
-          - country
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
           type: object
         strict: true
         type: function
@@ -176,13 +218,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1844'
+      - '2206'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2160'
+      - '2201'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -195,26 +237,23 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1765216840
+      created_at: 1765230500
       error: null
-      id: resp_077bb69e040244a30069371248858c8193bad172300ddd4528
+      id: resp_0d5a253d1a234c5300693747a479008196b8bafdbf04859137
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-4o-2024-08-06
+      model: gpt-4o-mini-2024-07-18
       object: response
       output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: The capital of PotatoLand is Potato City.
-          type: output_text
-        id: msg_077bb69e040244a30069371249a1ec819385b08d57120776b8
-        role: assistant
+      - arguments: '{"city":"New York"}'
+        call_id: call_aO7tp7SJfvstCftoWdLur8m5
+        id: fc_0d5a253d1a234c5300693747a51408819685b4fbd0d57b64ea
+        name: get_weather
         status: completed
-        type: message
+        type: function_call
       parallel_tool_calls: true
       previous_response_id: null
       prompt_cache_key: null
@@ -231,17 +270,31 @@ interactions:
         format:
           type: text
         verbosity: medium
-      tool_choice: auto
+      tool_choice:
+        name: get_weather
+        type: function
       tools:
-      - description: null
-        name: get_capital
+      - description: Get the weather for a city.
+        name: get_weather
         parameters:
           additionalProperties: false
           properties:
-            country:
+            city:
               type: string
           required:
-          - country
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
           type: object
         strict: true
         type: function
@@ -249,13 +302,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 67
+        input_tokens: 107
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 11
+        output_tokens: 7
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 78
+        total_tokens: 114
       user: null
     status:
       code: 200

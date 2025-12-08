@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '338'
+      - '703'
       content-type:
       - application/json
       host:
@@ -16,21 +16,37 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content:
-        - text: What food is in the image you can get from the get_image tool?
-          type: text
+      - content: What is the temperature in Paris? Use the weather tool and return the temperature as a number.
         role: user
-      model: gpt-4o
+      model: gpt-4o-mini
       stream: false
-      tool_choice: auto
+      tool_choice: required
       tools:
       - function:
-          description: ''
-          name: get_image
+          description: Get the weather for a city.
+          name: get_weather
           parameters:
             additionalProperties: false
-            properties: {}
+            properties:
+              city:
+                type: string
+            required:
+            - city
             type: object
+          strict: true
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              response:
+                type: integer
+            required:
+            - response
+            type: object
+          strict: true
         type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
@@ -42,13 +58,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1059'
+      - '1084'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '356'
+      - '533'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -69,28 +85,28 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{}'
-              name: get_image
-            id: call_Xn7ZD27IylZB66yw2n38IWXe
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_6cnx27ovpBoEsZdVp9TrQpuJ
             type: function
-      created: 1765216833
-      id: chatcmpl-CkZpBs2uAOr90Y3bazEGxLfYjrJgJ
-      model: gpt-4o-2024-08-06
+      created: 1765228458
+      id: chatcmpl-CkcqgC5SP14wk7UbdFm8dDvbrv3Yh
+      model: gpt-4o-mini-2024-07-18
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_e5bb698939
+      system_fingerprint: fp_aa07c96156
       usage:
-        completion_tokens: 10
+        completion_tokens: 14
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 46
+        prompt_tokens: 85
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 56
+        total_tokens: 99
     status:
       code: 200
       message: OK
@@ -103,50 +119,59 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '792'
+      - '996'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=vPgKiJqpcKFzgDkIX8ulUwInFUACX879aARRorhKjUY-1765216833-1.0.1.1-grWt61jAxHgVn8jEkPPM7gZgouPzhJNCnVRi2xs4JIzHBd5MezsJYuXsmCvsCxMZu0y8eeW7JLpOK75HeGhvUs78wDu4v.UDXpmKlYzVc0E;
-        _cfuvid=FbemPHGOS.s47WgNJknQvM0LCa3j23gJ88DjgJDcl6g-1765216833540-0.0.1.1-604800000
+      - __cf_bm=ol8jr68R2ZBn..U3o71xU4b2f3cJASQXvUl.zvLRGCw-1765228459-1.0.1.1-AEwlwckDmaBtEWR9jj9oT5ClkdClFNghBeXEswAowbuPjc8weX2RCxzaVuoII30kr7yWL0yp3Yh_7lVTCX_0ZAt3sel4LSYih5RcgXlhFCU;
+        _cfuvid=0JrSbTo4Ec3tvAZTYrzri_hviyFkHgK3URJEhOYouh0-1765228459054-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
-      - content:
-        - text: What food is in the image you can get from the get_image tool?
-          type: text
+      - content: What is the temperature in Paris? Use the weather tool and return the temperature as a number.
         role: user
       - content: null
         role: assistant
         tool_calls:
         - function:
-            arguments: '{}'
-            name: get_image
-          id: call_Xn7ZD27IylZB66yw2n38IWXe
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_6cnx27ovpBoEsZdVp9TrQpuJ
           type: function
-      - content: See file bd38f5
+      - content: The weather in Paris is sunny and 72°F.
         role: tool
-        tool_call_id: call_Xn7ZD27IylZB66yw2n38IWXe
-      - content:
-        - text: 'This is file bd38f5:'
-          type: text
-        - image_url:
-            url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
-          type: image_url
-        role: user
-      model: gpt-4o
+        tool_call_id: call_6cnx27ovpBoEsZdVp9TrQpuJ
+      model: gpt-4o-mini
       stream: false
-      tool_choice: auto
+      tool_choice: required
       tools:
       - function:
-          description: ''
-          name: get_image
+          description: Get the weather for a city.
+          name: get_weather
           parameters:
             additionalProperties: false
-            properties: {}
+            properties:
+              city:
+                type: string
+            required:
+            - city
             type: object
+          strict: true
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              response:
+                type: integer
+            required:
+            - response
+            type: object
+          strict: true
         type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
@@ -158,13 +183,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '828'
+      - '1084'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1342'
+      - '414'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -175,32 +200,38 @@ interactions:
       - chunked
     parsed_body:
       choices:
-      - finish_reason: stop
+      - finish_reason: tool_calls
         index: 0
         logprobs: null
         message:
           annotations: []
-          content: The image shows a potato.
+          content: null
           refusal: null
           role: assistant
-      created: 1765216835
-      id: chatcmpl-CkZpD3JSLa7qZKvU5yYhrf7L3wOxA
-      model: gpt-4o-2024-08-06
+          tool_calls:
+          - function:
+              arguments: '{"response":72}'
+              name: final_result
+            id: call_jZNjcraqsyVPKNG805WXZ3m3
+            type: function
+      created: 1765228459
+      id: chatcmpl-Ckcqh5kwsGapgnkWqTsTn4gGQVeiS
+      model: gpt-4o-mini-2024-07-18
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_83554c687e
+      system_fingerprint: fp_aa07c96156
       usage:
-        completion_tokens: 7
+        completion_tokens: 14
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 507
+        prompt_tokens: 118
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 514
+        total_tokens: 132
     status:
       code: 200
       message: OK

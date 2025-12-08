@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '705'
+      - '690'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is the largest city in the user country?
+        - text: What is 2+2?
         role: user
       generationConfig:
         responseModalities:
@@ -25,40 +25,41 @@ interactions:
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
-          - get_user_country
-          - final_result
+          - get_weather
           mode: ANY
       tools:
       - functionDeclarations:
-        - description: ''
-          name: get_user_country
+        - description: Get the weather for a city.
+          name: get_weather
           parameters_json_schema:
             additionalProperties: false
-            properties: {}
-            type: object
-        - description: The final response which ends this conversation
-          name: final_result
-          parameters_json_schema:
             properties:
               city:
                 type: string
-              country:
+            required:
+            - city
+            type: object
+        - description: Get the current time in a city.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
                 type: string
             required:
             - city
-            - country
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      - h3=":443"; ma=2592000
       content-length:
-      - '734'
+      - '775'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=943
+      - gfet4t7; dur=783
       transfer-encoding:
       - chunked
       vary:
@@ -67,26 +68,27 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 2.3644883185625075e-06
+      - avgLogprobs: -0.3120377540588379
         content:
           parts:
           - functionCall:
-              args: {}
-              name: get_user_country
+              args:
+                city: london
+              name: get_weather
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: ihI3adbMKZCez7IPy9_U-Qg
+      responseId: p0c3aaeeG8-Hz7IP2OPNqAc
       usageMetadata:
         candidatesTokenCount: 5
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 5
-        promptTokenCount: 25
+        promptTokenCount: 28
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 25
-        totalTokenCount: 30
+          tokenCount: 28
+        totalTokenCount: 33
     status:
       code: 200
       message: OK
@@ -99,7 +101,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1086'
+      - '1116'
       content-type:
       - application/json
       host:
@@ -108,21 +110,22 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is the largest city in the user country?
+        - text: What is 2+2?
         role: user
       - parts:
         - functionCall:
-            args: {}
-            id: pyd_ai_8f775a6033464e2f9d721abc0befe93a
-            name: get_user_country
+            args:
+              city: london
+            id: pyd_ai_3c21020f04a94d5097dd251d95e2b0e1
+            name: get_weather
           thoughtSignature: Y29udGV4dF9lbmdpbmVlcmluZ19pc190aGVfd2F5X3RvX2dv
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_8f775a6033464e2f9d721abc0befe93a
-            name: get_user_country
+            id: pyd_ai_3c21020f04a94d5097dd251d95e2b0e1
+            name: get_weather
             response:
-              return_value: Mexico
+              return_value: The weather in london is sunny and 72°F.
         role: user
       generationConfig:
         responseModalities:
@@ -130,40 +133,41 @@ interactions:
       toolConfig:
         functionCallingConfig:
           allowedFunctionNames:
-          - get_user_country
-          - final_result
+          - get_weather
           mode: ANY
       tools:
       - functionDeclarations:
-        - description: ''
-          name: get_user_country
+        - description: Get the weather for a city.
+          name: get_weather
           parameters_json_schema:
             additionalProperties: false
-            properties: {}
-            type: object
-        - description: The final response which ends this conversation
-          name: final_result
-          parameters_json_schema:
             properties:
               city:
                 type: string
-              country:
+            required:
+            - city
+            type: object
+        - description: Get the current time in a city.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
                 type: string
             required:
             - city
-            - country
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      - h3=":443"; ma=2592000
       content-length:
-      - '821'
+      - '775'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=830
+      - gfet4t7; dur=842
       transfer-encoding:
       - chunked
       vary:
@@ -172,28 +176,27 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -9.877141565084457e-06
+      - avgLogprobs: -0.3499784469604492
         content:
           parts:
           - functionCall:
               args:
-                city: Mexico City
-                country: Mexico
-              name: final_result
+                city: london
+              name: get_weather
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: ixI3ae73LOjoz7IPgeK2yQg
+      responseId: qEc3aeSDDJaHz7IP-onXyAk
       usageMetadata:
-        candidatesTokenCount: 8
+        candidatesTokenCount: 5
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 8
-        promptTokenCount: 39
+          tokenCount: 5
+        promptTokenCount: 52
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 39
-        totalTokenCount: 47
+          tokenCount: 52
+        totalTokenCount: 57
     status:
       code: 200
       message: OK

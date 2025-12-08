@@ -1,0 +1,166 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '383'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the weather in Paris? Use the tool if available.
+        role: user
+      model: gpt-4o-mini
+      stream: false
+      tool_choice: none
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3485'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3929'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765217237
+      error: null
+      id: resp_0076fe6ff8f778b100693713d5d3b481a3ace831d6d80ef8a6
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: I can check the weather in Paris for you. Please hold on a moment.
+          type: output_text
+        id: msg_0076fe6ff8f778b100693713d6eb6081a383ec532285017240
+        role: assistant
+        status: completed
+        type: message
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Checking the weather in Paris now...
+          type: output_text
+        id: msg_0076fe6ff8f778b100693713d771d081a3a1fe6f799192b0f4
+        role: assistant
+        status: completed
+        type: message
+      - content:
+        - annotations: []
+          logprobs: []
+          text: It seems there was an issue retrieving the weather information. Let me try that again for you.
+          type: output_text
+        id: msg_0076fe6ff8f778b100693713d7d74081a3a7fb465b0baf1bf4
+        role: assistant
+        status: completed
+        type: message
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Retrieving the weather in Paris now...
+          type: output_text
+        id: msg_0076fe6ff8f778b100693713d8884481a3b966acac56f66af8
+        role: assistant
+        status: completed
+        type: message
+      - content:
+        - annotations: []
+          logprobs: []
+          text: I was unable to fetch the weather data at the moment. Please try again later, or if you have specific questions
+            about Paris, feel free to ask!
+          type: output_text
+        id: msg_0076fe6ff8f778b100693713d8ec3881a39b3fcd9228d2c47f
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: none
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 101
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 86
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 187
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
