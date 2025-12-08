@@ -65,7 +65,7 @@ from ..toolsets._dynamic import (
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from .abstract import AbstractAgent, AgentMetadataValue, EventStreamHandler, Instructions, RunOutputDataT
+from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -132,7 +132,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """Options to automatically instrument with OpenTelemetry."""
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
-    _metadata: AgentMetadataValue[AgentDepsT] | None = dataclasses.field(repr=False)
+    _metadata: AgentMetadata[AgentDepsT] | None = dataclasses.field(repr=False)
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
@@ -180,7 +180,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> None: ...
@@ -208,7 +208,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> None: ...
@@ -234,7 +234,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Any,
@@ -373,7 +373,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
-        self._override_metadata: ContextVar[_utils.Option[AgentMetadataValue[AgentDepsT]]] = ContextVar(
+        self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
         )
 
@@ -445,7 +445,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -465,7 +465,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -485,7 +485,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -733,7 +733,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _compute_agent_metadata(
         self,
         ctx: RunContext[AgentDepsT],
-        run_metadata_config: AgentMetadataValue[AgentDepsT] | None = None,
+        run_metadata_config: AgentMetadata[AgentDepsT] | None = None,
     ) -> dict[str, Any] | None:
         metadata_override = self._override_metadata.get()
         if metadata_override is not None:
@@ -750,7 +750,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _resolve_metadata_config(
         self,
-        config: AgentMetadataValue[AgentDepsT] | None,
+        config: AgentMetadata[AgentDepsT] | None,
         ctx: RunContext[AgentDepsT],
     ) -> dict[str, Any] | None:
         if config is None:
@@ -825,7 +825,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
-        metadata: AgentMetadataValue[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 

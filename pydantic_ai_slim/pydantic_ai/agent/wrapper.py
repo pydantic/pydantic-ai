@@ -22,7 +22,7 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from .abstract import AbstractAgent, AgentMetadataValue, EventStreamHandler, Instructions, RunOutputDataT
+from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
 
 
 class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
@@ -82,7 +82,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -102,7 +102,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
@@ -122,7 +122,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadataValue[AgentDepsT] | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
