@@ -687,8 +687,8 @@ class BedrockConverseModel(Model):
     def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
         """Remove inference geographic prefix from model ID if present."""
         for prefix in BEDROCK_GEO_PREFIXES:
-            if model_name.startswith(prefix):
-                return model_name.removeprefix(prefix)
+            if model_name.startswith(f'{prefix}.'):
+                return model_name.removeprefix(f'{prefix}.')
         return model_name
 
 

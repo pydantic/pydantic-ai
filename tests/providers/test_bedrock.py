@@ -109,10 +109,19 @@ def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: s
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     provider = BedrockProvider()
 
-    model_name = f'{prefix}anthropic.claude-sonnet-4-5-20250929-v1:0'
+    model_name = f'{prefix}.anthropic.claude-sonnet-4-5-20250929-v1:0'
     profile = provider.model_profile(model_name)
 
     assert profile is not None, f'model_profile returned None for {model_name}'
+
+
+def test_bedrock_provider_model_profile_with_unknown_geo_prefix(env: TestEnv):
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+
+    model_name = 'narnia.anthropic.claude-sonnet-4-5-20250929-v1:0'
+    profile = provider.model_profile(model_name)
+    assert profile is None, f'model_profile returned {profile} for {model_name}'
 
 
 def test_latest_bedrock_model_names_geo_prefixes_are_supported():
@@ -131,7 +140,7 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
         # - With prefix: "us.anthropic.claude-xxx" (3 parts)
         parts = model_name.split('.')
         if len(parts) >= 3:
-            geo_prefix = parts[0] + '.'
+            geo_prefix = parts[0]
             if geo_prefix not in BEDROCK_GEO_PREFIXES:  # pragma: no cover
                 missing_prefixes.add(geo_prefix)
 
