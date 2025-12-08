@@ -414,7 +414,35 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
-You can inspect [`agent_run.metadata`][pydantic_ai.agent.AgentRun] or [`agent_run.result.metadata`][pydantic_ai.agent.AgentRunResult] after the run completes to read any metadata configured on the agent.
+You can inspect [`agent_run.metadata`][pydantic_ai.agent.AgentRun] or [`agent_run.result.metadata`][pydantic_ai.agent.AgentRunResult] after the run completes to read any metadata configured on the [`Agent`][pydantic_ai.agent.Agent].
+
+```python {title="result_usage_and_metadata.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+
+@dataclass
+class Deps:
+    tenant: str
+
+
+agent = Agent[Deps](
+    'openai:gpt-5',
+    deps_type=Deps,
+    metadata=lambda ctx: {'tenant': ctx.deps.tenant},
+)
+
+result = agent.run_sync(
+    'What is the capital of France?',
+    deps=Deps(tenant='tenant-123'),
+)
+print(result.output)
+print(result.metadata)
+print(result.usage())
+#> The capital of France is Paris.
+#> {'tenant': 'tenant-123'}
+#> RunUsage(input_tokens=..., output_tokens=..., requests=1)
+```
 
 #### Streaming All Events and Output
 

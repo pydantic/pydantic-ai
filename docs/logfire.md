@@ -343,15 +343,7 @@ This setting is particularly useful in production environments where compliance 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.
 Metadata can be provided as a dictionary, or a callable that reads the [`RunContext`][pydantic_ai.tools.RunContext] to compute values on each run, returning a dictionary.
 
-```python {hl_lines="4-5"}
-from pydantic_ai import Agent
-
-agent = Agent(
-    'openai:gpt-5',
-    instrument=True,
-    metadata=lambda ctx: {'deployment': 'staging', 'tenant': ctx.deps.tenant},
-)
-```
+See the [usage and metadata example in the agents guide](agents.md#accessing-usage-and-final-output) for an example that derives metadata from `deps` and accesses [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult].
 
 Resolved metadata is available after the run completes on
 [`AgentRun.metadata`][pydantic_ai.agent.AgentRun], [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult],
