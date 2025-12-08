@@ -60,7 +60,7 @@ try:
     )
     from outlines.models.vllm_offline import (
         VLLMOffline,
-        from_vllm_offline,
+        from_vllm_offline,  # pyright: ignore[reportUnknownVariableType]
     )
     from outlines.types.dsl import JsonSchema
     from PIL import Image as PILImage
@@ -393,7 +393,9 @@ class OutlinesModel(Model):
         self, model_settings: dict[str, Any]
     ) -> dict[str, Any]:
         """Select the model settings supported by the vLLMOffline model."""
-        from vllm.sampling_params import SamplingParams
+        from vllm.sampling_params import (  # pyright: ignore[reportMissingImports]
+            SamplingParams,  # pyright: ignore[reportUnknownVariableType]
+        )
 
         supported_args = [
             'max_tokens',
