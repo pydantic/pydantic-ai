@@ -346,10 +346,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata to attach to this run. Accepts a dictionary or a
-                callable taking [`RunContext`][pydantic_ai.tools.RunContext].
-                The resolved dictionary is shallow merged into the metadata configured on the agent (or
-                via [`Agent.override`][pydantic_ai.agent.Agent.override]) with run-level keys replacing duplicates.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
@@ -473,10 +471,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata to attach to this run. Accepts a dictionary or a
-                callable taking [`RunContext`][pydantic_ai.tools.RunContext].
-                The resolved dictionary is shallow merged into the metadata configured on the agent (or
-                via [`Agent.override`][pydantic_ai.agent.Agent.override]) with run-level keys replacing duplicates.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
@@ -598,10 +594,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata to attach to this run. Accepts a dictionary or a
-                callable taking [`RunContext`][pydantic_ai.tools.RunContext].
-                The resolved dictionary is shallow merged into the metadata configured on the agent (or
-                via [`Agent.override`][pydantic_ai.agent.Agent.override]) with run-level keys replacing duplicates.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -740,10 +734,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata to attach to this run. Accepts a dictionary or a
-                callable taking [`RunContext`][pydantic_ai.tools.RunContext].
-                The resolved dictionary is shallow merged into the metadata configured on the agent (or
-                via [`Agent.override`][pydantic_ai.agent.Agent.override]) with run-level keys replacing duplicates.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -909,10 +901,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-            metadata: Optional metadata to attach to this run. Accepts a dictionary or a
-                callable taking [`RunContext`][pydantic_ai.tools.RunContext].
-                The resolved dictionary is shallow merged into the metadata configured on the agent (or
-                via [`Agent.override`][pydantic_ai.agent.Agent.override]) with run-level keys replacing duplicates.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.

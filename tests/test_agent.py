@@ -2765,13 +2765,13 @@ async def test_agent_run_metadata_kwarg_merges_agent_metadata() -> None:
     assert result.metadata == {'env': 'base', 'run': 'value', 'shared': 'run'}
 
 
-async def test_agent_run_metadata_kwarg_merges_override() -> None:
+async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
     agent = Agent(TestModel(custom_output_text='kwarg override output'), metadata={'env': 'base'})
 
     with agent.override(metadata={'env': 'override', 'override_only': True}):
         result = await agent.run('kwarg override prompt', metadata={'run_only': True})
 
-    assert result.metadata == {'env': 'override', 'override_only': True, 'run_only': True}
+    assert result.metadata == {'env': 'override', 'override_only': True}
 
 
 def test_unknown_tool():

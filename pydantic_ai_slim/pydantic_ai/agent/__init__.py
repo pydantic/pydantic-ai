@@ -563,9 +563,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
-                [`RunContext`][pydantic_ai.tools.RunContext]. The resolved dictionary is shallow merged into the
-                agent's metadata (or any [`Agent.override`][pydantic_ai.agent.Agent.override]) with run-level keys
-                overwriting duplicates.
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -737,11 +735,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> dict[str, Any] | None:
         metadata_override = self._override_metadata.get()
         if metadata_override is not None:
-            base_config = metadata_override.value
-        else:
-            base_config = self._metadata
+            return self._resolve_metadata_config(metadata_override.value, ctx)
 
-        base_metadata = self._resolve_metadata_config(base_config, ctx)
+        base_metadata = self._resolve_metadata_config(self._metadata, ctx)
         run_metadata = self._resolve_metadata_config(run_metadata_config, ctx)
 
         if base_metadata and run_metadata:
@@ -839,7 +835,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
-            metadata: The metadata to use instead of the metadata passed to the agent constructor.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
         """
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
