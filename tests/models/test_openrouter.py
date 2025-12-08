@@ -406,3 +406,91 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
             }
         ]
     )
+
+
+async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    agent = Agent(
+        model=model,
+        model_settings=OpenRouterModelSettings(openrouter_reasoning={'enabled': True}),
+    )
+
+    async with agent.run_stream('What is 2+2?') as stream:
+        _ = await stream.get_output()
+
+        assert stream.response.parts == snapshot(
+            [
+                ThinkingPart(
+                    content='This is a simple arithmetic question. 2+2 equals 4.',
+                    signature='Et0BCkgIChACGAIqQA2s7h7tA7IG35fbwVkou9PM2hANVJNUwcEM4q12fTRDK6y3v6YoEvJ+7bko8wnW/GLsQFXadaJPAEMCpLkhI9ISDLjFkeR1aVUIvdCtyBoMrUTovh0jwk+wpnZWIjANV3e6VVdgbGSsEyyTHO6KMmVtqqs79f9blnVdJmmMIwMyTi6bEtG59+jTU7v1zlsqQ2IKGZILOlr6adh0Aam7zYttvisys+wjyZZXU1y/Srz0nmp1cFgVOJe1BLKQI3SSRrjsqQC0uAEUZy0GX0Rq1AXjvIcYAQ==',
+                    provider_name='openrouter',
+                    provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
+                ),
+                TextPart(content='2 + 2 = 4'),
+            ]
+        )
+
+
+async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
+
+    This verifies the fix for https://github.com/pydantic/pydantic-ai/issues/3617
+    where OpenRouter's translation layer didn't support modern JSON Schema features.
+    """
+    from enum import Enum
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+
+    class LevelType(str, Enum):
+        ground = 'ground'
+        basement = 'basement'
+        floor = 'floor'
+        attic = 'attic'
+
+    class SpaceType(str, Enum):
+        entryway = 'entryway'
+        living_room = 'living-room'
+        kitchen = 'kitchen'
+        bedroom = 'bedroom'
+        bathroom = 'bathroom'
+        garage = 'garage'
+
+    class InsertLevelArg(BaseModel):
+        level_name: str
+        level_type: LevelType
+
+    class SpaceArg(BaseModel):
+        space_name: str
+        space_type: SpaceType
+
+    class InsertedLevel(BaseModel):
+        """Result of inserting a level."""
+
+        level_name: str
+        level_type: LevelType
+        space_count: int
+
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent: Agent[None, InsertedLevel] = Agent(model, output_type=InsertedLevel)
+
+    @agent.tool_plain
+    def insert_level_with_spaces(level: InsertLevelArg | None, spaces: list[SpaceArg]) -> str:
+        """Insert a level with its spaces."""
+        return f'Inserted level {level} with {len(spaces)} spaces'
+
+    result = await agent.run("It's a house with a ground floor that has an entryway, a living room and a garage.")
+
+    tool_call_message = result.all_messages()[1]
+    assert tool_call_message.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='insert_level_with_spaces',
+                args='{"spaces":[{"space_type":"entryway","space_name":"entryway"},{"space_name":"living_room","space_type":"living-room"},{"space_name":"garage","space_type":"garage"}],"level":{"level_type":"ground","level_name":"ground_floor"}}',
+                tool_call_id='tool_insert_level_with_spaces_3ZiChYzj8xER8HixJe7W',
+            )
+        ]
+    )
+
+    assert result.output.level_type == LevelType.ground
+    assert result.output.space_count == 3

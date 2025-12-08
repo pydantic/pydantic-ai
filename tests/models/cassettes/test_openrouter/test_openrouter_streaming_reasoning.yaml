@@ -1,0 +1,91 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '176'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2?
+        role: user
+      model: anthropic/claude-sonnet-4.5
+      reasoning:
+        enabled: true
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: |+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[{"type":"reasoning.text","text":"","signature":"","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"This","reasoning_details":[{"type":"reasoning.text","text":"This","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":" is a simple arithmetic question. ","reasoning_details":[{"type":"reasoning.text","text":" is a simple arithmetic question. ","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"2+2 equals 4.","reasoning_details":[{"type":"reasoning.text","text":"2+2 equals 4.","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[{"type":"reasoning.text","text":"","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[{"type":"reasoning.text","signature":"Et0BCkgIChACGAIqQA2s7h7tA7IG35fbwVkou9PM2hANVJNUwcEM4q12fTRDK6y3v6YoEvJ+7bko8wnW/GLsQFXadaJPAEMCpLkhI9ISDLjFkeR1aVUIvdCtyBoMrUTovh0jwk+wpnZWIjANV3e6VVdgbGSsEyyTHO6KMmVtqqs79f9blnVdJmmMIwMyTi6bEtG59+jTU7v1zlsqQ2IKGZILOlr6adh0Aam7zYttvisys+wjyZZXU1y/Srz0nmp1cFgVOJe1BLKQI3SSRrjsqQC0uAEUZy0GX0Rq1AXjvIcYAQ==","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"2 ","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"+ 2 = 4","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":"stop","native_finish_reason":"stop","logprobs":null}]}
+
+        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null,"native_finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":43,"completion_tokens":36,"total_tokens":79,"cost":0.000669,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":null,"upstream_inference_prompt_cost":0.000129,"upstream_inference_completions_cost":0.00054},"completion_tokens_details":{"reasoning_tokens":13,"image_tokens":0}}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
+...

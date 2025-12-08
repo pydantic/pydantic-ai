@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
@@ -63,6 +63,9 @@ FinishReason: TypeAlias = Literal[
     'error',
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
+"""Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
 @dataclass(repr=False)
@@ -676,7 +679,7 @@ class CachePoint:
 
     Supported by:
 
-    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -1548,8 +1551,11 @@ class ThinkingPartDelta:
     Signatures are only sent back to the same provider.
     """
 
-    provider_details: dict[str, Any] | None = None
+    provider_details: ProviderDetailsDelta = None
     """Additional data returned by the provider that can't be mapped to standard fields.
+
+    Can be a dict to merge with existing details, or a callable that takes
+    the existing details and returns updated details.
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
@@ -1578,7 +1584,13 @@ class ThinkingPartDelta:
             new_content = part.content + self.content_delta if self.content_delta else part.content
             new_signature = self.signature_delta if self.signature_delta is not None else part.signature
             new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
-            new_provider_details = {**(part.provider_details or {}), **(self.provider_details or {})} or None
+            # Resolve callable provider_details if needed
+            resolved_details = (
+                self.provider_details(part.provider_details)
+                if callable(self.provider_details)
+                else self.provider_details
+            )
+            new_provider_details = {**(part.provider_details or {}), **(resolved_details or {})} or None
             return replace(
                 part,
                 content=new_content,
@@ -1596,7 +1608,28 @@ class ThinkingPartDelta:
             if self.provider_name is not None:
                 part = replace(part, provider_name=self.provider_name)
             if self.provider_details is not None:
-                part = replace(part, provider_details={**(part.provider_details or {}), **self.provider_details})
+                if callable(self.provider_details):
+                    if callable(part.provider_details):
+                        existing_fn = part.provider_details
+                        new_fn = self.provider_details
+
+                        def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
+                            return new_fn(existing_fn(d))
+
+                        part = replace(part, provider_details=chained_both)
+                    else:
+                        part = replace(part, provider_details=self.provider_details)  # pragma: no cover
+                elif callable(part.provider_details):
+                    existing_fn = part.provider_details
+                    new_dict = self.provider_details
+
+                    def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:
+                        return {**existing_fn(d), **new_dict}
+
+                    part = replace(part, provider_details=chained_dict)
+                else:
+                    existing = part.provider_details if isinstance(part.provider_details, dict) else {}
+                    part = replace(part, provider_details={**existing, **self.provider_details})
             return part
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
