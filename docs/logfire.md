@@ -348,4 +348,4 @@ See the [usage and metadata example in the agents guide](agents.md#accessing-usa
 Resolved metadata is available after the run completes on
 [`AgentRun.metadata`][pydantic_ai.agent.AgentRun], [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult],
 and [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult], so you can persist it alongside outputs.
-When instrumentation is enabled, the resolved metadata is recorded on the agent span under the `agent.metadata` attribute.
+When instrumentation is enabled, the resolved metadata is recorded on the agent span under the `metadata` attribute.

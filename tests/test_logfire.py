@@ -315,14 +315,14 @@ def test_logfire(
                         ]
                     )
                 ),
-                'agent.metadata': '{"env": "test"}',
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'pydantic_ai.all_messages': {'type': 'array'},
-                                'agent.metadata': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -382,14 +382,14 @@ def test_logfire(
                     )
                 ),
                 'final_result': '{"my_ret":"1"}',
-                'agent.metadata': '{"env": "test"}',
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'all_messages_events': {'type': 'array'},
-                                'agent.metadata': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -595,7 +595,7 @@ def test_logfire_metadata_values(
     agent.run_sync('Hello')
 
     summary = get_logfire_summary()
-    assert summary.attributes[0]['agent.metadata'] == expected
+    assert summary.attributes[0]['metadata'] == expected
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -605,7 +605,7 @@ def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSumm
         agent.run_sync('Hello')
 
     summary = get_logfire_summary()
-    assert summary.attributes[0]['agent.metadata'] == '{"env": "override"}'
+    assert summary.attributes[0]['metadata'] == '{"env": "override"}'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
