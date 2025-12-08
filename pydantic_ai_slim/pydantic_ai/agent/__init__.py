@@ -693,7 +693,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     def resolve_run_metadata() -> None:
                         nonlocal run_metadata
                         run_context = build_run_context(agent_run.ctx)
-                        run_metadata = self._compute_agent_metadata(run_context, metadata)
+                        run_metadata = self._get_metadata(run_context, metadata)
                         run_context.metadata = run_metadata
                         graph_run.state.metadata = run_metadata
 
@@ -728,17 +728,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             finally:
                 run_span.end()
 
-    def _compute_agent_metadata(
+    def _get_metadata(
         self,
         ctx: RunContext[AgentDepsT],
-        run_metadata_config: AgentMetadata[AgentDepsT] | None = None,
+        additional_metadata: AgentMetadata[AgentDepsT] | None = None,
     ) -> dict[str, Any] | None:
         metadata_override = self._override_metadata.get()
         if metadata_override is not None:
             return self._resolve_metadata_config(metadata_override.value, ctx)
 
         base_metadata = self._resolve_metadata_config(self._metadata, ctx)
-        run_metadata = self._resolve_metadata_config(run_metadata_config, ctx)
+        run_metadata = self._resolve_metadata_config(additional_metadata, ctx)
 
         if base_metadata and run_metadata:
             return {**base_metadata, **run_metadata}
