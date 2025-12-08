@@ -399,7 +399,10 @@ class _OpenRouterChoice(chat_completion.Choice):
 class _OpenRouterCostDetails:
     """OpenRouter specific cost details."""
 
-    upstream_inference_cost: int | None = None
+    upstream_inference_cost: float | None = None
+
+    # TODO rework fields, tests/models/cassettes/test_openrouter/test_openrouter_google_nested_schema.yaml
+    # shows an `upstream_inference_completions_cost` field as well
 
 
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
@@ -567,11 +570,8 @@ class OpenRouterModel(OpenAIChatModel):
             if item.provider_name == self._model.system:
                 if reasoning_detail := _into_reasoning_detail(item):  # pragma: lax no cover
                     self.reasoning_details.append(reasoning_detail.model_dump())
-            elif content := item.content:  # pragma: lax no cover
-                start_tag, end_tag = self._model.profile.thinking_tags
-                self.texts.append('\n'.join([start_tag, content, end_tag]))
-            else:
-                pass
+            else:  # pragma: lax no cover
+                super()._map_response_thinking_part(item)
 
     @property
     @override
@@ -650,7 +650,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                 # This is required for Gemini 3 Pro which returns multiple reasoning
                 # detail types that must be preserved separately for thought_signature handling.
                 vendor_id = f'reasoning_detail_{detail.type}_{i}'
-                yield self._parts_manager.handle_thinking_delta(
+                yield from self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     id=thinking_part.id,
                     content=thinking_part.content,
