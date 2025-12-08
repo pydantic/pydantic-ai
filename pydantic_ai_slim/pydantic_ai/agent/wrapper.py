@@ -16,6 +16,7 @@ from ..run import AgentRun
 from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
+    BuiltinToolFunc,
     DeferredToolResults,
     Tool,
     ToolFuncEither,
@@ -84,7 +85,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadataValue[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -104,7 +105,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadataValue[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -124,7 +125,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadataValue[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
