@@ -315,6 +315,39 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
+  devcontainer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free Disk Space on GitHub Actions runner
+        # Runners come with many preinstalled tools that we don't need for our build.
+        # This action removes them to free up disk space for the following heavy devcontainer build.
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - uses: actions/checkout@v4
+
+      - name: Build and run dev container task
+        uses: devcontainers/ci@v0.3
+        with:
+          runCmd: |
+            bash -c '
+              set -o errexit -o pipefail -o nounset
+              uv --version
+              uvx --version
+              pre-commit --version
+              make lint
+              make typecheck
+              make test
+              echo "Dev container built and run successfully"
+            '
+
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
@@ -327,6 +360,7 @@ jobs:
       - test-lowest-versions
       - test-examples
       - coverage
+      - devcontainer
     runs-on: ubuntu-latest
 
     steps:
