@@ -60,7 +60,7 @@ try:
     )
     from outlines.models.vllm_offline import (
         VLLMOffline,
-        from_vllm_offline,  # pyright: ignore[reportUnknownVariableType]
+        from_vllm_offline,
     )
     from outlines.types.dsl import JsonSchema
     from PIL import Image as PILImage
@@ -393,7 +393,7 @@ class OutlinesModel(Model):
         self, model_settings: dict[str, Any]
     ) -> dict[str, Any]:
         """Select the model settings supported by the vLLMOffline model."""
-        from vllm.sampling_params import SamplingParams  # pyright: ignore
+        from vllm.sampling_params import SamplingParams
 
         supported_args = [
             'max_tokens',
@@ -546,14 +546,13 @@ class OutlinesStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for event in self._response:
-            event = self._parts_manager.handle_text_delta(
+        async for content in self._response:
+            for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
-                content=event,
+                content=content,
                 thinking_tags=self._model_profile.thinking_tags,
                 ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-            )
-            if event is not None:  # pragma: no branch
+            ):
                 yield event
 
     @property

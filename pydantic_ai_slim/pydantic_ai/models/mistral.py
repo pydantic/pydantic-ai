@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -246,7 +246,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -639,7 +639,8 @@ class MistralStreamedResponse(StreamedResponse):
             content = choice.delta.content
             text, thinking = _map_content(content)
             for thought in thinking:
-                self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought)
+                for event in self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought):
+                    yield event
             if text:
                 # Attempt to produce an output tool call from the received text
                 output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
@@ -655,9 +656,8 @@ class MistralStreamedResponse(StreamedResponse):
                             tool_call_id=maybe_tool_call_part.tool_call_id,
                         )
                 else:
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
+                        yield event
 
             # Handle the explicit tool calls
             for index, dtc in enumerate(choice.delta.tool_calls or []):

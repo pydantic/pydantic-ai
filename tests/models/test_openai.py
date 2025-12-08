@@ -17,8 +17,10 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelProfile,
     ModelRequest,
@@ -55,7 +57,7 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
@@ -1145,6 +1147,36 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: gpt-4o, body: {'error': 'test error'}")
 
 
+def test_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIConnectionError(
+            message='Connection to http://localhost:11434/v1 timed out',
+            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+        )
+    )
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'gpt-4o'
+    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
+def test_responses_model_connection_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAIResponses.create_mock(
+        APIConnectionError(
+            message='Connection to http://localhost:11434/v1 timed out',
+            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+        )
+    )
+    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'o3-mini'
+    assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
 async def test_max_completion_tokens(allow_model_requests: None, model_name: str, openai_api_key: str):
     m = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
@@ -1181,6 +1213,57 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
         'What is the capital of England?', model=openai_model, message_history=result.all_messages()
     )
     assert result.output == snapshot('The capital of England is London.')
+
+
+async def test_message_history_can_start_with_model_response(allow_model_requests: None, openai_api_key: str):
+    """Test that an agent run with message_history starting with ModelResponse is executed correctly."""
+
+    openai_model = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    message_history = [ModelResponse(parts=[TextPart('Where do you want to go today?')])]
+
+    agent = Agent(model=openai_model)
+
+    result = await agent.run('Answer in 5 words only. Who is Tux?', message_history=message_history)
+
+    assert result.output == snapshot('Linux mascot, a penguin character.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Where do you want to go today?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Answer in 5 words only. Who is Tux?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Linux mascot, a penguin character.')],
+                usage=RequestUsage(
+                    input_tokens=31,
+                    output_tokens=8,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
@@ -2178,6 +2261,40 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
     ]
 
 
+async def test_openai_instructions_with_responses_logprobs(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        'gpt-4o-mini',
+        provider=OpenAIProvider(api_key=openai_api_key),
+    )
+    agent = Agent(m, instructions='You are a helpful assistant.')
+    result = await agent.run(
+        'What is the capital of Minas Gerais?',
+        model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
+    )
+    messages = result.all_messages()
+    response = cast(Any, messages[1])
+    text_part = response.parts[0]
+    assert hasattr(text_part, 'provider_details')
+    assert text_part.provider_details is not None
+    assert 'logprobs' in text_part.provider_details
+    assert text_part.provider_details['logprobs'] == [
+        {'token': 'The', 'logprob': -0.0, 'bytes': [84, 104, 101], 'top_logprobs': []},
+        {'token': ' capital', 'logprob': 0.0, 'bytes': [32, 99, 97, 112, 105, 116, 97, 108], 'top_logprobs': []},
+        {'token': ' of', 'logprob': 0.0, 'bytes': [32, 111, 102], 'top_logprobs': []},
+        {'token': ' Minas', 'logprob': -0.0, 'bytes': [32, 77, 105, 110, 97, 115], 'top_logprobs': []},
+        {'token': ' Gerais', 'logprob': -0.0, 'bytes': [32, 71, 101, 114, 97, 105, 115], 'top_logprobs': []},
+        {'token': ' is', 'logprob': -5.2e-05, 'bytes': [32, 105, 115], 'top_logprobs': []},
+        {'token': ' Belo', 'logprob': -4.3e-05, 'bytes': [32, 66, 101, 108, 111], 'top_logprobs': []},
+        {
+            'token': ' Horizonte',
+            'logprob': -2.0e-06,
+            'bytes': [32, 72, 111, 114, 105, 122, 111, 110, 116, 101],
+            'top_logprobs': [],
+        },
+        {'token': '.', 'logprob': -0.0, 'bytes': [46], 'top_logprobs': []},
+    ]
+
+
 async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
@@ -2925,7 +3042,7 @@ async def test_invalid_response(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message.startswith(
-        'Invalid response from OpenAI chat completions endpoint: 4 validation errors for ChatCompletion'
+        'Invalid response from openai chat completions endpoint: 4 validation errors for ChatCompletion'
     )
 
 
@@ -2939,7 +3056,7 @@ async def test_text_response(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message == snapshot(
-        'Invalid response from OpenAI chat completions endpoint, expected JSON data'
+        'Invalid response from openai chat completions endpoint, expected JSON data'
     )
 
 
@@ -3054,3 +3171,128 @@ def test_deprecated_openai_model(openai_api_key: str):
 
         provider = OpenAIProvider(api_key=openai_api_key)
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
+
+
+async def test_cache_point_filtering(allow_model_requests: None):
+    """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Test the instance method directly to trigger line 864
+    msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out, only text content should remain
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_cache_point_filtering_responses_model():
+    """Test that CachePoint is filtered out in OpenAI Responses API requests."""
+    # Test the static method directly to trigger line 1680
+    msg = await OpenAIResponsesModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['text before', CachePoint(), 'text after'])
+    )
+
+    # CachePoint should be filtered out, only text content should remain
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 2
+    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='tags',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {
+            'role': 'assistant',
+            'content': """\
+<think>
+reasoning
+</think>
+
+response\
+""",
+        }
+    )
+
+
+async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
+    )
+
+
+async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts=False,
+        ),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'content': 'response'}
+    )
+
+
+async def test_openai_reasoning_in_thinking_tags(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='<think>reasoning</think>response', role='assistant')
+    )
+    m = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)),
+        profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts='tags'),
+    )
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+    resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+    assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
+        {
+            'role': 'assistant',
+            'content': """\
+<think>
+reasoning
+</think>
+
+response\
+""",
+        }
+    )

@@ -11,6 +11,10 @@ See the sections below for how to enable thinking for each provider.
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags are converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](models/openai.md#model-profile).
 
+Some [OpenAI-compatible model providers](models/openai.md#openai-compatible-models) might also support native thinking parts that are not delimited by tags. Instead, they are sent and received as separate, custom fields in the API. Typically, if you are calling the model via the `<provider>:<model>` shorthand, Pydantic AI handles it for you. Nonetheless, you can still configure the fields with [`openai_chat_thinking_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_thinking_field].
+
+If your provider recommends to send back these custom fields not changed, for caching or interleaved thinking benefits, you can also achieve this with [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts].
+
 ### OpenAI Responses
 
 The [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] can generate native thinking parts.
@@ -33,6 +37,9 @@ settings = OpenAIResponsesModelSettings(
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+!!! note "Raw reasoning without summaries"
+    Some OpenAI-compatible APIs (such as LM Studio, vLLM, or OpenRouter with gpt-oss models) may return raw reasoning content without reasoning summaries. In this case, [`ThinkingPart.content`][pydantic_ai.messages.ThinkingPart.content] will be empty, but the raw reasoning is available in `provider_details['raw_content']`. Following [OpenAI's guidance](https://cookbook.openai.com/examples/responses_api/reasoning_items) that raw reasoning should not be shown directly to users, we store it in `provider_details` rather than in the main `content` field.
 
 ## Anthropic
 
@@ -140,6 +147,20 @@ from pydantic_ai.models.groq import GroqModel, GroqModelSettings
 
 model = GroqModel('qwen-qwq-32b')
 settings = GroqModelSettings(groq_reasoning_format='parsed')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+## OpenRouter
+
+To enable thinking, use the [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] [model setting](agents.md#model-run-settings).
+
+```python {title="openrouter_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+
+model = OpenRouterModel('openai/gpt-5')
+settings = OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'})
 agent = Agent(model, model_settings=settings)
 ...
 ```

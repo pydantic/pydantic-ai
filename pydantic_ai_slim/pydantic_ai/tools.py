@@ -11,6 +11,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
+from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
@@ -25,6 +26,7 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'BuiltinToolFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -122,6 +124,15 @@ agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 Usage `ToolsPrepareFunc[AgentDepsT]`.
 """
 
+BuiltinToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
+]
+"""Definition of a function that can prepare a builtin tool at call time.
+
+This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
+or omit it completely from a step.
+"""
+
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 """Supported docstring formats.
 
@@ -147,6 +158,8 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
 
 @dataclass(kw_only=True)
@@ -478,7 +491,7 @@ class ToolDefinition:
     When `False`, the model may be free to generate other properties or types (depending on the vendor).
     When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
 
-    Note: this is currently only supported by OpenAI models.
+    Note: this is currently supported by OpenAI and Anthropic models.
     """
 
     sequential: bool = False

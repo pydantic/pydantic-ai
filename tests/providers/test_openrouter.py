@@ -9,10 +9,10 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicJsonSchemaTransformer, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -25,8 +25,11 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import (
+        OpenRouterProvider,
+        _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 pytestmark = [
@@ -42,6 +45,16 @@ def test_openrouter_provider():
     assert provider.base_url == 'https://openrouter.ai/api/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)
     assert provider.client.api_key == 'api-key'
+
+
+def test_openrouter_provider_with_app_attribution():
+    provider = OpenRouterProvider(api_key='api-key', app_url='test.com', app_title='test')
+    assert provider.name == 'openrouter'
+    assert provider.base_url == 'https://openrouter.ai/api/v1'
+    assert isinstance(provider.client, openai.AsyncOpenAI)
+    assert provider.client.api_key == 'api-key'
+    assert provider.client.default_headers['X-Title'] == 'test'
+    assert provider.client.default_headers['HTTP-Referer'] == 'test.com'
 
 
 def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
@@ -70,7 +83,7 @@ def test_openrouter_pass_openai_client() -> None:
 
 async def test_openrouter_with_google_model(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenAIChatModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
     agent = Agent(model, instructions='Be helpful.')
     response = await agent.run('Tell me a joke.')
     assert response.output == snapshot("""\
@@ -99,12 +112,12 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
     google_profile = provider.model_profile('google/gemma-3n-e4b-it:free')
     google_model_profile_mock.assert_called_with('gemma-3n-e4b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
 
     openai_profile = provider.model_profile('openai/o1-mini')
     openai_model_profile_mock.assert_called_with('o1-mini')
@@ -114,7 +127,7 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
     anthropic_model_profile_mock.assert_called_with('claude-3.5-sonnet')
     assert anthropic_profile is not None
-    assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert anthropic_profile.json_schema_transformer == AnthropicJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
@@ -160,3 +173,40 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+
+def test_openrouter_google_json_schema_transformer():
+    """Test _OpenRouterGoogleJsonSchemaTransformer covers all transformation cases."""
+    schema = {
+        '$schema': 'http://json-schema.org/draft-07/schema#',
+        'title': 'TestSchema',
+        'type': 'object',
+        'properties': {
+            'status': {'const': 'active'},
+            'category': {'oneOf': [{'type': 'string'}, {'type': 'integer'}]},
+            'email': {'type': 'string', 'format': 'email', 'description': 'User email'},
+            'date': {'type': 'string', 'format': 'date'},
+        },
+    }
+
+    transformer = _OpenRouterGoogleJsonSchemaTransformer(schema)
+    result = transformer.walk()
+
+    # const -> enum conversion
+    assert result['properties']['status'] == {'enum': ['active'], 'type': 'string'}
+
+    # oneOf -> anyOf conversion
+    assert 'anyOf' in result['properties']['category']
+    assert 'oneOf' not in result['properties']['category']
+
+    # format -> description with existing description
+    assert result['properties']['email']['description'] == 'User email (format: email)'
+    assert 'format' not in result['properties']['email']
+
+    # format -> description without existing description
+    assert result['properties']['date']['description'] == 'Format: date'
+    assert 'format' not in result['properties']['date']
+
+    # Removed fields
+    assert '$schema' not in result
+    assert 'title' not in result

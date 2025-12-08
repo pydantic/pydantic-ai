@@ -18,6 +18,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -255,7 +256,7 @@ class HuggingFaceModel(Model):
             raise ModelHTTPError(
                 status_code=e.status,
                 model_name=self.model_name,
-                body=e.response_error_payload,  # type: ignore
+                body=e.message,
             ) from e
         except HfHubHTTPError as e:
             raise ModelHTTPError(
@@ -447,6 +448,9 @@ class HuggingFaceModel(Model):
                     raise NotImplementedError('DocumentUrl is not supported for Hugging Face')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for Hugging Face')
+                elif isinstance(item, CachePoint):
+                    # Hugging Face doesn't support prompt caching via CachePoint
+                    pass
                 else:
                     assert_never(item)
         return ChatCompletionInputMessage(role='user', content=content)  # type: ignore
@@ -483,14 +487,13 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content:
-                maybe_event = self._parts_manager.handle_text_delta(
+                for event in self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
                     ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                ):
+                    yield event
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(

@@ -17,6 +17,7 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -117,12 +118,10 @@ class MyModel(Model):
 class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         self._usage = RequestUsage(input_tokens=300, output_tokens=400)
-        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
-        if maybe_event is not None:  # pragma: no branch
-            yield maybe_event
-        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2')
-        if maybe_event is not None:  # pragma: no branch
-            yield maybe_event
+        for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1'):
+            yield event
+        for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2'):
+            yield event
 
     @property
     def model_name(self) -> str:
@@ -1611,6 +1610,81 @@ def test_message_with_builtin_tool_calls():
                         ],
                     },
                     {'type': 'text', 'content': 'text3'},
+                ],
+            }
+        ]
+    )
+
+
+def test_cache_point_in_user_prompt():
+    """Test that CachePoint is correctly skipped in OpenTelemetry conversion.
+
+    CachePoint is a marker for prompt caching and should not be included in the
+    OpenTelemetry message parts output.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['text before', CachePoint(), 'text after'])]),
+    ]
+    settings = InstrumentationSettings()
+
+    # Test otel_message_parts - CachePoint should be skipped
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'text before'},
+                    {'type': 'text', 'content': 'text after'},
+                ],
+            }
+        ]
+    )
+
+    # Test with multiple CachePoints
+    messages_multi: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['first', CachePoint(), 'second', CachePoint(), 'third']),
+            ]
+        ),
+    ]
+    assert settings.messages_to_otel_messages(messages_multi) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'first'},
+                    {'type': 'text', 'content': 'second'},
+                    {'type': 'text', 'content': 'third'},
+                ],
+            }
+        ]
+    )
+
+    # Test with CachePoint mixed with other content types
+    messages_mixed: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'context',
+                        CachePoint(),
+                        ImageUrl('https://example.com/image.jpg'),
+                        CachePoint(),
+                        'question',
+                    ]
+                ),
+            ]
+        ),
+    ]
+    assert settings.messages_to_otel_messages(messages_mixed) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'context'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
+                    {'type': 'text', 'content': 'question'},
                 ],
             }
         ]

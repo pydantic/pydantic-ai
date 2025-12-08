@@ -60,7 +60,7 @@ dependencies = [
     "exceptiongroup; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "genai-prices>=0.0.35",
+    "genai-prices>=0.0.40",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -70,15 +70,16 @@ logfire = ["logfire[httpx]>=3.14.1"]
 openai = ["openai>=1.107.2"]
 cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
-google = ["google-genai>=1.46.0"]
-anthropic = ["anthropic>=0.70.0"]
+google = ["google-genai>=1.51.0"]
+anthropic = ["anthropic>=0.75.0"]
 groq = ["groq>=0.25.0"]
+openrouter = ["openai>=2.8.0"]
 mistral = ["mistralai>=1.9.10"]
 bedrock = ["boto3>=1.40.14"]
-huggingface = ["huggingface-hub[inference]>=0.33.5"]
+huggingface = ["huggingface-hub[inference]>=0.33.5,<1.0.0"]
 outlines-transformers = ["outlines[transformers]>=1.0.0, <1.3.0; (sys_platform != 'darwin' or platform_machine != 'x86_64')", "transformers>=4.0.0", "pillow", "torch; (sys_platform != 'darwin' or platform_machine != 'x86_64')"]
 outlines-llamacpp = ["outlines[llamacpp]>=1.0.0, <1.3.0"]
-outlines-mlxlm = ["outlines[mlxlm]>=1.0.0, <1.3.0; (sys_platform != 'darwin' or platform_machine != 'x86_64')"]
+outlines-mlxlm = ["outlines[mlxlm]>=1.0.0, <1.3.0; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["outlines[sglang]>=1.0.0, <1.3.0", "pillow"]
 outlines-vllm-offline = ["vllm; python_version < '3.12' and (sys_platform != 'darwin' or platform_machine != 'x86_64')", "torch; (sys_platform != 'darwin' or platform_machine != 'x86_64')", "outlines>=1.0.0, <1.3.0"]
 # Tools
@@ -92,7 +93,7 @@ cli = [
     "pyperclip>=1.9.0",
 ]
 # MCP
-mcp = ["mcp>=1.12.3"]
+mcp = ["mcp>=1.18.0"]
 # FastMCP
 fastmcp = ["fastmcp>=2.12.0"]
 # Evals
@@ -106,7 +107,7 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
-temporal = ["temporalio==1.18.2"]
+temporal = ["temporalio==1.19.0"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
 # Prefect

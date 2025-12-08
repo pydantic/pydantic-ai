@@ -16,7 +16,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..builtin_tools import WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -52,7 +52,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, APIError, APIStatusError, AsyncGroq, AsyncStream
+    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -314,7 +314,9 @@ class GroqModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -549,9 +551,10 @@ class GroqStreamedResponse(StreamedResponse):
                         reasoning = True
 
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
-                    )
+                    ):
+                        yield event
                 else:
                     reasoning = False
 
@@ -574,14 +577,13 @@ class GroqStreamedResponse(StreamedResponse):
                 # Handle the text part of the response
                 content = choice.delta.content
                 if content:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
                         thinking_tags=self._model_profile.thinking_tags,
                         ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 # Handle the tool calls
                 for dtc in choice.delta.tool_calls or []:
