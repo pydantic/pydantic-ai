@@ -481,6 +481,29 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
         )
 
 
+async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
+    """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
+    from unittest.mock import patch
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=1704067200, object='chat.completion', model='test', provider='TestProvider'
+    )
+
+    with patch('pydantic_ai.models.openrouter._map_openrouter_provider_details', return_value={}):
+        result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    # With empty openrouter_details, we should still get the parent's provider_details (timestamp + finish_reason)
+    assert result.provider_details == snapshot(
+        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)}
+    )
+
+
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
     """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
 
