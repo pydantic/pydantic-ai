@@ -748,7 +748,7 @@ async def test_call_tool_wrong_name():
 
 
 class OutputType(BaseModel):
-    """Result type used by all tests."""
+    """Result type used by multiple tests."""
 
     value: str
 

@@ -2942,13 +2942,14 @@ def foo():
     assert mod.my_agent.name == 'my_agent'
 
 
+class OutputType(BaseModel):
+    """Result type used by multiple tests."""
+
+    value: str
+
+
 class TestMultipleToolCalls:
     """Tests for scenarios where multiple tool calls are made in a single response."""
-
-    class OutputType(BaseModel):
-        """Result type used by all tests."""
-
-        value: str
 
     def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
@@ -2965,7 +2966,7 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:  # pragma: no cover
@@ -3055,7 +3056,7 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='early')
         result = agent.run_sync('test multiple final results')
         messages = result.all_messages()
 
@@ -3116,7 +3117,7 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='exhaustive')
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='exhaustive')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -3564,7 +3565,7 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:  # pragma: no cover
@@ -3659,9 +3660,6 @@ class TestMultipleToolCalls:
     def test_exhaustive_raises_unexpected_model_behavior(self):
         """Test that exhaustive strategy raises `UnexpectedModelBehavior` when all outputs have validation errors."""
 
-        class OutputType(BaseModel):
-            value: str
-
         def process_output(output: OutputType) -> OutputType:
             """Process output."""
             return output
@@ -3689,7 +3687,7 @@ class TestMultipleToolCalls:
     def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
         """Test that 'early' strategy does not apply to tool calls when no output tool is called."""
         tool_called: list[str] = []
-        agent = Agent(TestModel(), output_type=self.OutputType, end_strategy='early')
+        agent = Agent(TestModel(), output_type=OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -3777,7 +3775,7 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='early')
         result = agent.run_sync('test multiple final results')
 
         # Verify the result came from the second final tool
@@ -3824,7 +3822,7 @@ class TestMultipleToolCalls:
 
         agent = Agent(
             FunctionModel(return_model),
-            output_type=[self.OutputType, DeferredToolRequests],
+            output_type=[OutputType, DeferredToolRequests],
             toolsets=[
                 ExternalToolset(
                     tool_defs=[
@@ -3845,7 +3843,7 @@ class TestMultipleToolCalls:
             return x
 
         result = agent.run_sync('test early strategy with external tool call')
-        assert result.output == snapshot(TestMultipleToolCalls.OutputType(value='final'))
+        assert result.output == snapshot(OutputType(value='final'))
         messages = result.all_messages()
 
         # Verify no tools were called
