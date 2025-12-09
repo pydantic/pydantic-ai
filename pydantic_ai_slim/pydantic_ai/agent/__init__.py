@@ -40,7 +40,7 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun, AgentRunResult
-from ..settings import ModelSettings, ToolChoiceValue, merge_model_settings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
     BuiltinToolFunc,
@@ -587,7 +587,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Merge model settings in order of precedence: run > agent > model
         merged_settings = merge_model_settings(model_used.settings, self.model_settings)
         model_settings = merge_model_settings(merged_settings, model_settings)
-        model_settings = self._apply_force_first_request(model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
@@ -1032,7 +1031,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        force_first_request: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
@@ -1051,7 +1049,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        force_first_request: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -1101,8 +1098,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
-            force_first_request: If True, the model will be forced to use this tool on the first request of a run.
-                Multiple tools with this flag set will allow the model to choose one of them. Defaults to False.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
         """
 
@@ -1123,7 +1118,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
-                force_first_request=force_first_request,
                 metadata=metadata,
             )
             return func_
@@ -1148,7 +1142,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        force_first_request: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
@@ -1167,7 +1160,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        force_first_request: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
@@ -1217,8 +1209,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
-            force_first_request: If True, the model will be forced to use this tool on the first request of a run.
-                Multiple tools with this flag set will allow the model to choose one of them. Defaults to False.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
         """
 
@@ -1237,7 +1227,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
-                force_first_request=force_first_request,
                 metadata=metadata,
             )
             return func_
@@ -1343,37 +1332,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if isinstance(instructions, str) or callable(instructions):
             return [instructions]
         return list(instructions)
-
-    def _apply_force_first_request(self, model_settings: ModelSettings | None) -> ModelSettings | None:
-        """Apply force_first_request tool flags to model_settings.
-
-        If any tools have force_first_request=True and no callable tool_choice is set,
-        generate a callable that forces those tools on the first request.
-        """
-        force_first_tools = [tool.name for tool in self._function_toolset.tools.values() if tool.force_first_request]
-
-        if not force_first_tools:
-            return model_settings
-
-        user_tool_choice = model_settings.get('tool_choice') if model_settings else None
-
-        if callable(user_tool_choice):
-            warnings.warn(
-                'force_first_request on tools is ignored when a callable tool_choice is set in model_settings',
-                UserWarning,
-                stacklevel=4,
-            )
-            return model_settings
-
-        # Generate callable that handles first request
-        def generated_tool_choice(ctx: RunContext[Any]) -> ToolChoiceValue:
-            if ctx.run_step == 1:
-                return force_first_tools
-            return user_tool_choice
-
-        if model_settings is None:
-            return {'tool_choice': generated_tool_choice}
-        return {**model_settings, 'tool_choice': generated_tool_choice}
 
     def _get_instructions(
         self,

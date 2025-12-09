@@ -6,5 +6,3 @@
       members:
         - ModelSettings
         - UsageLimits
-        - ToolChoiceValue
-        - ToolChoiceFunc
