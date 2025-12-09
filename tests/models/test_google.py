@@ -1933,7 +1933,6 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        signature=IsStr(),
                         provider_name='google-gla',
                     ),
                     TextPart(
@@ -1974,7 +1973,6 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        signature=IsStr(),
                         provider_name='google-gla',
                     ),
                     TextPart(
@@ -2085,7 +2083,7 @@ async def test_google_model_thinking_part_from_other_model(
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), signature=IsStr(), provider_name='google-gla'),
+                    ThinkingPart(content=IsStr(), provider_name='google-gla'),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -2141,7 +2139,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), signature=IsStr(), provider_name='google-gla'),
+                    ThinkingPart(content=IsStr(), provider_name='google-gla'),
                     TextPart(
                         content=IsStr(),
                         provider_details={'thought_signature': IsStr()},
@@ -2167,7 +2165,6 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr(), provider_name='google-gla')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr(), provider_name='google-gla')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr(), provider_name='google-gla')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr())),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
@@ -2193,7 +2190,6 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
 
 
 """,
-                    signature=IsStr(),
                     provider_name='google-gla',
                 ),
                 next_part_kind='text',

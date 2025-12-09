@@ -719,18 +719,6 @@ class GeminiStreamedResponse(StreamedResponse):
                     thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
                     provider_details = {'thought_signature': thought_signature}
 
-                # Google returns thought_signature on the part FOLLOWING the thinking part.
-                # Apply it to the previous ThinkingPart if this is a non-thinking part with a signature.
-                if thought_signature and not part.thought:
-                    # Only apply signature if the latest part is a ThinkingPart
-                    parts = self._parts_manager.get_parts()
-                    if parts and isinstance(parts[-1], ThinkingPart):
-                        for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=None,
-                            signature=thought_signature,
-                        ):
-                            yield event
-
                 if part.text is not None:
                     if len(part.text) == 0 and not provider_details:
                         continue
@@ -738,7 +726,6 @@ class GeminiStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=None,
                             content=part.text,
-                            signature=thought_signature,
                             provider_name=self._provider_name,
                             provider_details=provider_details,
                         ):
@@ -895,7 +882,6 @@ def _process_response_from_parts(
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
-    last_thinking_part: ThinkingPart | None = None
     for part in parts:
         provider_details: dict[str, Any] | None = None
         thought_signature: str | None = None
@@ -918,8 +904,7 @@ def _process_response_from_parts(
             if len(part.text) == 0 and not provider_details:
                 continue
             if part.thought:
-                item = ThinkingPart(content=part.text, signature=thought_signature, provider_name=provider_name)
-                last_thinking_part = item
+                item = ThinkingPart(content=part.text, provider_name=provider_name)
             else:
                 item = TextPart(content=part.text)
         elif part.function_call:
@@ -935,12 +920,6 @@ def _process_response_from_parts(
             item = FilePart(content=BinaryContent.narrow_type(content))
         else:  # pragma: no cover
             raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
-
-        # Google returns thought_signature on the part FOLLOWING the thinking part.
-        # Apply it to the previous ThinkingPart if this is a non-thinking part with a signature.
-        if thought_signature and last_thinking_part and not part.thought:
-            last_thinking_part.signature = thought_signature
-            last_thinking_part = None  # Only apply once
 
         if provider_details:
             item.provider_details = {**(item.provider_details or {}), **provider_details}
