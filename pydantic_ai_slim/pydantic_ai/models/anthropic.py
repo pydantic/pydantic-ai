@@ -207,7 +207,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically.
 
-    Set to `False` to force a fresh container (ignore any container_id from history).
+    Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
     """
 
@@ -1272,7 +1272,8 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                    self.provider_details = self.provider_details or {}
+                    self.provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
