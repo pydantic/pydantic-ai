@@ -58,8 +58,13 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
-from pydantic_ai.exceptions import CallDeferred
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    WebSearchTool,
+    CallDeferre,
+    WebSearchUserLocation,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -6919,3 +6924,115 @@ async def test_message_history():
             ]
         )
         assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+
+
+@dataclass
+class UserContext:
+    location: str | None
+
+
+async def prepared_web_search(ctx: RunContext[UserContext]) -> WebSearchTool | None:
+    if not ctx.deps.location:
+        return None
+
+    return WebSearchTool(
+        search_context_size='medium',
+        user_location=WebSearchUserLocation(city=ctx.deps.location),
+    )
+
+
+async def test_dynamic_builtin_tool_configured():
+    model = TestModel()
+    agent = Agent(model, builtin_tools=[prepared_web_search], deps_type=UserContext)
+
+    user_context = UserContext(location='London')
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=user_context)
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    tool = tools[0]
+    assert isinstance(tool, WebSearchTool)
+    assert tool.user_location is not None
+    assert tool.user_location.get('city') == 'London'
+    assert tool.search_context_size == 'medium'
+
+
+async def test_dynamic_builtin_tool_omitted():
+    model = TestModel()
+    agent = Agent(model, builtin_tools=[prepared_web_search], deps_type=UserContext)
+
+    user_context = UserContext(location=None)
+
+    await agent.run('Hello', deps=user_context)
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 0
+
+
+async def test_mixed_static_and_dynamic_builtin_tools():
+    model = TestModel()
+
+    static_tool = CodeExecutionTool()
+    agent = Agent(model, builtin_tools=[static_tool, prepared_web_search], deps_type=UserContext)
+
+    # Case 1: Dynamic tool returns None
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location=None))
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    assert tools[0] == static_tool
+
+    # Case 2: Dynamic tool returns a tool
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location='Paris'))
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 2
+    assert tools[0] == static_tool
+    dynamic_tool = tools[1]
+    assert isinstance(dynamic_tool, WebSearchTool)
+    assert dynamic_tool.user_location is not None
+    assert dynamic_tool.user_location.get('city') == 'Paris'
+
+
+def sync_dynamic_tool(ctx: RunContext[UserContext]) -> WebSearchTool:
+    """Verify that synchronous functions work."""
+    return WebSearchTool(search_context_size='low')
+
+
+async def test_sync_dynamic_tool():
+    model = TestModel()
+    agent = Agent(model, builtin_tools=[sync_dynamic_tool], deps_type=UserContext)
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location='London'))
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    assert isinstance(tools[0], WebSearchTool)
+    assert tools[0].search_context_size == 'low'
+
+
+async def test_dynamic_tool_in_run_call():
+    """Verify dynamic tools can be passed to agent.run()."""
+    model = TestModel()
+    agent = Agent(model, deps_type=UserContext)
+
+    with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+        await agent.run('Hello', deps=UserContext(location='Berlin'), builtin_tools=[prepared_web_search])
+
+    assert model.last_model_request_parameters is not None
+    tools = model.last_model_request_parameters.builtin_tools
+    assert len(tools) == 1
+    tool = tools[0]
+    assert isinstance(tool, WebSearchTool)
+    assert tool.user_location is not None
+    assert tool.user_location.get('city') == 'Berlin'

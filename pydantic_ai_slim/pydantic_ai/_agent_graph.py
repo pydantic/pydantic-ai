@@ -30,6 +30,7 @@ from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
+    BuiltinToolFunc,
     DeferredToolCallResult,
     DeferredToolResult,
     DeferredToolResults,
@@ -152,7 +153,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
-    builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
+    builtin_tools: list[AbstractBuiltinTool | BuiltinToolFunc[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
@@ -399,9 +400,23 @@ async def _prepare_request_parameters(
         else:
             function_tools.append(tool_def)
 
+    # resolve dynamic builtin tools
+    builtin_tools: list[AbstractBuiltinTool] = []
+    if ctx.deps.builtin_tools:
+        run_context = build_run_context(ctx)
+        for tool in ctx.deps.builtin_tools:
+            if isinstance(tool, AbstractBuiltinTool):
+                builtin_tools.append(tool)
+            else:
+                t = tool(run_context)
+                if inspect.isawaitable(t):
+                    t = await t
+                if t is not None:
+                    builtin_tools.append(t)
+
     return models.ModelRequestParameters(
         function_tools=function_tools,
-        builtin_tools=ctx.deps.builtin_tools,
+        builtin_tools=builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
