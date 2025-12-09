@@ -710,7 +710,6 @@ class GeminiStreamedResponse(StreamedResponse):
 
             for part in parts:
                 provider_details: dict[str, Any] | None = None
-                thought_signature: str | None = None
                 if part.thought_signature:
                     # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
                     # - Always send the thought_signature back to the model inside its original Part.
@@ -724,10 +723,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         continue
                     if part.thought:
                         for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=None,
-                            content=part.text,
-                            provider_name=self._provider_name,
-                            provider_details=provider_details,
+                            vendor_part_id=None, content=part.text, provider_details=provider_details
                         ):
                             yield event
                     else:
@@ -884,7 +880,6 @@ def _process_response_from_parts(
     code_execution_tool_call_id: str | None = None
     for part in parts:
         provider_details: dict[str, Any] | None = None
-        thought_signature: str | None = None
         if part.thought_signature:
             # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
             # - Always send the thought_signature back to the model inside its original Part.
@@ -904,7 +899,7 @@ def _process_response_from_parts(
             if len(part.text) == 0 and not provider_details:
                 continue
             if part.thought:
-                item = ThinkingPart(content=part.text, provider_name=provider_name)
+                item = ThinkingPart(content=part.text)
             else:
                 item = TextPart(content=part.text)
         elif part.function_call:
