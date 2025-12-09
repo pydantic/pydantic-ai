@@ -192,6 +192,12 @@ class FileUrl(ABC):
         """The file format."""
         raise NotImplementedError
 
+    @pydantic.computed_field
+    @property
+    def base_url(self) -> str:
+        """The base URL of the file (removes any query parameters or fragments)."""
+        return self.url.split('?', 1)[0].split('#', 1)[0]
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -231,21 +237,21 @@ class VideoUrl(FileUrl):
 
     def _infer_media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
-        if self.url.endswith('.mkv'):
+        if self.base_url.endswith('.mkv'):
             return 'video/x-matroska'
-        elif self.url.endswith('.mov'):
+        elif self.base_url.endswith('.mov'):
             return 'video/quicktime'
-        elif self.url.endswith('.mp4'):
+        elif self.base_url.endswith('.mp4'):
             return 'video/mp4'
-        elif self.url.endswith('.webm'):
+        elif self.base_url.endswith('.webm'):
             return 'video/webm'
-        elif self.url.endswith('.flv'):
+        elif self.base_url.endswith('.flv'):
             return 'video/x-flv'
-        elif self.url.endswith(('.mpeg', '.mpg')):
+        elif self.base_url.endswith(('.mpeg', '.mpg')):
             return 'video/mpeg'
-        elif self.url.endswith('.wmv'):
+        elif self.base_url.endswith('.wmv'):
             return 'video/x-ms-wmv'
-        elif self.url.endswith('.three_gp'):
+        elif self.base_url.endswith('.three_gp'):
             return 'video/3gpp'
         # Assume that YouTube videos are mp4 because there would be no extension
         # to infer from. This should not be a problem, as Gemini disregards media
@@ -311,17 +317,17 @@ class AudioUrl(FileUrl):
         References:
         - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
         """
-        if self.url.endswith('.mp3'):
+        if self.base_url.endswith('.mp3'):
             return 'audio/mpeg'
-        if self.url.endswith('.wav'):
+        if self.base_url.endswith('.wav'):
             return 'audio/wav'
-        if self.url.endswith('.flac'):
+        if self.base_url.endswith('.flac'):
             return 'audio/flac'
-        if self.url.endswith('.oga'):
+        if self.base_url.endswith('.oga'):
             return 'audio/ogg'
-        if self.url.endswith('.aiff'):
+        if self.base_url.endswith('.aiff'):
             return 'audio/aiff'
-        if self.url.endswith('.aac'):
+        if self.base_url.endswith('.aac'):
             return 'audio/aac'
 
         raise ValueError(
@@ -370,13 +376,13 @@ class ImageUrl(FileUrl):
 
     def _infer_media_type(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
-        if self.url.endswith(('.jpg', '.jpeg')):
+        if self.base_url.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
-        elif self.url.endswith('.png'):
+        elif self.base_url.endswith('.png'):
             return 'image/png'
-        elif self.url.endswith('.gif'):
+        elif self.base_url.endswith('.gif'):
             return 'image/gif'
-        elif self.url.endswith('.webp'):
+        elif self.base_url.endswith('.webp'):
             return 'image/webp'
         else:
             raise ValueError(
@@ -430,26 +436,26 @@ class DocumentUrl(FileUrl):
         """Return the media type of the document, based on the url."""
         # Common document types are hardcoded here as mime-type support for these
         # extensions varies across operating systems.
-        if self.url.endswith(('.md', '.mdx', '.markdown')):
+        if self.base_url.endswith(('.md', '.mdx', '.markdown')):
             return 'text/markdown'
-        elif self.url.endswith('.asciidoc'):
+        elif self.base_url.endswith('.asciidoc'):
             return 'text/x-asciidoc'
-        elif self.url.endswith('.txt'):
+        elif self.base_url.endswith('.txt'):
             return 'text/plain'
-        elif self.url.endswith('.pdf'):
+        elif self.base_url.endswith('.pdf'):
             return 'application/pdf'
-        elif self.url.endswith('.rtf'):
+        elif self.base_url.endswith('.rtf'):
             return 'application/rtf'
-        elif self.url.endswith('.doc'):
+        elif self.base_url.endswith('.doc'):
             return 'application/msword'
-        elif self.url.endswith('.docx'):
+        elif self.base_url.endswith('.docx'):
             return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        elif self.url.endswith('.xls'):
+        elif self.base_url.endswith('.xls'):
             return 'application/vnd.ms-excel'
-        elif self.url.endswith('.xlsx'):
+        elif self.base_url.endswith('.xlsx'):
             return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
-        type_, _ = guess_type(self.url)
+        type_, _ = guess_type(self.base_url)
         if type_ is None:
             raise ValueError(
                 f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
