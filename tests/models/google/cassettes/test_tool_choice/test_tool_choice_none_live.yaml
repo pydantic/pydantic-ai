@@ -37,17 +37,17 @@ interactions:
             required:
             - city
             type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '658'
+      - '550'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=608
+      - gfet4t7; dur=612
       transfer-encoding:
       - chunked
       vary:
@@ -56,25 +56,22 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00014808597916271538
-        content:
+      - content:
           parts:
-          - text: |
-              2 + 2 = 4
+          - text: 2 + 2 = 4
           role: model
         finishReason: STOP
-      modelVersion: gemini-2.0-flash
-      responseId: IXQ3af2UDM2hqtsPrunvwQY
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: xXU3adymMcW1qtsPj6-BuAU
       usageMetadata:
-        candidatesTokenCount: 8
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 8
-        promptTokenCount: 17
+        candidatesTokenCount: 7
+        promptTokenCount: 47
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 17
-        totalTokenCount: 25
+          tokenCount: 47
+        thoughtsTokenCount: 22
+        totalTokenCount: 76
     status:
       code: 200
       message: OK

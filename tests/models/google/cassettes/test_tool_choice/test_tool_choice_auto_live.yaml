@@ -37,17 +37,17 @@ interactions:
             required:
             - city
             type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '658'
+      - '898'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=479
+      - gfet4t7; dur=886
       transfer-encoding:
       - chunked
       vary:
@@ -56,25 +56,23 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00011117308167740703
-        content:
+      - content:
           parts:
-          - text: |
-              2+2 is 4.
+          - text: 2+2 is 4.
+            thoughtSignature: CuUBAXLI2nwEslcG7V2JKQpujVGAgAu5E2OIH6Xv9Q0Lw17n7eK2bQF4zGkpnazh569f5aKwJm3Ez+RAprR0K5pFq8BU9BA+6lrLck72CdxodJx+Cm78Weu3PPsNbVL/cKbPO4xDXr+g7a+ZBwJCJSugUN4yCm2NWqJt5mYNPuVgxIYF9jJ4hC2pPXU+o9mhYds8b3fQrr9hODf7lzhLvVDsqvO8bJv1ry5Mtg0tX4oU17zPaFyn/PmFdapho9sJLol7TODoOY2b7snleDX4/oUtMbdUSrohrzlqc3jW5hzbwnLby50wtQ==
           role: model
         finishReason: STOP
-      modelVersion: gemini-2.0-flash
-      responseId: IHQ3afypD9WlqtsPr4HwqAU
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: wHU3ab_LC-iyqtsPqabQoA4
       usageMetadata:
-        candidatesTokenCount: 8
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 8
-        promptTokenCount: 17
+        candidatesTokenCount: 7
+        promptTokenCount: 47
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 17
-        totalTokenCount: 25
+          tokenCount: 47
+        thoughtsTokenCount: 44
+        totalTokenCount: 98
     status:
       code: 200
       message: OK

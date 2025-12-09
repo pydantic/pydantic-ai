@@ -21,7 +21,7 @@ pytestmark = [
 
 async def test_tool_choice_auto_live(allow_model_requests: None, openai_api_key: str):
     """Test tool_choice='auto' allows model to decide whether to use tools."""
-    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -36,7 +36,7 @@ async def test_tool_choice_auto_live(allow_model_requests: None, openai_api_key:
 
 async def test_tool_choice_required_live(allow_model_requests: None, openai_api_key: str):
     """Test tool_choice='required' forces model to use a tool."""
-    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -54,7 +54,7 @@ async def test_tool_choice_required_live(allow_model_requests: None, openai_api_
 
 async def test_tool_choice_none_live(allow_model_requests: None, openai_api_key: str):
     """Test tool_choice='none' prevents model from using function tools."""
-    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -81,7 +81,7 @@ async def test_tool_choice_specific_live(allow_model_requests: None, openai_api_
     from pydantic_ai import UsageLimits
     from pydantic_ai.exceptions import UsageLimitExceeded
 
-    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
     @agent.tool_plain

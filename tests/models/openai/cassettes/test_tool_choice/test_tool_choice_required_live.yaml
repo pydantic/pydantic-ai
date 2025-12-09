@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '703'
+      - '702'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       messages:
       - content: What is the temperature in Paris? Use the weather tool and return the temperature as a number.
         role: user
-      model: gpt-4o-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: required
       tools:
@@ -58,13 +58,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1084'
+      - '1053'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '533'
+      - '3585'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -77,7 +77,6 @@ interactions:
       choices:
       - finish_reason: tool_calls
         index: 0
-        logprobs: null
         message:
           annotations: []
           content: null
@@ -87,26 +86,26 @@ interactions:
           - function:
               arguments: '{"city":"Paris"}'
               name: get_weather
-            id: call_6cnx27ovpBoEsZdVp9TrQpuJ
+            id: call_u0pRHSmUP8t3cbjfSM7v1A7y
             type: function
-      created: 1765228458
-      id: chatcmpl-CkcqgC5SP14wk7UbdFm8dDvbrv3Yh
-      model: gpt-4o-mini-2024-07-18
+      created: 1765242172
+      id: chatcmpl-CkgPsVsXpJRTZFCXphaH15QtUVMAO
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_aa07c96156
+      system_fingerprint: null
       usage:
-        completion_tokens: 14
+        completion_tokens: 279
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 256
           rejected_prediction_tokens: 0
-        prompt_tokens: 85
+        prompt_tokens: 166
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 99
+        total_tokens: 445
     status:
       code: 200
       message: OK
@@ -119,12 +118,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '996'
+      - '995'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=ol8jr68R2ZBn..U3o71xU4b2f3cJASQXvUl.zvLRGCw-1765228459-1.0.1.1-AEwlwckDmaBtEWR9jj9oT5ClkdClFNghBeXEswAowbuPjc8weX2RCxzaVuoII30kr7yWL0yp3Yh_7lVTCX_0ZAt3sel4LSYih5RcgXlhFCU;
-        _cfuvid=0JrSbTo4Ec3tvAZTYrzri_hviyFkHgK3URJEhOYouh0-1765228459054-0.0.1.1-604800000
+      - __cf_bm=hh996J5PFkiiXoeT9VbPMZi28ps6pxjzTg.2.wCFM28-1765242175-1.0.1.1-7wN_j0BHFbXzIfAmY1euNAtZTbwhDL9e_gNAX.wdUuKrKmIP.0jVn62BvygzUrXSXzkjUBrXh5zonY.gtt_P7DdGBzGazQhv1kxcSTyEh74;
+        _cfuvid=YmhDCKmj4MJp37mQzs3zP22LolFIMD5NpvReH26meFY-1765242175599-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -138,12 +137,12 @@ interactions:
         - function:
             arguments: '{"city":"Paris"}'
             name: get_weather
-          id: call_6cnx27ovpBoEsZdVp9TrQpuJ
+          id: call_u0pRHSmUP8t3cbjfSM7v1A7y
           type: function
       - content: The weather in Paris is sunny and 72°F.
         role: tool
-        tool_call_id: call_6cnx27ovpBoEsZdVp9TrQpuJ
-      model: gpt-4o-mini
+        tool_call_id: call_u0pRHSmUP8t3cbjfSM7v1A7y
+      model: gpt-5-mini
       stream: false
       tool_choice: required
       tools:
@@ -183,13 +182,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1084'
+      - '1051'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '414'
+      - '5782'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -202,7 +201,6 @@ interactions:
       choices:
       - finish_reason: tool_calls
         index: 0
-        logprobs: null
         message:
           annotations: []
           content: null
@@ -212,26 +210,26 @@ interactions:
           - function:
               arguments: '{"response":72}'
               name: final_result
-            id: call_jZNjcraqsyVPKNG805WXZ3m3
+            id: call_VFfKcHWlxtVOtwW6hJvPxdgn
             type: function
-      created: 1765228459
-      id: chatcmpl-Ckcqh5kwsGapgnkWqTsTn4gGQVeiS
-      model: gpt-4o-mini-2024-07-18
+      created: 1765242176
+      id: chatcmpl-CkgPwA8aiofTgU8pcgcxapgMgIjGs
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_aa07c96156
+      system_fingerprint: null
       usage:
-        completion_tokens: 14
+        completion_tokens: 343
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 320
           rejected_prediction_tokens: 0
-        prompt_tokens: 118
+        prompt_tokens: 205
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 132
+        total_tokens: 548
     status:
       code: 200
       message: OK

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '355'
+      - '354'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       messages:
       - content: What is 2+2?
         role: user
-      model: gpt-4o-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: auto
       tools:
@@ -45,13 +45,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '821'
+      - '783'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '547'
+      - '969'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -64,30 +64,29 @@ interactions:
       choices:
       - finish_reason: stop
         index: 0
-        logprobs: null
         message:
           annotations: []
-          content: 2 + 2 equals 4.
+          content: 2 + 2 = 4.
           refusal: null
           role: assistant
-      created: 1765217148
-      id: chatcmpl-CkZuG6lFINUWRiTIBXMrJHRz96VZc
-      model: gpt-4o-mini-2024-07-18
+      created: 1765242169
+      id: chatcmpl-CkgPpexmls8SXPdfc6CVKUd8TfnIH
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_11f3029f6b
+      system_fingerprint: null
       usage:
-        completion_tokens: 9
+        completion_tokens: 17
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 51
+        prompt_tokens: 132
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 60
+        total_tokens: 149
     status:
       code: 200
       message: OK

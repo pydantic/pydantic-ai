@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '399'
+      - '398'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       messages:
       - content: What is the weather in Paris? Use the tool if available.
         role: user
-      model: gpt-4o-mini
+      model: gpt-5-mini
       stream: false
       tool_choice: none
       tools:
@@ -45,13 +45,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '849'
+      - '1952'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '462'
+      - '8417'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -64,30 +64,39 @@ interactions:
       choices:
       - finish_reason: stop
         index: 0
-        logprobs: null
         message:
           annotations: []
-          content: I will check the weather in Paris for you.
+          content: "I can’t fetch live weather data right now (I don’t have access to the live-data tool at the moment). I
+            can, however, give you a quick summary of what Paris is typically like at this time of year and some ways to check
+            the current conditions.\n\nTypical conditions for Paris in early December:\n- Temperatures: roughly 3–10°C (37–50°F)
+            — nights near freezing, daytime cool.  \n- Sky: often cloudy or overcast.  \n- Precipitation: light rain or drizzle
+            is common.  \n- Wind: usually mild to moderate.  \n- Daylight: short days; evenings get dark early.\n\nHow to
+            get the current, live weather right now:\n- Check a weather website or app (Météo‑France, BBC Weather, Weather.com,
+            or your phone’s weather app).  \n- Ask a smart assistant on your phone/speaker (Siri, Google Assistant, Alexa).
+            \ \n- If you want, I can fetch the current conditions and forecast once live-data access is available — or I can
+            show you step‑by‑step how to check on a specific site or app.\n\nDo you want clothing/recommendation (what to
+            pack or wear today) based on the typical conditions, or would you like instructions for checking a live forecast
+            on a particular site or app?"
           refusal: null
           role: assistant
-      created: 1765217151
-      id: chatcmpl-CkZuJShKFVwRcLURIUZDYfHFYod9h
-      model: gpt-4o-mini-2024-07-18
+      created: 1765242183
+      id: chatcmpl-CkgQ36TEJeOvaM8LWdzjbLgRDgqyE
+      model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_11f3029f6b
+      system_fingerprint: null
       usage:
-        completion_tokens: 10
+        completion_tokens: 661
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 384
           rejected_prediction_tokens: 0
-        prompt_tokens: 58
+        prompt_tokens: 138
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 68
+        total_tokens: 799
     status:
       code: 200
       message: OK
