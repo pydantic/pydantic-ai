@@ -81,7 +81,7 @@ This will start a web server (default: http://127.0.0.1:7932) with a chat interf
 
 - `--agent`, `-a`: Agent to serve in `module:variable` format
 - `--model`, `-m`: Models to list as options in the UI (repeatable, agent's model is default if present)
-- `--tool`, `-t`: [Builtin tool](https://ai.pydantic.dev/builtin-tools/) to enable (repeatable). See [available tools](https://ai.pydantic.dev/ui/web/#builtin-tool-support).
+- `--tool`, `-t`: [Builtin tool](https://ai.pydantic.dev/builtin-tools/)s to list as options in the UI (repeatable). See [available tools](https://ai.pydantic.dev/ui/web/#builtin-tool-support).
 - `--instructions`, `-i`: System instructions. In generic mode (no `--agent`), these are the agent instructions. With `--agent`, these are passed as extra instructions to each run.
 - `--host`: Host to bind the server to (default: 127.0.0.1)
 - `--port`: Port to bind the server to (default: 7932)
