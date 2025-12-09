@@ -765,6 +765,7 @@ class TestMultipleToolCalls:
             yield {1: DeltaToolCall('final_result', '{"value": "final"}')}
             yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
             yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+            yield {4: DeltaToolCall('deferred_tool', '{"x": 3}')}
 
         agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
 
@@ -779,6 +780,13 @@ class TestMultipleToolCalls:
             """Another tool that should not be called."""
             tool_called.append('another_tool')
             return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
 
         async with agent.run_stream('test early strategy') as result:
             response = await result.get_output()
@@ -800,8 +808,9 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='final_result', args='{"value": "final"}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='regular_tool', args='{"x": 1}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='deferred_tool', args='{"x": 3}', tool_call_id=IsStr()),
                     ],
-                    usage=RequestUsage(input_tokens=50, output_tokens=10),
+                    usage=RequestUsage(input_tokens=50, output_tokens=13),
                     model_name='function::sf',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
@@ -822,6 +831,12 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
                             content='Tool not executed - a final result was already processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
