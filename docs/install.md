@@ -50,7 +50,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `mistral` — installs [Mistral Model](models/mistral.md) dependency `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
 * `cohere` - installs [Cohere Model](models/cohere.md) dependency `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `bedrock` - installs [Bedrock Model](models/bedrock.md) dependency `boto3` [PyPI ↗](https://pypi.org/project/boto3){:target="_blank"}
-* `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub[inference]` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
+* `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
 * `outlines-transformers` - installs [Outlines Model](models/outlines.md) dependency `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
 * `outlines-llamacpp` - installs [Outlines Model](models/outlines.md) dependency `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
 * `outlines-mlxlm` - installs [Outlines Model](models/outlines.md) dependency `outlines[mlxlm]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}

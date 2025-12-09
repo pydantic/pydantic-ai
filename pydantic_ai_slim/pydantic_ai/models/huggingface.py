@@ -9,6 +9,7 @@ from typing import Any, Literal, cast, overload
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
@@ -41,19 +42,17 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
 
 try:
     import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
+        ChatCompletionInputGrammarType,
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
+        ChatCompletionInputResponseFormatJSONObject,
+        ChatCompletionInputResponseFormatJSONSchema,
         ChatCompletionInputTool,
         ChatCompletionInputToolCall,
         ChatCompletionInputURL,
@@ -80,10 +79,11 @@ HFSystemPromptRole = Literal['system', 'user']
 
 LatestHuggingFaceModelNames = Literal[
     'deepseek-ai/DeepSeek-R1',
-    'meta-llama/Llama-3.3-70B-Instruct',
-    'meta-llama/Llama-4-Maverick-17B-128E-Instruct',
-    'meta-llama/Llama-4-Scout-17B-16E-Instruct',
-    'Qwen/QwQ-32B',
+    'meta-llama/Llama-3.1-8B-Instruct',
+    'MiniMaxAI/MiniMax-M2',
+    'openai/gpt-oss-20b',
+    'openai/gpt-oss-120b',
+    'Qwen/Qwen3-Coder-30B-A3B-Instruct',
     'Qwen/Qwen2.5-72B-Instruct',
     'Qwen/Qwen3-235B-A22B',
     'Qwen/Qwen3-32B',
@@ -142,13 +142,14 @@ class HuggingFaceModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
         """
-        self._model_name = model_name
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
+        provider_profile = provider.model_profile(model_name)
+        self._model_name = model_name.rsplit(':', 1)[0]
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile or provider_profile)
+        self.client = provider.client
 
     @property
     def model_name(self) -> HuggingFaceModelName:
@@ -233,6 +234,15 @@ class HuggingFaceModel(Model):
             raise UserError('HuggingFace does not support built-in tools')
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
+        response_format: ChatCompletionInputGrammarType | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_json_schema(output_object)
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            response_format = ChatCompletionInputResponseFormatJSONObject.parse_obj_as_instance({'type': 'json_object'})  # type: ignore
 
         try:
             return await self.client.chat.completions.create(  # type: ignore
@@ -245,6 +255,7 @@ class HuggingFaceModel(Model):
                 temperature=model_settings.get('temperature', None),
                 top_p=model_settings.get('top_p', None),
                 seed=model_settings.get('seed', None),
+                response_format=response_format or None,
                 presence_penalty=model_settings.get('presence_penalty', None),
                 frequency_penalty=model_settings.get('frequency_penalty', None),
                 logit_bias=model_settings.get('logit_bias', None),  # type: ignore
@@ -376,6 +387,19 @@ class HuggingFaceModel(Model):
                 },
             }
         )
+
+    def _map_json_schema(self, o: OutputObjectDefinition) -> ChatCompletionInputGrammarType:
+        response_format_param: ChatCompletionInputResponseFormatJSONSchema = {  # type: ignore
+            'type': 'json_schema',
+            'json_schema': {
+                'name': o.name or DEFAULT_OUTPUT_TOOL_NAME,
+                'schema': o.json_schema,
+                'strict': o.strict,
+            },
+        }
+        if o.description:  # pragma: no branch
+            response_format_param['json_schema']['description'] = o.description
+        return response_format_param
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ChatCompletionInputTool:
