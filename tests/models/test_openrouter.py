@@ -408,6 +408,30 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     )
 
 
+async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    agent = Agent(
+        model=model,
+        model_settings=OpenRouterModelSettings(openrouter_reasoning={'enabled': True}),
+    )
+
+    async with agent.run_stream('What is 2+2?') as stream:
+        _ = await stream.get_output()
+
+        assert stream.response.parts == snapshot(
+            [
+                ThinkingPart(
+                    content='This is a simple arithmetic question. 2+2 equals 4.',
+                    signature='Et0BCkgIChACGAIqQA2s7h7tA7IG35fbwVkou9PM2hANVJNUwcEM4q12fTRDK6y3v6YoEvJ+7bko8wnW/GLsQFXadaJPAEMCpLkhI9ISDLjFkeR1aVUIvdCtyBoMrUTovh0jwk+wpnZWIjANV3e6VVdgbGSsEyyTHO6KMmVtqqs79f9blnVdJmmMIwMyTi6bEtG59+jTU7v1zlsqQ2IKGZILOlr6adh0Aam7zYttvisys+wjyZZXU1y/Srz0nmp1cFgVOJe1BLKQI3SSRrjsqQC0uAEUZy0GX0Rq1AXjvIcYAQ==',
+                    provider_name='openrouter',
+                    provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
+                ),
+                TextPart(content='2 + 2 = 4'),
+            ]
+        )
+
+
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
     """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
 
