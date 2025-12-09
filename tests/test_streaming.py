@@ -905,11 +905,12 @@ class TestMultipleToolCalls:
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
             assert info.output_tools is not None
-            yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
-            yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
+            yield {1: DeltaToolCall('regular_tool', '{"x": 42}')}
+            yield {2: DeltaToolCall('final_result', '{"value": "first"}')}
             yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
             yield {4: DeltaToolCall('final_result', '{"value": "second"}')}
             yield {5: DeltaToolCall('unknown_tool', '{"value": "???"}')}
+            yield {6: DeltaToolCall('deferred_tool', '{"x": 4}')}
 
         agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='exhaustive')
 
@@ -925,10 +926,23 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
+
         async with agent.run_stream('test exhaustive strategy') as result:
             response = await result.get_output()
             assert response.value == snapshot('first')
             messages = result.all_messages()
+
+        # Verify the result came from the first final tool
+        assert response.value == 'first'
+
+        # Verify all regular tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
 
         # Verify we got tool returns in the correct order
         assert messages == snapshot(
@@ -939,13 +953,14 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='regular_tool', args='{"x": 42}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='deferred_tool', args='{"x": 4}', tool_call_id=IsStr()),
                     ],
-                    usage=RequestUsage(input_tokens=50, output_tokens=18),
+                    usage=RequestUsage(input_tokens=50, output_tokens=21),
                     model_name='function::sf',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
@@ -965,14 +980,23 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
-                            tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                            tool_name='regular_tool',
+                            content=42,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                         ),
                         RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
                             tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
