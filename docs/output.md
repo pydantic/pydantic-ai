@@ -304,6 +304,8 @@ print(repr(result.output))
 
 1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle`. However, as `ToolOutput` is an object rather than a type, we have to use a list.
 
+_(This example is complete, it can be run "as is")_
+
 #### Handling Multiple Tool Calls
 
 When the model calls multiple tools in a final response, you can control how tool calls are executed with the `end_strategy`:
@@ -314,8 +316,6 @@ When the model calls multiple tools in a final response, you can control how too
 The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
 See [`Agent.end_strategy`][pydantic_ai.agent.Agent.end_strategy] for more details.
-
-_(This example is complete, it can be run "as is")_
 
 #### Native Output
 
