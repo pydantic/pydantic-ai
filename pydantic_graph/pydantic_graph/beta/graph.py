@@ -755,7 +755,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
                 else:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
-            except BrokenResourceError:  # pragma: no cover
+            except BrokenResourceError:
                 pass  # This can happen in difficult-to-reproduce circumstances when cancelling an asyncio task
 
     async def _run_task(
