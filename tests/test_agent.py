@@ -3057,24 +3057,44 @@ class TestMultipleToolCalls:
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
         result = agent.run_sync('test multiple final results')
+        messages = result.all_messages()
 
         # Verify the result came from the first final tool
         assert result.output.value == 'first'
 
         # Verify we got appropriate tool returns
-        assert result.new_messages()[-1].parts == snapshot(
+        assert messages == snapshot(
             [
-                ToolReturnPart(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                ModelRequest(
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    run_id=IsStr(),
                 ),
-                ToolReturnPart(
-                    tool_name='final_result',
-                    content='Output tool not used - a final result was already processed.',
-                    tool_call_id=IsStr(),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=10),
+                    model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    run_id=IsStr(),
                 ),
             ]
         )
