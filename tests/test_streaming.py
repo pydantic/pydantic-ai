@@ -1007,13 +1007,7 @@ class TestMultipleToolCalls:
         )
 
     async def test_exhaustive_strategy_calls_all_output_tools(self):
-        """Test that 'exhaustive' strategy executes all output tool functions in streaming mode.
-
-        NOTE: Currently output tool processors are called TWICE in streaming mode
-        (once during graph execution, once during output validation).
-        This is existing behavior and may be changed in the future.
-        See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        """
+        """Test that 'exhaustive' strategy executes all output tool functions."""
         output_tools_called: list[str] = []
 
         def process_first(output: OutputType) -> OutputType:
@@ -1052,6 +1046,7 @@ class TestMultipleToolCalls:
         # is called twice, but subsequent tools are called only once
         # Expected behavior after fix: ['first', 'second']
         # Current behavior: ['first', 'first', 'second']
+        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
         assert output_tools_called == ['first', 'first', 'second']
 
         # Verify we got tool returns in the correct order

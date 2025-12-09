@@ -3216,18 +3216,12 @@ class TestMultipleToolCalls:
         """Test that 'exhaustive' strategy executes all output tool functions."""
         output_tools_called: list[str] = []
 
-        class FirstOutput(BaseModel):
-            value: str
-
-        class SecondOutput(BaseModel):
-            value: str
-
-        def process_first(output: FirstOutput) -> FirstOutput:
+        def process_first(output: OutputType) -> OutputType:
             """Process first output."""
             output_tools_called.append('first')
             return output
 
-        def process_second(output: SecondOutput) -> SecondOutput:
+        def process_second(output: OutputType) -> OutputType:
             """Process second output."""
             output_tools_called.append('second')
             return output
@@ -3253,7 +3247,7 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test exhaustive output tools')
 
         # Verify the result came from the first output tool
-        assert isinstance(result.output, FirstOutput)
+        assert isinstance(result.output, OutputType)
         assert result.output.value == 'first'
 
         # Verify both output tools were called
