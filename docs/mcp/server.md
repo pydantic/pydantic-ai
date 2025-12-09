@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 
 server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
-    'anthropic:claude-haiku-4-5', system_prompt='always reply in rhyme'
+    'anthropic:claude-haiku-4-5', instructions='always reply in rhyme'
 )
 
 
@@ -77,7 +77,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
 server = FastMCP('Pydantic AI Server with sampling')
-server_agent = Agent(system_prompt='always reply in rhyme')
+server_agent = Agent(instructions='always reply in rhyme')
 
 
 @server.tool()

@@ -343,7 +343,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockHuggingFace.create_mock(responses)
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(model, system_prompt='this is the system prompt')
+    agent = Agent(model, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:

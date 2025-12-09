@@ -665,7 +665,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     ]
     gemini_client = get_gemini_client(responses)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -757,7 +757,7 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
 
     gemini_client = client_with_handler(handler)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Hello')
@@ -1308,7 +1308,7 @@ async def test_video_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, video_content: BinaryContent
 ) -> None:
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output.strip() == snapshot(
@@ -1319,7 +1319,7 @@ async def test_video_as_binary_content_input(
 @pytest.mark.vcr()
 async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4')
 

@@ -302,7 +302,7 @@ class Recipe(BaseModel):
 recipe_agent = Agent(
     'openai:gpt-5-mini',
     output_type=Recipe,
-    system_prompt=(
+    instructions=(
         'Generate a recipe to cook the dish that meets the dietary restrictions.'
     ),
 )

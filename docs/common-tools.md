@@ -27,7 +27,7 @@ from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 agent = Agent(
     'openai:o3-mini',
     tools=[duckduckgo_search_tool()],
-    system_prompt='Search DuckDuckGo for the given query and return the results.',
+    instructions='Search DuckDuckGo for the given query and return the results.',
 )
 
 result = agent.run_sync(
@@ -115,7 +115,7 @@ assert api_key is not None
 agent = Agent(
     'openai:o3-mini',
     tools=[tavily_search_tool(api_key)],
-    system_prompt='Search Tavily for the given query and return the results.',
+    instructions='Search Tavily for the given query and return the results.',
 )
 
 result = agent.run_sync('Tell me the top news in the GenAI world, give me links.')

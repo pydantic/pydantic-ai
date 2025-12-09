@@ -544,7 +544,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
     )
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, output_type=int, system_prompt='System prompt value')
+    agent = Agent(model=model, output_type=int, instructions='System prompt value')
 
     result = await agent.run('User prompt value')
 
@@ -556,9 +556,9 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='System prompt value', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='System prompt value',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1092,7 +1092,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt')
+    agent = Agent(model, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1250,7 +1250,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
     ]
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
+    agent = Agent(model, instructions='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1407,7 +1407,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
+    agent = Agent(model, instructions='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1521,7 +1521,7 @@ async def test_stream_tool_call(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt')
+    agent = Agent(model, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1634,7 +1634,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt')
+    agent = Agent(model, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:

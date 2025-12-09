@@ -26,7 +26,7 @@ from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
     'openai:gpt-5',
-    system_prompt=(
+    instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
@@ -99,7 +99,7 @@ class ClientAndKey:  # (1)!
 joke_selection_agent = Agent(
     'openai:gpt-5',
     deps_type=ClientAndKey,  # (2)!
-    system_prompt=(
+    instructions=(
         'Use the `joke_factory` tool to generate some jokes on the given subject, '
         'then choose the best. You must return just a single joke.'
     ),
@@ -108,7 +108,7 @@ joke_generation_agent = Agent(
     'google-gla:gemini-2.5-flash',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
-    system_prompt=(
+    instructions=(
         'Use the "get_jokes" tool to get some jokes on the given subject, '
         'then extract each joke into a list.'
     ),
@@ -199,7 +199,7 @@ class Failed(BaseModel):
 flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
     'openai:gpt-5',
     output_type=FlightDetails | Failed,  # type: ignore
-    system_prompt=(
+    instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
     ),
@@ -247,7 +247,7 @@ class SeatPreference(BaseModel):
 seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
     'openai:gpt-5',
     output_type=SeatPreference | Failed,  # type: ignore
-    system_prompt=(
+    instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
         'Row 1 is the front row and has extra leg room. '

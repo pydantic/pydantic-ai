@@ -27,7 +27,6 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -315,7 +314,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockOpenAI.create_mock(responses)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -330,9 +329,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -365,6 +364,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -397,6 +397,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(

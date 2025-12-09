@@ -274,7 +274,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockAsyncClientV2.create_mock(responses)
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m, system_prompt='this is the system prompt')
+    agent = Agent(m, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:

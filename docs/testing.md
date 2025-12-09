@@ -39,7 +39,7 @@ from weather_service import WeatherService  # (2)!
 weather_agent = Agent(
     'openai:gpt-5',
     deps_type=WeatherService,
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 

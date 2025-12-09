@@ -30,7 +30,7 @@ Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult
 ```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
 print(result.output)
@@ -75,7 +75,7 @@ Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.Strea
 ```python {title="streamed_run_result_messages.py" hl_lines="9 40"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 
 async def main():
@@ -154,7 +154,7 @@ If `message_history` is set and not empty, a new system prompt is not generated 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -235,7 +235,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,  # (1)!
 )
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 history_step_1 = result1.all_messages()
@@ -275,7 +275,7 @@ In the example below, we reuse the message from the first agent run, which uses 
 ```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
