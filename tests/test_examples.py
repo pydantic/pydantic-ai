@@ -553,6 +553,32 @@ async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
+
+    # Handle tool_choice when it's a list of specific tool names
+    tool_choice = info.model_settings.get('tool_choice') if info.model_settings else None
+    if isinstance(tool_choice, list) and isinstance(m, UserPromptPart):
+        # Find the first matching tool and call it with default string args
+        for tool_name in tool_choice:
+            tool_def = next((t for t in info.function_tools if t.name == tool_name), None)
+            if tool_def:
+                # Build default args based on schema - use 'a' for strings, extract from prompt if 'query'
+                args: dict[str, Any] = {}
+                props = tool_def.parameters_json_schema.get('properties', {})
+                content = m.content if isinstance(m.content, str) else str(m.content)
+                for param_name, param_schema in props.items():
+                    if param_schema.get('type') == 'string':
+                        # Use the prompt content as the value for query-like params
+                        args[param_name] = content
+                    elif param_schema.get('type') == 'integer':
+                        args[param_name] = 1
+                    elif param_schema.get('type') == 'number':
+                        args[param_name] = 1.0
+                    elif param_schema.get('type') == 'boolean':
+                        args[param_name] = True
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool_name, args=args, tool_call_id='pyd_ai_tool_call_id')]
+                )
+
     if isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
             return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])

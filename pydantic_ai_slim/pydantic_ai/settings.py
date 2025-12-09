@@ -1,9 +1,30 @@
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal
 
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+if TYPE_CHECKING:
+    from ._run_context import RunContext
+
+ToolChoiceValue = Literal['none', 'required', 'auto'] | list[str] | None
+"""Type for static tool_choice values."""
+
+ToolChoiceFunc = Callable[['RunContext[Any]'], ToolChoiceValue]
+"""A callable that returns a tool_choice value based on the current run context.
+
+This allows dynamic control of tool_choice per model request.
+
+Example:
+```python
+def my_tool_choice(ctx: RunContext) -> str | list[str] | None:
+    if ctx.run_step == 1:
+        return ['search']  # Force search tool on first request
+    return None  # Default behavior for subsequent requests
+```
+"""
 
 
 class ModelSettings(TypedDict, total=False):
@@ -90,17 +111,35 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     """
 
-    tool_choice: Literal['none', 'required', 'auto'] | list[str] | None
+    tool_choice: ToolChoiceValue | Callable[..., ToolChoiceValue]
     """Control which function tools the model can use.
 
     This setting only affects function tools registered on the agent, not output tools
     used for structured output.
+
+    **Static values:**
 
     * `None` (default): Automatically determined based on output configuration
     * `'auto'`: Model decides whether to use function tools
     * `'required'`: Model must use one of the available function tools
     * `'none'`: Model cannot use function tools (output tools remain available if needed)
     * `list[str]`: Model must use one of the specified function tools (validated against registered tools)
+
+    **Dynamic callable:**
+
+    You can also pass a callable that receives a [`RunContext`][pydantic_ai.tools.RunContext]
+    and returns a static value. This allows dynamic control per model request:
+
+    ```python
+    def my_tool_choice(ctx: RunContext) -> str | list[str] | None:
+        if ctx.run_step == 1:
+            return ['search']  # Force search tool on first request
+        return None  # Default behavior for subsequent requests
+
+    agent = Agent(..., model_settings={'tool_choice': my_tool_choice})
+    ```
+
+    When the callable returns `None`, the default behavior (based on output configuration) is used.
 
     If the agent has a structured output type that requires an output tool and `tool_choice='none'`
     is set, the output tool will still be available and a warning will be logged. Consider using

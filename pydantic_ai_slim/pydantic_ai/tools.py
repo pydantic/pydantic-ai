@@ -272,6 +272,7 @@ class Tool(Generic[ToolAgentDepsT]):
     strict: bool | None
     sequential: bool
     requires_approval: bool
+    force_first_request: bool
     metadata: dict[str, Any] | None
     function_schema: _function_schema.FunctionSchema
     """
@@ -295,6 +296,7 @@ class Tool(Generic[ToolAgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        force_first_request: bool = False,
         metadata: dict[str, Any] | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
@@ -351,6 +353,8 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            force_first_request: If True, the model will be forced to use this tool on the first request of a run.
+                Multiple tools with this flag set will allow the model to choose one of them. Defaults to False.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
@@ -372,6 +376,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.strict = strict
         self.sequential = sequential
         self.requires_approval = requires_approval
+        self.force_first_request = force_first_request
         self.metadata = metadata
 
     @classmethod

@@ -1,0 +1,374 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '693'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Paris and what is the forecast?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        function:
+          name: get_weather
+        type: function
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the weather forecast for a city.
+          name: get_forecast
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '6128'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_lr3fVLODFt5q6v3aHfP4XsDD
+            type: function
+      created: 1765300671
+      id: chatcmpl-CkvdPjYulTO4ZwjJb2Dh7KyLTyWSG
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 407
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 161
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 568
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '985'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=ptALAnm.lqk9hFYhvo1iV3YuE6lpw5xuEHlCeXtMZN8-1765300677-1.0.1.1-39QUwnOCz3y8vpHH6PsFM3FrJSNkUKu3tMrrThbjh7cQ6kATc9ifbRPRxwnZvcnpLCLMRf6u.i4dY74pCZ_Nq40duAgSHIfNguw_Y2L3j_A;
+        _cfuvid=S4Kpbf3Q3prsUgCsF4CiRFp.4QLQ5VcbEo82aKytdos-1765300677210-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Paris and what is the forecast?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_lr3fVLODFt5q6v3aHfP4XsDD
+          type: function
+      - content: 'Current weather in Paris: 72°F, sunny'
+        role: tool
+        tool_call_id: call_lr3fVLODFt5q6v3aHfP4XsDD
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        function:
+          name: get_forecast
+        type: function
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the weather forecast for a city.
+          name: get_forecast
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1052'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2102'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_forecast
+            id: call_W8qSbpVjYPqA1FO6Ckm360h9
+            type: function
+      created: 1765300678
+      id: chatcmpl-CkvdWAVMSzgFPrHMR8WhQuyLByQ6I
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 88
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 64
+          rejected_prediction_tokens: 0
+        prompt_tokens: 199
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 287
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1236'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=ptALAnm.lqk9hFYhvo1iV3YuE6lpw5xuEHlCeXtMZN8-1765300677-1.0.1.1-39QUwnOCz3y8vpHH6PsFM3FrJSNkUKu3tMrrThbjh7cQ6kATc9ifbRPRxwnZvcnpLCLMRf6u.i4dY74pCZ_Nq40duAgSHIfNguw_Y2L3j_A;
+        _cfuvid=S4Kpbf3Q3prsUgCsF4CiRFp.4QLQ5VcbEo82aKytdos-1765300677210-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Paris and what is the forecast?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: call_lr3fVLODFt5q6v3aHfP4XsDD
+          type: function
+      - content: 'Current weather in Paris: 72°F, sunny'
+        role: tool
+        tool_call_id: call_lr3fVLODFt5q6v3aHfP4XsDD
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_forecast
+          id: call_W8qSbpVjYPqA1FO6Ckm360h9
+          type: function
+      - content: 'Forecast for Paris: sunny for the next 3 days'
+        role: tool
+        tool_call_id: call_W8qSbpVjYPqA1FO6Ckm360h9
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the weather forecast for a city.
+          name: get_forecast
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '852'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '862'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: |-
+            Current weather in Paris: 72°F, sunny.
+
+            Forecast: sunny for the next 3 days.
+          refusal: null
+          role: assistant
+      created: 1765300681
+      id: chatcmpl-CkvdZTfzXSbnF1UzQ0DQwnYkbkUVK
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 24
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 240
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 264
+    status:
+      code: 200
+      message: OK
+version: 1

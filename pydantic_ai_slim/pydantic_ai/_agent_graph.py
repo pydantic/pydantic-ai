@@ -516,7 +516,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_request_parameters = await _prepare_request_parameters(ctx)
 
-        model_settings = ctx.deps.model_settings
+        # Resolve dynamic tool_choice callable if present
+        model_settings = _resolve_tool_choice(ctx.deps.model_settings, run_context)
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
@@ -837,6 +838,28 @@ def build_validation_context(
         return fn(run_context)
     else:
         return validation_ctx
+
+
+def _resolve_tool_choice(
+    settings: ModelSettings | None,
+    ctx: RunContext[Any],
+) -> ModelSettings | None:
+    """Resolve dynamic tool_choice if it's a callable.
+
+    If tool_choice is a callable, invoke it with the run context and return
+    a new ModelSettings dict with the resolved value. If it's not callable,
+    or settings is None, return as-is.
+    """
+    if settings is None:
+        return None
+
+    tool_choice = settings.get('tool_choice')
+    if callable(tool_choice):
+        resolved = tool_choice(ctx)
+        new_settings: ModelSettings = {**settings, 'tool_choice': resolved}
+        return new_settings
+
+    return settings
 
 
 async def process_tool_calls(  # noqa: C901

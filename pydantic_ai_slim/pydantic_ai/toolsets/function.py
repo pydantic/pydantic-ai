@@ -51,6 +51,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        force_first_request: bool = False,
         metadata: dict[str, Any] | None = None,
         id: str | None = None,
     ):
@@ -74,6 +75,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, unless overridden when adding a tool.
+            force_first_request: If True, the model will be forced to use this tool on the first request of a run.
+                Multiple tools with this flag set will allow the model to choose one of them. Defaults to False.
+                Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
@@ -87,6 +91,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.strict = strict
         self.sequential = sequential
         self.requires_approval = requires_approval
+        self.force_first_request = force_first_request
         self.metadata = metadata
 
         self.tools = {}
@@ -118,6 +123,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        force_first_request: bool | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
@@ -136,6 +142,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        force_first_request: bool | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -191,6 +198,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            force_first_request: If True, the model will be forced to use this tool on the first request of a run.
+                Multiple tools with this flag set will allow the model to choose one of them. Defaults to False.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
         """
@@ -212,6 +222,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                force_first_request=force_first_request,
                 metadata=metadata,
             )
             return func_
@@ -232,6 +243,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        force_first_request: bool | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
@@ -265,6 +277,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            force_first_request: If True, the model will be forced to use this tool on the first request of a run.
+                Multiple tools with this flag set will allow the model to choose one of them. Defaults to False.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
         """
@@ -280,6 +295,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential = self.sequential
         if requires_approval is None:
             requires_approval = self.requires_approval
+        if force_first_request is None:
+            force_first_request = self.force_first_request
 
         tool = Tool[AgentDepsT](
             func,
@@ -294,6 +311,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict=strict,
             sequential=sequential,
             requires_approval=requires_approval,
+            force_first_request=force_first_request,
             metadata=metadata,
         )
         self.add_tool(tool)
