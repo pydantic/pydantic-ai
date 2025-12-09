@@ -3294,18 +3294,12 @@ class TestMultipleToolCalls:
         """Test that 'early' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []
 
-        class FirstOutput(BaseModel):
-            value: str
-
-        class SecondOutput(BaseModel):
-            value: str
-
-        def process_first(output: FirstOutput) -> FirstOutput:
+        def process_first(output: OutputType) -> OutputType:
             """Process first output."""
             output_tools_called.append('first')
             return output
 
-        def process_second(output: SecondOutput) -> SecondOutput:  # pragma: no cover
+        def process_second(output: OutputType) -> OutputType:  # pragma: no cover
             """Process second output."""
             output_tools_called.append('second')
             return output
@@ -3331,7 +3325,7 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test early output tools')
 
         # Verify the result came from the first output tool
-        assert isinstance(result.output, FirstOutput)
+        assert isinstance(result.output, OutputType)
         assert result.output.value == 'first'
 
         # Verify only the first output tool was called
