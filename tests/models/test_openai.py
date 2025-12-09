@@ -897,10 +897,10 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Xn7ZD27IylZB66yw2n38IWXe')],
                 usage=RequestUsage(
                     input_tokens=46,
-                    output_tokens=11,
+                    output_tokens=10,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -912,7 +912,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
+                provider_response_id='chatcmpl-CkZpBs2uAOr90Y3bazEGxLfYjrJgJ',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -921,7 +921,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file bd38f5',
-                        tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
+                        tool_call_id='call_Xn7ZD27IylZB66yw2n38IWXe',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -940,8 +940,8 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],
                 usage=RequestUsage(
-                    input_tokens=503,
-                    output_tokens=8,
+                    input_tokens=507,
+                    output_tokens=7,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
@@ -953,7 +953,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
+                provider_response_id='chatcmpl-CkZpD3JSLa7qZKvU5yYhrf7L3wOxA',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

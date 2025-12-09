@@ -27,7 +27,7 @@ async def test_tool_choice_auto_live(allow_model_requests: None, openai_api_key:
     @agent.tool_plain
     def get_weather(city: str) -> str:
         """Get the weather for a city."""
-        return f'The weather in {city} is sunny and 72°F.'
+        return f'The weather in {city} is sunny and 72°F.'  # pragma: no cover
 
     result = await agent.run('What is 2+2?', model_settings={'tool_choice': 'auto'})
     assert result.output is not None

@@ -2543,7 +2543,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33}
+                    input_tokens=25, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 25}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2573,7 +2573,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=47, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47}
+                    input_tokens=39, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 39}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),

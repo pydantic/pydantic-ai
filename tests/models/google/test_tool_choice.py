@@ -19,7 +19,6 @@ pytestmark = [
 ]
 
 
-@pytest.mark.skip(reason='Cassette not yet recorded due to Google API rate limits - re-run with --record-mode=rewrite')
 async def test_tool_choice_auto_live(allow_model_requests: None, gemini_api_key: str):
     """Test tool_choice='auto' allows model to decide whether to use tools."""
     m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
@@ -28,7 +27,7 @@ async def test_tool_choice_auto_live(allow_model_requests: None, gemini_api_key:
     @agent.tool_plain
     def get_weather(city: str) -> str:
         """Get the weather for a city."""
-        return f'The weather in {city} is sunny and 72°F.'
+        return f'The weather in {city} is sunny and 72°F.'  # pragma: no cover
 
     result = await agent.run('What is 2+2?', model_settings={'tool_choice': 'auto'})
     assert result.output is not None
@@ -53,7 +52,6 @@ async def test_tool_choice_required_live(allow_model_requests: None, gemini_api_
     assert result.output == 72
 
 
-@pytest.mark.skip(reason='Cassette not yet recorded due to Google API rate limits - re-run with --record-mode=rewrite')
 async def test_tool_choice_none_live(allow_model_requests: None, gemini_api_key: str):
     """Test tool_choice='none' prevents model from using function tools."""
     m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
