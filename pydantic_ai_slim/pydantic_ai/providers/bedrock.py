@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
@@ -75,14 +75,9 @@ class BedrockProvider(Provider[BaseClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: replace(
-                BedrockModelProfile(bedrock_supports_tool_choice=True, bedrock_send_back_thinking_parts=True).update(
-                    anthropic_model_profile(model_name)
-                ),
-                # Bedrock does not support native structured output
-                supports_json_schema_output=False,
-                json_schema_transformer=None,
-            ),
+            'anthropic': lambda model_name: BedrockModelProfile(
+                bedrock_supports_tool_choice=True, bedrock_send_back_thinking_parts=True
+            ).update(anthropic_model_profile(model_name)),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 mistral_model_profile(model_name)
             ),
