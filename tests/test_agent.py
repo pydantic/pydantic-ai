@@ -3636,7 +3636,7 @@ class TestMultipleToolCalls:
     def test_exhaustive_raises_unexpected_model_behavior(self):
         """Test that exhaustive strategy raises `UnexpectedModelBehavior` when all outputs have validation errors."""
 
-        def process_output(output: OutputType) -> OutputType:
+        def process_output(output: OutputType) -> OutputType:  # pragma: no cover
             """Process output."""
             return output
 
