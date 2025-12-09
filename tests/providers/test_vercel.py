@@ -14,7 +14,6 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
-from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
@@ -83,7 +82,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('anthropic/claude-sonnet-4-5')
     anthropic_mock.assert_called_with('claude-sonnet-4-5')
     assert profile is not None
-    assert profile.json_schema_transformer == AnthropicJsonSchemaTransformer
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
     profile = provider.model_profile('bedrock/anthropic.claude-sonnet-4-5')

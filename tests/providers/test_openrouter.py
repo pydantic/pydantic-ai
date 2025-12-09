@@ -19,7 +19,6 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
@@ -128,7 +127,7 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
     anthropic_model_profile_mock.assert_called_with('claude-3.5-sonnet')
     assert anthropic_profile is not None
-    assert anthropic_profile.json_schema_transformer == AnthropicJsonSchemaTransformer
+    assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
