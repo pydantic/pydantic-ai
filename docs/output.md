@@ -305,7 +305,7 @@ print(repr(result.output))
 1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle`. However, as `ToolOutput` is an object rather than a type, we have to use a list.
 
 !!! note "Handling Multiple Tool Calls with `end_strategy`"
-    When a model calls multiple tools in the same response (either output tools or [function tools](tools.md)), the agent's `end_strategy` parameter controls how these tools are executed:
+    When a model calls multiple tools in the same response (either output tools or [function tools](tools.md)), the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tools are executed:
 
     **For Output Tools:**
 
