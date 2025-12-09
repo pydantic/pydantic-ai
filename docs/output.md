@@ -304,20 +304,16 @@ print(repr(result.output))
 
 1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle`. However, as `ToolOutput` is an object rather than a type, we have to use a list.
 
-!!! note "Handling Multiple Tool Calls with `end_strategy`"
-    When a model calls multiple tools in the same response (either output tools or [function tools](tools.md)), the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tools are executed:
+#### Handling Multiple Tool Calls
 
-    **For Output Tools:**
+When the model calls multiple tools in a final response, you can control how tool calls are executed with the `end_strategy`:
 
-    - `'early'` (default): Output tools are executed one by one in the order they were called. Once any output tool produces a valid result, that result becomes the final output and all remaining tool calls (both output tools and function tools) are skipped. If an output tool fails validation, the next output tool in the list is tried.
-    - `'exhaustive'`: All output tool functions are executed, regardless of whether earlier ones succeeded or failed. The first output tool that produces a valid result becomes the final output. All function tools in the response are also executed, even after a final result is found.
+- `'early'` (default): Tools are executed in order until a valid final result is found, then remaining tool calls are skipped
+- `'exhaustive'`: All tools are executed with the first valid result becoming the final output
 
-    **For Function Tools:**
+The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-    - `'early'` (default): Once a final result is found from an output tool, all remaining function tool calls are skipped and not executed.
-    - `'exhaustive'`: All function tool calls are executed, even after a final result has been found from an output tool.
-
-    The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute, regardless of whether a final result has been found.
+See [`Agent.end_strategy`][pydantic_ai.agent.Agent.end_strategy] for more details.
 
 _(This example is complete, it can be run "as is")_
 

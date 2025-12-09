@@ -118,12 +118,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
-    - `'early'`: Tools are executed in order until a valid final result is found, then remaining tool calls are skipped (default)
-    - `'exhaustive'`: All tool calls are executed, even after a valid final result is found
-
-    This applies to both function tools and output tools.
-    With output tools, the first valid result becomes the final output.
-    With 'early', if an output tool fails validation, the next one is tried.
+    - `'early'`: Tools are executed in order until a valid final result is found, then remaining tool calls are skipped
+    - `'exhaustive'`: All tools are executed with the first valid result becoming the final output 
     """
 
     model_settings: ModelSettings | None

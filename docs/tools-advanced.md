@@ -378,15 +378,15 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
-### End Strategy
-
-When a model returns multiple tool calls in a single response, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tools are executed.
-The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
-
-For a detailed explanation of how `end_strategy` works with both function tools and output tools, see [Handling Multiple Tool Calls with `end_strategy`](output.md#handling-multiple-tool-calls-with-end_strategy).
-
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+
+### Handling Final Tool Calls
+
+When a model returns multiple tool calls in a single response, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
+The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
+
+For a detailed explanation of how `end_strategy` works with both function tools and output tools, see [Handling Multiple Tool Calls](output.md#handling-multiple-tool-calls).
 
 ## See Also
 
