@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
+from functools import cached_property
 from mimetypes import guess_type
 from os import PathLike
 from pathlib import Path
@@ -192,8 +193,7 @@ class FileUrl(ABC):
         """The file format."""
         raise NotImplementedError
 
-    @pydantic.computed_field
-    @property
+    @cached_property
     def base_url(self) -> str:
         """The base URL of the file (removes any query parameters or fragments)."""
         return self.url.split('?', 1)[0].split('#', 1)[0]

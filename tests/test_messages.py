@@ -720,7 +720,6 @@ def test_image_url_validation_with_optional_identifier():
             'kind': 'image-url',
             'media_type': 'image/jpeg',
             'identifier': '39cfc4',
-            'base_url': 'https://example.com/image.jpg',
         }
     )
 
@@ -738,7 +737,6 @@ def test_image_url_validation_with_optional_identifier():
             'kind': 'image-url',
             'media_type': 'image/png',
             'identifier': 'foo',
-            'base_url': 'https://example.com/image.jpg',
         }
     )
 
