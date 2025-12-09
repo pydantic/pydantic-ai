@@ -1247,13 +1247,7 @@ class TestMultipleToolCalls:
         )
 
     async def test_exhaustive_strategy_valid_first_invalid_second_output(self):
-        """Test that exhaustive strategy uses the first valid output even when the second is invalid.
-
-        NOTE: Currently output tool processors are called TWICE in streaming mode
-        (once during graph execution, once during output validation).
-        This is existing behavior and may be changed in the future.
-        See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
-        """
+        """Test that exhaustive strategy uses the first valid output even when the second is invalid."""
         output_tools_called: list[str] = []
 
         def process_first(output: OutputType) -> OutputType:
@@ -1284,15 +1278,16 @@ class TestMultipleToolCalls:
         async with agent.run_stream('test valid first invalid second') as result:
             response = await result.get_output()
 
-        # Verify the result came from the first output tool
+        # Verify the result came from the first output tool (second was invalid, but we ignore it)
         assert isinstance(response, OutputType)
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        # NOTE: Due to current streaming behavior, the first output tool (which becomes final_result)
-        # is called twice, but subsequent tools are called only once
-        # Expected behavior after https://github.com/pydantic/pydantic-ai/issues/3624 is fixed: ['first', 'second']
-        # Current behavior: ['first', 'first', 'second']
+        # NOTE: Due to current streaming behavior, the second output tool (which becomes final_result)
+        # is called twice, first tool called once and fails
+        # Expected behavior after fix: ['first', 'second']
+        # Current behavior: ['first', 'second', 'second']
+        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
         assert output_tools_called == snapshot(['first', 'first', 'second'])
 
         # Verify we got appropriate messages
