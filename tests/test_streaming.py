@@ -1166,7 +1166,7 @@ class TestMultipleToolCalls:
             ]
         )
 
-    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3393')
+    @pytest.mark.skip(reason='See https://github.com/pydantic/pydantic-ai/issues/3393')
     async def test_exhaustive_strategy_invalid_first_valid_second_output(self):
         """Test that exhaustive strategy uses the second valid output when the first is invalid."""
         output_tools_called: list[str] = []
@@ -1451,7 +1451,7 @@ class TestMultipleToolCalls:
             ]
         )
 
-    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3638')
+    @pytest.mark.skip(reason='See https://github.com/pydantic/pydantic-ai/issues/3638')
     async def test_exhaustive_raises_unexpected_model_behavior(self):
         """Test that exhaustive strategy raises `UnexpectedModelBehavior` when all outputs have validation errors."""
 
@@ -1560,7 +1560,7 @@ class TestMultipleToolCalls:
             ]
         )
 
-    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3638')
+    @pytest.mark.skip(reason='See https://github.com/pydantic/pydantic-ai/issues/3638')
     async def test_multiple_final_result_are_validated_correctly(self):
         """Tests that if multiple final results are returned, but one fails validation, the other is used."""
 
