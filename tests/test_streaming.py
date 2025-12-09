@@ -1728,6 +1728,7 @@ class TestMultipleToolCalls:
         )
 
     async def test_early_strategy_with_deferred_tool_call(self):
+        """Test that early strategy handles deferred tool calls correctly."""
         tool_called: list[str] = []
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
