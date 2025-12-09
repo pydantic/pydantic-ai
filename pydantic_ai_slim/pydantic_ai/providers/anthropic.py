@@ -45,7 +45,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         profile = anthropic_model_profile(model_name)
         if profile:
             return replace(profile, json_schema_transformer=AnthropicJsonSchemaTransformer)
-        return profile
+        return profile  # pragma: no cover
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
