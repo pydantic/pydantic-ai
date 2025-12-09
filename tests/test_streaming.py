@@ -1451,6 +1451,7 @@ class TestMultipleToolCalls:
             ]
         )
 
+    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3638')
     async def test_exhaustive_raises_unexpected_model_behavior(self):
         """Test that exhaustive strategy raises `UnexpectedModelBehavior` when all outputs have validation errors."""
 
@@ -1471,10 +1472,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        # NOTE: This test is incorrect and not consistent with sync mode behavior.
-        # Expected behavior after https://github.com/pydantic/pydantic-ai/issues/3638 is fixed: UnexpectedModelBehavior
-        # Current behavior: ValidationError
-        with pytest.raises(ValidationError, match='Field required'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(1\\) for output validation'):
             async with agent.run_stream('test') as result:
                 await result.get_output()
 
