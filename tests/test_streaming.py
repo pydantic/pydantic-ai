@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import (

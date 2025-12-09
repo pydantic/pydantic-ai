@@ -3761,9 +3761,7 @@ class TestMultipleToolCalls:
         assert result.new_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[
-                        UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))
-                    ],
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     run_id=IsStr(),
                 ),
                 ModelResponse(

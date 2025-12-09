@@ -119,7 +119,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """The strategy for handling multiple tool calls when a final result is found.
 
     - `'early'`: Tools are executed in order until a valid final result is found, then remaining tool calls are skipped
-    - `'exhaustive'`: All tools are executed with the first valid result becoming the final output 
+    - `'exhaustive'`: All tools are executed with the first valid result becoming the final output
     """
 
     model_settings: ModelSettings | None
