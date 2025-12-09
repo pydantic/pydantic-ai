@@ -24,7 +24,7 @@ from ._run_context import RunContext
 from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
-    from .tools import DocstringFormat, ObjectJsonSchema
+    from .tools import DocstringFormat, ObjectJsonSchema, TextFormat
 
 
 __all__ = ('function_schema',)
@@ -44,6 +44,8 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list)
     var_positional_field: str | None = None
+    text_format: TextFormat | None = None
+    """Text format annotation extracted from a string parameter, if present."""
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -111,6 +113,7 @@ def function_schema(  # noqa: C901
     positional_fields: list[str] = []
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
+    text_format: TextFormat | None = None
 
     description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
 
@@ -146,6 +149,13 @@ def function_schema(  # noqa: C901
             elif index != 0 and _is_call_ctx(annotation):
                 errors.append('RunContext annotations can only be used as the first argument')
                 continue
+
+            # Extract text format annotation if present
+            if extracted_format := _extract_text_format(annotation):
+                if text_format is not None:
+                    errors.append('Only one parameter may have a TextFormat annotation')
+                else:
+                    text_format = extracted_format
 
         field_name = p.name
         if p.kind == Parameter.VAR_KEYWORD:
@@ -222,6 +232,7 @@ def function_schema(  # noqa: C901
         takes_ctx=takes_ctx,
         is_async=is_async_callable(function),
         function=function,
+        text_format=text_format,
     )
 
 
@@ -301,3 +312,39 @@ def _build_schema(
 def _is_call_ctx(annotation: Any) -> bool:
     """Return whether the annotation is the `RunContext` class, parameterized or not."""
     return annotation is RunContext or get_origin(annotation) is RunContext
+
+
+def _extract_text_format(annotation: Any) -> TextFormat | None:
+    """Extract a TextFormat annotation from an Annotated type hint.
+
+    Args:
+        annotation: The type annotation to check.
+
+    Returns:
+        The TextFormat instance if found, None otherwise.
+    """
+    from typing import Annotated, get_args, get_origin
+
+    from .tools import FreeformText, LarkGrammar, RegexGrammar
+
+    if get_origin(annotation) is not Annotated:
+        return None
+
+    args = get_args(annotation)
+    if len(args) < 2:
+        return None
+
+    # First arg is the base type, rest are metadata
+    base_type = args[0]
+    metadata = args[1:]
+
+    # Check if base type is str
+    if base_type is not str:
+        return None
+
+    # Look for TextFormat in metadata
+    for item in metadata:
+        if isinstance(item, (FreeformText, RegexGrammar, LarkGrammar)):
+            return item
+
+    return None

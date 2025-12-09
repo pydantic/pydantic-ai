@@ -210,6 +210,137 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
+### Freeform Function Calling
+
+GPT‑5 can now send raw text payloads - anything from Python scripts to SQL queries - to your custom tool without wrapping the data in JSON using freeform function calling. This differs from classic structured function calls, giving you greater flexibility when interacting with external runtimes such as:
+
+* code execution with sandboxes (Python, C++, Java, …)
+* SQL databases
+* Shell environments
+* Configuration generators
+
+Note that freeform function calling does NOT support parallel tool calling.
+
+You can enable freeform function calling for a tool by annotating the string parameter with [`FreeformText`][pydantic_ai.tools.FreeformText]. The tool must take a single string argument (other than the runtime context) and the model must be one of the GPT-5 responses models. For example:
+
+```python
+from typing import Annotated
+
+from pydantic_ai import Agent, FreeformText
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-5')  # (1)!
+agent = Agent(model)
+
+@agent.tool_plain
+def freeform_tool(sql: Annotated[str, FreeformText()]): ...  # (2)!
+```
+
+1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling.
+2. If the tool or model cannot be used with freeform function calling then it will be invoked in the normal way.
+
+You can read more about this function calling style in the [OpenAI documentation](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#2-freeform-function-calling).
+
+#### Context Free Grammar
+
+A tool that queries an SQL database can only accept valid SQL. The freeform function calling of GPT-5 supports generation of valid SQL for this situation by constraining the generated text using a context free grammar.
+
+A context‑free grammar is a collection of production rules that define which strings belong to a language. Each rule rewrites a non‑terminal symbol into a sequence of terminals (literal tokens) and/or other non‑terminals, independent of surrounding context—hence context‑free. CFGs can capture the syntax of most programming languages and, in OpenAI custom tools, serve as contracts that force the model to emit only strings that the grammar accepts.
+
+##### Regular Expression
+
+The grammar can be written as either a regular expression using [`RegexGrammar`][pydantic_ai.tools.RegexGrammar]:
+
+
+```python
+from typing import Annotated
+
+from pydantic_ai import Agent, RegexGrammar
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-5')  # (1)!
+agent = Agent(model)
+
+timestamp_pattern = r'^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) (?:[01]\d|2[0-3]):[0-5]\d$'
+
+@agent.tool_plain
+def timestamp_accepting_tool(timestamp: Annotated[str, RegexGrammar(timestamp_pattern)]): ...  # (2)!
+```
+
+1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately `gpt-5-nano` often struggles with these calls.
+2. If the tool or model cannot be used with freeform function calling then it will be invoked in the normal way, which may lead to invalid input.
+
+##### LARK
+
+Or as a [LARK](https://lark-parser.readthedocs.io/en/latest/how_to_use.html) grammar using [`LarkGrammar`][pydantic_ai.tools.LarkGrammar]:
+
+```python
+from typing import Annotated
+
+from pydantic_ai import Agent, LarkGrammar
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-5')  # (1)!
+agent = Agent(model)
+
+timestamp_grammar = r'''
+start: timestamp
+
+timestamp: YEAR "-" MONTH "-" DAY " " HOUR ":" MINUTE
+
+%import common.DIGIT
+
+YEAR: DIGIT DIGIT DIGIT DIGIT
+MONTH: /(0[1-9]|1[0-2])/
+DAY: /(0[1-9]|[12]\d|3[01])/
+HOUR: /([01]\d|2[0-3])/
+MINUTE: /[0-5]\d/
+'''
+
+@agent.tool_plain
+def i_like_iso_dates(date: Annotated[str, LarkGrammar(timestamp_grammar)]): ...  # (2)!
+```
+
+1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately `gpt-5-nano` often struggles with these calls.
+2. If the tool or model cannot be used with freeform function calling then it will be invoked in the normal way, which may lead to invalid input.
+
+There is a limit to the grammar complexity that GPT-5 supports, as such it is important to test your grammar.
+
+Freeform function calling, with or without a context free grammar, can be used with the output type for the agent:
+
+```python
+from typing import Annotated
+
+from pydantic_ai import Agent, LarkGrammar
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+sql_grammar = r'''
+start: select_stmt
+select_stmt: "SELECT" select_list "FROM" table ("WHERE" condition ("AND" condition)*)?
+select_list: "*" | column ("," column)*
+table: "users" | "orders"
+column: "id" | "user_id" | "name" | "age"
+condition: column ("=" | ">" | "<") (NUMBER | STRING)
+%import common.NUMBER
+%import common.ESCAPED_STRING -> STRING
+%import common.WS
+%ignore WS
+''' # (1)!
+
+model = OpenAIResponsesModel('gpt-5')
+agent = Agent(model, output_type=Annotated[str, LarkGrammar(sql_grammar)])
+```
+
+1. An inline SQL grammar definition would be quite extensive and so this simplified version has been written, you can find an example SQL grammar [in the openai example](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#33-example---sql-dialect--ms-sql-vs-postgresql). There are also example grammars in the [lark repo](https://github.com/lark-parser/lark/blob/master/examples/composition/json.lark). Remember that a simpler grammar that matches your DDL will be easier for GPT-5 to work with and will result in fewer semantically invalid results.
+
+##### Best Practices
+
+You can find recommended best practices in the [OpenAI Cookbook](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#35-best-practices).
+
+* [Lark Docs](https://lark-parser.readthedocs.io/en/stable/)
+* [Lark IDE](https://www.lark-parser.org/ide/)
+* [OpenAI Cookbook on CFG](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#3-contextfree-grammar-cfg)
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
