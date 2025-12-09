@@ -386,7 +386,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 span_id = f'{context.span_id:016x}'
 
             # task_group_gather returns a list of results from each _handle_case call
-            # Each result is now a list of items (because we loop runs inside)
             nested_results = await task_group_gather(
                 [
                     lambda case=case, i=i: _handle_case(case, case.name or f'Case {i}')
