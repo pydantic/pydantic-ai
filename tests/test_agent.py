@@ -3372,18 +3372,12 @@ class TestMultipleToolCalls:
         """Test that exhaustive strategy uses the second valid output when the first is invalid."""
         output_tools_called: list[str] = []
 
-        class FirstOutput(BaseModel):
-            value: str
-
-        class SecondOutput(BaseModel):
-            value: str
-
-        def process_first(output: FirstOutput) -> FirstOutput:
+        def process_first(output: OutputType) -> OutputType:
             """Process first output - will be invalid."""
             output_tools_called.append('first')
             raise ModelRetry('First output validation failed')
 
-        def process_second(output: SecondOutput) -> SecondOutput:
+        def process_second(output: OutputType) -> OutputType:
             """Process second output - will be valid."""
             output_tools_called.append('second')
             return output
@@ -3409,7 +3403,7 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test invalid first valid second')
 
         # Verify the result came from the second output tool (first was invalid)
-        assert isinstance(result.output, SecondOutput)
+        assert isinstance(result.output, OutputType)
         assert result.output.value == 'valid'
 
         # Verify both output tools were called

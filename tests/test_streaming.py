@@ -1166,7 +1166,7 @@ class TestMultipleToolCalls:
             ]
         )
 
-    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3624')
+    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3393')
     async def test_exhaustive_strategy_invalid_first_valid_second_output(self):
         """Test that exhaustive strategy uses the second valid output when the first is invalid."""
         output_tools_called: list[str] = []
@@ -1193,7 +1193,6 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,  # No retries - first tool will fail, second will be used
         )
 
         async with agent.run_stream('test invalid first valid second') as result:
@@ -1206,8 +1205,9 @@ class TestMultipleToolCalls:
         # Verify both output tools were called
         # NOTE: Due to current streaming behavior, the second output tool (which becomes final_result)
         # is called twice, first tool called once and fails
-        # Expected behavior after https://github.com/pydantic/pydantic-ai/issues/3624 is fixed: ['first', 'second']
+        # Expected behavior after fix: ['first', 'second']
         # Current behavior: ['first', 'second', 'second']
+        # See https://github.com/pydantic/pydantic-ai/issues/3624 for details.
         assert output_tools_called == snapshot(['first', 'second', 'second'])
 
         # Verify we got appropriate messages
