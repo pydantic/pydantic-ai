@@ -333,6 +333,120 @@ def test_video_url_invalid():
         VideoUrl('foobar.potato').media_type
 
 
+@pytest.mark.parametrize(
+    'url,expected_media_type,expected_format',
+    [
+        # Basic URLs
+        pytest.param('https://example.com/video.mp4', 'video/mp4', 'mp4', id='basic_mp4'),
+        pytest.param('https://example.com/audio.mp3', 'audio/mpeg', 'mp3', id='basic_mp3'),
+        pytest.param('https://example.com/image.jpg', 'image/jpeg', 'jpeg', id='basic_jpg'),
+        pytest.param('https://example.com/document.pdf', 'application/pdf', 'pdf', id='basic_pdf'),
+        # Query parameters only
+        pytest.param('https://example.com/video.mp4?v=1', 'video/mp4', 'mp4', id='mp4_with_query'),
+        pytest.param(
+            'https://example.com/audio.mp3?version=2&format=high', 'audio/mpeg', 'mp3', id='mp3_with_multi_query'
+        ),
+        pytest.param('https://example.com/image.jpg?size=large', 'image/jpeg', 'jpeg', id='jpg_with_query'),
+        pytest.param('https://example.com/document.pdf?page=1', 'application/pdf', 'pdf', id='pdf_with_query'),
+        # Fragments only
+        pytest.param('https://example.com/video.mp4#section', 'video/mp4', 'mp4', id='mp4_with_fragment'),
+        pytest.param('https://example.com/audio.mp3#intro', 'audio/mpeg', 'mp3', id='mp3_with_fragment'),
+        pytest.param('https://example.com/image.jpg#header', 'image/jpeg', 'jpeg', id='jpg_with_fragment'),
+        pytest.param('https://example.com/document.pdf#page10', 'application/pdf', 'pdf', id='pdf_with_fragment'),
+        # Query parameters and fragments
+        pytest.param('https://example.com/video.mp4?v=1#section', 'video/mp4', 'mp4', id='mp4_with_query_and_fragment'),
+        pytest.param(
+            'https://example.com/audio.mp3?version=2#intro', 'audio/mpeg', 'mp3', id='mp3_with_query_and_fragment'
+        ),
+        pytest.param(
+            'https://example.com/image.jpg?size=large#header', 'image/jpeg', 'jpeg', id='jpg_with_query_and_fragment'
+        ),
+        pytest.param(
+            'https://example.com/document.pdf?page=1#section',
+            'application/pdf',
+            'pdf',
+            id='pdf_with_query_and_fragment',
+        ),
+        # S3 presigned URLs
+        pytest.param(
+            'https://my-bucket.s3.amazonaws.com/video.mp4?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Signature=xyz&Expires=1234567890',
+            'video/mp4',
+            'mp4',
+            id='s3_mp4_presigned',
+        ),
+        pytest.param(
+            'https://my-bucket.s3.us-west-2.amazonaws.com/audio.mp3?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIA&X-Amz-Date=20250101T000000Z&X-Amz-Expires=3600&X-Amz-Signature=abc&X-Amz-SignedHeaders=host',
+            'audio/mpeg',
+            'mp3',
+            id='s3_mp3_presigned_v4',
+        ),
+        pytest.param(
+            'https://my-bucket.s3.amazonaws.com/image.jpg?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Signature=xyz&Expires=1234567890',
+            'image/jpeg',
+            'jpeg',
+            id='s3_jpg_presigned',
+        ),
+        pytest.param(
+            'https://my-bucket.s3.amazonaws.com/document.pdf?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Signature=xyz&Expires=1234567890',
+            'application/pdf',
+            'pdf',
+            id='s3_pdf_presigned',
+        ),
+        # Complex S3 URLs with nested paths
+        pytest.param(
+            'https://my-bucket.s3.amazonaws.com/path/to/nested/video.mp4?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Signature=xyz',
+            'video/mp4',
+            'mp4',
+            id='s3_nested_mp4_presigned',
+        ),
+    ],
+)
+def test_file_urls_with_query_params_and_fragments(url: str, expected_media_type: str, expected_format: str):
+    """Test that file URLs work correctly with query parameters and fragments."""
+    # Test VideoUrl
+    if expected_media_type.startswith('video/'):
+        video_url = VideoUrl(url)
+        assert video_url.media_type == expected_media_type
+        assert video_url.format == expected_format
+
+    # Test AudioUrl
+    if expected_media_type.startswith('audio/'):
+        audio_url = AudioUrl(url)
+        assert audio_url.media_type == expected_media_type
+        assert audio_url.format == expected_format
+
+    # Test ImageUrl
+    if expected_media_type.startswith('image/'):
+        image_url = ImageUrl(url)
+        assert image_url.media_type == expected_media_type
+        assert image_url.format == expected_format
+
+    # Test DocumentUrl
+    if expected_media_type in ('application/pdf', 'text/plain', 'text/markdown'):
+        document_url = DocumentUrl(url)
+        assert document_url.media_type == expected_media_type
+        assert document_url.format == expected_format
+
+
+def test_file_url_base_url_property():
+    """Test that the base_url property correctly strips query parameters and fragments."""
+    test_cases = [
+        ('https://example.com/file.mp4', 'https://example.com/file.mp4'),
+        ('https://example.com/file.mp4?v=1', 'https://example.com/file.mp4'),
+        ('https://example.com/file.mp4#section', 'https://example.com/file.mp4'),
+        ('https://example.com/file.mp4?v=1#section', 'https://example.com/file.mp4'),
+        ('https://example.com/file.mp4?a=1&b=2&c=3', 'https://example.com/file.mp4'),
+        (
+            'https://my-bucket.s3.amazonaws.com/file.mp4?AWSAccessKeyId=ABC&Signature=xyz&Expires=123',
+            'https://my-bucket.s3.amazonaws.com/file.mp4',
+        ),
+    ]
+
+    for url, expected_base_url in test_cases:
+        video_url = VideoUrl(url)
+        assert video_url.base_url == expected_base_url
+
+
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
     original_delta = ThinkingPartDelta(
@@ -606,6 +720,7 @@ def test_image_url_validation_with_optional_identifier():
             'kind': 'image-url',
             'media_type': 'image/jpeg',
             'identifier': '39cfc4',
+            'base_url': 'https://example.com/image.jpg',
         }
     )
 
@@ -623,6 +738,7 @@ def test_image_url_validation_with_optional_identifier():
             'kind': 'image-url',
             'media_type': 'image/png',
             'identifier': 'foo',
+            'base_url': 'https://example.com/image.jpg',
         }
     )
 
