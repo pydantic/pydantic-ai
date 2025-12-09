@@ -317,7 +317,7 @@ def test_prompt_templates_callable():
                     ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=75, output_tokens=23),  # More tokens for 3 tool calls
+                usage=RequestUsage(input_tokens=75, output_tokens=23),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -433,7 +433,7 @@ def test_prompt_templates_string_and_override_prompt_templates():
                     ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=54, output_tokens=23),  # More tokens for 3 tool calls
+                usage=RequestUsage(input_tokens=54, output_tokens=23),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
