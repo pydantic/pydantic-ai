@@ -15,6 +15,9 @@ from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
+    AgentRunResult,
+    AgentRunResultEvent,
+    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -4424,4 +4427,128 @@ def test_google_missing_tool_call_thought_signature():
                 {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
             ],
         }
+    )
+
+
+async def test_google_streaming_tool_call_thought_signature(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def get_country() -> str:
+        return 'Mexico'
+
+    events: list[AgentStreamEvent] = []
+    result: AgentRunResult | None = None
+    async for event in agent.run_stream_events('What is the capital of the user country? Call the tool'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+        else:
+            events.append(event)
+
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of the user country? Call the tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=29, output_tokens=127, details={'thoughts_tokens': 117, 'text_prompt_tokens': 29}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of Mexico is **Mexico City**.')],
+                usage=RequestUsage(input_tokens=170, output_tokens=9, details={'text_prompt_tokens': 170}),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_country',
+                    args={},
+                    tool_call_id=IsStr(),
+                    provider_details={'thought_signature': IsStr()},
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_country',
+                    args={},
+                    tool_call_id=IsStr(),
+                    provider_details={'thought_signature': IsStr()},
+                ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='get_country',
+                    args={},
+                    tool_call_id=IsStr(),
+                    provider_details={'thought_signature': IsStr()},
+                )
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_country',
+                    content='Mexico',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='The')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(content_delta=' capital of Mexico is **Mexico City**.'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(content='The capital of Mexico is **Mexico City**.'),
+            ),
+        ]
     )
