@@ -30,8 +30,10 @@ def my_tool_choice(ctx: RunContext) -> str | list[str] | None:
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers,
+    Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
+
+    All types must be JSON-serializable.
     """
 
     max_tokens: int
