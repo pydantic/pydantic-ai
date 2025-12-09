@@ -64,6 +64,7 @@ try:
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
+    from pydantic_ai.durable_exec.temporal._dynamic_toolset import TemporalDynamicToolset
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -1102,6 +1103,244 @@ async def test_toolset_without_id():
         ),
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+# --- DynamicToolset / @agent.toolset tests ---
+
+
+def dynamic_toolset_model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model logic for testing dynamic toolsets."""
+    # If no tool calls yet, call the tool
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_dynamic_data', args={'key': 'test'})])
+    # After tool call, return final result
+    return ModelResponse(parts=[TextPart(content='Dynamic result received')])
+
+
+dynamic_toolset_function_model = FunctionModel(dynamic_toolset_model_logic)
+
+dynamic_toolset_agent = Agent(dynamic_toolset_function_model, name='dynamic_toolset_agent')
+
+
+@dynamic_toolset_agent.toolset
+def my_dynamic_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+    toolset = FunctionToolset[None](id='inner_dynamic')
+
+    @toolset.tool
+    def get_dynamic_data(key: str) -> str:
+        return f'dynamic_value_for_{key}'
+
+    return toolset
+
+
+dynamic_toolset_temporal_agent = TemporalAgent(
+    dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_toolset_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_temporal_agent_structure():
+    """Test that DynamicToolset is correctly wrapped by TemporalDynamicToolset."""
+    toolsets = dynamic_toolset_temporal_agent.toolsets
+
+    # Should have the dynamic toolset wrapped
+    assert any(isinstance(t, TemporalDynamicToolset) for t in toolsets)
+
+    # Find the TemporalDynamicToolset
+    for toolset in toolsets:
+        if isinstance(toolset, TemporalDynamicToolset):
+            # Check it has the correct id (defaults to function name)
+            assert toolset.id == 'my_dynamic_toolset'
+            # Check it has both get_tools and call_tool activities
+            activities = toolset.temporal_activities
+            assert len(activities) == 2
+            activity_names: list[str] = [
+                name
+                for a in activities
+                if (name := ActivityDefinition.must_from_callable(a).name) is not None  # pyright: ignore[reportUnknownMemberType]
+            ]
+            assert any('get_tools' in name for name in activity_names)
+            assert any('call_tool' in name for name in activity_names)
+            break
+    else:
+        pytest.fail('TemporalDynamicToolset not found in toolsets')
+
+
+async def test_dynamic_toolset_in_workflow(client: Client):
+    """Test that @agent.toolset works correctly in a Temporal workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicToolsetAgentWorkflow.run,
+            args=['Call the dynamic tool with test key'],
+            id='test_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Dynamic result received'
+
+
+# Test with explicit id parameter
+dynamic_toolset_agent_with_id = Agent(dynamic_toolset_function_model, name='dynamic_toolset_agent_with_id')
+
+
+@dynamic_toolset_agent_with_id.toolset(id='custom_toolset_id')
+def my_custom_id_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+    toolset = FunctionToolset[None](id='inner')
+
+    @toolset.tool
+    def get_custom_data(key: str) -> str:
+        return f'custom_value_for_{key}'
+
+    return toolset
+
+
+dynamic_toolset_with_id_temporal_agent = TemporalAgent(
+    dynamic_toolset_agent_with_id,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+async def test_dynamic_toolset_with_custom_id():
+    """Test that explicit id parameter is respected."""
+    toolsets = dynamic_toolset_with_id_temporal_agent.toolsets
+
+    for toolset in toolsets:
+        if isinstance(toolset, TemporalDynamicToolset):
+            assert toolset.id == 'custom_toolset_id'
+            break
+    else:
+        pytest.fail('TemporalDynamicToolset not found in toolsets')
+
+
+async def test_dynamic_toolset_get_tools_outside_workflow():
+    """Test that get_tools works when called outside a workflow (delegates to wrapped toolset)."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='test-run',
+    )
+
+    for toolset in dynamic_toolset_temporal_agent.toolsets:
+        if isinstance(toolset, TemporalDynamicToolset):
+            async with toolset:
+                tools = await toolset.get_tools(ctx)
+            assert 'get_dynamic_data' in tools
+            break
+    else:
+        pytest.fail('TemporalDynamicToolset not found')
+
+
+async def test_dynamic_toolset_call_tool_outside_workflow():
+    """Test that call_tool works when called outside a workflow (delegates to wrapped toolset)."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='test-run',
+    )
+
+    for toolset in dynamic_toolset_temporal_agent.toolsets:
+        if isinstance(toolset, TemporalDynamicToolset):
+            async with toolset:
+                tools = await toolset.get_tools(ctx)
+                tool = tools['get_dynamic_data']
+                result = await toolset.call_tool('get_dynamic_data', {'key': 'mykey'}, ctx, tool)
+            assert result == 'dynamic_value_for_mykey'
+            break
+    else:
+        pytest.fail('TemporalDynamicToolset not found')
+
+
+async def test_dynamic_toolset_tool_not_found_in_activity():
+    """Test that calling a non-existent tool in the activity raises UserError."""
+    from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='test-run',
+    )
+
+    for toolset in dynamic_toolset_temporal_agent.toolsets:
+        if isinstance(toolset, TemporalDynamicToolset):
+            # Serialize the run context as the activity would receive it
+            serialized_ctx = TemporalRunContext.serialize_run_context(ctx)
+
+            # Create params with a non-existent tool name
+            params = CallToolParams(
+                name='nonexistent_tool',
+                tool_args={'key': 'test'},
+                serialized_run_context=serialized_ctx,
+                tool_def=None,
+            )
+
+            # Call the activity directly - this should raise UserError
+            with pytest.raises(UserError, match="Tool 'nonexistent_tool' not found in dynamic toolset"):
+                await toolset.call_tool_activity(params, None)
+            break
+    else:
+        pytest.fail('TemporalDynamicToolset not found')
+
+
+# Create a dynamic toolset with activity disabled for testing
+dynamic_toolset_agent_disabled = Agent(dynamic_toolset_function_model, name='dynamic_toolset_agent_disabled')
+
+
+@dynamic_toolset_agent_disabled.toolset
+def my_dynamic_toolset_disabled(ctx: RunContext[None]) -> FunctionToolset[None]:
+    toolset = FunctionToolset[None](id='inner_dynamic_disabled')
+
+    @toolset.tool
+    def get_dynamic_data(key: str) -> str:
+        return f'disabled_dynamic_value_for_{key}'
+
+    return toolset
+
+
+dynamic_toolset_activity_disabled_temporal_agent = TemporalAgent(
+    dynamic_toolset_agent_disabled,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    tool_activity_config={'my_dynamic_toolset_disabled': {'get_dynamic_data': False}},
+)
+
+
+@workflow.defn
+class DynamicToolsetActivityDisabledWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_toolset_activity_disabled_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_activity_disabled(client: Client):
+    """Test that call_tool with activity disabled runs tool directly in workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicToolsetActivityDisabledWorkflow],
+        plugins=[AgentPlugin(dynamic_toolset_activity_disabled_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicToolsetActivityDisabledWorkflow.run,
+            args=['Call the dynamic tool with test key'],
+            id='test_dynamic_toolset_activity_disabled_wf',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Dynamic result received'
 
 
 async def test_temporal_agent():

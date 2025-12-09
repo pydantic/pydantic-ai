@@ -27,13 +27,15 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
     toolset_func: ToolsetFunc[AgentDepsT]
     per_run_step: bool = True
+    _id: str | None = None
+    """An optional unique ID for the toolset. Required for use with durable execution like Temporal."""
 
     _toolset: AbstractToolset[AgentDepsT] | None = None
     _run_step: int | None = None
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return self._id
 
     async def __aenter__(self) -> Self:
         return self

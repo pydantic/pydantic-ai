@@ -598,6 +598,14 @@ To register a dynamic toolset, you can pass a function that takes [`RunContext`]
 
 By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
 
+When using [Temporal durable execution](./durable_execution/temporal.md), the decorator also accepts an `id` parameter to uniquely identify the toolset. If not provided, the function name is used as the ID.
+
+```python
+@agent.toolset(id='my_toolset')
+def my_dynamic_toolset(ctx: RunContext[MyDeps]):
+    return FunctionToolset(...)
+```
+
 ```python {title="dynamic_toolset.py", requires="function_toolset.py"}
 from dataclasses import dataclass
 from typing import Literal

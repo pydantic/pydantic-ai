@@ -127,6 +127,20 @@ def temporalize_toolset(
             run_context_type=run_context_type,
         )
 
+    from pydantic_ai.toolsets._dynamic import DynamicToolset
+
+    if isinstance(toolset, DynamicToolset):
+        from ._dynamic_toolset import TemporalDynamicToolset
+
+        return TemporalDynamicToolset(
+            toolset,
+            activity_name_prefix=activity_name_prefix,
+            activity_config=activity_config,
+            tool_activity_config=tool_activity_config,
+            deps_type=deps_type,
+            run_context_type=run_context_type,
+        )
+
     try:
         from pydantic_ai.mcp import MCPServer
 
