@@ -3637,8 +3637,8 @@ class TestMultipleToolCalls:
         """Test that exhaustive strategy raises `UnexpectedModelBehavior` when all outputs have validation errors."""
 
         def process_output(output: OutputType) -> OutputType:  # pragma: no cover
-            """Process output."""
-            return output
+            """A tool that should not be called."""
+            assert False
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
