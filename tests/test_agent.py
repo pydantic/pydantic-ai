@@ -2993,31 +2993,52 @@ class TestMultipleToolCalls:
         assert tool_called == []
 
         # Verify we got tool returns for all calls
-        assert messages[-1].parts == snapshot(
+        assert messages == snapshot(
             [
-                ToolReturnPart(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                ModelRequest(
+                    parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
+                    run_id=IsStr(),
                 ),
-                ToolReturnPart(
-                    tool_name='regular_tool',
-                    content='Tool not executed - a final result was already processed.',
-                    tool_call_id=IsStr(),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='regular_tool', args={'x': 1}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='deferred_tool', args={'x': 3}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=53, output_tokens=17),
+                    model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
-                ToolReturnPart(
-                    tool_name='another_tool',
-                    content='Tool not executed - a final result was already processed.',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                ToolReturnPart(
-                    tool_name='deferred_tool',
-                    content='Tool not executed - a final result was already processed.',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    run_id=IsStr(),
                 ),
             ]
         )
