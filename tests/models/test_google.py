@@ -4307,6 +4307,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -4318,6 +4319,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     assert old_google_response == snapshot(
         {
@@ -4342,6 +4344,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -4352,6 +4355,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     assert old_google_response == snapshot(
         {
@@ -4376,6 +4380,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -4386,6 +4391,7 @@ def test_google_thought_signature_on_thinking_part():
             provider_name='google-gla',
         ),
         'google-gla',
+        True,
     )
     assert old_google_response == snapshot(
         {
@@ -4412,6 +4418,7 @@ def test_google_missing_tool_call_thought_signature():
             provider_name='openai',
         ),
         'google-gla',
+        True,
     )
     assert google_response == snapshot(
         {
@@ -4424,4 +4431,108 @@ def test_google_missing_tool_call_thought_signature():
                 {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
             ],
         }
+    )
+
+
+async def test_google_mapping_messages_no_tool_support(google_provider: GoogleProvider):
+    old_messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content='What is the largest city in the user country?',
+                    timestamp=IsDatetime(),
+                )
+            ],
+            run_id=IsStr(),
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_user_country',
+                    content='Mexico',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
+            ],
+            run_id=IsStr(),
+        ),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'city': 'Mexico City', 'country': 'Mexico'},
+                    tool_call_id=IsStr(),
+                )
+            ],
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
+            ],
+            run_id=IsStr(),
+        ),
+    ]
+    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    new_messages = await model._map_messages(old_messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert new_messages == snapshot(
+        (
+            None,
+            [
+                {'role': 'user', 'parts': [{'text': 'What is the largest city in the user country?'}]},
+                {
+                    'role': 'model',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL CALL name="get_user_country "id="IsStr()""-----
+args: {}
+-----END TOOL CALL id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL RETURN name="get_user_country" id="IsStr()"-----
+response: {'return_value': 'Mexico'}
+-----END TOOL RETURN id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+                {
+                    'role': 'model',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL CALL name="final_result "id="IsStr()""-----
+args: {"city":"Mexico City","country":"Mexico"}
+-----END TOOL CALL id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'text': """\
+-----BEGIN TOOL RETURN name="final_result" id="IsStr()"-----
+response: {'return_value': 'Final result processed.'}
+-----END TOOL RETURN id="IsStr()"-----\
+"""
+                        }
+                    ],
+                },
+            ],
+        )
     )
