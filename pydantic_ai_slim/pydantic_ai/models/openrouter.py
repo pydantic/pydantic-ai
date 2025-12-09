@@ -262,21 +262,21 @@ class _ReasoningSummary(_BaseReasoningDetail, frozen=True):
     """Represents a high-level summary of the reasoning process."""
 
     type: Literal['reasoning.summary']
-    summary: str
+    summary: str = ''
 
 
 class _ReasoningEncrypted(_BaseReasoningDetail, frozen=True):
     """Represents encrypted reasoning data."""
 
     type: Literal['reasoning.encrypted']
-    data: str
+    data: str = ''
 
 
 class _ReasoningText(_BaseReasoningDetail, frozen=True):
     """Represents raw text reasoning."""
 
     type: Literal['reasoning.text']
-    text: str
+    text: str = ''
     signature: str | None = None
 
 
