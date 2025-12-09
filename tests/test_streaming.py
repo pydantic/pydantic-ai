@@ -1560,18 +1560,9 @@ class TestMultipleToolCalls:
             ]
         )
 
-    @pytest.mark.xfail(
-        reason='Multiple output validation not supported in streaming mode. '
-        'See https://github.com/pydantic/pydantic-ai/issues/3638'
-    )
+    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3638')
     async def test_multiple_final_result_are_validated_correctly(self):
-        """Tests that if multiple final results are returned, but one fails validation, the other is used.
-
-        NOTE: This test fails because streaming mode validates the first output tool and raises
-        ValidationError when it fails. Early strategy should try all output tools until finding
-        a valid one, but this behavior is not implemented in streaming mode yet.
-        See https://github.com/pydantic/pydantic-ai/issues/3638 for details.
-        """
+        """Tests that if multiple final results are returned, but one fails validation, the other is used."""
 
         async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
             assert info.output_tools is not None
@@ -1582,31 +1573,53 @@ class TestMultipleToolCalls:
 
         async with agent.run_stream('test multiple final results') as result:
             response = await result.get_output()
+            messages = result.new_messages()
 
         # Verify the result came from the second final tool
         assert response.value == snapshot('second')
 
         # Verify we got appropriate tool returns
-        assert result.new_messages()[-1].parts == snapshot(
+        assert messages == snapshot(
             [
-                RetryPromptPart(
-                    content=[
-                        ErrorDetails(
-                            type='missing',
-                            loc=('value',),
-                            msg='Field required',
-                            input={'bad_value': 'first'},
-                        )
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))
                     ],
-                    tool_name='final_result',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
-                ToolReturnPart(
-                    tool_name='final_result',
-                    content='Final result processed.',
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"bad_value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=8),
+                    model_name='function::stream_function',
                     timestamp=IsNow(tz=timezone.utc),
-                    tool_call_id=IsStr(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                ErrorDetails(
+                                    type='missing',
+                                    loc=('value',),
+                                    msg='Field required',
+                                    input={'bad_value': 'first'},
+                                )
+                            ],
+                            tool_name='final_result',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    run_id=IsStr(),
                 ),
             ]
         )

@@ -3758,26 +3758,47 @@ class TestMultipleToolCalls:
         assert result.output.value == 'second'
 
         # Verify we got appropriate tool returns
-        assert result.new_messages()[-1].parts == snapshot(
+        assert result.new_messages() == snapshot(
             [
-                RetryPromptPart(
-                    content=[
-                        ErrorDetails(
-                            type='missing',
-                            loc=('value',),
-                            msg='Field required',
-                            input={'bad_value': 'first'},
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'bad_value': 'first'}, tool_call_id='first'),
+                        ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id='second'),
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                ErrorDetails(
+                                    type='missing',
+                                    loc=('value',),
+                                    msg='Field required',
+                                    input={'bad_value': 'first'},
+                                ),
+                            ],
+                            tool_name='final_result',
+                            tool_call_id='first',
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id='second',
                         ),
                     ],
-                    tool_name='final_result',
-                    tool_call_id='first',
-                    timestamp=IsDatetime(),
-                ),
-                ToolReturnPart(
-                    tool_name='final_result',
-                    content='Final result processed.',
-                    timestamp=IsNow(tz=timezone.utc),
-                    tool_call_id='second',
+                    run_id=IsStr(),
                 ),
             ]
         )
