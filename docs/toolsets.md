@@ -600,7 +600,7 @@ By default, the function will be called again ahead of each agent run step. If y
 
 When using [Temporal durable execution](./durable_execution/temporal.md), the decorator also accepts an `id` parameter to uniquely identify the toolset. If not provided, the function name is used as the ID.
 
-```python
+```python {test="skip"}
 @agent.toolset(id='my_toolset')
 def my_dynamic_toolset(ctx: RunContext[MyDeps]):
     return FunctionToolset(...)

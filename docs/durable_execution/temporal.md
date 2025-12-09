@@ -160,7 +160,7 @@ When `TemporalAgent` dynamically creates activities for the wrapped agent's mode
 
 For dynamic toolsets created with the [`@agent.toolset`][pydantic_ai.Agent.toolset] decorator, the `id` parameter can be set explicitly or it will default to the function name:
 
-```python
+```python {test="skip"}
 @agent.toolset(id='my_dynamic_tools')
 def my_toolset(ctx: RunContext[MyDeps]) -> FunctionToolset:
     ...
