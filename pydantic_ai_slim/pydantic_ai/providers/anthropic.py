@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TypeAlias, overload
 
 import httpx
@@ -43,9 +43,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         profile = anthropic_model_profile(model_name)
-        if profile:
-            return replace(profile, json_schema_transformer=AnthropicJsonSchemaTransformer)
-        return profile  # pragma: no cover
+        return ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
