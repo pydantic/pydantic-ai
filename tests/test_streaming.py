@@ -1582,9 +1582,7 @@ class TestMultipleToolCalls:
         assert messages == snapshot(
             [
                 ModelRequest(
-                    parts=[
-                        UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))
-                    ],
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1627,8 +1625,8 @@ class TestMultipleToolCalls:
     async def test_early_strategy_with_external_tool_call(self):
         """Test that early strategy handles external tool calls correctly.
 
-        NOTE: In streaming mode, deferred tools become the final result.
-        This differs from sync mode where output tools are prioritized.
+        Streaming mode expects the first output tool call to be the final result,
+        and has different behavior from sync mode in this regard.
         See https://github.com/pydantic/pydantic-ai/issues/3636 for details.
         """
         tool_called: list[str] = []
