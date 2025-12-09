@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '17952'
+      - '17958'
       content-type:
       - application/json
       host:
@@ -24,7 +24,7 @@ interactions:
             filename: filename.pdf
           type: file
         role: user
-      model: openai/gpt-4.1-mini
+      model: openai/gpt-5.1-codex-mini
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:
@@ -34,7 +34,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '838'
+      - '2772'
       content-type:
       - application/json
       permissions-policy:
@@ -52,33 +52,55 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: The PDF contains a single page with the text "Dummy PDF file" centered on it.
-          reasoning: null
+          annotations:
+          - file:
+              content:
+              - text: <file name="filename.pdf">
+                type: text
+              - text: '# Dummy PDF file'
+                type: text
+              - text: </file>
+                type: text
+              hash: a1e01852b473a959e3d5234eea9ca3489acec9dfb82938d51f1a45d980a23fe5
+              name: filename.pdf
+            type: file
+          content: The PDF appears to be a dummy placeholder file.
+          reasoning: '**Assessing dummy PDF file**'
+          reasoning_details:
+          - format: openai-responses-v1
+            index: 0
+            summary: '**Assessing dummy PDF file**'
+            type: reasoning.summary
+          - data: gAAAAABpN3b5wJGYeGBX_VyMX1Rwkrgjdp8EUH0IKM4F0zZIR_axuOe2VVQrN_2Q18BXLWAo5JTB_ZyUnsdjjor4J7c8RX_RMO4ytbyWLImJs7vJ7FnHHWn19fdGKsFgLLQ61P5rfun8QcaggCJ3OELNbIgQO328ziDRPDlUfadk8oLV7p3uF201LvA534dUscBDIXe1MJH4H2QW6UcdTJTWCQIUUCpjCzAr72ML8eT9qz6mA94GIaLzqv3dR4wZNGU2QC5h4267HX0z6_rSvMfug1vO31CFbaKJ2Q-AJQO0Ydj9QwKLTvsN37xrMmcC6KkHp-Y6a1gw9WstN2cOSUSHUbAR5Rno42g-q7zreF9GRe64gGpFsG5haXktL7QDtBa6xlqz-DZLlWFtqrLkhQgAMZeFlKKqE8JAZZ7azlkgeAjuGoh9BG873FMOGat32tSs-hpq4hzimGJxEo3GMQ2z_T4i1CYxrQgrfYNFMrn94We6jfpN743L0At5CpsMoEgUwg7DnQMULkiEWt2iI-fF4uk829l8V1U5injn2SetGpIZPjjI3sIja1qd4rbTG66HUHl6KHoQq5iX2ZkjZpstQjBbV-JwHtZEaWH1p7PpY5Jo9qGksL-5KFk2Kp9TE52biuprdDHzXkhMDuItGupVJggWMWe8-JJ7x8XTVABRe2cWlpE23uB-jWwZyFYNwatZ8yy8UVlIBtfOfpinBJmIC0bRN41CBTLg5IRjF-MmrYfk110s8CKDMD6I-8jtJMPMwn-BqKFo-ggrgTOkCzvPLr7x-Zd9eDLznTrzlRn0vgmlnsyjOaq-zozSWIAUkYwoX_QQkptA6IHf-Rxq2bFsXLySK0VU8WBaQ2Lwr3gpOzvIHfDwuNzv5HhwswsZerDEiiPRZNfI1bvUStfJZtzJ_Qc18YxFlbujEPnfzE4vxjJYoUehmGbZv5uiYdOyAv-_I8V8R07bLylanIhddlUENpIzDFbsu-5qu6Wnl7bHRQbiWzQsYso1lqvQ5MyBdprmXP3yl22wE5N1dzj27YrBE-ul1cViqljb5Xga1UxERJo7WsdXvRCPRtHGziSHm6GmA8eGIb7pPgQDdVs9L3y-SBKqAZufqY9VaO1rt-0qg_q87G9dv0Ree-N_EbtPPIlMVqMgcEepDnjU0lnpjo48lYbxaElYIZuzkNwKMwkovlQ-z6grqcpfrD47dKcxkjZ6nzGPHTo0XYwtvor0gZfgJcupbos9qFoKF6JdHNaAWqzBqExMakQXJ5L927b0BQ8aO8qAVR3mdSsEf3WW27IcO_xDefnjsy7fRx3VSQJwEYYi8ZCRy0wkvS3hSOsF4uvICLTY1U01
+            format: openai-responses-v1
+            id: rs_05bf8ea94da6e78901693776f7ccbc8196be12bafeee9d7d81
+            index: 0
+            type: reasoning.encrypted
           refusal: null
           role: assistant
         native_finish_reason: completed
-      created: 1765215274
-      id: gen-1765215274-f2Ns22GclSVkSndbGhQI
-      model: openai/gpt-4.1-mini
+      created: 1765242614
+      id: gen-1765242614-YgDR3Zs41nEz8rEq4RPu
+      model: openai/gpt-5.1-codex-mini
       object: chat.completion
       provider: OpenAI
       usage:
-        completion_tokens: 19
+        completion_tokens: 80
         completion_tokens_details:
           image_tokens: 0
-          reasoning_tokens: 0
-        cost: 4.08e-05
+          reasoning_tokens: 64
+        cost: 0.00216775
         cost_details:
-          upstream_inference_completions_cost: 3.04e-05
+          upstream_inference_completions_cost: 0.00016
           upstream_inference_cost: null
-          upstream_inference_prompt_cost: 1.04e-05
+          upstream_inference_prompt_cost: 7.75e-06
         is_byok: false
-        prompt_tokens: 26
+        prompt_tokens: 31
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
           video_tokens: 0
-        total_tokens: 45
+        total_tokens: 111
     status:
       code: 200
       message: OK

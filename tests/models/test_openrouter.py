@@ -483,7 +483,7 @@ async def test_openrouter_file_annotation(
     parsed without validation errors.
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = OpenRouterModel('openai/gpt-5.1-codex-mini', provider=provider)
     agent = Agent(model)
 
     result = await agent.run(
