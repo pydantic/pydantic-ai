@@ -69,6 +69,8 @@ from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instruct
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
+    from pydantic_graph import GraphRunContext
+
     from ..mcp import MCPServer
 
 __all__ = (
@@ -290,8 +292,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata to store with each run.
                 Provide a dictionary of primitives, or a callable returning one
                 computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
-                Callables are invoked after the run finishes (whether it succeeded or raised) so they can
-                inspect the final run state.
+                Metadata is resolved when a run starts and recomputed after a successful run finishes so it
+                can reflect the final state.
                 Resolved metadata can be read after the run completes via
                 [`AgentRun.metadata`][pydantic_ai.agent.AgentRun],
                 [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], and
@@ -689,18 +691,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ) as graph_run:
                 async with toolset:
                     agent_run = AgentRun(graph_run)
-
-                    def resolve_run_metadata() -> None:
-                        nonlocal run_metadata
-                        run_context = build_run_context(agent_run.ctx)
-                        run_metadata = self._get_metadata(run_context, metadata)
-                        run_context.metadata = run_metadata
-                        graph_run.state.metadata = run_metadata
+                    run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
                     try:
                         yield agent_run
                     finally:
-                        resolve_run_metadata()
+                        if agent_run.result is not None:
+                            run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
+                        else:
+                            run_metadata = graph_run.state.metadata
 
                     final_result = agent_run.result
                     if instrumentation_settings and run_span.is_recording():
@@ -753,6 +752,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return None
         metadata = config(ctx) if callable(config) else config
         return metadata
+
+    def _resolve_and_store_metadata(
+        self,
+        graph_run_ctx: GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]],
+        metadata: AgentMetadata[AgentDepsT] | None,
+    ) -> dict[str, Any] | None:
+        run_context = build_run_context(graph_run_ctx)
+        resolved_metadata = self._get_metadata(run_context, metadata)
+        run_context.metadata = resolved_metadata
+        graph_run_ctx.state.metadata = resolved_metadata
+        return resolved_metadata
 
     def _run_span_end_attributes(
         self,

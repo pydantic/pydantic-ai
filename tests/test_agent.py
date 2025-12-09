@@ -2720,6 +2720,23 @@ async def test_agent_metadata_persisted_when_run_fails() -> None:
     assert captured_run.result is None
 
 
+async def test_agent_metadata_recomputed_on_successful_run() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='recomputed metadata'),
+        metadata=lambda ctx: {'requests': ctx.usage.requests},
+    )
+
+    async with agent.iter('recompute metadata prompt') as agent_run:
+        initial_metadata = agent_run.metadata
+        async for _ in agent_run:
+            pass
+
+    assert initial_metadata == {'requests': 0}
+    assert agent_run.metadata == {'requests': 1}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'requests': 1}
+
+
 async def test_agent_metadata_override_with_dict() -> None:
     agent = Agent(TestModel(custom_output_text='override dict base'), metadata={'env': 'base'})
 

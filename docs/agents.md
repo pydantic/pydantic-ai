@@ -421,6 +421,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent
 
+
 @dataclass
 class Deps:
     tenant: str
@@ -437,11 +438,11 @@ result = agent.run_sync(
     deps=Deps(tenant='tenant-123'),
 )
 print(result.output)
-print(result.metadata)
-print(result.usage())
 #> The capital of France is Paris.
+print(result.metadata)
 #> {'tenant': 'tenant-123'}
-#> RunUsage(input_tokens=..., output_tokens=..., requests=1)
+print(result.usage())
+#> RunUsage(input_tokens=56, output_tokens=7, requests=1)
 ```
 
 #### Streaming All Events and Output
