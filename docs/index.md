@@ -196,7 +196,7 @@ import logfire
 
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
-logfire.instrument_asyncpg()  # (3)!
+logfire.instrument_sqlite3()  # (3)!
 
 ...
 
@@ -213,11 +213,14 @@ support_agent = Agent(
 
 1. Configure the Logfire SDK, this will fail if project is not set up.
 2. This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the [`instrument=True` keyword argument][pydantic_ai.Agent.__init__] to the agent.
-3. In our demo, `DatabaseConn` uses [`asyncpg`]() to connect to a PostgreSQL database, so [`logfire.instrument_asyncpg()`](https://magicstack.github.io/asyncpg/current/) is used to log the database queries.
+3. In our demo, `DatabaseConn` uses [`sqlite3`][] to connect to a PostgreSQL database, so [`logfire.instrument_sqlite3()`](https://logfire.pydantic.dev/docs/integrations/databases/sqlite3/)
+   is used to log the database queries.
 
 That's enough to get the following view of your agent in action:
 
-{{ video('9078b98c4f75d01f912a0368bbbdb97a', 25, 55) }}
+/// public-trace | https://logfire-eu.pydantic.dev/public-trace/a2957caa-b7b7-4883-a529-777742649004?spanId=31aade41ab896144
+    title: 'Logfire instrumentation for the bank agent'
+///
 
 See [Monitoring and Performance](logfire.md) to learn more.
 

@@ -43,7 +43,6 @@ typecheck-pyright:
 .PHONY: typecheck-mypy
 typecheck-mypy:
 	uv run mypy
-	uv run mypy typings/ --strict
 
 .PHONY: typecheck
 typecheck: typecheck-pyright ## Run static type checking

@@ -1,0 +1,137 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '343'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of the user country? Call the tool
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_country\",\"args\":
+        {}},\"thoughtSignature\": \"Et4ECtsEAXLI2nyJtljzBkvSzfFwCuDHg1Ubv1K7gmhe/8Oj4BE0bMEnzcpgKQseNP2rR0JUZs8RmtbDWR35oJIKp4xTji+uQwSb7Fui2IxdaP3uLc4HGnQKIIuI+c1I3t0HfFHYN/oY4xj7gCkxy9Sk4OjOjSnEjC6CZs7qYLHX/0abu+hou4rQl0S/+sWdZJfR26eb7W9Ct6RwUAnFYATDu34opPFtAR2KtmrOdffLwYU//6lNk9JbZP9mvz3I9+mYKMwdZ+5iKt6cHPTNZk17yQM4+jXuXXoVC8fwxm/G5VMcB1TGiZRUFrd5ohzNAyCz+/YRfbetVJtqIZglU69iGTtr+5KHMTloxq6TR8QExwz9re3V08GCtG0SlXN937cUNnoAzUOJaJyTha6PA7b5Qrz9E7B3IMsRlvjoza+cLUlrvFFumnyNaMAvwLJfOUvNVFzg/57qhMh5ZYr1IrAW4fCSBVuPW2UH/7GIvORkA0mVSt83DED599s+JsB1dmnu668Xpw8JLKRnpmXnGpUQKNX9+JEOU3EoucvV86H/kgjgCNi5jW9NyxG2DZ6up18SQdOZjGTCVNB5/792gbmu9FqkUQeQW3aZ5ocynLeY5XCtH6NTiMkegw0yKIP1itmaBabshFQ1rn8qNYjLcTobvSgsof9asSyIaa9dgBNv9MwA1txUFN9ybXVONp/7la0osS+xqn8dUSeUYfbVtLCV7hkwWcywETLAA7wP0DL21Hnm42Ln2g2pDIpMaYsI0TJd4O7eoribaoAJsyjV6OODey3zfWKrKT8rYF9eplXe\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 29,\"candidatesTokenCount\": 10,\"totalTokenCount\":
+        156,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 29}],\"thoughtsTokenCount\": 117},\"modelVersion\":
+        \"gemini-3-pro-preview\",\"responseId\": \"WC44aZ29Erflz7IPp4CZwQ4\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        29,\"candidatesTokenCount\": 10,\"totalTokenCount\": 156,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        29}],\"thoughtsTokenCount\": 117},\"modelVersion\": \"gemini-3-pro-preview\",\"responseId\": \"WC44aZ29Erflz7IPp4CZwQ4\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=4243
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1478'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of the user country? Call the tool
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_e31595c62bcb4dc4ae439480bd2f0623
+            name: get_country
+          thoughtSignature: Et4ECtsEAXLI2nyJtljzBkvSzfFwCuDHg1Ubv1K7gmhe_8Oj4BE0bMEnzcpgKQseNP2rR0JUZs8RmtbDWR35oJIKp4xTji-uQwSb7Fui2IxdaP3uLc4HGnQKIIuI-c1I3t0HfFHYN_oY4xj7gCkxy9Sk4OjOjSnEjC6CZs7qYLHX_0abu-hou4rQl0S_-sWdZJfR26eb7W9Ct6RwUAnFYATDu34opPFtAR2KtmrOdffLwYU__6lNk9JbZP9mvz3I9-mYKMwdZ-5iKt6cHPTNZk17yQM4-jXuXXoVC8fwxm_G5VMcB1TGiZRUFrd5ohzNAyCz-_YRfbetVJtqIZglU69iGTtr-5KHMTloxq6TR8QExwz9re3V08GCtG0SlXN937cUNnoAzUOJaJyTha6PA7b5Qrz9E7B3IMsRlvjoza-cLUlrvFFumnyNaMAvwLJfOUvNVFzg_57qhMh5ZYr1IrAW4fCSBVuPW2UH_7GIvORkA0mVSt83DED599s-JsB1dmnu668Xpw8JLKRnpmXnGpUQKNX9-JEOU3EoucvV86H_kgjgCNi5jW9NyxG2DZ6up18SQdOZjGTCVNB5_792gbmu9FqkUQeQW3aZ5ocynLeY5XCtH6NTiMkegw0yKIP1itmaBabshFQ1rn8qNYjLcTobvSgsof9asSyIaa9dgBNv9MwA1txUFN9ybXVONp_7la0osS-xqn8dUSeUYfbVtLCV7hkwWcywETLAA7wP0DL21Hnm42Ln2g2pDIpMaYsI0TJd4O7eoribaoAJsyjV6OODey3zfWKrKT8rYF9eplXe
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_e31595c62bcb4dc4ae439480bd2f0623
+            name: get_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 55,\"candidatesTokenCount\": 1,\"totalTokenCount\": 56,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 55}]},\"modelVersion\": \"gemini-3-pro-preview\",\"responseId\": \"hy44aYu1BO-ez7IP-cTyoAk\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" capital of Mexico is **Mexico City**.\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 55,\"candidatesTokenCount\": 9,\"totalTokenCount\": 64,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 55}]},\"modelVersion\": \"gemini-3-pro-preview\",\"responseId\": \"hy44aYu1BO-ez7IP-cTyoAk\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 170,\"candidatesTokenCount\": 9,\"totalTokenCount\": 179,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 170}]},\"modelVersion\": \"gemini-3-pro-preview\",\"responseId\": \"hy44aYu1BO-ez7IP-cTyoAk\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=46746
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -58,6 +58,10 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     return profile  # pragma: no cover
 
 
+# Known geo prefixes for cross-region inference profile IDs
+BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
+
+
 class BedrockProvider(Provider[BaseClient]):
     """Provider for AWS Bedrock."""
 
@@ -90,10 +94,11 @@ class BedrockProvider(Provider[BaseClient]):
         # Split the model name into parts
         parts = model_name.split('.', 2)
 
-        # Handle regional prefixes (e.g. "us.")
-        if len(parts) > 2 and len(parts[0]) == 2:
+        # Handle regional prefixes
+        if len(parts) > 2 and parts[0] in BEDROCK_GEO_PREFIXES:
             parts = parts[1:]
 
+        # required format is provider.model-name-with-version
         if len(parts) < 2:
             return None
 
