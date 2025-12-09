@@ -1,4 +1,4 @@
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 from pytest_mock import MockerFixture
@@ -16,7 +16,8 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
 
-    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
+    from pydantic_ai.models.bedrock import LatestBedrockModelNames
+    from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile, BedrockProvider
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
@@ -105,3 +106,51 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
     unknown_model = provider.model_profile('unknown.unknown-model')
     assert unknown_model is None
+
+
+@pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
+def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: str):
+    """Test that all cross-region inference geo prefixes are correctly handled."""
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+
+    model_name = f'{prefix}.anthropic.claude-sonnet-4-5-20250929-v1:0'
+    profile = provider.model_profile(model_name)
+
+    assert profile is not None, f'model_profile returned None for {model_name}'
+
+
+def test_bedrock_provider_model_profile_with_unknown_geo_prefix(env: TestEnv):
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    provider = BedrockProvider()
+
+    model_name = 'narnia.anthropic.claude-sonnet-4-5-20250929-v1:0'
+    profile = provider.model_profile(model_name)
+    assert profile is None, f'model_profile returned {profile} for {model_name}'
+
+
+def test_latest_bedrock_model_names_geo_prefixes_are_supported():
+    """Ensure all geo prefixes used in LatestBedrockModelNames are in BEDROCK_GEO_PREFIXES.
+
+    This test prevents adding new model names with geo prefixes that aren't handled
+    by the provider's model_profile method.
+    """
+    model_names = get_args(LatestBedrockModelNames)
+
+    missing_prefixes: set[str] = set()
+
+    for model_name in model_names:
+        # Model names with geo prefixes have 3+ dot-separated parts:
+        # - No prefix: "anthropic.claude-xxx" (2 parts)
+        # - With prefix: "us.anthropic.claude-xxx" (3 parts)
+        parts = model_name.split('.')
+        if len(parts) >= 3:
+            geo_prefix = parts[0]
+            if geo_prefix not in BEDROCK_GEO_PREFIXES:  # pragma: no cover
+                missing_prefixes.add(geo_prefix)
+
+    if missing_prefixes:  # pragma: no cover
+        pytest.fail(
+            f'Found geo prefixes in LatestBedrockModelNames that are not in BEDROCK_GEO_PREFIXES: {missing_prefixes}. '
+            f'Please add them to BEDROCK_GEO_PREFIXES'
+        )
