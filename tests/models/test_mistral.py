@@ -29,7 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
-from pydantic_ai.output import NativeOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
@@ -2491,3 +2491,76 @@ async def test_mistral_native_output_with_nested_model(allow_model_requests: Non
     assert result.output == Person(name='John Doe', address=Address(street='123 Main St', city='Paris'))
     assert result.usage().input_tokens == 15
     assert result.usage().output_tokens == 25
+
+
+async def test_prompted_output_json_object_mode(allow_model_requests: None):
+    """Test prompted mode with json_object response format (no function tools)."""
+
+    class CityInfo(BaseModel):
+        city: str
+        population: int
+
+    completion = completion_message(
+        MistralAssistantMessage(
+            content='{"city": "Tokyo", "population": 14000000}',
+            role='assistant',
+        ),
+        usage=MistralUsageInfo(prompt_tokens=10, completion_tokens=15, total_tokens=25),
+    )
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    # PromptedOutput uses 'prompted' output mode without function tools
+    agent = Agent(model, output_type=PromptedOutput(CityInfo))
+
+    result = await agent.run('Tell me about Tokyo')
+
+    assert result.output == CityInfo(city='Tokyo', population=14000000)
+    assert result.usage().input_tokens == 10
+    assert result.usage().output_tokens == 15
+
+
+async def test_native_output_with_function_tools(allow_model_requests: None):
+    """Test native output mode with function tools present (tool_choice should be 'auto')."""
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    completion = [
+        # First response: call the tool
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"city_name": "Paris"}', name='get_coordinates'),
+                        type='function',
+                    )
+                ],
+            ),
+            usage=MistralUsageInfo(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+        ),
+        # Second response: return native output
+        completion_message(
+            MistralAssistantMessage(
+                content='{"city": "Paris", "country": "France"}',
+                role='assistant',
+            ),
+            usage=MistralUsageInfo(prompt_tokens=15, completion_tokens=10, total_tokens=25),
+        ),
+    ]
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_coordinates(city_name: str) -> str:
+        return '{"lat": 48.8566, "lng": 2.3522}'
+
+    result = await agent.run('Tell me about Paris')
+
+    assert result.output == CityLocation(city='Paris', country='France')
+    assert result.usage().input_tokens == 25
+    assert result.usage().output_tokens == 15
