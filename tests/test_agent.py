@@ -23,6 +23,7 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CallDeferred,
     CombinedToolset,
     DocumentUrl,
     ExternalToolset,
@@ -62,7 +63,6 @@ from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
     WebSearchTool,
-    CallDeferre,
     WebSearchUserLocation,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
