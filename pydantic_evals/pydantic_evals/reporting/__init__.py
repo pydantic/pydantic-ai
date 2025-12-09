@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
 from typing import Any, Generic, Literal, Protocol, cast
@@ -35,6 +35,7 @@ __all__ = (
     'RenderValueConfig',
     'RenderNumberConfig',
     'ReportCaseAggregate',
+    'ReportCaseMultiRun',
 )
 
 from ..evaluators.evaluator import EvaluatorFailure
@@ -122,12 +123,12 @@ class ReportCaseAggregate(BaseModel):
     total_duration: float
 
     @staticmethod
-    def average(cases: list[ReportCase]) -> ReportCaseAggregate:
+    def average(cases: Sequence[ReportCase | ReportCaseMultiRun], name: str = 'Averages') -> ReportCaseAggregate:
         """Produce a synthetic "summary" case by averaging quantitative attributes."""
         num_cases = len(cases)
         if num_cases == 0:
             return ReportCaseAggregate(
-                name='Averages',
+                name=name,
                 scores={},
                 labels={},
                 metrics={},
@@ -136,47 +137,23 @@ class ReportCaseAggregate(BaseModel):
                 total_duration=0.0,
             )
 
-        def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, float] = defaultdict(float)
-            for sbn in scores_by_name:
-                for name, score in sbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name] += score
-            return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
+        average_scores = _calculate_average_scores(cases)
+        average_labels = _calculate_average_labels(cases)
+        average_metrics = _calculate_average_metrics(cases)
+        average_assertions = _calculate_average_assertions(cases)
 
-        def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            for lbn in labels_by_name:
-                for name, label in lbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name][label] += 1
-            return {
-                name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
-                for name in sums_by_name
-            }
-
-        average_task_duration = sum(case.task_duration for case in cases) / num_cases
-        average_total_duration = sum(case.total_duration for case in cases) / num_cases
-
-        # average_assertions: dict[str, float] = _scores_averages([{k: v.value for k, v in case.scores.items()} for case in cases])
-        average_scores: dict[str, float] = _scores_averages(
-            [{k: v.value for k, v in case.scores.items()} for case in cases]
+        average_task_duration = (
+            sum(c.aggregate.task_duration if isinstance(c, ReportCaseMultiRun) else c.task_duration for c in cases)
+            / num_cases
         )
-        average_labels: dict[str, dict[str, float]] = _labels_averages(
-            [{k: v.value for k, v in case.labels.items()} for case in cases]
-        )
-        average_metrics: dict[str, float] = _scores_averages([case.metrics for case in cases])
 
-        average_assertions: float | None = None
-        n_assertions = sum(len(case.assertions) for case in cases)
-        if n_assertions > 0:
-            n_passing = sum(1 for case in cases for assertion in case.assertions.values() if assertion.value)
-            average_assertions = n_passing / n_assertions
+        average_total_duration = (
+            sum(c.aggregate.total_duration if isinstance(c, ReportCaseMultiRun) else c.total_duration for c in cases)
+            / num_cases
+        )
 
         return ReportCaseAggregate(
-            name='Averages',
+            name=name,
             scores=average_scores,
             labels=average_labels,
             metrics=average_metrics,
@@ -186,6 +163,103 @@ class ReportCaseAggregate(BaseModel):
         )
 
 
+def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, float] = defaultdict(float)
+    for sbn in scores_by_name:
+        for name, score in sbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name] += score
+    return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
+
+
+def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for lbn in labels_by_name:
+        for name, label in lbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name][label] += 1
+    return {
+        name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
+        for name in sums_by_name
+    }
+
+
+def _calculate_average_scores(cases: Sequence[ReportCase | ReportCaseMultiRun]) -> dict[str, float]:
+    scores_list: list[dict[str, int | float]] = []
+    for c in cases:
+        if isinstance(c, ReportCaseMultiRun):
+            scores_list.append(c.aggregate.scores)
+        else:
+            scores_list.append({k: v.value for k, v in c.scores.items()})
+
+    return _scores_averages(cast(list[dict[str, int | float | bool]], scores_list))
+
+
+def _calculate_average_metrics(cases: Sequence[ReportCase | ReportCaseMultiRun]) -> dict[str, float]:
+    metrics_list: list[dict[str, int | float]] = []
+    for c in cases:
+        if isinstance(c, ReportCaseMultiRun):
+            metrics_list.append(c.aggregate.metrics)
+        else:
+            metrics_list.append(c.metrics)
+
+    return _scores_averages(cast(list[dict[str, int | float | bool]], metrics_list))
+
+
+def _calculate_average_labels(cases: Sequence[ReportCase | ReportCaseMultiRun]) -> dict[str, dict[str, float]]:
+    all_labels_list: list[dict[str, str]] = []
+    for c in cases:
+        if isinstance(c, ReportCaseMultiRun):
+            for run in c.runs:
+                all_labels_list.append({k: v.value for k, v in run.labels.items()})
+        else:
+            all_labels_list.append({k: v.value for k, v in c.labels.items()})
+
+    return _labels_averages(all_labels_list)
+
+
+def _calculate_average_assertions(cases: Sequence[ReportCase | ReportCaseMultiRun]) -> float | None:
+    n_assertions = 0
+    n_passing = 0
+    for case in cases:
+        if isinstance(case, ReportCaseMultiRun):
+            n_assertions += sum(len(r.assertions) for r in case.runs)
+            n_passing += sum(1 for r in case.runs for a in r.assertions.values() if a.value)
+        else:
+            n_assertions += len(case.assertions)
+            n_passing += sum(1 for assertion in case.assertions.values() if assertion.value)
+
+    if n_assertions > 0:
+        return n_passing / n_assertions
+    return None
+
+
+@dataclass(kw_only=True)
+class ReportCaseMultiRun(Generic[InputsT, OutputT, MetadataT]):
+    """A case in an evaluation report that represents multiple runs of the same test case."""
+
+    name: str
+    """The name of the [case][pydantic_evals.Case]."""
+    inputs: InputsT
+    """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
+    metadata: MetadataT | None
+    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
+    expected_output: OutputT | None
+    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
+
+    runs: list[ReportCase[InputsT, OutputT, MetadataT]]
+    """The individual runs of the test case."""
+    aggregate: ReportCaseAggregate
+    """Aggregated statistics for the runs."""
+
+    trace_id: str | None = None
+    """The trace ID of the case span (parent of individual runs)."""
+    span_id: str | None = None
+    """The span ID of the case span (parent of individual runs)."""
+
+
 @dataclass(kw_only=True)
 class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """A report of the results of evaluating a model on a set of cases."""
@@ -193,7 +267,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     name: str
     """The name of the report."""
 
-    cases: list[ReportCase[InputsT, OutputT, MetadataT]]
+    cases: list[ReportCase[InputsT, OutputT, MetadataT] | ReportCaseMultiRun[InputsT, OutputT, MetadataT]]
     """The cases in the report."""
     failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
     """The failures in the report. These are cases where task execution raised an exception."""
@@ -832,8 +906,11 @@ class ReportCaseRenderer:
             table.add_column('Error Stacktrace', overflow='fold')
         return table
 
-    def build_row(self, case: ReportCase) -> list[str]:
+    def build_row(self, case: ReportCase | ReportCaseMultiRun) -> list[str]:
         """Build a table row for a single case."""
+        if isinstance(case, ReportCaseMultiRun):
+            return self.build_multi_run_row(case)
+
         row = [case.name]
 
         if self.include_input:
@@ -865,6 +942,51 @@ class ReportCaseRenderer:
 
         if self.include_durations:
             row.append(self._render_durations(case))
+
+        return row
+
+    def build_multi_run_row(self, case: ReportCaseMultiRun) -> list[str]:
+        """Build a table row for a multi-run case."""
+        # For multi-run cases, show the aggregated statistics
+        aggregate = case.aggregate
+        row = [f'[i]{case.name} ({len(case.runs)} runs)[/]']
+
+        if self.include_input:
+            row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
+
+        if self.include_metadata:
+            row.append(self.metadata_renderer.render_value(None, case.metadata) or EMPTY_CELL_STR)
+
+        if self.include_expected_output:
+            row.append(self.output_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
+
+        if self.include_output:
+            row.append(EMPTY_CELL_STR)
+
+        if self.include_scores:
+            row.append(self._render_dict(aggregate.scores, self.score_renderers))
+
+        if self.include_labels:
+            row.append(self._render_dict(aggregate.labels, self.label_renderers))
+
+        if self.include_metrics:
+            row.append(self._render_dict(aggregate.metrics, self.metric_renderers))
+
+        if self.include_assertions:
+            row.append(self._render_aggregate_assertions(aggregate.assertions))
+
+        if self.include_evaluator_failures:
+            # Gather unique failure messages from runs
+            unique_failures: dict[tuple[str, str], EvaluatorFailure] = {}
+            for run in case.runs:
+                for f in run.evaluator_failures:
+                    key = (f.name, f.error_message)
+                    if key not in unique_failures:
+                        unique_failures[key] = f
+            row.append(self._render_evaluator_failures(list(unique_failures.values())))
+
+        if self.include_durations:
+            row.append(self._render_durations(aggregate))
 
         return row
 
@@ -906,67 +1028,128 @@ class ReportCaseRenderer:
 
     def build_diff_row(
         self,
-        new_case: ReportCase,
-        baseline: ReportCase,
+        new_case: ReportCase | ReportCaseMultiRun,
+        baseline: ReportCase | ReportCaseMultiRun,
     ) -> list[str]:
         """Build a table row for a given case ID."""
         assert baseline.name == new_case.name, 'This should only be called for matching case IDs'
         row = [baseline.name]
 
-        if self.include_input:  # pragma: no branch
+        row.extend(self._build_diff_row_basics(baseline, new_case))
+        row.extend(self._build_diff_row_evals(baseline, new_case))
+        row.extend(self._build_diff_row_status(baseline, new_case))
+
+        return row
+
+    def _build_diff_row_basics(
+        self, baseline: ReportCase | ReportCaseMultiRun, new_case: ReportCase | ReportCaseMultiRun
+    ) -> list[str]:
+        row: list[str] = []
+        if self.include_input:
             input_diff = self.input_renderer.render_diff(None, baseline.inputs, new_case.inputs) or EMPTY_CELL_STR
             row.append(input_diff)
 
-        if self.include_metadata:  # pragma: no branch
+        if self.include_metadata:
             metadata_diff = (
                 self.metadata_renderer.render_diff(None, baseline.metadata, new_case.metadata) or EMPTY_CELL_STR
             )
             row.append(metadata_diff)
 
-        if self.include_expected_output:  # pragma: no branch
+        if self.include_expected_output:
             expected_output_diff = (
                 self.output_renderer.render_diff(None, baseline.expected_output, new_case.expected_output)
                 or EMPTY_CELL_STR
             )
             row.append(expected_output_diff)
 
-        if self.include_output:  # pragma: no branch
-            output_diff = self.output_renderer.render_diff(None, baseline.output, new_case.output) or EMPTY_CELL_STR
+        if self.include_output:
+            old_output = baseline.output if isinstance(baseline, ReportCase) else None
+            new_output = new_case.output if isinstance(new_case, ReportCase) else None
+            output_diff = self.output_renderer.render_diff(None, old_output, new_output) or EMPTY_CELL_STR
             row.append(output_diff)
 
-        if self.include_scores:  # pragma: no branch
+        return row
+
+    def _build_diff_row_evals(
+        self, baseline: ReportCase | ReportCaseMultiRun, new_case: ReportCase | ReportCaseMultiRun
+    ) -> list[str]:
+        row: list[str] = []
+
+        # Helpers
+        def get_scores(c: ReportCase | ReportCaseMultiRun) -> dict[str, int | float]:
+            if isinstance(c, ReportCaseMultiRun):
+                return c.aggregate.scores
+            return {k: v.value for k, v in c.scores.items()}
+
+        def get_labels(c: ReportCase | ReportCaseMultiRun) -> dict[str, str]:
+            if isinstance(c, ReportCaseMultiRun):
+                return {}
+            return {k: v.value for k, v in c.labels.items()}
+
+        def get_metrics(c: ReportCase | ReportCaseMultiRun) -> dict[str, int | float]:
+            if isinstance(c, ReportCaseMultiRun):
+                return c.aggregate.metrics
+            return c.metrics
+
+        if self.include_scores:
             scores_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.scores.items()},
-                {k: v.value for k, v in new_case.scores.items()},
+                get_scores(baseline),
+                get_scores(new_case),
                 self.score_renderers,
             )
             row.append(scores_diff)
 
-        if self.include_labels:  # pragma: no branch
+        if self.include_labels:
             labels_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.labels.items()},
-                {k: v.value for k, v in new_case.labels.items()},
+                get_labels(baseline),
+                get_labels(new_case),
                 self.label_renderers,
             )
             row.append(labels_diff)
 
-        if self.include_metrics:  # pragma: no branch
-            metrics_diff = self._render_dicts_diff(baseline.metrics, new_case.metrics, self.metric_renderers)
+        if self.include_metrics:
+            metrics_diff = self._render_dicts_diff(get_metrics(baseline), get_metrics(new_case), self.metric_renderers)
             row.append(metrics_diff)
 
-        if self.include_assertions:  # pragma: no branch
-            assertions_diff = self._render_assertions_diff(
-                list(baseline.assertions.values()), list(new_case.assertions.values())
-            )
+        return row
+
+    def _build_diff_row_status(
+        self, baseline: ReportCase | ReportCaseMultiRun, new_case: ReportCase | ReportCaseMultiRun
+    ) -> list[str]:
+        row: list[str] = []
+
+        if self.include_assertions:
+            if isinstance(baseline, ReportCase) and isinstance(new_case, ReportCase):
+                assertions_diff = self._render_assertions_diff(
+                    list(baseline.assertions.values()), list(new_case.assertions.values())
+                )
+            else:
+                old_val = (
+                    baseline.aggregate.assertions
+                    if isinstance(baseline, ReportCaseMultiRun)
+                    else _calculate_average_assertions([baseline])
+                )
+                new_val = (
+                    new_case.aggregate.assertions
+                    if isinstance(new_case, ReportCaseMultiRun)
+                    else _calculate_average_assertions([new_case])
+                )
+                assertions_diff = self._render_aggregate_assertions_diff(old_val, new_val)
             row.append(assertions_diff)
 
-        if self.include_evaluator_failures:  # pragma: no branch
+        if self.include_evaluator_failures:
+
+            def get_failures(c: ReportCase | ReportCaseMultiRun) -> list[EvaluatorFailure]:
+                if isinstance(c, ReportCaseMultiRun):
+                    return [f for r in c.runs for f in r.evaluator_failures]
+                return c.evaluator_failures
+
             evaluator_failures_diff = self._render_evaluator_failures_diff(
-                baseline.evaluator_failures, new_case.evaluator_failures
+                get_failures(baseline), get_failures(new_case)
             )
             row.append(evaluator_failures_diff)
 
-        if self.include_durations:  # pragma: no branch
+        if self.include_durations:
             durations_diff = self._render_durations_diff(baseline, new_case)
             row.append(durations_diff)
 
@@ -1039,11 +1222,14 @@ class ReportCaseRenderer:
 
         return row
 
-    def _render_durations(self, case: ReportCase | ReportCaseAggregate) -> str:
+    def _render_durations(self, case: ReportCase | ReportCaseMultiRun | ReportCaseAggregate) -> str:
         """Build the diff string for a duration value."""
-        case_durations: dict[str, float] = {'task': case.task_duration}
+        task_duration = case.aggregate.task_duration if isinstance(case, ReportCaseMultiRun) else case.task_duration
+        total_duration = case.aggregate.total_duration if isinstance(case, ReportCaseMultiRun) else case.total_duration
+
+        case_durations: dict[str, float] = {'task': task_duration}
         if self.include_total_duration:
-            case_durations['total'] = case.total_duration
+            case_durations['total'] = total_duration
         return self._render_dict(
             case_durations,
             {'task': self.duration_renderer, 'total': self.duration_renderer},
@@ -1052,15 +1238,33 @@ class ReportCaseRenderer:
 
     def _render_durations_diff(
         self,
-        base_case: ReportCase | ReportCaseAggregate,
-        new_case: ReportCase | ReportCaseAggregate,
+        base_case: ReportCase | ReportCaseMultiRun | ReportCaseAggregate,
+        new_case: ReportCase | ReportCaseMultiRun | ReportCaseAggregate,
     ) -> str:
         """Build the diff string for a duration value."""
-        base_case_durations: dict[str, float] = {'task': base_case.task_duration}
-        new_case_durations: dict[str, float] = {'task': new_case.task_duration}
+        base_task = (
+            base_case.aggregate.task_duration if isinstance(base_case, ReportCaseMultiRun) else base_case.task_duration
+        )
+        new_task = (
+            new_case.aggregate.task_duration if isinstance(new_case, ReportCaseMultiRun) else new_case.task_duration
+        )
+
+        base_case_durations: dict[str, float] = {'task': base_task}
+        new_case_durations: dict[str, float] = {'task': new_task}
+
         if self.include_total_duration:  # pragma: no branch
-            base_case_durations['total'] = base_case.total_duration
-            new_case_durations['total'] = new_case.total_duration
+            base_total = (
+                base_case.aggregate.total_duration
+                if isinstance(base_case, ReportCaseMultiRun)
+                else base_case.total_duration
+            )
+            new_total = (
+                new_case.aggregate.total_duration
+                if isinstance(new_case, ReportCaseMultiRun)
+                else new_case.total_duration
+            )
+            base_case_durations['total'] = base_total
+            new_case_durations['total'] = new_total
         return self._render_dicts_diff(
             base_case_durations,
             new_case_durations,
@@ -1210,29 +1414,50 @@ class EvaluationRenderer:
     include_evaluator_failures: bool
 
     def include_scores(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
-        return any(case.scores for case in self._all_cases(report, baseline))
-
-    def include_labels(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
-        return any(case.labels for case in self._all_cases(report, baseline))
-
-    def include_metrics(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
-        return any(case.metrics for case in self._all_cases(report, baseline))
-
-    def include_assertions(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
-        return any(case.assertions for case in self._all_cases(report, baseline))
-
-    def include_evaluator_failures_column(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
-        return self.include_evaluator_failures and any(
-            case.evaluator_failures for case in self._all_cases(report, baseline)
+        return any(
+            case.aggregate.scores if isinstance(case, ReportCaseMultiRun) else case.scores
+            for case in self._all_cases(report, baseline)
         )
 
-    def _all_cases(self, report: EvaluationReport, baseline: EvaluationReport | None) -> list[ReportCase]:
+    def include_labels(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
+        return any(
+            case.aggregate.labels if isinstance(case, ReportCaseMultiRun) else case.labels
+            for case in self._all_cases(report, baseline)
+        )
+
+    def include_metrics(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
+        return any(
+            case.aggregate.metrics if isinstance(case, ReportCaseMultiRun) else case.metrics
+            for case in self._all_cases(report, baseline)
+        )
+
+    def include_assertions(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
+        return any(
+            case.aggregate.assertions is not None if isinstance(case, ReportCaseMultiRun) else bool(case.assertions)
+            for case in self._all_cases(report, baseline)
+        )
+
+    def include_evaluator_failures_column(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
+        if not self.include_evaluator_failures:
+            return False
+        return any(
+            any(bool(run.evaluator_failures) for run in case.runs)
+            if isinstance(case, ReportCaseMultiRun)
+            else bool(case.evaluator_failures)
+            for case in self._all_cases(report, baseline)
+        )
+
+    def _all_cases(
+        self, report: EvaluationReport, baseline: EvaluationReport | None
+    ) -> list[ReportCase | ReportCaseMultiRun]:
         if not baseline:
             return report.cases
         else:
             return report.cases + self._baseline_cases_to_include(report, baseline)
 
-    def _baseline_cases_to_include(self, report: EvaluationReport, baseline: EvaluationReport) -> list[ReportCase]:
+    def _baseline_cases_to_include(
+        self, report: EvaluationReport, baseline: EvaluationReport
+    ) -> list[ReportCase | ReportCaseMultiRun]:
         if self.include_removed_cases:
             return baseline.cases
         report_case_names = {case.name for case in report.cases}
@@ -1247,9 +1472,12 @@ class EvaluationRenderer:
         score_renderers = self._infer_score_renderers(report, baseline)
         label_renderers = self._infer_label_renderers(report, baseline)
         metric_renderers = self._infer_metric_renderers(report, baseline)
-        duration_renderer = _NumberRenderer.infer_from_config(
-            self.duration_config, 'duration', [x.task_duration for x in self._all_cases(report, baseline)]
-        )
+
+        all_cases = self._all_cases(report, baseline)
+        durations = [
+            x.aggregate.task_duration if isinstance(x, ReportCaseMultiRun) else x.task_duration for x in all_cases
+        ]
+        duration_renderer = _NumberRenderer.infer_from_config(self.duration_config, 'duration', durations)
 
         return ReportCaseRenderer(
             include_input=self.include_input,
@@ -1321,9 +1549,9 @@ class EvaluationRenderer:
         report_cases_by_id = {case.name: case for case in report_cases}
         baseline_cases_by_id = {case.name: case for case in baseline_cases}
 
-        diff_cases: list[tuple[ReportCase, ReportCase]] = []
-        removed_cases: list[ReportCase] = []
-        added_cases: list[ReportCase] = []
+        diff_cases: list[tuple[ReportCase | ReportCaseMultiRun, ReportCase | ReportCaseMultiRun]] = []
+        removed_cases: list[ReportCase | ReportCaseMultiRun] = []
+        added_cases: list[ReportCase | ReportCaseMultiRun] = []
 
         for case_id in sorted(set(baseline_cases_by_id.keys()) | set(report_cases_by_id.keys())):
             maybe_baseline_case = baseline_cases_by_id.get(case_id)
@@ -1377,8 +1605,14 @@ class EvaluationRenderer:
 
         values_by_name: dict[str, list[float | int]] = {}
         for case in all_cases:
-            for k, score in case.scores.items():
-                values_by_name.setdefault(k, []).append(score.value)
+            if isinstance(case, ReportCaseMultiRun):
+                agg_scores = case.aggregate.scores
+                for k, score in agg_scores.items():
+                    values_by_name.setdefault(k, []).append(score)
+            else:
+                case_scores = case.scores
+                for k, score_result in case_scores.items():
+                    values_by_name.setdefault(k, []).append(score_result.value)
 
         all_renderers: dict[str, _NumberRenderer] = {}
         for name, values in values_by_name.items():
@@ -1393,8 +1627,10 @@ class EvaluationRenderer:
         all_cases = self._all_cases(report, baseline)
         all_names: set[str] = set()
         for case in all_cases:
-            for k in case.labels:
-                all_names.add(k)
+            if isinstance(case, ReportCaseMultiRun):
+                all_names.update(case.aggregate.labels.keys())
+            else:
+                all_names.update(case.labels.keys())
 
         all_renderers: dict[str, _ValueRenderer] = {}
         for name in all_names:
@@ -1410,7 +1646,11 @@ class EvaluationRenderer:
 
         values_by_name: dict[str, list[float | int]] = {}
         for case in all_cases:
-            for k, v in case.metrics.items():
+            if isinstance(case, ReportCaseMultiRun):
+                metrics = case.aggregate.metrics
+            else:
+                metrics = case.metrics
+            for k, v in metrics.items():
                 values_by_name.setdefault(k, []).append(v)
 
         all_renderers: dict[str, _NumberRenderer] = {}
@@ -1424,7 +1664,14 @@ class EvaluationRenderer:
         self, report: EvaluationReport, baseline: EvaluationReport | None
     ) -> _NumberRenderer:  # pragma: no cover
         all_cases = self._all_cases(report, baseline)
-        all_durations = [x.task_duration for x in all_cases]
-        if self.include_total_duration:
-            all_durations += [x.total_duration for x in all_cases]
+        all_durations: list[float] = []
+        for case in all_cases:
+            if isinstance(case, ReportCaseMultiRun):
+                all_durations.append(case.aggregate.task_duration)
+                if self.include_total_duration:
+                    all_durations.append(case.aggregate.total_duration)
+            else:
+                all_durations.append(case.task_duration)
+                if self.include_total_duration:
+                    all_durations.append(case.total_duration)
         return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)

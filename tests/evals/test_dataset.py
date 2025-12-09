@@ -220,6 +220,7 @@ async def test_evaluate_async(
 
     assert report is not None
     assert len(report.cases) == 2
+    assert isinstance(report.cases[0], ReportCase)
     assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
@@ -273,6 +274,7 @@ async def test_evaluate_sync(
 
     assert report is not None
     assert len(report.cases) == 2
+    assert isinstance(report.cases[0], ReportCase)
     assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
@@ -354,6 +356,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
 
     assert report is not None
     assert len(report.cases) == 2
+    assert isinstance(report.cases[0], ReportCase)
     assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
@@ -407,6 +410,7 @@ async def test_evaluate_with_concurrency(
 
     assert report is not None
     assert len(report.cases) == 2
+    assert isinstance(report.cases[0], ReportCase)
     assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
@@ -1376,6 +1380,7 @@ async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Datase
 
     report = await example_dataset.evaluate(task)
     assert len(report.cases) == 2
+    assert isinstance(report.cases[0], ReportCase)
     assert len(report.cases[0].scores) == 2
 
 
@@ -1556,6 +1561,7 @@ async def test_evaluate_async_logfire(
                             'dataset_name': {},
                             'gen_ai.operation.name': {},
                             'n_cases': {},
+                            'runs': {},
                             'name': {},
                             'metadata': {'type': 'object'},
                             'logfire.experiment.metadata': {
@@ -1572,6 +1578,7 @@ async def test_evaluate_async_logfire(
                         },
                         'type': 'object',
                     },
+                    'runs': 1,
                     'logfire.msg': 'evaluate mock_async_task',
                     'metadata': {'key': 'value'},
                     'logfire.msg_template': 'evaluate {name}',
