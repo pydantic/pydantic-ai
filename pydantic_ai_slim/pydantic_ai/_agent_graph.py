@@ -910,6 +910,7 @@ async def process_tool_calls(  # noqa: C901
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
+                    raise e  # pragma: lax no cover
                 yield _messages.FunctionToolCallEvent(call)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
