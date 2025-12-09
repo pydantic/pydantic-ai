@@ -380,7 +380,7 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 ### End Strategy
 
-When a model returns multiple tool calls in a single response, the agent's `end_strategy` parameter controls how these tools are executed.
+When a model returns multiple tool calls in a single response, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tools are executed.
 The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
 For a detailed explanation of how `end_strategy` works with both function tools and output tools, see [Handling Multiple Tool Calls with `end_strategy`](output.md#handling-multiple-tool-calls-with-end_strategy).
