@@ -18,7 +18,7 @@ ToolChoiceFunc = Callable[['RunContext[Any]'], ToolChoiceValue]
 This allows dynamic control of tool_choice per model request.
 
 Example:
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 def my_tool_choice(ctx: RunContext) -> str | list[str] | None:
     if ctx.run_step == 1:
         return ['search']  # Force search tool on first request
@@ -130,7 +130,7 @@ class ModelSettings(TypedDict, total=False):
     You can also pass a callable that receives a [`RunContext`][pydantic_ai.tools.RunContext]
     and returns a static value. This allows dynamic control per model request:
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     def my_tool_choice(ctx: RunContext) -> str | list[str] | None:
         if ctx.run_step == 1:
             return ['search']  # Force search tool on first request
