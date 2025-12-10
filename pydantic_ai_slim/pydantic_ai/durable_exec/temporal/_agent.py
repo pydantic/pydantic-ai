@@ -88,6 +88,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             additional_models:
                 Optional mapping of additional models to register with the agent.
                 Keys define the names that can be referenced at runtime and the values are `Model` instances.
+                Registered model instances can be passed directly to `run(model=...)` and will be resolved to their key.
                 Model strings (e.g., `'openai:gpt-4'`) don't need to be pre-registered and can be passed directly to `run(model=...)`.
             provider_factory:
                 Optional callable used when instantiating models from provider strings (both pre-registered and those supplied at runtime).

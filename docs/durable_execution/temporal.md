@@ -161,6 +161,54 @@ When `TemporalAgent` dynamically creates activities for the wrapped agent's mode
 
 Other than that, any agent and toolset will just work!
 
+### Model Selection at Runtime
+
+By default, a `TemporalAgent` uses the model that was set on the wrapped agent. However, you can register additional models and select between them at runtime inside workflows using the `additional_models` parameter:
+
+```python {title="multi_model_temporal.py" test="skip"}
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalAgent
+from pydantic_ai.models.openai import OpenAIModel
+
+# Create models
+default_model = OpenAIModel('gpt-4o')
+fast_model = OpenAIModel('gpt-4o-mini')
+reasoning_model = OpenAIModel('o1')
+
+agent = Agent(default_model, name='multi_model_agent')
+
+temporal_agent = TemporalAgent(
+    agent,
+    additional_models={
+        'fast': fast_model,
+        'reasoning': reasoning_model,
+    },
+)
+
+
+@workflow.defn
+class MultiModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, use_reasoning: bool) -> str:
+        if use_reasoning:
+            # Select by registered name
+            result = await temporal_agent.run(prompt, model='reasoning')
+        else:
+            # Or pass the registered instance directly
+            result = await temporal_agent.run(prompt, model=fast_model)
+        return result.output
+```
+
+Inside workflows, you can reference models in three ways:
+
+1. **By registered name**: Pass the string key used in `additional_models` (e.g., `model='fast'`)
+2. **By registered instance**: Pass a model instance that was registered via `additional_models` or as the agent's default model
+3. **By provider string**: Pass a model string like `'openai:gpt-4o'` which will be instantiated at runtime
+
+Unregistered model instances cannot be used inside workflows because they cannot be serialized for Temporal's replay mechanism. If you need to use a specific model configuration, register it via `additional_models` first.
+
 ### Instructions Functions, Output Functions, and History Processors
 
 Pydantic AI runs non-async [instructions](../agents.md#instructions) and [system prompt](../agents.md#system-prompts) functions, [history processors](../message-history.md#processing-message-history), [output functions](../output.md#output-functions), and [output validators](../output.md#output-validator-functions) in threads, which are not supported inside Temporal workflows and require an activity. Ensure that these functions are async instead.
