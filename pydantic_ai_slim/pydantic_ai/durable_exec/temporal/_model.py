@@ -36,7 +36,7 @@ class _RequestParams:
     model_id: str | None = None
 
 
-TemporalProviderFactory = Callable[[str, RunContext[Any] | None, Any | None], Provider[Any]]
+TemporalProviderFactory = Callable[[RunContext[Any] | None, str], Provider[Any]]
 
 
 class TemporalStreamedResponse(StreamedResponse):
@@ -257,6 +257,6 @@ class TemporalModel(WrapperModel):
             return models.infer_model(model_name)
 
         def _factory(provider_name: str) -> Provider[Any]:
-            return provider_factory(provider_name, run_context, deps)
+            return provider_factory(run_context, provider_name)
 
         return models.infer_model(model_name, provider_factory=_factory)
