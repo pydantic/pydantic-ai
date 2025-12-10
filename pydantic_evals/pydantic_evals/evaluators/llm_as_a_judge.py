@@ -221,8 +221,17 @@ def _stringify(value: Any) -> str:
         return repr(value)
 
 
-def _add_section(sections: list[str | UserContent], content: Any, tag: str) -> None:
-    """Add a tagged section *inplace* to the sections list, handling different content types."""
+def _make_section(content: Any, tag: str) -> list[str | UserContent]:
+    """Create a tagged section, handling different content types, for use in the LLMJudge's prompt.
+
+    Args:
+        content (Any): content to include in the section_
+        tag (str): tag name for the section
+
+    Returns:
+        list[str | UserContent]: the tagged section as a list of strings or UserContent
+    """
+    sections: list[str | UserContent] = []
     if isinstance(content, str):
         sections.append(f'<{tag}>\n{content}\n</{tag}>')
     else:
@@ -238,6 +247,7 @@ def _add_section(sections: list[str | UserContent], content: Any, tag: str) -> N
         else:
             sections.append(_stringify(content))
         sections.append(f'</{tag}>')
+    return sections
 
 
 def _build_prompt(
@@ -248,17 +258,14 @@ def _build_prompt(
 ) -> str | Sequence[str | UserContent]:
     """Build a prompt that includes input, output, expected output, and rubric."""
     sections: list[str | UserContent] = []
-
     if inputs is not None:
-        _add_section(sections, inputs, 'Input')
+        sections.extend(_make_section(inputs, 'Input'))
 
-    _add_section(sections, output, 'Output')
-
-    sections.append(f'<Rubric>\n{rubric}\n</Rubric>')
+    sections.extend(_make_section(output, 'Output'))
+    sections.extend(_make_section(rubric, 'Rubric'))
 
     if expected_output is not None:
-        _add_section(sections, expected_output, 'ExpectedOutput')
-
+        sections.extend(_make_section(expected_output, 'ExpectedOutput'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]
     return sections

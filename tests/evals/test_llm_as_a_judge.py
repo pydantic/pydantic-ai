@@ -181,13 +181,22 @@ async def test_judge_binary_output_mock(mocker: MockerFixture, image_content: Bi
 
     # Verify the agent was called with correct prompt
     mock_run.assert_called_once()
-    raw_prompt = mock_run.call_args[0][0]
+    call_args, *_ = mock_run.call_args
 
-    # 1) It must be a list
-    assert isinstance(raw_prompt, list), 'Expected prompt to be a list when passing binary'
-
-    # 2) The BinaryContent you passed in should be one of the elements
-    assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
+    assert call_args == snapshot(
+        (
+            [
+                '<Output>',
+                image_content,
+                '</Output>',
+                """\
+<Rubric>
+dummy rubric
+</Rubric>\
+""",
+            ],
+        )
+    )
 
 
 async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, image_content: BinaryContent):
