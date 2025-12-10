@@ -60,11 +60,16 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet-20240620')
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.bedrock_supports_tool_choice is True
+    # Bedrock does not support native structured output, even for models that support it via direct Anthropic API
+    assert anthropic_profile.supports_json_schema_output is False
+    assert anthropic_profile.json_schema_transformer is None
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
     anthropic_model_profile_mock.assert_called_with('claude-instant')
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.bedrock_supports_tool_choice is True
+    assert anthropic_profile.supports_json_schema_output is False
+    assert anthropic_profile.json_schema_transformer is None
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')

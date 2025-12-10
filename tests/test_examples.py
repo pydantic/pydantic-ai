@@ -692,6 +692,12 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Generate a wide illustration of an axolotl city skyline.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='wide-axolotl-city')),
+                ]
+            )
         elif m.content == 'Generate a chart of y=x^2 for x=-5 to 5.':
             return ModelResponse(
                 parts=[
