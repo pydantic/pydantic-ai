@@ -7,7 +7,7 @@ from textwrap import dedent
 from typing_extensions import Self
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
-from ..builtin_tools import AbstractBuiltinTool, get_builtin_tool_types
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..output import StructuredOutputMode
 
 __all__ = [
@@ -66,7 +66,7 @@ class ModelProfile:
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
     """
 
-    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(default_factory=get_builtin_tool_types)
+    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(default_factory=lambda: SUPPORTED_BUILTIN_TOOLS)
     """The set of builtin tool types that this model/profile supports.
 
     Defaults to ALL builtin tools. Profile functions should explicitly
