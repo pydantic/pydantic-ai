@@ -821,16 +821,11 @@ class GeminiStreamedResponse(StreamedResponse):
         code_execution_tool_call_id is None for file_search, or the new ID for code_execution.
         """
         code = executable_code.code
-        if not code:  # pragma: no cover
-            code_execution_tool_call_id = _utils.generate_tool_call_id()
-            part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
-            return part_obj, code_execution_tool_call_id
-
         has_file_search_tool = any(
             isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.builtin_tools
         )
 
-        if has_file_search_tool and (file_search_query := _extract_file_search_query(code)):
+        if code and has_file_search_tool and (file_search_query := _extract_file_search_query(code)):
             if self._file_search_tool_call_id is None:
                 self._file_search_tool_call_id = _utils.generate_tool_call_id()
                 part_obj = BuiltinToolCallPart(
@@ -841,10 +836,10 @@ class GeminiStreamedResponse(StreamedResponse):
                 )
                 return part_obj, None
             return None, None  # pragma: no cover
-        else:
-            code_execution_tool_call_id = _utils.generate_tool_call_id()
-            part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
-            return part_obj, code_execution_tool_call_id
+
+        code_execution_tool_call_id = _utils.generate_tool_call_id()
+        part_obj = _map_executable_code(executable_code, self.provider_name, code_execution_tool_call_id)
+        return part_obj, code_execution_tool_call_id
 
     @property
     def model_name(self) -> GoogleModelName:
