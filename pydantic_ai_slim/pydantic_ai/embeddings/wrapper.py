@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING
 
 from .base import EmbeddingModel, EmbedInputType
+from .result import EmbeddingResult
 from .settings import EmbeddingSettings
 
 if TYPE_CHECKING:
@@ -27,19 +28,9 @@ class WrapperEmbeddingModel(EmbeddingModel):
         super().__init__()
         self.wrapped = infer_model(wrapped) if isinstance(wrapped, str) else wrapped
 
-    @overload
-    async def embed(
-        self, documents: str, *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float]: ...
-
-    @overload
-    async def embed(
-        self, documents: Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[list[float]]: ...
-
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         return await self.wrapped.embed(documents, input_type=input_type, settings=settings)
 
     @property

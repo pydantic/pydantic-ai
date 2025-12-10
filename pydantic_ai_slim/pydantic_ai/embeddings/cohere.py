@@ -51,7 +51,7 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
 
     # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # TODO: Possibly move to base EmbeddingSettings if supported by more providers
+    # TODO (DouweM): Possibly move to base EmbeddingSettings if supported by more providers
     cohere_max_tokens: int
     """The maximum number of tokens to generate before stopping."""
 
@@ -72,13 +72,13 @@ class CohereEmbeddingModel(EmbeddingModel):
     """Cohere embedding model."""
 
     _model_name: CohereEmbeddingModelName = field(repr=False)
-    _provider: CohereProvider = field(repr=False)
+    _provider: Provider[AsyncClientV2] = field(repr=False)
 
     def __init__(
         self,
         model_name: CohereEmbeddingModelName,
         *,
-        provider: Literal['cohere'] | Provider[AsyncClientV2] | CohereProvider = 'cohere',
+        provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
         settings: EmbeddingSettings | None = None,
     ):
         """Initialize an Cohere model.
@@ -148,7 +148,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         if embeddings is None:
             raise UnexpectedModelBehavior(
                 'The Cohere embeddings response did not have an `embeddings` field holding a list of floats',
-                response,
+                str(response),
             )
 
         return EmbeddingResult(
@@ -182,7 +182,7 @@ def _map_usage(response: EmbedByTypeResponse) -> RequestUsage:
     usage_data = u.billed_units.model_dump(exclude_none=True)
     details = {k: int(v) for k, v in usage_data.items() if k != 'input_tokens' and isinstance(v, int | float) and v > 0}
 
-    # TODO (DouweM): Use RequestUsage.extract() once https://github.com/pydantic/genai-prices/blob/main/prices/providers/cohere.yml has been updated
+    # TODO (DouweM): Use RequestUsage.extract() once https://github.com/pydantic/genai-prices/pull/240 has been released
     return RequestUsage(
         input_tokens=int(u.billed_units.input_tokens or 0),
         details=details,

@@ -77,7 +77,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
 
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
-    ) -> list[float] | list[list[float]]:
+    ) -> EmbeddingResult:
         docs, settings = self.prepare_embed(documents, settings)
         return await self._embed(docs, input_type, cast(SentenceTransformersEmbeddingSettings, settings))
 

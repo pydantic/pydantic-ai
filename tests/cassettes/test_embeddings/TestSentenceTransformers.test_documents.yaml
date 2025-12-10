@@ -37,9 +37,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
       ratelimit:
-      - '"resolvers";r=4969;t=81'
+      - '"resolvers";r=2983;t=95'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -68,10 +68,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372339'
+      - '14529079'
       connection:
       - keep-alive
       content-disposition:
@@ -86,10 +84,6 @@ interactions:
       - same-origin
       etag:
       - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
-      ratelimit:
-      - '"resolvers";r=4998;t=220'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -135,9 +129,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
       ratelimit:
-      - '"resolvers";r=4968;t=81'
+      - '"resolvers";r=2982;t=95'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -166,10 +160,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372338'
+      - '12835329'
       connection:
       - keep-alive
       content-disposition:
@@ -184,10 +176,6 @@ interactions:
       - same-origin
       etag:
       - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
-      ratelimit:
-      - '"resolvers";r=4996;t=219'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -233,9 +221,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
       ratelimit:
-      - '"resolvers";r=4967;t=80'
+      - '"resolvers";r=2981;t=95'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -264,10 +252,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372339'
+      - '12835329'
       connection:
       - keep-alive
       content-disposition:
@@ -282,10 +268,6 @@ interactions:
       - same-origin
       etag:
       - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
-      ratelimit:
-      - '"resolvers";r=4996;t=219'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -331,9 +313,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2FREADME.md=&etag=%2258d4a9a45664eb9e12de9549c548c09b6134c17f%22
       ratelimit:
-      - '"resolvers";r=4966;t=80'
+      - '"resolvers";r=2980;t=95'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -362,10 +344,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372339'
+      - '14529078'
       connection:
       - keep-alive
       content-disposition:
@@ -380,10 +360,6 @@ interactions:
       - same-origin
       etag:
       - '"58d4a9a45664eb9e12de9549c548c09b6134c17f"'
-      ratelimit:
-      - '"resolvers";r=4993;t=219'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -429,9 +405,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
       ratelimit:
-      - '"resolvers";r=4965;t=80'
+      - '"resolvers";r=2979;t=95'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -460,10 +436,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372340'
+      - '14529080'
       connection:
       - keep-alive
       content-disposition:
@@ -478,10 +452,6 @@ interactions:
       - same-origin
       etag:
       - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
-      ratelimit:
-      - '"resolvers";r=4998;t=220'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -527,9 +497,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fsentence_bert_config.json=&etag=%2259d594003bf59880a884c574bf88ef7555bb0202%22
       ratelimit:
-      - '"resolvers";r=4964;t=80'
+      - '"resolvers";r=2978;t=94'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -558,10 +528,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372338'
+      - '14529078'
       connection:
       - keep-alive
       content-disposition:
@@ -576,10 +544,6 @@ interactions:
       - same-origin
       etag:
       - '"59d594003bf59880a884c574bf88ef7555bb0202"'
-      ratelimit:
-      - '"resolvers";r=4990;t=218'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -621,9 +585,9 @@ interactions:
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=4963;t=80'
+      - '"resolvers";r=2977;t=94'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -669,9 +633,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig.json=&etag=%2272b987fd805cfa2b58c4c8c952b274a11bfd5a00%22
       ratelimit:
-      - '"resolvers";r=4962;t=80'
+      - '"resolvers";r=2976;t=94'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -700,10 +664,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372338'
+      - '14529078'
       connection:
       - keep-alive
       content-disposition:
@@ -718,10 +680,6 @@ interactions:
       - same-origin
       etag:
       - '"72b987fd805cfa2b58c4c8c952b274a11bfd5a00"'
-      ratelimit:
-      - '"resolvers";r=4987;t=218'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -767,9 +725,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/tokenizer_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Ftokenizer_config.json=&etag=%22c79f2b6a0cea6f4b564fed1938984bace9d30ff0%22
       ratelimit:
-      - '"resolvers";r=4961;t=80'
+      - '"resolvers";r=2975;t=94'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -801,7 +759,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '1372338'
+      - '7297723'
       connection:
       - keep-alive
       content-disposition:
@@ -816,10 +774,12 @@ interactions:
       - same-origin
       etag:
       - '"c79f2b6a0cea6f4b564fed1938984bace9d30ff0"'
-      ratelimit:
-      - '"resolvers";r=4985;t=218'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      ratelimit-limit:
+      - '5000'
+      ratelimit-remaining:
+      - '4723'
+      ratelimit-reset:
+      - '1'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -857,9 +817,9 @@ interactions:
       etag:
       - W/"40-09f9IAqP13xarAhQxFS2W8rvRkM"
       ratelimit:
-      - '"api";r=993;t=79'
+      - '"api";r=496;t=93'
       ratelimit-policy:
-      - '"fixed window";"api";q=1000;w=300'
+      - '"fixed window";"api";q=500;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -907,9 +867,9 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/1_Pooling%2Fconfig.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2F1_Pooling%2Fconfig.json=&etag=%22d1514c3162bbe87b343f565fadc62e6c06f04f03%22
       ratelimit:
-      - '"resolvers";r=4960;t=79'
+      - '"resolvers";r=2974;t=93'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
+      - '"fixed window";"resolvers";q=3000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -938,10 +898,8 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      access-control-max-age:
-      - '86400'
       age:
-      - '1372338'
+      - '9911792'
       connection:
       - keep-alive
       content-disposition:
@@ -956,10 +914,6 @@ interactions:
       - same-origin
       etag:
       - '"d1514c3162bbe87b343f565fadc62e6c06f04f03"'
-      ratelimit:
-      - '"resolvers";r=4983;t=217'
-      ratelimit-policy:
-      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -989,17 +943,17 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '6975'
+      - '6936'
       content-type:
       - application/json; charset=utf-8
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"1b3f-OuAtfidf0ZZH73+fS3AD9wSoeHs"
+      - W/"1b18-tYsUubMIdJpiie7REeH+rkhWHKs"
       ratelimit:
-      - '"api";r=992;t=79'
+      - '"api";r=495;t=93'
       ratelimit-policy:
-      - '"fixed window";"api";q=1000;w=300'
+      - '"fixed window";"api";q=500;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -1051,13 +1005,13 @@ interactions:
           unk_token: '[UNK]'
       createdAt: '2022-03-02T23:29:05.000Z'
       disabled: false
-      downloads: 148188690
+      downloads: 152259509
       gated: false
       id: sentence-transformers/all-MiniLM-L6-v2
       inference: warm
       lastModified: '2025-03-06T13:37:44.000Z'
       library_name: sentence-transformers
-      likes: 4160
+      likes: 4211
       mask_token: '[MASK]'
       model-index: null
       modelId: sentence-transformers/all-MiniLM-L6-v2
@@ -1101,35 +1055,37 @@ interactions:
       - rfilename: train_script.py
       - rfilename: vocab.txt
       spaces:
-      - MCP-1st-Birthday/Jobly
-      - onkar-waghmode/neural-humanizer
-      - MCP-1st-Birthday/ragmint-mcp-agent
-      - noorfatima71/RAG_Pharma_Chatbot
-      - MCP-1st-Birthday/ragmint-mcp-server
-      - Nawabwaqar/FastMed_RAG_Chatbot
-      - Mr-TD/RAG-PDF-QnA-ChatBot
+      - MCP-1st-Birthday/AI-Digital-Library-Assistant
       - merterbak/RAG-Llama
-      - himanshukumar378/Mutliple_chat_pdf
-      - BaoNhan/MinerU_2.5_plus_Intelligent_Reasoning_and_Knowledge_Explorer
-      - kiwinov/strint
-      - MCP-1st-Birthday/NeatNote
-      - Lesterchia174/FPOC2_AI-Tutor_Chatbot
-      - LuciferMrng/Voice_to_Notes
-      - VishalVikas003/ai-innovation-studio
-      - muniparash79/chat-with-your-pdf
-      - MCP-1st-Birthday/cx_ai_agent
-      - guanqiantong/edu_ai
-      - paivalucass/ai-restaurant-recommend
-      - abhismanc/career_conversation
-      - Benaah/amaniquery
-      - Deeksha11-alt/1_foundations
-      - GopalJee2745/PDF_QA_Chat_Lang_GROQ
-      - duartevn/ailo-lite-rag-ifood
-      - dhpjames71/career_conversations
-      - sotcsa/career_conversation
-      - nigampriyanshi-ai/My_AI_Chatbot
-      - cvachet/pdf-chatbot
+      - MCP-1st-Birthday/DETERMINATOR
+      - Thanos51/ai-recruitment-system
+      - MCP-1st-Birthday/auto-distill
       - marcosv/InstructIR
+      - MCP-1st-Birthday/Jobly
+      - MCP-1st-Birthday/ragmint-mcp-server
+      - richard-godfrey/AI_sheria_tanzania
+      - saugatadk101/AI-Book-Recommender
+      - satyaki-mitra/AI_Text_Authenticator
+      - LoneWolfgang/Abalone-RAG-Demo
+      - HindHammad/NutriBud
+      - MCP-1st-Birthday/monkey-mind
+      - nothingworry/IntegraChat
+      - Aditya230302/RAG_Based_Chatbot
+      - CareLoopAI/careloop-chatbot-nlp
+      - Akashmj22122002/Akash_ai_talks
+      - dashVector/dashVectorSpace
+      - GopalKrushnaMahapatra/TrueWrite-Scan-Backend
+      - hasnainmn7/TaskmasterRAG
+      - canvaacc0315-debug/canvaacc0315-debug
+      - Ayush239/Ayush_Alter_Ego
+      - shovon2000/ewu-uniguide
+      - lpatil27/lpatil27career_conversation2
+      - hamxaameer/OutfitOrbit-Chatbot-Assistant
+      - shivsunder0006/MultiModalRAG
+      - nehit07/career_conversation
+      - Faiza1992/Customerchatbot
+      - yash9340/EduMate
+      - cvachet/pdf-chatbot
       - JournalistsonHF/ai-scraper
       - mteb/arena
       - Illia56/Ask-AI-Youtube
@@ -1141,6 +1097,7 @@ interactions:
       - SeaLLMs/SeaLLM-Chat
       - mteb/leaderboard_legacy
       - q-future/Co-Instruct
+      - Mr-TD/RAG-PDF-QnA-ChatBot
       - radames/sentence-embeddings-visualization
       - radames/Candle-BERT-Semantic-Similarity-Wasm
       - ml6team/post-processing-summarization
@@ -1150,6 +1107,7 @@ interactions:
       - Gradio-Blocks/pubmed-abstract-retriever
       - seanpedrickcase/Light-PDF-Web-QA-Chatbot
       - seanpedrickcase/topic_modelling
+      - onkar-waghmode/neural-humanizer
       - Agents-MCP-Hackathon/Intelligent_Content_Organizer
       - jscheah/open-webui
       - ZySec-AI/ZySec
@@ -1196,11 +1154,7 @@ interactions:
       - JDWebProgrammer/chatbot
       - sickcell/AskCTI
       - Shashikiran42/Banking_Regulations_Compliance_ChatBOT
-      - Thanos51/ai-recruitment-system
       - rivapereira123/career-buddy
-      - MarjG/anime-recommendation-engine
-      - Agents-MCP-Hackathon/Merlin-AI-Coach
-      - stevenbucaille/ScouterAI
       tags:
       - sentence-transformers
       - pytorch
@@ -1241,7 +1195,6 @@ interactions:
       - arxiv:1704.05179
       - arxiv:1810.09305
       - license:apache-2.0
-      - autotrain_compatible
       - text-embeddings-inference
       - endpoints_compatible
       - deploy:azure
