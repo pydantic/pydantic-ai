@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -12,6 +12,7 @@ from .settings import EmbeddingSettings
 
 try:
     from cohere import AsyncClientV2
+    from cohere.core.api_error import ApiError
     from cohere.core.request_options import RequestOptions
     from cohere.types.embed_by_type_response import EmbedByTypeResponse
     from cohere.types.embed_input_type import EmbedInputType as CohereEmbedInputType
@@ -51,7 +52,6 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
 
     # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # TODO (DouweM): Possibly move to base EmbeddingSettings if supported by more providers
     cohere_max_tokens: int
     """The maximum number of tokens to generate before stopping."""
 
@@ -135,15 +135,21 @@ class CohereEmbeddingModel(EmbeddingModel):
             'cohere_input_type', 'search_document' if input_type == 'document' else 'search_query'
         )
 
-        response = await self._client.embed(
-            model=self.model_name,
-            texts=documents,
-            output_dimension=settings.get('dimensions'),
-            input_type=cohere_input_type,
-            max_tokens=settings.get('cohere_max_tokens'),
-            truncate=settings.get('cohere_truncate', 'NONE'),
-            request_options=request_options,
-        )
+        try:
+            response = await self._client.embed(
+                model=self.model_name,
+                texts=documents,
+                output_dimension=settings.get('dimensions'),
+                input_type=cohere_input_type,
+                max_tokens=settings.get('cohere_max_tokens'),
+                truncate=settings.get('cohere_truncate', 'NONE'),
+                request_options=request_options,
+            )
+        except ApiError as e:
+            if (status_code := e.status_code) and status_code >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+
         embeddings = response.embeddings.float_
         if embeddings is None:
             raise UnexpectedModelBehavior(
@@ -167,11 +173,17 @@ class CohereEmbeddingModel(EmbeddingModel):
     async def count_tokens(self, text: str) -> int:
         if self._v1_client is None:
             raise NotImplementedError('Counting tokens requires the Cohere v1 client')
-        result = await self._v1_client.tokenize(
-            model=self.model_name,
-            text=text,  # Has a max length of 65536 characters
-            offline=False,
-        )
+        try:
+            result = await self._v1_client.tokenize(
+                model=self.model_name,
+                text=text,  # Has a max length of 65536 characters
+                offline=False,
+            )
+        except ApiError as e:
+            if (status_code := e.status_code) and status_code >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+
         return len(result.tokens)
 
 

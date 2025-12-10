@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic_ai import _utils
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -14,7 +14,7 @@ from .settings import EmbeddingSettings
 
 try:
     import tiktoken
-    from openai import AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
     from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
     from openai.types.create_embedding_response import Usage
 
@@ -91,13 +91,20 @@ class OpenAIEmbeddingModel(EmbeddingModel):
     async def _embed(
         self, documents: str | Sequence[str], input_type: EmbedInputType, settings: OpenAIEmbeddingSettings
     ) -> EmbeddingResult:
-        response = await self._client.embeddings.create(
-            input=documents,  # pyright: ignore[reportArgumentType]  # Sequence[str] not compatible with SequenceNotStr[str] :/
-            model=self.model_name,
-            dimensions=settings.get('dimensions') or OMIT,
-            extra_headers=settings.get('extra_headers'),
-            extra_body=settings.get('extra_body'),
-        )
+        try:
+            response = await self._client.embeddings.create(
+                input=documents,  # pyright: ignore[reportArgumentType]  # Sequence[str] not compatible with SequenceNotStr[str] :/
+                model=self.model_name,
+                dimensions=settings.get('dimensions') or OMIT,
+                extra_headers=settings.get('extra_headers'),
+                extra_body=settings.get('extra_body'),
+            )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
         embeddings = [item.embedding for item in response.data]
 
         return EmbeddingResult(

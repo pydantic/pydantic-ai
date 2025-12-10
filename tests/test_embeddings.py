@@ -9,6 +9,7 @@ from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
 from pydantic_ai.embeddings import Embedder, EmbeddingResult, KnownEmbeddingModelName, infer_model
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsList, try_import
@@ -123,6 +124,12 @@ class TestOpenAI:
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(4)
 
+    async def test_embed_error(self, openai_api_key: str):
+        model = OpenAIEmbeddingModel('nonexistent', provider=OpenAIProvider(api_key=openai_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(ModelHTTPError, match='model_not_found'):
+            await embedder.embed_query('Hello, world!')
+
 
 @pytest.mark.skipif(not cohere_imports_successful, reason='Cohere not installed')
 class TestCohere:
@@ -187,6 +194,12 @@ class TestCohere:
         embedder = Embedder(model)
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(4)
+
+    async def test_embed_error(self, co_api_key: str):
+        model = CohereEmbeddingModel('nonexistent', provider=CohereProvider(api_key=co_api_key))
+        embedder = Embedder(model)
+        with pytest.raises(ModelHTTPError, match='not found,'):
+            await embedder.embed_query('Hello, world!')
 
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful, reason='SentenceTransformers not installed')

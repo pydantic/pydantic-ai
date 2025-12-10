@@ -91,7 +91,6 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         normalize = settings.get('sentence_transformers_normalize_embeddings', False)
         batch_size = settings.get('sentence_transformers_batch_size', None)
 
-        # TODO (DouweM): Update /typings so we can remove the type ignores
         model = await self._get_model()
         encode_func = model.encode_query if input_type == 'query' else model.encode_document  # type: ignore[reportUnknownReturnType]
 
