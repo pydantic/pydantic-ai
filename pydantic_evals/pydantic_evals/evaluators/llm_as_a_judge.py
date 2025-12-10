@@ -221,39 +221,45 @@ def _stringify(value: Any) -> str:
         return repr(value)
 
 
+def _add_section(sections: list[str | UserContent], content: Any, tag: str) -> None:
+    """Add a tagged section *inplace* to the sections list, handling different content types."""
+    if isinstance(content, str):
+        sections.append(f'<{tag}>\n{content}\n</{tag}>')
+    else:
+        sections.append(f'<{tag}>\n')
+        if isinstance(content, Sequence):
+            for item in content:  # type: ignore[reportUnknownVariableType]
+                if isinstance(item, str | MultiModalContent):
+                    sections.append(item)
+                else:
+                    sections.append(_stringify(item))
+        elif isinstance(content, MultiModalContent):
+            sections.append(content)
+        else:
+            sections.append(_stringify(content))
+        sections.append(f'</{tag}>')
+
+
 def _build_prompt(
     output: Any,
     rubric: str,
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> str | Sequence[str | UserContent]:
-    """Build a prompt that includes input, output, and rubric."""
+    """Build a prompt that includes input, output, expected output, and rubric."""
     sections: list[str | UserContent] = []
 
     if inputs is not None:
-        if isinstance(inputs, str):
-            sections.append(f'<Input>\n{inputs}\n</Input>')
-        else:
-            sections.append('<Input>\n')
-            if isinstance(inputs, Sequence):
-                for item in inputs:  # type: ignore
-                    if isinstance(item, str | MultiModalContent):
-                        sections.append(item)
-                    else:
-                        sections.append(_stringify(item))
-            elif isinstance(inputs, MultiModalContent):
-                sections.append(inputs)
-            else:
-                sections.append(_stringify(inputs))
-            sections.append('</Input>')
+        _add_section(sections, inputs, 'Input')
 
-    sections.append(f'<Output>\n{_stringify(output)}\n</Output>')
+    if output is not None:
+        _add_section(sections, output, 'Output')
+
     sections.append(f'<Rubric>\n{rubric}\n</Rubric>')
 
     if expected_output is not None:
-        sections.append(f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>')
+        _add_section(sections, expected_output, 'ExpectedOutput')
 
-    if inputs is None or isinstance(inputs, str):
+    if all(isinstance(section, str) for section in sections):
         return '\n\n'.join(sections)  # type: ignore[arg-type]
-    else:
-        return sections
+    return sections

@@ -166,6 +166,30 @@ async def test_judge_input_output_binary_content_list_mock(mocker: MockerFixture
     assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
 
 
+async def test_judge_binary_output_mock(mocker: MockerFixture, image_content: BinaryContent) -> None:
+    """Test judge_output function when binary content is to be judged"""
+    # Mock the agent run method
+    mock_result = mocker.MagicMock()
+    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
+    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+
+    result = await judge_output(output=image_content, rubric='dummy rubric')
+    assert isinstance(result, GradingOutput)
+    assert result.reason == 'Test passed'
+    assert result.pass_ is True
+    assert result.score == 1.0
+
+    # Verify the agent was called with correct prompt
+    mock_run.assert_called_once()
+    raw_prompt = mock_run.call_args[0][0]
+
+    # 1) It must be a list
+    assert isinstance(raw_prompt, list), 'Expected prompt to be a list when passing binary'
+
+    # 2) The BinaryContent you passed in should be one of the elements
+    assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
+
+
 async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_input_output function with mocked agent."""
     # Mock the agent run method
@@ -326,26 +350,26 @@ async def test_judge_input_output_expected_with_model_settings_mock(
 
     assert call_args == snapshot(
         (
-            [
-                '<Input>\n',
-                '123',
-                '</Input>',
-                """\
+            """\
+<Input>
+
+
+123
+
+</Input>
+
 <Output>
 Hello world with settings
-</Output>\
-""",
-                """\
+</Output>
+
 <Rubric>
 Output contains input with settings
-</Rubric>\
-""",
-                """\
+</Rubric>
+
 <ExpectedOutput>
 Hello
 </ExpectedOutput>\
 """,
-            ],
         )
     )
 
@@ -366,26 +390,26 @@ Hello
 
     assert call_args == snapshot(
         (
-            [
-                '<Input>\n',
-                '123',
-                '</Input>',
-                """\
+            """\
+<Input>
+
+
+123
+
+</Input>
+
 <Output>
 Hello world with settings
-</Output>\
-""",
-                """\
+</Output>
+
 <Rubric>
 Output contains input with settings
-</Rubric>\
-""",
-                """\
+</Rubric>
+
 <ExpectedOutput>
 Hello
 </ExpectedOutput>\
 """,
-            ],
         )
     )
 
@@ -457,7 +481,7 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
     call_args, call_kwargs = mock_run.call_args
     assert '<Input>' not in call_args[0]
     assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
-    assert '<Output>' in call_args[0]
+    assert '<Output>\n' in call_args[0]
     assert '<Rubric>\nOutput contains input with settings\n</Rubric>' in call_args[0]
     assert call_kwargs['model_settings'] == test_model_settings
     # Check if 'model' kwarg is passed, its value will be the default model or None
