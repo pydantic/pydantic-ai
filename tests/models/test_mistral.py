@@ -1998,12 +1998,10 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    base64_content = (
-        b'/9j/4AAQSkZJRgABAQEAYABgAAD/4QBYRXhpZgAATU0AKgAAAAgAA1IBAAEAAAABAAAAPgIBAAEAAAABAAAARgMBAAEAAAABAAAA'
-        b'WgAAAAAAAAAE'
-    )
+    # Fake image bytes for testing
+    image_bytes = b'fake image data'
 
-    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='image/jpeg')])
+    result = await agent.run(['hello', BinaryContent(data=image_bytes, media_type='image/jpeg')])
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -2011,7 +2009,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                     UserPromptPart(
                         content=[
                             'hello',
-                            BinaryContent(data=base64_content, media_type='image/jpeg', identifier='cb93e3'),
+                            BinaryContent(data=image_bytes, media_type='image/jpeg'),
                         ],
                         timestamp=IsDatetime(),
                     )

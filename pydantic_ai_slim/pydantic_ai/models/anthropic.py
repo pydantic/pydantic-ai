@@ -1007,6 +1007,33 @@ class AnthropicModel(Model):
         last_param['cache_control'] = self._build_cache_control(ttl)
 
     @staticmethod
+    def _map_binary_content(item: BinaryContent) -> BetaContentBlockParam:
+        # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
+        if item.is_image:
+            return BetaImageBlockParam(
+                source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
+                type='image',
+            )
+        elif item.media_type == 'application/pdf':
+            return BetaBase64PDFBlockParam(
+                source=BetaBase64PDFSourceParam(
+                    data=io.BytesIO(item.data),
+                    media_type='application/pdf',
+                    type='base64',
+                ),
+                type='document',
+            )
+        elif item.media_type == 'text/plain':
+            return BetaBase64PDFBlockParam(
+                source=BetaPlainTextSourceParam(
+                    data=item.data.decode('utf-8'), media_type=item.media_type, type='text'
+                ),
+                type='document',
+            )
+        else:
+            raise RuntimeError(f'Unsupported binary content media type for Anthropic: {item.media_type}')
+
+    @staticmethod
     async def _map_user_prompt(
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
@@ -1021,24 +1048,20 @@ class AnthropicModel(Model):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, BinaryContent):
-                    if item.is_image:
+                    yield AnthropicModel._map_binary_content(item)
+                elif isinstance(item, ImageUrl):
+                    if item.force_download:
+                        downloaded = await download_item(item, data_format='bytes')
                         yield BetaImageBlockParam(
-                            source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
+                            source={
+                                'data': io.BytesIO(downloaded['data']),
+                                'media_type': item.media_type,
+                                'type': 'base64',
+                            },  # type: ignore
                             type='image',
                         )
-                    elif item.media_type == 'application/pdf':
-                        yield BetaBase64PDFBlockParam(
-                            source=BetaBase64PDFSourceParam(
-                                data=io.BytesIO(item.data),
-                                media_type='application/pdf',
-                                type='base64',
-                            ),
-                            type='document',
-                        )
                     else:
-                        raise RuntimeError('Only images and PDFs are supported for binary content')
-                elif isinstance(item, ImageUrl):
-                    yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
+                        yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
                         yield BetaBase64PDFBlockParam(source={'url': item.url, 'type': 'url'}, type='document')

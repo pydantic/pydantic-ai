@@ -474,7 +474,11 @@ class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
     data: bytes
-    """The binary data."""
+    """Arbitrary binary data.
+
+    Store actual bytes here, not base64.
+    Use `BinaryContent.base64` to get the base64-encoded string.
+    """
 
     _: KW_ONLY
 
@@ -574,7 +578,12 @@ class BinaryContent:
     @property
     def data_uri(self) -> str:
         """Convert the `BinaryContent` to a data URI."""
-        return f'data:{self.media_type};base64,{base64.b64encode(self.data).decode()}'
+        return f'data:{self.media_type};base64,{self.base64}'
+
+    @property
+    def base64(self) -> str:
+        """Return the binary data as a base64-encoded string."""
+        return base64.b64encode(self.data).decode()
 
     @property
     def is_audio(self) -> bool:
