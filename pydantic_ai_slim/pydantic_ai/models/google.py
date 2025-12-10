@@ -1129,7 +1129,7 @@ def _extract_file_search_retrieved_contexts(
                 mode='json', exclude_none=True, by_alias=True
             )
             file_search_store = context_dict_with_aliases.get('fileSearchStore')
-        if file_search_store is not None:
+        if file_search_store is not None:  # pragma: lax no cover
             context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
