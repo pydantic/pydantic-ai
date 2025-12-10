@@ -68,9 +68,9 @@ pytestmark = [
 
 
 class DummyUIRunInput(BaseModel):
-    messages: list[ModelMessage] = field(default_factory=list)
-    tool_defs: list[ToolDefinition] = field(default_factory=list)
-    state: dict[str, Any] = field(default_factory=dict)
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    tool_defs: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    state: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 class DummyUIState(BaseModel):

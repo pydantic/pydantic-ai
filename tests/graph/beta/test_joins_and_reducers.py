@@ -178,7 +178,7 @@ async def test_multiple_joins():
 
     @dataclass
     class MultiState:
-        results: dict[str, list[int]] = field(default_factory=dict)
+        results: dict[str, list[int]] = field(default_factory=dict[str, list[int]])
 
     g = GraphBuilder(state_type=MultiState, output_type=dict[str, list[int]])
 
@@ -333,7 +333,7 @@ async def test_reduce_first_value():
 
     @dataclass
     class StateWithResults:
-        results: list[str] = field(default_factory=list)
+        results: list[str] = field(default_factory=list[str])
 
     g = GraphBuilder(state_type=StateWithResults, output_type=str)
 

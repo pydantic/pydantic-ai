@@ -248,11 +248,11 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         if allows_image:
             outputs = [output for output in outputs if output is not _messages.BinaryImage]
 
-        if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
+        if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
 
-            flattened_outputs = _flatten_output_spec(output.outputs)
+            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(  # pragma: no cover
@@ -273,11 +273,11 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
             )
-        elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
+        elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
                 raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
 
-            flattened_outputs = _flatten_output_spec(output.outputs)
+            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(  # pragma: no cover
@@ -306,9 +306,9 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             if output is str:
                 text_outputs.append(cast(type[str], output))
             elif isinstance(output, TextOutput):
-                text_outputs.append(output)
+                text_outputs.append(cast(TextOutput[OutputDataT], output))
             elif isinstance(output, ToolOutput):
-                tool_outputs.append(output)
+                tool_outputs.append(cast(ToolOutput[OutputDataT], output))
             elif isinstance(output, NativeOutput):
                 # We can never get here because this is checked for above.
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
@@ -900,6 +900,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             description = None
             strict = None
             if isinstance(output, ToolOutput):
+                output = cast(ToolOutput[OutputDataT], output)
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
@@ -999,7 +1000,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]:
     outputs: Sequence[OutputSpec[T]]
     if isinstance(output_spec, Sequence):
-        outputs = output_spec
+        outputs = cast(Sequence[OutputSpec[T]], output_spec)
     else:
         outputs = (output_spec,)
 

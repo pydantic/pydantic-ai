@@ -186,7 +186,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
             if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
-                base_node: BaseNode[
+                base_node: BaseNode[  # pyright: ignore[reportUnknownVariableType]
                     _agent_graph.GraphAgentState,
                     _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
                     FinalResult[OutputDataT],

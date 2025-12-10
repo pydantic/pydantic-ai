@@ -2,6 +2,11 @@
 # environment to be able to run the associated tests
 
 # pyright: reportUnnecessaryTypeIgnoreComment = false
+# pyright: reportMissingImports = false
+# pyright: reportUnknownVariableType = false
+# pyright: reportUnknownMemberType = false
+# pyright: reportUnknownParameterType = false
+# pyright: reportUnknownArgumentType = false
 
 from __future__ import annotations
 

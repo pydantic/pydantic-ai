@@ -538,8 +538,13 @@ def model(
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
         elif request.param == 'outlines':
-            from outlines.models.transformers import from_transformers
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from outlines.models.transformers import (
+                from_transformers,
+            )
+            from transformers import (
+                AutoModelForCausalLM,
+                AutoTokenizer,
+            )
 
             from pydantic_ai.models.outlines import OutlinesModel
 
