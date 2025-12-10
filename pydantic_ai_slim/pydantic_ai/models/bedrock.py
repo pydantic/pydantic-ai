@@ -584,7 +584,8 @@ class BedrockConverseModel(Model):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
-                bedrock_messages.append({'role': 'assistant', 'content': content})
+                if content:
+                    bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(message)
 
