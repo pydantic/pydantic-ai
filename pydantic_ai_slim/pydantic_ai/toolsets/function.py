@@ -35,6 +35,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     tools: dict[str, Tool[Any]]
     max_retries: int
+    max_uses: int | None
     _id: str | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -45,6 +46,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,
+        max_uses: int | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -59,6 +61,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
+                Applies to all tools, unless overridden when adding a tool.
+            max_uses: The maximum number of uses allowed for each tool during a run.
                 Applies to all tools, unless overridden when adding a tool.
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
@@ -81,6 +85,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         self.max_retries = max_retries
         self._id = id
+        self.max_uses = max_uses
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.schema_generator = schema_generator
@@ -111,6 +116,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -129,6 +135,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -205,6 +212,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 name=name,
                 description=description,
                 retries=retries,
+                max_uses=max_uses,
                 prepare=prepare,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -225,6 +233,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -248,6 +257,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
+            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -287,6 +297,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             name=name,
             description=description,
             max_retries=retries,
+            max_uses=max_uses,
             prepare=prepare,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
@@ -308,6 +319,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None:
             tool.max_retries = self.max_retries
+        if tool.max_uses is None:
+            tool.max_uses = self.max_uses
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
@@ -316,6 +329,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            max_uses = tool.max_uses if tool.max_uses is not None else self.max_uses
             run_context = replace(
                 ctx,
                 tool_name=original_name,
@@ -337,6 +351,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 toolset=self,
                 tool_def=tool_def,
                 max_retries=max_retries,
+                max_uses=max_uses,
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,

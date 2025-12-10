@@ -95,6 +95,7 @@ class GraphAgentState:
     retries: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
+    tool_usage: dict[str, int] = dataclasses.field(default_factory=dict)
 
     def increment_retries(
         self,
@@ -821,6 +822,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
+        tool_usage=ctx.state.tool_usage,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1020,14 +1022,33 @@ async def _call_tools(
         projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
+    calls_to_run: list[_messages.ToolCallPart] = []
+
+    # For each tool, check how many calls are going to be made and if it is over the limit
+    tool_call_counts: defaultdict[str, int] = defaultdict(int)
     for call in tool_calls:
-        yield _messages.FunctionToolCallEvent(call)
+        tool_call_counts[call.tool_name] += 1
+
+    for call in tool_calls:
+        current_tool_use = tool_manager.get_current_use_of_tool(call.tool_name)
+        max_tool_use = tool_manager.get_max_use_of_tool(call.tool_name)
+        if max_tool_use is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tool_use:
+            return_part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=f'Tool call limit reached for tool "{call.tool_name}".',
+                tool_call_id=call.tool_call_id,
+            )
+            output_parts.append(return_part)
+            yield _messages.FunctionToolResultEvent(return_part)
+        else:
+            yield _messages.FunctionToolCallEvent(call)
+            calls_to_run.append(call)
 
     with tracer.start_as_current_span(
         'running tools',
         attributes={
-            'tools': [call.tool_name for call in tool_calls],
-            'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
+            'tools': [call.tool_name for call in calls_to_run],
+            'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
         },
     ):
 
@@ -1061,8 +1082,8 @@ async def _call_tools(
 
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        if tool_manager.should_call_sequentially(tool_calls):
-            for index, call in enumerate(tool_calls):
+        if tool_manager.should_call_sequentially(calls_to_run):
+            for index, call in enumerate(calls_to_run):
                 if event := await handle_call_or_result(
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     index,
@@ -1075,7 +1096,7 @@ async def _call_tools(
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     name=call.tool_name,
                 )
-                for call in tool_calls
+                for call in calls_to_run
             ]
 
             pending = tasks
@@ -1092,7 +1113,7 @@ async def _call_tools(
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     _populate_deferred_calls(
-        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+        calls_to_run, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
     )
 
 

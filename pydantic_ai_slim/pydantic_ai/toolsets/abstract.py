@@ -52,6 +52,8 @@ class ToolsetTool(Generic[AgentDepsT]):
     """The tool definition for this tool, including the name, description, and parameters."""
     max_retries: int
     """The maximum number of retries to attempt if the tool call fails."""
+    max_uses: int
+    """The maximum number of uses allowed for this tool."""
     args_validator: SchemaValidator | SchemaValidatorProt
     """The Pydantic Core validator for the tool's arguments.
 

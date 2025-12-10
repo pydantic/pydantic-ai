@@ -1309,6 +1309,62 @@ def test_tool_retries():
     assert call_last_attempt == snapshot([False, False, False, False, False, True])
 
 
+def test_tool_max_uses():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(max_uses=1)
+    def tool_with_max_use(ctx: RunContext[None]) -> str:
+        return 'Used'
+
+    # Force the agent to use this tool now
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('{"tool_with_max_use":"Used"}')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='tool_with_max_use', args={}, tool_call_id='pyd_ai_tool_call_id__tool_with_max_use'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='tool_with_max_use',
+                        content='Used',
+                        tool_call_id='pyd_ai_tool_call_id__tool_with_max_use',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"tool_with_max_use":"Used"}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def test_tool_raises_call_deferred():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 

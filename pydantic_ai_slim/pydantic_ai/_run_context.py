@@ -48,6 +48,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
+    tool_usage: dict[str, int] = field(default_factory=dict)
+    """Number of calls for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None

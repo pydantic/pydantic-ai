@@ -161,6 +161,8 @@ class ToolManager(Generic[AgentDepsT]):
                 partial_output=allow_partial,
             )
 
+            self.ctx.tool_usage[name] = self.ctx.tool_usage.get(name, 0) + 1
+
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
@@ -274,3 +276,21 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
         return tool_result
+
+    def get_max_use_of_tool(self, tool_name: str) -> int | None:
+        """Get the maximum number of uses allowed for a given tool, or `None` if unlimited."""
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        tool = self.tools.get(tool_name, None)
+        if tool is None:
+            return None
+
+        return tool.max_uses
+    
+    def get_current_use_of_tool(self, tool_name: str) -> int:
+        """Get the current number of uses of a given tool."""
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        return self.ctx.tool_usage.get(tool_name, 0)

@@ -264,6 +264,7 @@ class Tool(Generic[ToolAgentDepsT]):
     function: ToolFuncEither[ToolAgentDepsT]
     takes_ctx: bool
     max_retries: int | None
+    max_uses: int | None
     name: str
     description: str | None
     prepare: ToolPrepareFunc[ToolAgentDepsT] | None
@@ -286,6 +287,7 @@ class Tool(Generic[ToolAgentDepsT]):
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
+        max_uses: int | None = None,
         name: str | None = None,
         description: str | None = None,
         prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
@@ -364,6 +366,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
+        self.max_uses = max_uses
         self.name = name or function.__name__
         self.description = description or self.function_schema.description
         self.prepare = prepare
