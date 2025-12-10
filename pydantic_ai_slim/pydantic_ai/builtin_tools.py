@@ -24,6 +24,9 @@ __all__ = (
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
 
+ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
+"""Supported aspect ratios for image generation tools."""
+
 
 @dataclass(kw_only=True)
 class AbstractBuiltinTool(ABC):
@@ -316,6 +319,15 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    """
+
+    aspect_ratio: ImageAspectRatio | None = None
+    """The aspect ratio to use for generated images.
+
+    Supported by:
+
+    * Google image-generation models (Gemini)
+    * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
     kind: str = 'image_generation'

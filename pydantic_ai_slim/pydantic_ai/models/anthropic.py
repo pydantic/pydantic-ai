@@ -74,6 +74,7 @@ try:
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
         BetaCodeExecutionToolResultBlockParamContentParam,
+        BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaImageBlockParam,
@@ -198,6 +199,16 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Note: Uses 1 of Anthropic's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    """
+
+    anthropic_container: BetaContainerParams | Literal[False]
+    """Container configuration for multi-turn conversations.
+
+    By default, if previous messages contain a container_id (from a prior response),
+    it will be reused automatically.
+
+    Set to `False` to force a fresh container (ignore any `container_id` from history).
+    Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
     """
 
 
@@ -385,6 +396,7 @@ class AnthropicModel(Model):
         output_format = self._native_output_format(model_request_parameters)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
+        container = self._get_container(messages, model_settings)
         try:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -403,6 +415,7 @@ class AnthropicModel(Model):
                 top_p=model_settings.get('top_p', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
+                container=container or OMIT,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -438,6 +451,18 @@ class AnthropicModel(Model):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
         return betas, extra_headers
+
+    def _get_container(
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+    ) -> BetaContainerParams | None:
+        """Get container config for the API request."""
+        if (container := model_settings.get('anthropic_container')) is not None:
+            return None if container is False else container
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
+                if cid := m.provider_details.get('container_id'):
+                    return BetaContainerParams(id=cid)
+        return None
 
     async def _messages_count_tokens(
         self,
@@ -526,6 +551,9 @@ class AnthropicModel(Model):
         if raw_finish_reason := response.stop_reason:  # pragma: no branch
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+        if response.container:
+            provider_details = provider_details or {}
+            provider_details['container_id'] = response.container.id
 
         return ModelResponse(
             parts=items,
@@ -1125,6 +1153,9 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, BetaRawMessageStartEvent):
                 self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
                 self.provider_response_id = event.message.id
+                if event.message.container:
+                    self.provider_details = self.provider_details or {}
+                    self.provider_details['container_id'] = event.message.container.id
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
@@ -1241,7 +1272,8 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
-                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.provider_details = self.provider_details or {}
+                    self.provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
