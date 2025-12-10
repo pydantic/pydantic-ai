@@ -19,8 +19,8 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'BUILTIN_TOOL_TYPES',
-    'DEPRECATED_BUILTIN_TOOL_TYPES',
-    'get_builtin_tool_types',
+    'DEPRECATED_BUILTIN_TOOL_KINDS',
+    'SUPPORTED_BUILTIN_TOOLS',
 )
 
 BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -29,7 +29,7 @@ BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
 This dict is populated automatically via `__init_subclass__` when tool classes are defined.
 """
 
-DEPRECATED_BUILTIN_TOOL_TYPES: frozenset[str] = frozenset({'url_context'})
+DEPRECATED_BUILTIN_TOOL_KINDS: frozenset[str] = frozenset({'url_context'})
 """Set of deprecated builtin tool IDs that should not be offered in new UIs."""
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
@@ -436,7 +436,6 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.kind
 
 
-# used in a couple places
-def get_builtin_tool_types() -> frozenset[type[AbstractBuiltinTool]]:
-    """Get the set of all builtin tool types (excluding deprecated tools)."""
-    return frozenset(cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_TYPES)
+SUPPORTED_BUILTIN_TOOLS = frozenset(cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_KINDS)
+"""Get the set of all builtin tool types (excluding deprecated tools)."""
+

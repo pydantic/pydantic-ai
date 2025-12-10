@@ -16,7 +16,7 @@ from typing_inspection.introspection import get_literal_values
 from .. import __version__
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
-from ..builtin_tools import get_builtin_tool_types
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
@@ -57,7 +57,7 @@ PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 # CLI-supported tool IDs (excludes deprecated and config-requiring tools)
 _CLI_TOOL_IDS = sorted(
-    k.kind for k in get_builtin_tool_types() if k not in {'mcp_server', 'memory', 'unknown_builtin_tool'}
+    bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint.kind not in {'mcp_server', 'memory'}
 )
 
 
@@ -253,12 +253,16 @@ Special prompts:
             instructions=args.instructions,
         )
 
-    if args.command == 'chat':
-        return _run_chat_command(args, console, name_version, default_model, prog_name)
+    # Default to chat command
+    if args.command is None:
+        # Set defaults for chat arguments when no subcommand specified
+        args.prompt = None
+        args.model = None
+        args.agent = None
+        args.code_theme = 'dark'
+        args.no_stream = False
 
-    # No command specified - show help
-    parser.print_help()
-    return 0
+    return _run_chat_command(args, console, name_version, default_model, prog_name)
 
 
 def _run_chat_command(
