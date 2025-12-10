@@ -54,7 +54,7 @@ async def test_builtin_tools_not_supported_code_execution_stream(model: Model, a
     'model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'groq', 'anthropic', 'test', 'outlines'), indirect=True
 )
 async def test_builtin_tools_not_supported_file_search(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[FileSearchTool(file_store_ids={'test-id'})])
+    agent = Agent(model=model, builtin_tools=[FileSearchTool(file_store_ids=['test-id'])])
 
     with pytest.raises(UserError):
         await agent.run('Search my files')
@@ -62,7 +62,7 @@ async def test_builtin_tools_not_supported_file_search(model: Model, allow_model
 
 @pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface', 'groq', 'anthropic', 'outlines'), indirect=True)
 async def test_builtin_tools_not_supported_file_search_stream(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[FileSearchTool(file_store_ids={'test-id'})])
+    agent = Agent(model=model, builtin_tools=[FileSearchTool(file_store_ids=['test-id'])])
 
     with pytest.raises(UserError):
         async with agent.run_stream('Search my files'):

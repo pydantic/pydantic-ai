@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union
 
@@ -409,8 +410,8 @@ class FileSearchTool(AbstractBuiltinTool):
     * Google (Gemini)
     """
 
-    file_store_ids: set[str]
-    """Set of file store IDs to search through.
+    file_store_ids: Sequence[str]
+    """The file store IDs to search through.
 
     For OpenAI, these are the IDs of vector stores created via the OpenAI API.
     For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
