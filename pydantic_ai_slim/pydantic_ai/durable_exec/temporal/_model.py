@@ -33,7 +33,7 @@ class _RequestParams:
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any | None = None
-    model_selection: str | None = None
+    model_id: str | None = None
 
 
 TemporalProviderFactory = Callable[[str, RunContext[Any] | None, Any | None], Provider[Any]]
@@ -89,7 +89,7 @@ class TemporalModel(WrapperModel):
         self.activity_config = activity_config
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
-        self._model_selection_var: ContextVar[str | None] = ContextVar('_temporal_model_selection', default=None)
+        self._model_id_var: ContextVar[str | None] = ContextVar('_temporal_model_id', default=None)
         self._model_instances = dict(model_instances or {})
         self._provider_factory = provider_factory
         # Store the model spec so we can re-infer with provider_factory if needed
@@ -151,7 +151,7 @@ class TemporalModel(WrapperModel):
 
         self._validate_model_request_parameters(model_request_parameters)
 
-        selection = self._current_selection()
+        model_id = self._current_model_id()
         run_context = get_current_run_context()
         serialized_run_context = None
         deps: Any | None = None
@@ -167,7 +167,7 @@ class TemporalModel(WrapperModel):
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
-                    model_selection=selection,
+                    model_id=model_id,
                 ),
                 deps,
             ],
@@ -200,7 +200,7 @@ class TemporalModel(WrapperModel):
 
         self._validate_model_request_parameters(model_request_parameters)
 
-        selection = self._current_selection()
+        model_id = self._current_model_id()
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         response = await workflow.execute_activity(
             activity=self.request_stream_activity,
@@ -210,7 +210,7 @@ class TemporalModel(WrapperModel):
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
-                    model_selection=selection,
+                    model_id=model_id,
                 ),
                 run_context.deps,
             ],
@@ -223,29 +223,29 @@ class TemporalModel(WrapperModel):
             raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
 
     @contextmanager
-    def using_model(self, selection: str | None) -> Iterator[None]:
-        """Context manager to set the model selection for the duration of a block."""
-        token = self._model_selection_var.set(selection)
+    def using_model(self, model_id: str | None) -> Iterator[None]:
+        """Context manager to set the model id for the duration of a block."""
+        token = self._model_id_var.set(model_id)
         try:
             yield
         finally:
-            self._model_selection_var.reset(token)
+            self._model_id_var.reset(token)
 
-    def _current_selection(self) -> str | None:
-        return self._model_selection_var.get()
+    def _current_model_id(self) -> str | None:
+        return self._model_id_var.get()
 
     def _resolve_model(self, params: _RequestParams, deps: Any | None) -> Model:
-        selection = params.model_selection
-        if selection is None:
+        model_id = params.model_id
+        if model_id is None:
             # Re-infer the default model if provider_factory is set
             if self._default_model_spec is not None:
                 return self._infer_model(self._default_model_spec, params, deps)
             return self.wrapped
 
-        if selection in self._model_instances:
-            return self._model_instances[selection]
+        if model_id in self._model_instances:
+            return self._model_instances[model_id]
 
-        return self._infer_model(selection, params, deps)
+        return self._infer_model(model_id, params, deps)
 
     def _infer_model(self, model_name: str, params: _RequestParams, deps: Any | None) -> Model:
         run_context: RunContext[Any] | None = None
