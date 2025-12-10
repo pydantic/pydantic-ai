@@ -1024,6 +1024,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1032,7 +1033,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        max_uses: int | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1043,6 +1043,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1051,7 +1052,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        max_uses: int | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1088,6 +1088,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
+            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -1101,7 +1102,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
-            max_uses: Optional maximum number of times this tool can be used during a run. Defaults to None (unlimited).
         """
 
         def tool_decorator(
@@ -1114,6 +1114,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 name=name,
                 description=description,
                 retries=retries,
+                max_uses=max_uses,
                 prepare=prepare,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -1122,7 +1123,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
-                max_uses=max_uses,
             )
             return func_
 
@@ -1139,6 +1139,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1147,7 +1148,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        max_uses: int | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1158,6 +1158,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1166,7 +1167,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        max_uses: int | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1203,6 +1203,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
+            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -1216,7 +1217,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
-            max_uses: Optional maximum number of times this tool can be used during a run. Defaults to None (unlimited).
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1227,6 +1227,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 name=name,
                 description=description,
                 retries=retries,
+                max_uses=max_uses,
                 prepare=prepare,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -1235,7 +1236,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
-                max_uses=max_uses,
             )
             return func_
 
