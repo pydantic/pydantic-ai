@@ -23,6 +23,7 @@ from pydantic_ai import (
     PrefixedToolset,
     RetryPromptPart,
     RunContext,
+    RunUsage,
     TextPart,
     Tool,
     ToolCallPart,
@@ -1310,14 +1311,40 @@ def test_tool_retries():
 
 
 def test_tool_max_uses():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+    """Test that a tool with max_uses=2 can only be called twice, and the third call is rejected."""
+    call_count = 0
 
-    @agent.tool(max_uses=1)
+    def my_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First round: call the tool twice (will succeed, uses up the limit)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_2'),
+                ]
+            )
+        elif call_count == 2:
+            # Second round: try to call the tool again (should be rejected)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_3'),
+                ]
+            )
+        else:
+            # Third round: return final output
+            return ModelResponse(parts=[TextPart(content='Done')])
+
+    agent = Agent(FunctionModel(my_model), output_type=str)
+
+    @agent.tool(max_uses=2)
     def tool_with_max_use(ctx: RunContext[None]) -> str:
         return 'Used'
 
     result = agent.run_sync('Hello')
-    assert result.output == snapshot('{"tool_with_max_use":"Used"}')
+    assert result.output == snapshot('Done')
     messages = result.all_messages()
     assert messages == snapshot(
         [
@@ -1332,12 +1359,11 @@ def test_tool_max_uses():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='tool_with_max_use', args={}, tool_call_id='pyd_ai_tool_call_id__tool_with_max_use'
-                    )
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_1'),
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_2'),
                 ],
-                usage=RequestUsage(input_tokens=51, output_tokens=2),
-                model_name='test',
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name=IsStr(),
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
@@ -1346,16 +1372,42 @@ def test_tool_max_uses():
                     ToolReturnPart(
                         tool_name='tool_with_max_use',
                         content='Used',
-                        tool_call_id='pyd_ai_tool_call_id__tool_with_max_use',
+                        tool_call_id='call_1',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    ToolReturnPart(
+                        tool_name='tool_with_max_use',
+                        content='Used',
+                        tool_call_id='call_2',
+                        timestamp=IsDatetime(),
+                    ),
                 ],
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='{"tool_with_max_use":"Used"}')],
-                usage=RequestUsage(input_tokens=52, output_tokens=6),
-                model_name='test',
+                parts=[
+                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_3'),
+                ],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='tool_with_max_use',
+                        content='Tool call limit reached for tool "tool_with_max_use".',
+                        tool_call_id='call_3',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done')],
+                usage=RequestUsage(input_tokens=61, output_tokens=7),
+                model_name=IsStr(),
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
