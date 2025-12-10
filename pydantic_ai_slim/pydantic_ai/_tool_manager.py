@@ -173,19 +173,6 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
             return await self.toolset.call_tool(name, args_dict, ctx, tool)
-        except ToolRetryError:
-            # ToolRetryError can be raised by toolset.call_tool() (e.g., on timeout)
-            # We need to track it as a failed tool for retry counting
-            max_retries = tool.max_retries if tool is not None else 1
-            current_retry = self.ctx.retries.get(name, 0)
-
-            if current_retry == max_retries:
-                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}')
-
-            if not allow_partial:
-                self.failed_tools.add(name)
-
-            raise
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
             current_retry = self.ctx.retries.get(name, 0)

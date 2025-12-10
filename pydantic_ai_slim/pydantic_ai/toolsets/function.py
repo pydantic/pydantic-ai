@@ -8,8 +8,7 @@ import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
-from ..exceptions import ToolRetryError, UserError
-from ..messages import RetryPromptPart
+from ..exceptions import ModelRetry, UserError
 from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -373,12 +372,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 with anyio.fail_after(timeout):
                     return await tool.call_func(tool_args, ctx)
             except TimeoutError:
-                assert ctx.tool_call_id is not None  # Set by ToolManager._call_tool
-                m = RetryPromptPart(
-                    tool_name=name,
-                    content=f'Timed out after {timeout} seconds.',
-                    tool_call_id=ctx.tool_call_id,
-                )
-                raise ToolRetryError(m) from None
+                raise ModelRetry(f'Timed out after {timeout} seconds.') from None
         else:
             return await tool.call_func(tool_args, ctx)
