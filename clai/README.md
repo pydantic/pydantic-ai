@@ -25,7 +25,7 @@ export OPENAI_API_KEY='your-api-key-here'
 Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
 ```bash
-uvx clai chat
+uvx clai
 ```
 
 Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools), run:
@@ -33,7 +33,7 @@ Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools
 ```bash
 uv tool install clai
 ...
-clai chat
+clai
 ```
 
 Or with `pip`, run:
@@ -41,10 +41,10 @@ Or with `pip`, run:
 ```bash
 pip install clai
 ...
-clai chat
+clai
 ```
 
-Either way, running `clai chat` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
@@ -53,20 +53,22 @@ Either way, running `clai chat` will start an interactive session where you can 
 
 ## Web Chat UI
 
-Launch a web-based chat interface for your agent:
+Launch a web-based chat interface:
 
 ```bash
-clai web --agent module:agent_variable
+clai web -m openai:gpt-5
 ```
 
 ![Web Chat UI](https://github.com/user-attachments/assets/8a1c90dc-f62b-4e35-9d66-59459b45790d)
 
-For example, if you have an agent defined in `my_agent.py`:
+This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
+
+You can also serve an existing agent. For example, if you have an agent defined in `my_agent.py`:
 
 ```python
 from pydantic_ai import Agent
 
-my_agent = Agent('openai:gpt-5', system_prompt='You are a helpful assistant.')
+my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
 ```
 
 Launch the web UI with:
@@ -74,8 +76,6 @@ Launch the web UI with:
 ```bash
 clai web --agent my_agent:my_agent
 ```
-
-This will start a web server (default: http://127.0.0.1:7932) with a chat interface for your agent.
 
 ### Web Command Options
 
@@ -106,22 +106,8 @@ clai web --agent my_agent:my_agent -i 'Always respond in Spanish'
 
 When using `--agent`, the agent's configured model becomes the default. CLI models (`-m`) are additional options. Without `--agent`, the first `-m` model is the default.
 
-For full documentation, see [Web Chat UI](https://ai.pydantic.dev/ui/web/).
+For full documentation, see [Web Chat UI](https://ai.pydantic.dev/web/).
 
 ## Help
 
-```
-usage: clai [-h] [-l] [--version] {chat,web} ...
-
-Pydantic AI CLI v...
-
-positional arguments:
-  {chat,web}         Available commands
-    chat             Interactive chat with an AI model
-    web              Launch web chat UI for an agent
-
-options:
-  -h, --help         show this help message and exit
-  -l, --list-models  List all available models and exit
-  --version          Show version and exit
-```
+For full CLI documentation, see the [CLI documentation](https://ai.pydantic.dev/cli/).
