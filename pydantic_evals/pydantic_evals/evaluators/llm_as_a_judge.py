@@ -252,8 +252,7 @@ def _build_prompt(
     if inputs is not None:
         _add_section(sections, inputs, 'Input')
 
-    if output is not None:
-        _add_section(sections, output, 'Output')
+    _add_section(sections, output, 'Output')
 
     sections.append(f'<Rubric>\n{rubric}\n</Rubric>')
 
