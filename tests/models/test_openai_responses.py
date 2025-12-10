@@ -44,7 +44,10 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import _resolve_openai_image_generation_size  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.models.openai import (
+    OpenAIResponsesModelSettings,
+    _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
@@ -8455,7 +8458,7 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
         # Use the openai_include_file_search_results setting to include search results
         result = await agent.run(
             'What is the capital of France?',
-            model_settings={'openai_include_file_search_results': True},
+            model_settings=OpenAIResponsesModelSettings(openai_include_file_search_results=True),
         )
 
         messages = result.all_messages()
@@ -8472,13 +8475,14 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
         return_part = return_parts[0]
         assert return_part.tool_name == 'file_search'
         assert isinstance(return_part.content, dict)
-        assert return_part.content.get('status') == 'completed'
+        content = cast(dict[str, Any], return_part.content)  # pyright: ignore[reportUnknownMemberType]
+        assert content.get('status') == 'completed'
 
         # When openai_include_file_search_results is True, results should be included
-        assert 'results' in return_part.content, (
+        assert 'results' in content, (
             'Expected file search results to be included when openai_include_file_search_results=True'
         )
-        results = return_part.content['results']
+        results = cast(list[dict[str, Any]], content['results'])
         assert isinstance(results, list)
         assert len(results) > 0
 

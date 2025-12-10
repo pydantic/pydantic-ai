@@ -817,9 +817,7 @@ class GeminiStreamedResponse(StreamedResponse):
             )
             self._file_search_tool_call_id = None
 
-    def _handle_executable_code_streaming(
-        self, executable_code: ExecutableCode
-    ) -> ModelResponsePart | None:
+    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart | None:
         """Handle executable code for streaming responses.
 
         Returns a part object, or None if the part was already generated (to avoid duplicates).
