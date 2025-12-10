@@ -739,42 +739,95 @@ An example text describing the use of "John Doe" as a placeholder name in legal 
     )
 
 
-@pytest.mark.vcr()
-async def test_s3_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_s3_image_url_input(bedrock_provider: BedrockProvider):
     """Test that s3:// image URLs are passed directly to Bedrock API without downloading."""
-    m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     image_url = ImageUrl(url='s3://my-bucket/images/test-image.jpg', media_type='image/jpeg')
 
-    result = await agent.run(['What is in this image?', image_url])
-    assert result.output == snapshot(
-        'The image shows a scenic landscape with mountains in the background and a clear blue sky above.'
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'jpeg',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/images/test-image.jpg'}},
+                        }
+                    },
+                ],
+            }
+        ]
     )
 
 
-@pytest.mark.vcr()
-async def test_s3_video_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_s3_video_url_input(bedrock_provider: BedrockProvider):
     """Test that s3:// video URLs are passed directly to Bedrock API."""
-    m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     video_url = VideoUrl(url='s3://my-bucket/videos/test-video.mp4', media_type='video/mp4')
 
-    result = await agent.run(['Describe this video', video_url])
-    assert result.output == snapshot(
-        'The video shows a time-lapse of a sunset over the ocean with waves gently rolling onto the shore.'
+    # Create a ModelRequest with the S3 video URL
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', video_url])]),
+    ]
+
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Describe this video'},
+                    {
+                        'video': {
+                            'format': 'mp4',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/videos/test-video.mp4'}},
+                        }
+                    },
+                ],
+            }
+        ]
     )
 
 
-@pytest.mark.vcr()
-async def test_s3_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_s3_document_url_input(bedrock_provider: BedrockProvider):
     """Test that s3:// document URLs are passed directly to Bedrock API."""
-    m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
     document_url = DocumentUrl(url='s3://my-bucket/documents/test-doc.pdf', media_type='application/pdf')
 
-    result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot(
-        'Based on the provided document, the main content discusses best practices for cloud storage and data management.'
+    # Create a ModelRequest with the S3 document URL
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is the main content on this document?', document_url])]),
+    ]
+
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is the main content on this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': 'Document 1',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/documents/test-doc.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
     )
 
 

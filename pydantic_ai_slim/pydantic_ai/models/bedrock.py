@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
+from mypy_boto3_bedrock_runtime.type_defs import DocumentSourceTypeDef
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import (
@@ -743,7 +744,7 @@ class BedrockConverseModel(Model):
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': cast(Any, source)}
+                        image: ImageBlockTypeDef = {'format': format, 'source': cast(DocumentSourceTypeDef, source)}
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
@@ -751,7 +752,7 @@ class BedrockConverseModel(Model):
                         document: DocumentBlockTypeDef = {
                             'name': name,
                             'format': item.format,
-                            'source': cast(Any, source),
+                            'source': cast(DocumentSourceTypeDef, source),
                         }
                         content.append({'document': document})
 
@@ -768,7 +769,7 @@ class BedrockConverseModel(Model):
                             'wmv',
                             'three_gp',
                         ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': cast(Any, source)}
+                        video: VideoBlockTypeDef = {'format': format, 'source': cast(DocumentSourceTypeDef, source)}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
