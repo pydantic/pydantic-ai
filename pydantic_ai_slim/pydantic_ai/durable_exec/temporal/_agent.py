@@ -231,9 +231,15 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return None
 
         if isinstance(model, Model):
+            # Check if this model instance is already registered
+            for key, registered_model in self._registered_model_instances.items():
+                if registered_model is model:
+                    if key == 'default':
+                        return None
+                    return key
             raise UserError(
-                'Model instances cannot be selected at runtime inside a Temporal workflow. '
-                'Register the model via the mapping form of `additional_models` and reference it by name.'
+                'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. '
+                'Register the model via `additional_models` or reference a registered model by name.'
             )
 
         return model
@@ -289,11 +295,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(self, selection: str | None = None) -> Iterator[None]:
+    def _temporal_overrides(self, *, model_id: str | None = None) -> Iterator[None]:
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
         with (
             super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
-            self._temporal_model.using_model(selection),
+            self._temporal_model.using_model(model_id),
         ):
             token = self._temporal_overrides_active.set(True)
             try:

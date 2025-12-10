@@ -1391,11 +1391,21 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
             )
 
 
+# Unregistered model instance for testing error case
+unregistered_model = OpenAIChatModel(
+    'gpt-4o-mini',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+
 @workflow.defn
 class SimpleAgentWorkflowWithRunModel:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, model=model)
+        result = await simple_temporal_agent.run(prompt, model=unregistered_model)
         return result.output  # pragma: no cover
 
 
@@ -1409,7 +1419,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Model instances cannot be selected at runtime inside a Temporal workflow. Register the model via the mapping form of `additional_models` and reference it by name.'
+                'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by name.'
             ),
         ):
             await client.execute_workflow(
@@ -2624,7 +2634,7 @@ async def test_temporal_agent_multi_model_unregistered_error(allow_model_request
     ):
         with workflow_raises(
             UserError,
-            'Model instances cannot be selected at runtime inside a Temporal workflow. Register the model via the mapping form of `additional_models` and reference it by name.',
+            'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by name.',
         ):
             await client.execute_workflow(
                 MultiModelWorkflowUnregistered.run,
@@ -2728,13 +2738,40 @@ async def test_temporal_agent_unregistered_string_model():
     assert selection == 'unregistered:model'
 
 
-async def test_temporal_agent_disallows_model_instances_in_selection():
-    """Model instances must be referenced by name inside workflows."""
+async def test_temporal_agent_disallows_unregistered_model_instances_in_selection():
+    """Unregistered model instances must be referenced by name inside workflows."""
     test_model1 = TestModel()
     temporal_agent = TemporalAgent(Agent(test_model1, name='disallow_instances'), name='disallow_instances')
 
-    with pytest.raises(UserError, match='Model instances cannot be selected'):
+    with pytest.raises(UserError, match='Unregistered model instances cannot be selected'):
         temporal_agent._select_model(TestModel())  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_temporal_agent_select_model_registered_instance_returns_key():
+    """Passing a registered model instance should return its registered key."""
+    test_model1 = TestModel()
+    test_model2 = TestModel()
+    agent = Agent(test_model1, name='registered_instance_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='registered_instance_test',
+        additional_models={'my_model': test_model2},
+    )
+
+    # Passing the registered instance should return its key
+    selection = temporal_agent._select_model(test_model2)  # pyright: ignore[reportPrivateUsage]
+    assert selection == 'my_model'
+
+
+async def test_temporal_agent_select_model_default_instance_returns_none():
+    """Passing the default model instance should return None."""
+    test_model = TestModel()
+    agent = Agent(test_model, name='default_instance_test')
+    temporal_agent = TemporalAgent(agent, name='default_instance_test')
+
+    # Passing the default model instance should return None
+    selection = temporal_agent._select_model(test_model)  # pyright: ignore[reportPrivateUsage]
+    assert selection is None
 
 
 def test_temporal_agent_provider_factory_uses_run_context(monkeypatch: MonkeyPatch) -> None:
