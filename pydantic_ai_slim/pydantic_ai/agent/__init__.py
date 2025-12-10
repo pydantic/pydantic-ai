@@ -34,8 +34,7 @@ from .._agent_graph import (
     UserPromptNode,
     capture_run_messages,
 )
-from .._json_schema import JsonSchema
-from .._output import OutputToolset, flatten_output_type
+from .._output import OutputToolset
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
@@ -84,8 +83,6 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
-    'JsonSchema',
-    'flatten_output_type',
 )
 
 
