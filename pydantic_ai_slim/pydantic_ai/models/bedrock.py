@@ -523,7 +523,12 @@ class BedrockConverseModel(Model):
         if not tools:
             return None
 
-        if model_settings and model_settings.get('bedrock_cache_tool_definitions'):
+        profile = BedrockModelProfile.from_profile(self.profile)
+        if (
+            model_settings
+            and model_settings.get('bedrock_cache_tool_definitions')
+            and profile.bedrock_supports_tool_caching
+        ):
             tools.append({'cachePoint': {'type': 'default'}})
 
         tool_choice: ToolChoiceTypeDef
@@ -559,7 +564,9 @@ class BedrockConverseModel(Model):
                     if isinstance(part, SystemPromptPart) and part.content:
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(await self._map_user_prompt(part, document_count))
+                        bedrock_messages.extend(
+                            await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
+                        )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -658,10 +665,10 @@ class BedrockConverseModel(Model):
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt.insert(0, {'text': instructions})
 
-        if system_prompt and settings.get('bedrock_cache_instructions'):
+        if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
             system_prompt.append({'cachePoint': {'type': 'default'}})
 
-        if processed_messages and settings.get('bedrock_cache_messages'):
+        if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
             if last_user_content is not None:
                 # AWS currently rejects cache points that directly follow non-text content.
@@ -699,7 +706,11 @@ class BedrockConverseModel(Model):
         return content
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:  # noqa: C901
+    async def _map_user_prompt(  # noqa: C901
+        part: UserPromptPart,
+        document_count: Iterator[int],
+        supports_prompt_caching: bool,
+    ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
             content.append({'text': part.content})
@@ -757,6 +768,9 @@ class BedrockConverseModel(Model):
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, CachePoint):
+                    if not supports_prompt_caching:
+                        # Silently skip CachePoint for models that don't support prompt caching
+                        continue
                     if not content or 'cachePoint' in content[-1]:
                         raise UserError(
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
