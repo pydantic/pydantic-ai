@@ -57,9 +57,6 @@ KnownModelName = TypeAliasType(
     Literal[
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-5-sonnet-20240620',
-        'anthropic:claude-3-5-sonnet-20241022',
-        'anthropic:claude-3-5-sonnet-latest',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
@@ -72,6 +69,8 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-0',
         'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
+        'anthropic:claude-opus-4-5',
+        'anthropic:claude-opus-4-5-20251101',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5',
@@ -100,6 +99,7 @@ KnownModelName = TypeAliasType(
         'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
         'bedrock:meta.llama3-1-405b-instruct-v1:0',
         'bedrock:meta.llama3-1-70b-instruct-v1:0',
         'bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -134,7 +134,6 @@ KnownModelName = TypeAliasType(
         'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cerebras:qwen-3-32b',
         'cerebras:zai-glm-4.6',
         'cohere:c4ai-aya-expanse-32b',
@@ -145,6 +144,196 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
+        'gateway/anthropic:claude-3-5-haiku-20241022',
+        'gateway/anthropic:claude-3-5-haiku-latest',
+        'gateway/anthropic:claude-3-7-sonnet-20250219',
+        'gateway/anthropic:claude-3-7-sonnet-latest',
+        'gateway/anthropic:claude-3-haiku-20240307',
+        'gateway/anthropic:claude-3-opus-20240229',
+        'gateway/anthropic:claude-3-opus-latest',
+        'gateway/anthropic:claude-4-opus-20250514',
+        'gateway/anthropic:claude-4-sonnet-20250514',
+        'gateway/anthropic:claude-haiku-4-5',
+        'gateway/anthropic:claude-haiku-4-5-20251001',
+        'gateway/anthropic:claude-opus-4-0',
+        'gateway/anthropic:claude-opus-4-1-20250805',
+        'gateway/anthropic:claude-opus-4-20250514',
+        'gateway/anthropic:claude-opus-4-5',
+        'gateway/anthropic:claude-opus-4-5-20251101',
+        'gateway/anthropic:claude-sonnet-4-0',
+        'gateway/anthropic:claude-sonnet-4-20250514',
+        'gateway/anthropic:claude-sonnet-4-5',
+        'gateway/anthropic:claude-sonnet-4-5-20250929',
+        'gateway/bedrock:amazon.titan-text-express-v1',
+        'gateway/bedrock:amazon.titan-text-lite-v1',
+        'gateway/bedrock:amazon.titan-tg1-large',
+        'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+        'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
+        'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
+        'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        'gateway/bedrock:anthropic.claude-instant-v1',
+        'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
+        'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
+        'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:anthropic.claude-v2',
+        'gateway/bedrock:anthropic.claude-v2:1',
+        'gateway/bedrock:cohere.command-light-text-v14',
+        'gateway/bedrock:cohere.command-r-plus-v1:0',
+        'gateway/bedrock:cohere.command-r-v1:0',
+        'gateway/bedrock:cohere.command-text-v14',
+        'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+        'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+        'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-70b-instruct-v1:0',
+        'gateway/bedrock:meta.llama3-8b-instruct-v1:0',
+        'gateway/bedrock:mistral.mistral-7b-instruct-v0:2',
+        'gateway/bedrock:mistral.mistral-large-2402-v1:0',
+        'gateway/bedrock:mistral.mistral-large-2407-v1:0',
+        'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+        'gateway/bedrock:us.amazon.nova-lite-v1:0',
+        'gateway/bedrock:us.amazon.nova-micro-v1:0',
+        'gateway/bedrock:us.amazon.nova-pro-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'gateway/bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
+        'gateway/bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+        'gateway/bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+        'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-1b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
+        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+        'gateway/google-vertex:gemini-2.0-flash',
+        'gateway/google-vertex:gemini-2.0-flash-lite',
+        'gateway/google-vertex:gemini-2.5-flash',
+        'gateway/google-vertex:gemini-2.5-flash-image',
+        'gateway/google-vertex:gemini-2.5-flash-lite',
+        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
+        'gateway/google-vertex:gemini-2.5-pro',
+        'gateway/google-vertex:gemini-3-pro-image-preview',
+        'gateway/google-vertex:gemini-3-pro-preview',
+        'gateway/google-vertex:gemini-flash-latest',
+        'gateway/google-vertex:gemini-flash-lite-latest',
+        'gateway/groq:deepseek-r1-distill-llama-70b',
+        'gateway/groq:deepseek-r1-distill-qwen-32b',
+        'gateway/groq:distil-whisper-large-v3-en',
+        'gateway/groq:gemma2-9b-it',
+        'gateway/groq:llama-3.1-8b-instant',
+        'gateway/groq:llama-3.2-11b-vision-preview',
+        'gateway/groq:llama-3.2-1b-preview',
+        'gateway/groq:llama-3.2-3b-preview',
+        'gateway/groq:llama-3.2-90b-vision-preview',
+        'gateway/groq:llama-3.3-70b-specdec',
+        'gateway/groq:llama-3.3-70b-versatile',
+        'gateway/groq:llama-guard-3-8b',
+        'gateway/groq:llama3-70b-8192',
+        'gateway/groq:llama3-8b-8192',
+        'gateway/groq:mistral-saba-24b',
+        'gateway/groq:moonshotai/kimi-k2-instruct',
+        'gateway/groq:playai-tts',
+        'gateway/groq:playai-tts-arabic',
+        'gateway/groq:qwen-2.5-32b',
+        'gateway/groq:qwen-2.5-coder-32b',
+        'gateway/groq:qwen-qwq-32b',
+        'gateway/groq:whisper-large-v3',
+        'gateway/groq:whisper-large-v3-turbo',
+        'gateway/openai:chatgpt-4o-latest',
+        'gateway/openai:codex-mini-latest',
+        'gateway/openai:computer-use-preview',
+        'gateway/openai:computer-use-preview-2025-03-11',
+        'gateway/openai:gpt-3.5-turbo',
+        'gateway/openai:gpt-3.5-turbo-0125',
+        'gateway/openai:gpt-3.5-turbo-0301',
+        'gateway/openai:gpt-3.5-turbo-0613',
+        'gateway/openai:gpt-3.5-turbo-1106',
+        'gateway/openai:gpt-3.5-turbo-16k',
+        'gateway/openai:gpt-3.5-turbo-16k-0613',
+        'gateway/openai:gpt-4',
+        'gateway/openai:gpt-4-0125-preview',
+        'gateway/openai:gpt-4-0314',
+        'gateway/openai:gpt-4-0613',
+        'gateway/openai:gpt-4-1106-preview',
+        'gateway/openai:gpt-4-32k',
+        'gateway/openai:gpt-4-32k-0314',
+        'gateway/openai:gpt-4-32k-0613',
+        'gateway/openai:gpt-4-turbo',
+        'gateway/openai:gpt-4-turbo-2024-04-09',
+        'gateway/openai:gpt-4-turbo-preview',
+        'gateway/openai:gpt-4-vision-preview',
+        'gateway/openai:gpt-4.1',
+        'gateway/openai:gpt-4.1-2025-04-14',
+        'gateway/openai:gpt-4.1-mini',
+        'gateway/openai:gpt-4.1-mini-2025-04-14',
+        'gateway/openai:gpt-4.1-nano',
+        'gateway/openai:gpt-4.1-nano-2025-04-14',
+        'gateway/openai:gpt-4o',
+        'gateway/openai:gpt-4o-2024-05-13',
+        'gateway/openai:gpt-4o-2024-08-06',
+        'gateway/openai:gpt-4o-2024-11-20',
+        'gateway/openai:gpt-4o-audio-preview',
+        'gateway/openai:gpt-4o-audio-preview-2024-10-01',
+        'gateway/openai:gpt-4o-audio-preview-2024-12-17',
+        'gateway/openai:gpt-4o-audio-preview-2025-06-03',
+        'gateway/openai:gpt-4o-mini',
+        'gateway/openai:gpt-4o-mini-2024-07-18',
+        'gateway/openai:gpt-4o-mini-audio-preview',
+        'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
+        'gateway/openai:gpt-4o-mini-search-preview',
+        'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
+        'gateway/openai:gpt-4o-search-preview',
+        'gateway/openai:gpt-4o-search-preview-2025-03-11',
+        'gateway/openai:gpt-5',
+        'gateway/openai:gpt-5-2025-08-07',
+        'gateway/openai:gpt-5-chat-latest',
+        'gateway/openai:gpt-5-codex',
+        'gateway/openai:gpt-5-mini',
+        'gateway/openai:gpt-5-mini-2025-08-07',
+        'gateway/openai:gpt-5-nano',
+        'gateway/openai:gpt-5-nano-2025-08-07',
+        'gateway/openai:gpt-5-pro',
+        'gateway/openai:gpt-5-pro-2025-10-06',
+        'gateway/openai:gpt-5.1',
+        'gateway/openai:gpt-5.1-2025-11-13',
+        'gateway/openai:gpt-5.1-chat-latest',
+        'gateway/openai:gpt-5.1-codex',
+        'gateway/openai:gpt-5.1-mini',
+        'gateway/openai:o1',
+        'gateway/openai:o1-2024-12-17',
+        'gateway/openai:o1-mini',
+        'gateway/openai:o1-mini-2024-09-12',
+        'gateway/openai:o1-preview',
+        'gateway/openai:o1-preview-2024-09-12',
+        'gateway/openai:o1-pro',
+        'gateway/openai:o1-pro-2025-03-19',
+        'gateway/openai:o3',
+        'gateway/openai:o3-2025-04-16',
+        'gateway/openai:o3-deep-research',
+        'gateway/openai:o3-deep-research-2025-06-26',
+        'gateway/openai:o3-mini',
+        'gateway/openai:o3-mini-2025-01-31',
+        'gateway/openai:o3-pro',
+        'gateway/openai:o3-pro-2025-06-10',
+        'gateway/openai:o4-mini',
+        'gateway/openai:o4-mini-2025-04-16',
+        'gateway/openai:o4-mini-deep-research',
+        'gateway/openai:o4-mini-deep-research-2025-06-26',
         'google-gla:gemini-flash-latest',
         'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.0-flash',
@@ -156,6 +345,7 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.5-flash-lite-preview-09-2025',
         'google-gla:gemini-2.5-pro',
         'google-gla:gemini-3-pro-preview',
+        'google-gla:gemini-3-pro-image-preview',
         'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.0-flash',
@@ -167,6 +357,7 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
         'google-vertex:gemini-2.5-pro',
         'google-vertex:gemini-3-pro-preview',
+        'google-vertex:gemini-3-pro-image-preview',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
         'grok:grok-3',
@@ -175,6 +366,13 @@ KnownModelName = TypeAliasType(
         'grok:grok-3-mini-fast',
         'grok:grok-4',
         'grok:grok-4-0709',
+        'grok:grok-4-fast',
+        'grok:grok-4-fast-reasoning',
+        'grok:grok-4-fast-non-reasoning',
+        'grok:grok-code-fast-1',
+        'grok:grok-4-1-fast',
+        'grok:grok-4-1-fast-reasoning',
+        'grok:grok-4-1-fast-non-reasoning',
         'groq:deepseek-r1-distill-llama-70b',
         'groq:deepseek-r1-distill-qwen-32b',
         'groq:distil-whisper-large-v3-en',
@@ -414,7 +612,10 @@ class Model(ABC):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Make a request to the model."""
+        """Make a request to the model.
+
+        This is ultimately called by `pydantic_ai._agent_graph.ModelRequestNode._make_request(...)`.
+        """
         raise NotImplementedError()
 
     async def count_tokens(
@@ -830,11 +1031,16 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
+    # OpenRouter and Cerebras need to be checked before OpenAI,
+    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
-        # OpenRouter needs to be checked before OpenAI, as `openrouter` is in `OpenAIChatCompatibleProvider` but has its own model class.
         from .openrouter import OpenRouterModel
 
         return OpenRouterModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
@@ -859,6 +1065,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1001,23 +1211,27 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
-    schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
+    """Customize the tool definition using the given transformer.
+
+    If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
+    """
+    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     parameters_json_schema = schema_transformer.walk()
     return replace(
-        t,
+        tool_def,
         parameters_json_schema=parameters_json_schema,
-        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+        strict=schema_transformer.is_strict_compatible if tool_def.strict is None else tool_def.strict,
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=o.strict)
+def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+    schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
-        o,
+        output_object,
         json_schema=json_schema,
-        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+        strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
 
 

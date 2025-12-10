@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -19,7 +19,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageAspectRatio, ImageGenerationTool, MCPServerTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -74,6 +74,7 @@ try:
         ChatCompletionContentPartTextParam,
         chat_completion,
         chat_completion_chunk,
+        chat_completion_token_logprob,
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
@@ -91,7 +92,10 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
-    from openai.types.responses.response_reasoning_item_param import Summary
+    from openai.types.responses.response_reasoning_item_param import (
+        Content as ReasoningContent,
+        Summary as ReasoningSummary,
+    )
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
@@ -164,6 +168,36 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'failed': 'error',
 }
 
+_OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
+    '1:1': '1024x1024',
+    '2:3': '1024x1536',
+    '3:2': '1536x1024',
+}
+
+
+def _resolve_openai_image_generation_size(
+    tool: ImageGenerationTool,
+) -> Literal['auto', '1024x1024', '1024x1536', '1536x1024']:
+    """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
+    aspect_ratio = tool.aspect_ratio
+    if aspect_ratio is None:
+        return tool.size
+
+    mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
+    if mapped_size is None:
+        supported = ', '.join(_OPENAI_ASPECT_RATIO_TO_SIZE)
+        raise UserError(
+            f'OpenAI image generation only supports `aspect_ratio` values: {supported}. '
+            'Specify one of those values or omit `aspect_ratio`.'
+        )
+
+    if tool.size not in ('auto', mapped_size):
+        raise UserError(
+            '`ImageGenerationTool` cannot combine `aspect_ratio` with a conflicting `size` when using OpenAI.'
+        )
+
+    return mapped_size
+
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
@@ -178,7 +212,11 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
     openai_logprobs: bool
-    """Include log probabilities in the response."""
+    """Include log probabilities in the response.
+
+    For Chat models, these will be included in `ModelResponse.provider_details['logprobs']`.
+    For Responses models, these will be included in the response output parts `TextPart.provider_details['logprobs']`.
+    """
 
     openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
@@ -200,6 +238,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Enables [predictive outputs](https://platform.openai.com/docs/guides/predicted-outputs).
 
     This feature is currently only supported for some OpenAI models.
+    """
+
+    openai_prompt_cache_key: str
+    """Used by OpenAI to cache responses for similar requests to optimize your cache hit rates.
+
+    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
+    """
+
+    openai_prompt_cache_retention: Literal['in-memory', '24h']
+    """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
+
+    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
 
@@ -485,7 +535,7 @@ class OpenAIChatModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
-                model=self._model_name,
+                model=self.model_name,
                 messages=openai_messages,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
                 tools=tools or OMIT,
@@ -509,6 +559,8 @@ class OpenAIChatModel(Model):
                 logit_bias=model_settings.get('logit_bias', OMIT),
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -599,20 +651,28 @@ class OpenAIChatModel(Model):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        custom_field = profile.openai_chat_thinking_field
         items: list[ThinkingPart] = []
 
-        # The `reasoning_content` field is only present in DeepSeek models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-        if reasoning_content := getattr(message, 'reasoning_content', None):
-            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
+        # Prefer the configured custom reasoning field, if present in profile.
+        # Fall back to built-in fields if no custom field result was found.
 
-        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+
+        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(message, 'reasoning', None):
-            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+        for field_name in (custom_field, 'reasoning', 'reasoning_content'):
+            if not field_name:
+                continue
+            reasoning: str | None = getattr(message, field_name, None)
+            if reasoning:  # pragma: no branch
+                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
+                return items
 
-        return items
+        return items or None
 
     async def _process_streamed_response(
         self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
@@ -627,7 +687,7 @@ class OpenAIChatModel(Model):
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
-        model_name = first_chunk.model or self._model_name
+        model_name = first_chunk.model or self.model_name
 
         return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
@@ -648,7 +708,7 @@ class OpenAIChatModel(Model):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
+        return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -688,6 +748,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list)
+        thinkings: list[str] = field(default_factory=list)
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
@@ -715,10 +776,15 @@ class OpenAIChatModel(Model):
             Returns:
                 An OpenAI `ChatCompletionAssistantMessageParam` object representing the assistant's response.
             """
+            profile = OpenAIModelProfile.from_profile(self._model.profile)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+            # Note: model responses from this model should only have one text item, so the following
+            # shouldn't merge multiple texts into one unless you switch models between runs:
+            if profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
+                field = profile.openai_chat_thinking_field
+                if field:  # pragma: no branch (handled by profile validation)
+                    message_param[field] = '\n\n'.join(self.thinkings)
             if self.texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
                 message_param['content'] = None
@@ -740,11 +806,13 @@ class OpenAIChatModel(Model):
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for handling thinking parts.
             """
-            # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
-            # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
-            # If you need this changed, please file an issue.
-            start_tag, end_tag = self._model.profile.thinking_tags
-            self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            profile = OpenAIModelProfile.from_profile(self._model.profile)
+            include_method = profile.openai_chat_send_back_thinking_parts
+            if include_method == 'tags':
+                start_tag, end_tag = self._model.profile.thinking_tags
+                self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            elif include_method == 'field':
+                self.thinkings.append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -1090,6 +1158,10 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
+                # Handle raw CoT content from gpt-oss models
+                raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
+                provider_details: dict[str, Any] | None = {'raw_content': raw_content} if raw_content else None
+
                 if item.summary:
                     for summary in item.summary:
                         # We use the same id for all summaries so that we can merge them on the round trip.
@@ -1098,26 +1170,30 @@ class OpenAIResponsesModel(Model):
                                 content=summary.text,
                                 id=item.id,
                                 signature=signature,
-                                provider_name=self.system if signature else None,
+                                provider_name=self.system if (signature or provider_details) else None,
+                                provider_details=provider_details,
                             )
                         )
-                        # We only need to store the signature once.
+                        # We only need to store the signature and raw_content once.
                         signature = None
-                elif signature:
+                        provider_details = None
+                elif signature or provider_details:
                     items.append(
                         ThinkingPart(
                             content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system,
+                            provider_name=self.system if (signature or provider_details) else None,
+                            provider_details=provider_details,
                         )
                     )
-                # NOTE: We don't currently handle the raw CoT from gpt-oss `reasoning_text`: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
-                # If you need this, please file an issue.
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        items.append(TextPart(content.text, id=item.id))
+                        part_provider_details: dict[str, Any] | None = None
+                        if content.logprobs:
+                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                        items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
@@ -1176,7 +1252,7 @@ class OpenAIResponsesModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1224,7 +1300,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(
+    async def _responses_create(  # noqa: C901
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
@@ -1283,13 +1359,27 @@ class OpenAIResponsesModel(Model):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')
+        if model_settings.get('openai_logprobs'):
+            include.append('message.output_text.logprobs')
+
+        # When there are no input messages and we're not reusing a previous response,
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions.
+        # To avoid this provide an explicit empty user message.
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
-                model=self._model_name,
+                model=self.model_name,
                 instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
                 tools=tools or OMIT,
@@ -1302,10 +1392,13 @@ class OpenAIResponsesModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', OMIT),
                 previous_response_id=previous_response_id or OMIT,
+                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', OMIT),
                 text=text or OMIT,
                 include=include or OMIT,
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1382,6 +1475,7 @@ class OpenAIResponsesModel(Model):
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
+                size = _resolve_openai_image_generation_size(tool)
                 tools.append(
                     responses.tool_param.ImageGeneration(
                         type='image_generation',
@@ -1392,7 +1486,7 @@ class OpenAIResponsesModel(Model):
                         output_format=tool.output_format or 'png',
                         partial_images=tool.partial_images,
                         quality=tool.quality,
-                        size=tool.size,
+                        size=size,
                     )
                 )
             else:
@@ -1443,7 +1537,15 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
-        """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
+        """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
+
+        For `ThinkingParts`, this method:
+        - Sends `signature` back as `encrypted_content` (for official OpenAI reasoning)
+        - Sends `content` back as `summary` text
+        - Sends `provider_details['raw_content']` back as `content` items (for gpt-oss raw CoT)
+
+        Raw CoT is sent back to improve model performance in multi-turn conversations.
+        """
         profile = OpenAIModelProfile.from_profile(self.profile)
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
@@ -1529,7 +1631,7 @@ class OpenAIResponsesModel(Model):
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system and send_item_ids:
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
@@ -1599,7 +1701,7 @@ class OpenAIResponsesModel(Model):
                                     openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item.provider_name == self.system and send_item_ids:
+                        if item.provider_name == self.system and send_item_ids:  # pragma: no branch
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
@@ -1628,7 +1730,12 @@ class OpenAIResponsesModel(Model):
                         # If `send_item_ids` is false, we won't send the `BuiltinToolReturnPart`, but OpenAI does not have a type for files from the assistant.
                         pass
                     elif isinstance(item, ThinkingPart):
-                        if item.id and send_item_ids:
+                        # Get raw CoT content from provider_details if present and from this provider
+                        raw_content: list[str] | None = None
+                        if item.provider_name == self.system:
+                            raw_content = (item.provider_details or {}).get('raw_content')
+
+                        if item.id and (send_item_ids or raw_content):
                             signature: str | None = None
                             if (
                                 item.signature
@@ -1638,7 +1745,7 @@ class OpenAIResponsesModel(Model):
                                 signature = item.signature
 
                             if (reasoning_item is None or reasoning_item['id'] != item.id) and (
-                                signature or item.content
+                                signature or item.content or raw_content
                             ):  # pragma: no branch
                                 reasoning_item = responses.ResponseReasoningItemParam(
                                     id=item.id,
@@ -1653,7 +1760,14 @@ class OpenAIResponsesModel(Model):
                                 assert reasoning_item is not None
                                 reasoning_item['summary'] = [
                                     *reasoning_item['summary'],
-                                    Summary(text=item.content, type='summary_text'),
+                                    ReasoningSummary(text=item.content, type='summary_text'),
+                                ]
+
+                            if raw_content:
+                                # Send raw CoT back
+                                assert reasoning_item is not None
+                                reasoning_item['content'] = [
+                                    ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
                             start_tag, end_tag = profile.thinking_tags
@@ -1827,26 +1941,30 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        # The `reasoning_content` field is only present in DeepSeek models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-        if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
-            yield self._parts_manager.handle_thinking_delta(
-                vendor_part_id='reasoning_content',
-                id='reasoning_content',
-                content=reasoning_content,
-                provider_name=self.provider_name,
-            )
+        profile = OpenAIModelProfile.from_profile(self._model_profile)
+        custom_field = profile.openai_chat_thinking_field
 
-        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # Prefer the configured custom reasoning field, if present in profile.
+        # Fall back to built-in fields if no custom field result was found.
+
+        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+
+        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
-            yield self._parts_manager.handle_thinking_delta(
-                vendor_part_id='reasoning',
-                id='reasoning',
-                content=reasoning,
-                provider_name=self.provider_name,
-            )
+        for field_name in (custom_field, 'reasoning', 'reasoning_content'):
+            if not field_name:
+                continue
+            reasoning: str | None = getattr(choice.delta, field_name, None)
+            if reasoning:  # pragma: no branch
+                yield from self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=field_name,
+                    id=field_name,
+                    content=reasoning,
+                    provider_name=self.provider_name,
+                )
+                break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
@@ -1856,17 +1974,16 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response
         content = choice.delta.content
         if content:
-            maybe_event = self._parts_manager.handle_text_delta(
+            for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=content,
                 thinking_tags=self._model_profile.thinking_tags,
                 ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-            )
-            if maybe_event is not None:  # pragma: no branch
-                if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                    maybe_event.part.id = 'content'
-                    maybe_event.part.provider_name = self.provider_name
-                yield maybe_event
+            ):
+                if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+                    event.part.id = 'content'
+                    event.part.provider_name = self.provider_name
+                yield event
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
@@ -1891,7 +2008,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         return _map_provider_details(chunk.choices[0])
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
@@ -2040,13 +2157,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 if isinstance(chunk.item, responses.ResponseReasoningItem):
                     if signature := chunk.item.encrypted_content:  # pragma: no branch
-                        # Add the signature to the part corresponding to the first summary item
-                        yield self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=f'{chunk.item.id}-0',
+                        # Add the signature to the part corresponding to the first summary/raw CoT
+                        for event in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=chunk.item.id,
                             id=chunk.item.id,
                             signature=signature,
                             provider_name=self.provider_name,
-                        )
+                        ):
+                            yield event
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                     _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
                     for i, file_part in enumerate(file_parts):
@@ -2079,11 +2197,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
+                # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
+                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
+                for event in self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=vendor_id,
                     content=chunk.part.text,
                     id=chunk.item_id,
-                )
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
                 pass  # there's nothing we need to do here
@@ -2092,22 +2213,36 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
-                yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
+                # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
+                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
+                for event in self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=vendor_id,
                     content=chunk.delta,
                     id=chunk.item_id,
-                )
+                ):
+                    yield event
+
+            elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
+                # Handle raw CoT from gpt-oss models using callback pattern
+                for event in self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=chunk.item_id,
+                    id=chunk.item_id,
+                    provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
+                ):
+                    yield event
+
+            elif isinstance(chunk, responses.ResponseReasoningTextDoneEvent):
+                pass  # content already accumulated via delta events
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                 # TODO(Marcelo): We should support annotations in the future.
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(
+                for event in self._parts_manager.handle_text_delta(
                     vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here
@@ -2213,7 +2348,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -2229,6 +2364,43 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
+    """Create a callback that updates `provider_details['raw_content']`.
+
+    This is used for streaming raw CoT from gpt-oss models. The callback pattern keeps
+    `raw_content` logic in OpenAI code while the parts manager stays provider-agnostic.
+    """
+
+    def update_provider_details(existing: dict[str, Any] | None) -> dict[str, Any]:
+        details = {**(existing or {})}
+        raw_list: list[str] = list(details.get('raw_content', []))
+        while len(raw_list) <= index:
+            raw_list.append('')
+        raw_list[index] += delta
+        details['raw_content'] = raw_list
+        return details
+
+    return update_provider_details
+
+
+# Convert logprobs to a serializable format
+def _map_logprobs(
+    logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
+    | list[responses.response_output_text.Logprob],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            'token': lp.token,
+            'bytes': lp.bytes,
+            'logprob': lp.logprob,
+            'top_logprobs': [
+                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+            ],
+        }
+        for lp in logprobs
+    ]
 
 
 def _map_usage(
@@ -2279,19 +2451,7 @@ def _map_provider_details(
 
     # Add logprobs to vendor_details if available
     if choice.logprobs is not None and choice.logprobs.content:
-        # Convert logprobs to a serializable format
-        provider_details['logprobs'] = [
-            {
-                'token': lp.token,
-                'bytes': lp.bytes,
-                'logprob': lp.logprob,
-                'top_logprobs': [
-                    {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                ],
-            }
-            for lp in choice.logprobs.content
-        ]
-
+        provider_details['logprobs'] = _map_logprobs(choice.logprobs.content)
     if raw_finish_reason := choice.finish_reason:
         provider_details['finish_reason'] = raw_finish_reason
 

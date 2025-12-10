@@ -6,6 +6,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Anthropic](anthropic.md)
 * [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
 * [Bedrock](bedrock.md)
+* [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
@@ -18,7 +19,6 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [Cerebras](openai.md#cerebras)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
 - [GitHub Models](openai.md#github-models)
@@ -87,8 +87,7 @@ in sequence until one successfully returns a result. Under the hood, Pydantic AI
 from one model to the next if the current model returns a 4xx or 5xx status code.
 
 !!! note
-
-   The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
+    The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
 
     When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client).
 
@@ -173,7 +172,9 @@ In the year 2157, Captain Maya Chen piloted her spacecraft through the vast expa
 
 In this example, if the OpenAI model fails, the agent will automatically fall back to the Anthropic model with its own configured settings. The `FallbackModel` itself doesn't have settings - it uses the individual settings of whichever model successfully handles the request.
 
-In this next example, we demonstrate the exception-handling capabilities of `FallbackModel`.
+### Exception Handling
+
+The next example demonstrates the exception-handling capabilities of `FallbackModel`.
 If all models fail, a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] is raised, which
 contains all the exceptions encountered during the `run` execution.
 
@@ -230,3 +231,6 @@ By default, the `FallbackModel` only moves on to the next model if the current m
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which includes
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.
+
+!!! note
+    Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
