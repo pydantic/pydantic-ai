@@ -1001,6 +1001,17 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
+def _projection_count_of_tool_usage(
+    tool_call_counts: defaultdict[str, int], tool_calls: list[_messages.ToolCallPart]
+) -> None:
+    """Populate a count of tool usage based on the provided tool calls for this run step.
+
+    We will use this to make sure the calls do not exceed tool usage limits.
+    """
+    for call in tool_calls:
+        tool_call_counts[call.tool_name] += 1
+
+
 async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1024,10 +1035,9 @@ async def _call_tools(
 
     calls_to_run: list[_messages.ToolCallPart] = []
 
-    # For each tool, check how many calls are going to be made and if it is over the limit
+    # For each tool, check how many calls are going to be made
     tool_call_counts: defaultdict[str, int] = defaultdict(int)
-    for call in tool_calls:
-        tool_call_counts[call.tool_name] += 1
+    _projection_count_of_tool_usage(tool_call_counts, tool_calls)
 
     for call in tool_calls:
         current_tool_use = tool_manager.get_current_use_of_tool(call.tool_name)
@@ -1113,7 +1123,11 @@ async def _call_tools(
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     _populate_deferred_calls(
-        calls_to_run, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+        calls_to_run,
+        deferred_calls_by_index,
+        deferred_metadata_by_index,
+        output_deferred_calls,
+        output_deferred_metadata,
     )
 
 

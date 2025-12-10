@@ -298,6 +298,7 @@ class ToolManager(Generic[AgentDepsT]):
             return None
 
         return tool.max_uses
+
     def get_current_use_of_tool(self, tool_name: str) -> int:
         """Get the current number of uses of a given tool."""
         if self.ctx is None:
