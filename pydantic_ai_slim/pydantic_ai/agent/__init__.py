@@ -291,8 +291,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Processors can be sync or async and are applied in sequence.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
-                a retry prompt is returned to the model. Individual tools can override this with their own timeout.
-                Defaults to None (no timeout).
+                the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
+                Individual tools can override this with their own timeout. Defaults to None (no timeout).
         """
         if model is None or defer_model_check:
             self._model = model
