@@ -88,13 +88,13 @@ You can specify a list of [builtin tools](builtin-tools.md) that will be shown a
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import WebSearchTool, CodeExecutionTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 
 agent = Agent('openai:gpt-5')
 
 app = agent.to_web(
     models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
-    builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+    builtin_tools=[CodeExecutionTool(), WebSearchTool()],
 )
 ```
 
@@ -108,6 +108,10 @@ The UI will only show tools that the selected model supports.
 You can pass extra instructions that will be included in each agent run:
 
 ```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5')
+
 app = agent.to_web(
     models=['openai:gpt-5'],
     instructions='Always respond in a friendly tone.',
