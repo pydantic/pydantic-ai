@@ -92,11 +92,11 @@ class CerebrasModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = cerebras_settings_to_openai_settings(cast(CerebrasModelSettings, merged_settings or {}))
+        new_settings = _cerebras_settings_to_openai_settings(cast(CerebrasModelSettings, merged_settings or {}))
         return new_settings, customized_parameters
 
 
-def cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:
+def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:
     """Transforms a 'CerebrasModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:

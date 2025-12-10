@@ -13,7 +13,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import (
         CerebrasModel,
         CerebrasModelSettings,
-        cerebras_settings_to_openai_settings,
+        _cerebras_settings_to_openai_settings,
     )
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
@@ -53,17 +53,17 @@ async def test_cerebras_settings_transformation():
     """Test that CerebrasModelSettings are correctly transformed to OpenAIChatModelSettings."""
     # Test with disable_reasoning
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
-    transformed = cerebras_settings_to_openai_settings(settings)
+    transformed = _cerebras_settings_to_openai_settings(settings)
     extra_body = cast(dict[str, Any], transformed.get('extra_body', {}))
     assert extra_body.get('disable_reasoning') is True
 
     # Test without disable_reasoning (should not have extra_body)
     settings_empty = CerebrasModelSettings()
-    transformed_empty = cerebras_settings_to_openai_settings(settings_empty)
+    transformed_empty = _cerebras_settings_to_openai_settings(settings_empty)
     assert transformed_empty.get('extra_body') is None
 
     # Test with disable_reasoning=False
     settings_false = CerebrasModelSettings(cerebras_disable_reasoning=False)
-    transformed_false = cerebras_settings_to_openai_settings(settings_false)
+    transformed_false = _cerebras_settings_to_openai_settings(settings_false)
     extra_body_false = cast(dict[str, Any], transformed_false.get('extra_body', {}))
     assert extra_body_false.get('disable_reasoning') is False
