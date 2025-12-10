@@ -75,6 +75,7 @@ try:
         GoogleSearchDict,
         GroundingMetadata,
         HttpOptionsDict,
+        ImageConfigDict,
         MediaResolution,
         Modality,
         Part,
@@ -336,11 +337,15 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolDict] | None:
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
         tools: list[ToolDict] = [
             ToolDict(function_declarations=[_function_declaration_from_tool(t)])
             for t in model_request_parameters.tool_defs.values()
         ]
+
+        image_config: ImageConfigDict | None = None
 
         if model_request_parameters.builtin_tools:
             if model_request_parameters.function_tools:
@@ -358,11 +363,13 @@ class GoogleModel(Model):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
+                    if tool.aspect_ratio:
+                        image_config = ImageConfigDict(aspect_ratio=tool.aspect_ratio)
                 else:  # pragma: no cover
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
                     )
-        return tools or None
+        return tools or None, image_config
 
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
@@ -421,7 +428,7 @@ class GoogleModel(Model):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
-        tools = self._get_tools(model_request_parameters)
+        tools, image_config = self._get_tools(model_request_parameters)
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
@@ -477,7 +484,9 @@ class GoogleModel(Model):
             response_mime_type=response_mime_type,
             response_json_schema=response_schema,
             response_modalities=modalities,
+            image_config=image_config,
         )
+
         return contents, config
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
@@ -725,15 +734,15 @@ class GeminiStreamedResponse(StreamedResponse):
                     if len(part.text) == 0 and not provider_details:
                         continue
                     if part.thought:
-                        yield self._parts_manager.handle_thinking_delta(
+                        for event in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=None, content=part.text, provider_details=provider_details
-                        )
+                        ):
+                            yield event
                     else:
-                        maybe_event = self._parts_manager.handle_text_delta(
+                        for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=None, content=part.text, provider_details=provider_details
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        ):
+                            yield event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
