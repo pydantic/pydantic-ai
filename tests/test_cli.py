@@ -552,7 +552,7 @@ def test_run_web_command_generic_agent_no_model(capfd: CaptureFixture[str]):
 
 
 def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
-    """Test run_web_command creates generic agent with system prompt decorator."""
+    """Test run_web_command passes instructions to create_web_app for generic agent."""
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
@@ -562,11 +562,9 @@ def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
 
-    # Verify agent was created with instructions
-    call_args = mock_create_app.call_args
-    agent = call_args[0][0]
-    assert agent is not None
-    assert 'You are a helpful assistant' in agent._instructions
+    # Verify instructions were passed to create_web_app (not to Agent constructor)
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs['instructions'] == 'You are a helpful assistant'
 
 
 def test_run_web_command_agent_with_instructions(
