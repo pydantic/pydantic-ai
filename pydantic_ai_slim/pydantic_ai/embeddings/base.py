@@ -53,10 +53,9 @@ class EmbeddingModel(ABC):
 
     def prepare_embed(
         self, documents: str | Sequence[str], settings: EmbeddingSettings | None = None
-    ) -> tuple[Sequence[str], EmbeddingSettings]:
+    ) -> tuple[list[str], EmbeddingSettings]:
         """Prepare the documents and settings for the embedding."""
-        if isinstance(documents, str):
-            documents = [documents]
+        documents = [documents] if isinstance(documents, str) else list(documents)
 
         settings = merge_embedding_settings(self._settings, settings) or {}
 

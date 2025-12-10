@@ -78,15 +78,9 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        docs, settings = self.prepare_embed(documents, settings)
-        return await self._embed(docs, input_type, cast(SentenceTransformersEmbeddingSettings, settings))
+        documents, settings = self.prepare_embed(documents, settings)
+        settings = cast(SentenceTransformersEmbeddingSettings, settings)
 
-    async def _embed(
-        self,
-        documents: str | Sequence[str],
-        input_type: EmbedInputType,
-        settings: SentenceTransformersEmbeddingSettings,
-    ) -> EmbeddingResult:
         device = settings.get('sentence_transformers_device', None)
         normalize = settings.get('sentence_transformers_normalize_embeddings', False)
         batch_size = settings.get('sentence_transformers_batch_size', None)
@@ -96,7 +90,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
 
         np_embeddings: np.ndarray[Any, float] = await _utils.run_in_executor(  # type: ignore[reportAssignmentType]
             encode_func,  # type: ignore[reportArgumentType]
-            documents if isinstance(documents, str) else list(documents),
+            documents,
             show_progress_bar=False,
             convert_to_numpy=True,
             convert_to_tensor=False,

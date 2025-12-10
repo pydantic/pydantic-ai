@@ -120,11 +120,8 @@ class CohereEmbeddingModel(EmbeddingModel):
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         documents, settings = self.prepare_embed(documents, settings)
-        return await self._embed(documents, input_type, cast(CohereEmbeddingSettings, settings))
+        settings = cast(CohereEmbeddingSettings, settings)
 
-    async def _embed(
-        self, documents: str | Sequence[str], input_type: EmbedInputType, settings: CohereEmbeddingSettings
-    ) -> EmbeddingResult:
         request_options = RequestOptions()
         if extra_headers := settings.get('extra_headers'):
             request_options['additional_headers'] = extra_headers

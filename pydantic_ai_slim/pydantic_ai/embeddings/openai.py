@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic_ai import _utils
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -86,14 +86,11 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         documents, settings = self.prepare_embed(documents, settings)
-        return await self._embed(documents, input_type, settings)
+        settings = cast(OpenAIEmbeddingSettings, settings)
 
-    async def _embed(
-        self, documents: str | Sequence[str], input_type: EmbedInputType, settings: OpenAIEmbeddingSettings
-    ) -> EmbeddingResult:
         try:
             response = await self._client.embeddings.create(
-                input=documents,  # pyright: ignore[reportArgumentType]  # Sequence[str] not compatible with SequenceNotStr[str] :/
+                input=documents,
                 model=self.model_name,
                 dimensions=settings.get('dimensions') or OMIT,
                 extra_headers=settings.get('extra_headers'),
@@ -105,6 +102,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             raise  # pragma: lax no cover
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
         embeddings = [item.embedding for item in response.data]
 
         return EmbeddingResult(

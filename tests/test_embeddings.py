@@ -12,7 +12,7 @@ from pydantic_ai.embeddings import Embedder, EmbeddingResult, KnownEmbeddingMode
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsList, try_import
+from .conftest import IsDatetime, IsInt, IsList, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -334,8 +334,8 @@ async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
                                 'gen_ai.response.model': 'text-embedding-3-small',
                                 'gen_ai.token.type': 'input',
                             },
-                            'start_time_unix_nano': 1765405564786519761,
-                            'time_unix_nano': 1765405564979671854,
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
                             'count': 1,
                             'sum': 4,
                             'scale': 20,
@@ -365,8 +365,8 @@ async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
                                 'gen_ai.response.model': 'text-embedding-3-small',
                                 'gen_ai.token.type': 'input',
                             },
-                            'start_time_unix_nano': 1765405564786777491,
-                            'time_unix_nano': 1765405564979671854,
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
                             'count': 1,
                             'sum': 8e-08,
                             'scale': 20,
