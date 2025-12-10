@@ -32,6 +32,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -532,7 +533,7 @@ print(result)\
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(
-        model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
     )
 
     @agent.tool_plain
@@ -551,8 +552,10 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                instructions='You are a helpful chatbot.',
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime()),
+                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -584,7 +587,6 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -616,7 +618,6 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(

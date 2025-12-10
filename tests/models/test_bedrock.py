@@ -23,6 +23,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -109,7 +110,7 @@ def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     assert model.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
-    agent = Agent(model=model, instructions='You are a chatbot.')
+    agent = Agent(model=model, system_prompt='You are a chatbot.')
 
     result = await agent.run('Hello!')
     assert result.output == snapshot(
@@ -120,12 +121,15 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
         [
             ModelRequest(
                 parts=[
+                    SystemPromptPart(
+                        content='You are a chatbot.',
+                        timestamp=IsDatetime(),
+                    ),
                     UserPromptPart(
                         content='Hello!',
                         timestamp=IsDatetime(),
                     ),
                 ],
-                instructions='You are a chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(

@@ -31,6 +31,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -309,7 +310,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
     mock_client = MockGroq.create_mock(responses)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, instructions='this is the system prompt')
+    agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -324,9 +325,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
-                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -355,7 +356,6 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
-                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -384,7 +384,6 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
-                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
