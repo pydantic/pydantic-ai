@@ -13,7 +13,6 @@ from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -66,7 +65,7 @@ def validate_request_options(
     if extra_data.model and model_ids and extra_data.model not in model_ids:
         return f'Model "{extra_data.model}" is not in the allowed models list'
 
-    # base model also valdiates this but makes sesne to have an api check, since one could be a UI bug/misbehavior
+    # base model also validates this but makes sense to have an api check, since one could be a UI bug/misbehavior
     # the other would be a pydantic-ai bug
     # also as future proofing since we don't know how users will use this feature in the future
     invalid_tools = [t for t in extra_data.builtin_tools if t not in allowed_tool_ids]
@@ -80,7 +79,6 @@ def create_api_routes(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
     builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
@@ -93,8 +91,8 @@ def create_api_routes(
             - A sequence of model names/instances (e.g., `['openai:gpt-5', Model(...)]`)
             - A dict mapping display labels to model names/instances
             If not provided, the UI will have no model options.
-        builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
-        toolsets: Optional list of toolsets (e.g., MCP servers). These provide additional tools.
+        builtin_tools: Optional list of additional builtin tools to make available in the UI.
+            Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
@@ -105,8 +103,10 @@ def create_api_routes(
     # Build model ID → original reference mapping and ModelInfo list for frontend
     model_id_to_ref: dict[str, Model | str] = {}
     model_infos: list[ModelInfo] = []
-    builtin_tools = builtin_tools or []
-    builtin_tool_types = {type(tool) for tool in builtin_tools}
+
+    # Filter out builtin_tools that are already configured on the agent (they're always included)
+    agent_tool_types = {type(t) for t in agent._builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
+    ui_builtin_tools = [t for t in (builtin_tools or []) if type(t) not in agent_tool_types]
 
     if models is not None:
         items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in models]
@@ -116,14 +116,13 @@ def create_api_routes(
             model_id = model_ref if isinstance(model_ref, str) else f'{model.system}:{model.model_name}'
             display_name = label or model.label
             model_supported_tools = model.profile.supported_builtin_tools
-            supported_tool_ids = [t.kind for t in (model_supported_tools & builtin_tool_types)]
+            supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
 
             model_id_to_ref[model_id] = model_ref  # Store original reference
             model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
 
     model_ids = set(model_id_to_ref.keys())
-    allowed_tool_ids = {tool.unique_id for tool in builtin_tools}
-    toolsets = list(toolsets) if toolsets else None
+    allowed_tool_ids = {tool.unique_id for tool in ui_builtin_tools}
 
     async def options_chat(request: Request) -> Response:
         """Handle CORS preflight requests."""
@@ -133,7 +132,7 @@ def create_api_routes(
         """Endpoint to configure the frontend with available models and tools."""
         config = ConfigureFrontend(
             models=model_infos,
-            builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in builtin_tools],
+            builtin_tools=[BuiltinToolInfo(id=tool.unique_id, name=tool.label) for tool in ui_builtin_tools],
         )
         return JSONResponse(config.model_dump(by_alias=True))
 
@@ -150,13 +149,12 @@ def create_api_routes(
             return JSONResponse({'error': error}, status_code=400)
 
         model_ref = model_id_to_ref.get(extra_data.model) if extra_data.model else None
-        request_builtin_tools = [tool for tool in builtin_tools if tool.unique_id in extra_data.builtin_tools]
+        request_builtin_tools = [tool for tool in ui_builtin_tools if tool.unique_id in extra_data.builtin_tools]
         streaming_response = await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
             request,
             agent=agent,
             model=model_ref,
             builtin_tools=request_builtin_tools,
-            toolsets=toolsets,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
