@@ -67,28 +67,20 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None,
     ) -> Iterator[Callable[[EmbeddingResult], None]]:
-        operation = 'embed'
+        operation = 'embeddings'
         span_name = f'{operation} {self.model_name}'
-
-        num_inputs = 1 if isinstance(documents, str) else len(documents)
-
-        # TODO (DouweM): Review all of these attributes that Claude may have hallucinated.
 
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
+            'input_type': input_type,
             **self.model_attributes(self.wrapped),
-            'gen_ai.embedding.input_type': input_type,
-            'gen_ai.embedding.num_inputs': num_inputs,
         }
 
         if settings:
             attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
 
-        if self.instrumentation_settings.include_content and isinstance(documents, str):
-            attributes['gen_ai.prompt'] = documents
-        elif self.instrumentation_settings.include_content:
-            # For sequences, store as JSON array
-            attributes['gen_ai.prompt'] = json.dumps(list(documents))
+        if self.instrumentation_settings.include_content:
+            attributes['gen_ai.prompt'] = documents if isinstance(documents, str) else json.dumps(list(documents))
 
         attributes['logfire.json_schema'] = json.dumps(
             {
@@ -124,18 +116,9 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     else:
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
-                    # Calculate output dimension
                     embeddings = result.embeddings
                     if embeddings:
-                        output_dim = len(embeddings[0]) if embeddings[0] else 0
-                        num_outputs = len(embeddings)
-
-                        attributes_to_set.update(
-                            {
-                                'gen_ai.embedding.dimension': output_dim,
-                                'gen_ai.embedding.num_outputs': num_outputs,
-                            }
-                        )
+                        attributes_to_set['gen_ai.embeddings.dimension.count'] = len(embeddings[0])
 
                     if result.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = result.provider_response_id
@@ -151,7 +134,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
     @staticmethod
     def model_attributes(model: EmbeddingModel) -> dict[str, AttributeValue]:
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.system': model.system,
+            'gen_ai.provider.name': model.system,
             'gen_ai.request.model': model.model_name,
         }
         if base_url := model.base_url:
