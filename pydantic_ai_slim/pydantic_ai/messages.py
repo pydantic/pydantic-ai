@@ -477,7 +477,7 @@ class BinaryContent:
     """Arbitrary binary data.
 
     Store actual bytes here, not base64.
-    Use `BinaryContent.base64` to get the base64-encoded string.
+    Use `.base64` to get the base64-encoded string.
     """
 
     _: KW_ONLY
