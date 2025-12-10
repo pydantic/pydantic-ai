@@ -447,7 +447,6 @@ async def test_validation_can_be_disabled():
 async def test_multiple_stream_decorators_without_node_id():
     """Test that multiple @g.stream decorators without explicit node_id get unique IDs.
 
-    Regression test for: https://github.com/pydantic/pydantic-ai/issues/3587
     When using @g.stream without node_id, the node ID should be derived from the
     decorated function's name, not from the internal 'wrapper' function.
     """
