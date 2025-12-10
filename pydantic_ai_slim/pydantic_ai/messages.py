@@ -285,7 +285,7 @@ class VideoUrl(FileUrl):
     def is_youtube(self) -> bool:
         """True if the URL has a YouTube domain."""
         parsed = urlparse(self.url)
-        hostname = parsed.hostname or ''
+        hostname = parsed.hostname
         return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
 
     @property
