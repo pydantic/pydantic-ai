@@ -37,13 +37,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
       ratelimit:
-      - '"resolvers";r=2999;t=102'
+      - '"resolvers";r=4993;t=61'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -68,8 +72,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14529072'
+      - '1388488'
       connection:
       - keep-alive
       content-disposition:
@@ -84,10 +90,16 @@ interactions:
       - same-origin
       etag:
       - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
+      ratelimit:
+      - '"resolvers";r=4998;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -132,8 +144,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14548168'
+      - '1671'
       connection:
       - keep-alive
       content-disposition:
@@ -148,10 +162,16 @@ interactions:
       - same-origin
       etag:
       - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
+      ratelimit:
+      - '"resolvers";r=4998;t=232'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -193,13 +213,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
       ratelimit:
-      - '"resolvers";r=2998;t=102'
+      - '"resolvers";r=4992;t=61'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -224,8 +248,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '12835323'
+      - '1388488'
       connection:
       - keep-alive
       content-disposition:
@@ -240,10 +266,16 @@ interactions:
       - same-origin
       etag:
       - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
+      ratelimit:
+      - '"resolvers";r=4996;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -275,8 +307,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14548169'
+      - '1673'
       connection:
       - keep-alive
       content-disposition:
@@ -291,10 +325,16 @@ interactions:
       - same-origin
       etag:
       - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
+      ratelimit:
+      - '"resolvers";r=4996;t=232'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -336,13 +376,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig_sentence_transformers.json=&etag=%22fd1b291129c607e5d49799f87cb219b27f98acdf%22
       ratelimit:
-      - '"resolvers";r=2997;t=101'
+      - '"resolvers";r=4991;t=59'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -367,8 +411,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '12835323'
+      - '1388490'
       connection:
       - keep-alive
       content-disposition:
@@ -383,10 +429,16 @@ interactions:
       - same-origin
       etag:
       - '"fd1b291129c607e5d49799f87cb219b27f98acdf"'
+      ratelimit:
+      - '"resolvers";r=4996;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -428,13 +480,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2FREADME.md=&etag=%2258d4a9a45664eb9e12de9549c548c09b6134c17f%22
       ratelimit:
-      - '"resolvers";r=2996;t=101'
+      - '"resolvers";r=4990;t=59'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"58d4a9a45664eb9e12de9549c548c09b6134c17f"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -459,8 +515,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14529072'
+      - '1388490'
       connection:
       - keep-alive
       content-disposition:
@@ -475,10 +533,16 @@ interactions:
       - same-origin
       etag:
       - '"58d4a9a45664eb9e12de9549c548c09b6134c17f"'
+      ratelimit:
+      - '"resolvers";r=4993;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -584,7 +648,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '8079517'
+      - '1672'
       connection:
       - keep-alive
       content-disposition:
@@ -599,12 +663,18 @@ interactions:
       - same-origin
       etag:
       - W/"58d4a9a45664eb9e12de9549c548c09b6134c17f"
+      ratelimit:
+      - '"resolvers";r=4993;t=231'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
       vary:
       - Origin,accept-encoding
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -646,13 +716,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fmodules.json=&etag=%22952a9b81c0bfd99800fabf352f69c7ccd46c5e43%22
       ratelimit:
-      - '"resolvers";r=2995;t=101'
+      - '"resolvers";r=4989;t=59'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -677,8 +751,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14529073'
+      - '1388490'
       connection:
       - keep-alive
       content-disposition:
@@ -693,10 +769,16 @@ interactions:
       - same-origin
       etag:
       - '"952a9b81c0bfd99800fabf352f69c7ccd46c5e43"'
+      ratelimit:
+      - '"resolvers";r=4998;t=149'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -738,13 +820,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fsentence_bert_config.json=&etag=%2259d594003bf59880a884c574bf88ef7555bb0202%22
       ratelimit:
-      - '"resolvers";r=2994;t=101'
+      - '"resolvers";r=4988;t=58'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"59d594003bf59880a884c574bf88ef7555bb0202"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -769,8 +855,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14529071'
+      - '1388490'
       connection:
       - keep-alive
       content-disposition:
@@ -785,10 +873,16 @@ interactions:
       - same-origin
       etag:
       - '"59d594003bf59880a884c574bf88ef7555bb0202"'
+      ratelimit:
+      - '"resolvers";r=4990;t=148'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -817,8 +911,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '13034323'
+      - '1673'
       connection:
       - keep-alive
       content-disposition:
@@ -833,10 +929,16 @@ interactions:
       - same-origin
       etag:
       - '"59d594003bf59880a884c574bf88ef7555bb0202"'
+      ratelimit:
+      - '"resolvers";r=4990;t=231'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -874,13 +976,15 @@ interactions:
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=2993;t=101'
+      - '"resolvers";r=4987;t=58'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 404
       message: Not Found
@@ -922,13 +1026,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fconfig.json=&etag=%2272b987fd805cfa2b58c4c8c952b274a11bfd5a00%22
       ratelimit:
-      - '"resolvers";r=2992;t=101'
+      - '"resolvers";r=4986;t=57'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"72b987fd805cfa2b58c4c8c952b274a11bfd5a00"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -953,8 +1061,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14529072'
+      - '1388492'
       connection:
       - keep-alive
       content-disposition:
@@ -969,10 +1079,16 @@ interactions:
       - same-origin
       etag:
       - '"72b987fd805cfa2b58c4c8c952b274a11bfd5a00"'
+      ratelimit:
+      - '"resolvers";r=4987;t=148'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -1021,8 +1137,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14548171'
+      - '1674'
       connection:
       - keep-alive
       content-disposition:
@@ -1037,10 +1155,16 @@ interactions:
       - same-origin
       etag:
       - '"72b987fd805cfa2b58c4c8c952b274a11bfd5a00"'
+      ratelimit:
+      - '"resolvers";r=4987;t=230'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -1070,7 +1194,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1317'
+      - '1337'
       content-type:
       - text/plain; charset=utf-8
       cross-origin-opener-policy:
@@ -1080,15 +1204,23 @@ interactions:
         rel="xet-auth", <https://cas-server.xethub.hf.co/v1/reconstructions/789fdf16a3e59f4fbfb6002967ecee539a198dadb5be74ca549aa7dc9b1b55fb>;
         rel="xet-reconstruction-info"
       location:
-      - https://cas-bridge.xethub.hf.co/xet-bridge-us/621ffdc136468d709f180294/789fdf16a3e59f4fbfb6002967ecee539a198dadb5be74ca549aa7dc9b1b55fb?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cas%2F20251210%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251210T213615Z&X-Amz-Expires=3600&X-Amz-Signature=b0a042166c1dbdf053ab017801f7411e24e1b341260cb7b49272bacbd2c9b6f7&X-Amz-SignedHeaders=host&X-Xet-Cas-Uid=public&response-content-disposition=inline%3B+filename*%3DUTF-8%27%27model.safetensors%3B+filename%3D%22model.safetensors%22%3B&x-id=GetObject&Expires=1765406175&Policy=eyJTdGF0ZW1lbnQiOlt7IkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc2NTQwNjE3NX19LCJSZXNvdXJjZSI6Imh0dHBzOi8vY2FzLWJyaWRnZS54ZXRodWIuaGYuY28veGV0LWJyaWRnZS11cy82MjFmZmRjMTM2NDY4ZDcwOWYxODAyOTQvNzg5ZmRmMTZhM2U1OWY0ZmJmYjYwMDI5NjdlY2VlNTM5YTE5OGRhZGI1YmU3NGNhNTQ5YWE3ZGM5YjFiNTVmYioifV19&Signature=XcXb2Y1CJpv6f4kRawxeYnmSjiJF0KbpGI3dNiqI3cRMrmTOLWdbIVZ3-5Nx7AIKkMB68J3ZtTftHvIqEXUPnafxThFjynJ8z38oQupFQ68yh3wMwATp%7EgaWCAz30QIlcEiav96ayjecEtNHrkEXHj8zn86eCkF2ugFj6MWeNneE2Z4Qae1Z2XU9sMP5MuQI620GHZVg3ePLPuVHCD6CO2vmXPa4yQRQRI8VQDU87eO40r89xuUHg1Veczn2z%7EikO6HfWB7NMQXKkoB9ED-tI52VUwjPz8Q7uwZh6S95OP0g7yndatrD4gFLgK-a%7EHKmDfn46GMDYTEcAvNOKeKRVw__&Key-Pair-Id=K2L8F4GPSG1IFC
+      - https://cas-bridge.xethub.hf.co/xet-bridge-us/621ffdc136468d709f180294/789fdf16a3e59f4fbfb6002967ecee539a198dadb5be74ca549aa7dc9b1b55fb?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cas%2F20251210%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20251210T232655Z&X-Amz-Expires=3600&X-Amz-Signature=8cdbb79e2814df69fa97e0c2864b6d81f543afe69331c3b011f61259dbc6f254&X-Amz-SignedHeaders=host&X-Xet-Cas-Uid=6593e9aff7291078f96a942f&response-content-disposition=inline%3B+filename*%3DUTF-8%27%27model.safetensors%3B+filename%3D%22model.safetensors%22%3B&x-id=GetObject&Expires=1765412815&Policy=eyJTdGF0ZW1lbnQiOlt7IkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc2NTQxMjgxNX19LCJSZXNvdXJjZSI6Imh0dHBzOi8vY2FzLWJyaWRnZS54ZXRodWIuaGYuY28veGV0LWJyaWRnZS11cy82MjFmZmRjMTM2NDY4ZDcwOWYxODAyOTQvNzg5ZmRmMTZhM2U1OWY0ZmJmYjYwMDI5NjdlY2VlNTM5YTE5OGRhZGI1YmU3NGNhNTQ5YWE3ZGM5YjFiNTVmYioifV19&Signature=qd3Zgi7H1jHIkzdzC7017k-Ftagrd7h71hXGWqyPDFQYuvQVbSp3kFig8kSWXn-tpbUCD3Ac0WpE6EeCnN0tiKHGSz3nB9TfSqhuWPlgM4aE2qEFch21PA0RoBRxK9pjnCXU58ibHUYyi7xd9YOEMm5cPnaCjFtkxz3SNH%7ErUOiNwPBlbD7uTc1ITc8IOzc9AWKmhhgW448Kk%7Es7eKvua5RBTx4DQoDG3FZoWTDa3pllPFhmimwO8MoR%7E3l4sPZcWCYFHJQ8XaFqZycgvocraTu9BpejfADZ6FWxPyj-xhGkDbOfQmNQR%7EuO86U1bTVGR83-BY53pz3I0z5zyYnTrQ__&Key-Pair-Id=K2L8F4GPSG1IFC
       ratelimit:
-      - '"resolvers";r=2991;t=99'
+      - '"resolvers";r=4985;t=53'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"53aa51172d142c89d9012cce15ae4d6cc0ca6895895114379cacb4fab128d9db"'
+      x-linked-size:
+      - '90868376'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
+      x-xet-hash:
+      - 789fdf16a3e59f4fbfb6002967ecee539a198dadb5be74ca549aa7dc9b1b55fb
     status:
       code: 302
       message: Found
@@ -1114,25 +1246,31 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '365'
+      - '417'
       content-type:
       - application/json; charset=utf-8
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"16d-PmTC1VdrQCi99fwysaRewVrRkJ0"
+      - W/"1a1-XPbpL1cDxt4iR4Ec1CWk2LAbjRs"
       ratelimit:
-      - '"api";r=499;t=99'
+      - '"api";r=997;t=52'
       ratelimit-policy:
-      - '"fixed window";"api";q=500;w=300'
+      - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-xet-access-token:
+      - eyJhbGciOiJIUzI1NiJ9.eyJyZXBvSWQiOiI2MjFmZmRjMTM2NDY4ZDcwOWYxODAyOTQiLCJ1c2VySWQiOiI2ODgxM2UxMGFmZGQ2ZWEzODA3MTc0NWYiLCJhY2Nlc3MiOiJSRUFEIiwidXNlUHJpdmF0ZUxpbmsiOmZhbHNlLCJoZkNkblRpZXIiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzY1NDEwNTQ0LCJleHAiOjE3NjU0MTE0NDQsImlzcyI6Imh0dHBzOi8vaHVnZ2luZ2ZhY2UuY28ifQ.xwb5xEr9d2MQratOVNHeimRk1yWnxfWhxjCrEdSUf-c
+      x-xet-cas-url:
+      - https://cas-server.xethub.hf.co
+      x-xet-token-expiration:
+      - '1765411444'
     parsed_body:
-      accessToken: eyJhbGciOiJIUzI1NiJ9.eyJyZXBvSWQiOiI2MjFmZmRjMTM2NDY4ZDcwOWYxODAyOTQiLCJ1c2VySWQiOiJwdWJsaWMiLCJhY2Nlc3MiOiJSRUFEIiwiaGZDZG5UaWVyIjoidW5hdXRoZW50aWNhdGVkIiwiaWF0IjoxNzY1NDAzNjE3LCJleHAiOjE3NjU0MDQ1MTcsImlzcyI6Imh0dHBzOi8vaHVnZ2luZ2ZhY2UuY28ifQ.6zl30-5oP18L5kylUbywTPIg4jRW1B7Qvu41XVTbjRc
+      accessToken: eyJhbGciOiJIUzI1NiJ9.eyJyZXBvSWQiOiI2MjFmZmRjMTM2NDY4ZDcwOWYxODAyOTQiLCJ1c2VySWQiOiI2ODgxM2UxMGFmZGQ2ZWEzODA3MTc0NWYiLCJhY2Nlc3MiOiJSRUFEIiwidXNlUHJpdmF0ZUxpbmsiOmZhbHNlLCJoZkNkblRpZXIiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzY1NDEwNTQ0LCJleHAiOjE3NjU0MTE0NDQsImlzcyI6Imh0dHBzOi8vaHVnZ2luZ2ZhY2UuY28ifQ.xwb5xEr9d2MQratOVNHeimRk1yWnxfWhxjCrEdSUf-c
       casUrl: https://cas-server.xethub.hf.co
-      exp: 1765404517
+      exp: 1765411444
     status:
       code: 200
       message: OK
@@ -1174,13 +1312,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/tokenizer_config.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Ftokenizer_config.json=&etag=%22c79f2b6a0cea6f4b564fed1938984bace9d30ff0%22
       ratelimit:
-      - '"resolvers";r=2990;t=98'
+      - '"resolvers";r=4984;t=51'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"c79f2b6a0cea6f4b564fed1938984bace9d30ff0"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -1208,7 +1350,7 @@ interactions:
       access-control-max-age:
       - '86400'
       age:
-      - '7297719'
+      - '1388494'
       connection:
       - keep-alive
       content-disposition:
@@ -1223,16 +1365,16 @@ interactions:
       - same-origin
       etag:
       - '"c79f2b6a0cea6f4b564fed1938984bace9d30ff0"'
-      ratelimit-limit:
-      - '5000'
-      ratelimit-remaining:
-      - '4723'
-      ratelimit-reset:
-      - '1'
+      ratelimit:
+      - '"resolvers";r=4985;t=144'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -1259,8 +1401,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14221452'
+      - '1678'
       connection:
       - keep-alive
       content-disposition:
@@ -1275,10 +1419,16 @@ interactions:
       - same-origin
       etag:
       - '"c79f2b6a0cea6f4b564fed1938984bace9d30ff0"'
+      ratelimit:
+      - '"resolvers";r=4984;t=228'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -1312,9 +1462,9 @@ interactions:
       etag:
       - W/"40-09f9IAqP13xarAhQxFS2W8rvRkM"
       ratelimit:
-      - '"api";r=498;t=98'
+      - '"api";r=996;t=49'
       ratelimit-policy:
-      - '"fixed window";"api";q=500;w=300'
+      - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -1362,13 +1512,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/vocab.txt?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fvocab.txt=&etag=%22fb140275c155a9c7c5a3b3e0e77a9e839594a938%22
       ratelimit:
-      - '"resolvers";r=2989;t=98'
+      - '"resolvers";r=4983;t=49'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"fb140275c155a9c7c5a3b3e0e77a9e839594a938"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -1393,8 +1547,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14391036'
+      - '1678'
       connection:
       - keep-alive
       content-disposition:
@@ -1409,10 +1565,16 @@ interactions:
       - same-origin
       etag:
       - '"fb140275c155a9c7c5a3b3e0e77a9e839594a938"'
+      ratelimit:
+      - '"resolvers";r=4982;t=227'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -31957,8 +32119,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14172020'
+      - '1678'
       connection:
       - keep-alive
       content-disposition:
@@ -31973,12 +32137,18 @@ interactions:
       - same-origin
       etag:
       - W/"fb140275c155a9c7c5a3b3e0e77a9e839594a938"
+      ratelimit:
+      - '"resolvers";r=4981;t=227'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
       vary:
       - Origin,accept-encoding
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -32020,13 +32190,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/tokenizer.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Ftokenizer.json=&etag=%22cb202bfe2e3c98645018a6d12f182a434c9d3e02%22
       ratelimit:
-      - '"resolvers";r=2988;t=97'
+      - '"resolvers";r=4982;t=48'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"cb202bfe2e3c98645018a6d12f182a434c9d3e02"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -32051,8 +32225,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14391036'
+      - '1679'
       connection:
       - keep-alive
       content-disposition:
@@ -32067,10 +32243,16 @@ interactions:
       - same-origin
       etag:
       - '"cb202bfe2e3c98645018a6d12f182a434c9d3e02"'
+      ratelimit:
+      - '"resolvers";r=4979;t=227'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -32093,8 +32275,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '10004298'
+      - '1679'
       connection:
       - keep-alive
       content-disposition:
@@ -32109,12 +32293,18 @@ interactions:
       - same-origin
       etag:
       - W/"cb202bfe2e3c98645018a6d12f182a434c9d3e02"
+      ratelimit:
+      - '"resolvers";r=4978;t=227'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
       vary:
       - Origin,accept-encoding
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -32152,13 +32342,15 @@ interactions:
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=2987;t=97'
+      - '"resolvers";r=4981;t=48'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 404
       message: Not Found
@@ -32200,13 +32392,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/special_tokens_map.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2Fspecial_tokens_map.json=&etag=%22e7b0375001f109a6b8873d756ad4f7bbb15fbaa5%22
       ratelimit:
-      - '"resolvers";r=2986;t=97'
+      - '"resolvers";r=4980;t=48'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"e7b0375001f109a6b8873d756ad4f7bbb15fbaa5"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -32231,8 +32427,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14391034'
+      - '1679'
       connection:
       - keep-alive
       content-disposition:
@@ -32247,10 +32445,16 @@ interactions:
       - same-origin
       etag:
       - '"e7b0375001f109a6b8873d756ad4f7bbb15fbaa5"'
+      ratelimit:
+      - '"resolvers";r=4975;t=226'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -32275,8 +32479,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '14548174'
+      - '1679'
       connection:
       - keep-alive
       content-disposition:
@@ -32291,10 +32497,16 @@ interactions:
       - same-origin
       etag:
       - '"e7b0375001f109a6b8873d756ad4f7bbb15fbaa5"'
+      ratelimit:
+      - '"resolvers";r=4974;t=226'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -32332,13 +32544,15 @@ interactions:
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=2985;t=97'
+      - '"resolvers";r=4979;t=47'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 404
       message: Not Found
@@ -32380,13 +32594,17 @@ interactions:
       location:
       - /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/1_Pooling%2Fconfig.json?%2Fsentence-transformers%2Fall-MiniLM-L6-v2%2Fresolve%2Fmain%2F1_Pooling%2Fconfig.json=&etag=%22d1514c3162bbe87b343f565fadc62e6c06f04f03%22
       ratelimit:
-      - '"resolvers";r=2984;t=97'
+      - '"resolvers";r=4978;t=47'
       ratelimit-policy:
-      - '"fixed window";"resolvers";q=3000;w=300'
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin, Accept
+      x-linked-etag:
+      - '"d1514c3162bbe87b343f565fadc62e6c06f04f03"'
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 307
       message: Temporary Redirect
@@ -32411,8 +32629,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '9911788'
+      - '1388497'
       connection:
       - keep-alive
       content-disposition:
@@ -32427,10 +32647,16 @@ interactions:
       - same-origin
       etag:
       - '"d1514c3162bbe87b343f565fadc62e6c06f04f03"'
+      ratelimit:
+      - '"resolvers";r=4983;t=143'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -32462,8 +32688,10 @@ interactions:
       - https://huggingface.co
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
       age:
-      - '11352458'
+      - '1680'
       connection:
       - keep-alive
       content-disposition:
@@ -32478,10 +32706,16 @@ interactions:
       - same-origin
       etag:
       - '"d1514c3162bbe87b343f565fadc62e6c06f04f03"'
+      ratelimit:
+      - '"resolvers";r=4971;t=226'
+      ratelimit-policy:
+      - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
       - Origin
+      x-repo-commit:
+      - c9745ed1d9f207416be6d2e6f8de32d1f16199bf
     status:
       code: 200
       message: OK
@@ -32513,11 +32747,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"1b18-tYsUubMIdJpiie7REeH+rkhWHKs"
+      - W/"1b18-lCJnZzuriAlH9WT135arObbvyQM"
       ratelimit:
-      - '"api";r=497;t=97'
+      - '"api";r=995;t=46'
       ratelimit-policy:
-      - '"fixed window";"api";q=500;w=300'
+      - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
       - strict-origin-when-cross-origin
       vary:
@@ -32575,7 +32809,7 @@ interactions:
       inference: warm
       lastModified: '2025-03-06T13:37:44.000Z'
       library_name: sentence-transformers
-      likes: 4211
+      likes: 4212
       mask_token: '[MASK]'
       model-index: null
       modelId: sentence-transformers/all-MiniLM-L6-v2

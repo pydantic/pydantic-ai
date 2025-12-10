@@ -15,6 +15,16 @@ else:
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
 FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
+ALLOWED_HEADER_PREFIXES = {
+    # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
+    'x-xet-',
+}
+ALLOWED_HEADERS = {
+    # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
+    'x-repo-commit',
+    'x-linked-size',
+    'x-linked-etag',
+}
 
 
 class LiteralDumper(Dumper):
@@ -55,7 +65,11 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
             headers = {k: v for k, v in headers.items() if k not in FILTERED_HEADERS}
             # filter headers by prefix
             headers = {
-                k: v for k, v in headers.items() if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES)
+                k: v
+                for k, v in headers.items()
+                if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES)
+                or k in ALLOWED_HEADERS
+                or any(k.startswith(prefix) for prefix in ALLOWED_HEADER_PREFIXES)
             }
             # update headers on source object
             data['headers'] = headers
