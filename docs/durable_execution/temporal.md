@@ -92,7 +92,7 @@ from pydantic_ai.durable_exec.temporal import (
 )
 
 agent = Agent(
-    'gpt-5',
+    'openai:gpt-5',
     instructions="You're an expert in geography.",
     name='geography',  # (10)!
 )
@@ -161,6 +161,17 @@ When `TemporalAgent` dynamically creates activities for the wrapped agent's mode
 For dynamic toolsets created with the [`@agent.toolset`][pydantic_ai.Agent.toolset] decorator, the `id` parameter can be set explicitly or it will default to the function name:
 
 ```python {test="skip"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.toolsets import FunctionToolset
+
+agent = Agent('openai:gpt-5')
+
+@dataclass
+class MyDeps:
+    ...
+
 @agent.toolset(id='my_dynamic_tools')
 def my_toolset(ctx: RunContext[MyDeps]) -> FunctionToolset:
     ...
