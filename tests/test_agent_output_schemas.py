@@ -234,14 +234,55 @@ async def test_image_output_json_schema():
                 'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
                 'media_type': {
                     'anyOf': [
+                        {
+                            'enum': ['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac'],
+                            'type': 'string',
+                        },
                         {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                        {
+                            'enum': [
+                                'application/pdf',
+                                'text/plain',
+                                'text/csv',
+                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                'text/html',
+                                'text/markdown',
+                                'application/msword',
+                                'application/vnd.ms-excel',
+                            ],
+                            'type': 'string',
+                        },
                         {'type': 'string'},
                     ],
                     'title': 'Media Type',
                 },
+                'vendor_metadata': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Vendor Metadata',
+                },
                 'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                'identifier': {
+                    'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                    'readOnly': True,
+                    'title': 'Identifier',
+                    'type': 'string',
+                },
             },
-            'required': ['data', 'media_type'],
+            'required': ['data', 'media_type', 'identifier'],
             'title': 'BinaryImage',
             'type': 'object',
         }
@@ -259,14 +300,62 @@ async def test_image_output_json_schema():
                         'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {'type': 'string'},
                             ],
                             'title': 'Media Type',
                         },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'identifier': {
+                            'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'title': 'Identifier',
+                            'type': 'string',
+                        },
                     },
-                    'required': ['data', 'media_type'],
+                    'required': ['data', 'media_type', 'identifier'],
                     'title': 'BinaryImage',
                     'type': 'object',
                 },
@@ -348,14 +437,62 @@ async def test_deferred_output_json_schema():
                         'data': {'format': 'binary', 'title': 'Data', 'type': 'string'},
                         'media_type': {
                             'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
                                 {'type': 'string'},
                             ],
                             'title': 'Media Type',
                         },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
+                        'identifier': {
+                            'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'title': 'Identifier',
+                            'type': 'string',
+                        },
                     },
-                    'required': ['data', 'media_type'],
+                    'required': ['data', 'media_type', 'identifier'],
                     'title': 'BinaryImage',
                     'type': 'object',
                 },

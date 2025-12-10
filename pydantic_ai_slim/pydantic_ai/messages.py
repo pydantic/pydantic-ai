@@ -614,17 +614,14 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(init=False, repr=False)
 class BinaryImage(BinaryContent):
     """Binary content that's guaranteed to be an image."""
-
-    media_type: ImageMediaType | str
 
     def __init__(
         self,
         data: bytes,
         *,
-        media_type: ImageMediaType | str,
+        media_type: str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -637,26 +634,6 @@ class BinaryImage(BinaryContent):
 
         if not self.is_image:
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
-
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls, core_schema: pydantic_core.core_schema.CoreSchema, handler: pydantic.GetJsonSchemaHandler
-    ) -> pydantic.json_schema.JsonSchemaValue:
-        json_schema = handler(core_schema)
-        if handler.mode == 'serialization':  # pragma: no branch
-            json_schema = cls._remove_json_schema_property(json_schema, 'identifier')
-            json_schema = cls._remove_json_schema_property(json_schema, 'vendor_metadata')
-        return json_schema
-
-    @classmethod
-    def _remove_json_schema_property(
-        cls, json_schema: pydantic.json_schema.JsonSchemaValue, property_name: str
-    ) -> pydantic.json_schema.JsonSchemaValue:
-        if 'properties' in json_schema:  # pragma: no branch
-            json_schema['properties'].pop(property_name, None)
-        if 'required' in json_schema:  # pragma: no branch
-            json_schema['required'] = [x for x in json_schema['required'] if x != property_name]
-        return json_schema
 
 
 @dataclass
