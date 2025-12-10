@@ -379,7 +379,7 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
 !!! note "Limiting tool executions"
-    You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+    You can cap the total number of tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). For finer control, you can limit how many times a *specific* tool can be called by setting the `max_uses` parameter when registering the tool (e.g., `@agent.tool(max_uses=3)` or `Tool(func, max_uses=3)`). Once a tool reaches its `max_uses` limit, it is automatically removed from the available tools for subsequent steps in the run. The `tool_calls` counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
 ## See Also
 
