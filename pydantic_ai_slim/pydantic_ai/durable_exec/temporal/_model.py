@@ -32,7 +32,7 @@ class _RequestParams:
     # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
-    serialized_run_context: Any | None = None
+    serialized_run_context: Any
     model_id: str | None = None
 
 
@@ -92,10 +92,6 @@ class TemporalModel(WrapperModel):
         self._model_id_var: ContextVar[str | None] = ContextVar('_temporal_model_id', default=None)
         self._model_instances = dict(model_instances or {})
         self._provider_factory = provider_factory
-        # Store the model spec so we can re-infer with provider_factory if needed
-        self._default_model_spec: str | None = None
-        if provider_factory is not None:
-            self._default_model_spec = f'{model.system}:{model.model_name}'
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any) -> ModelResponse:
@@ -112,9 +108,6 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
-
-            if params.serialized_run_context is None:  # pragma: no cover
-                raise UserError('Serialized run context is required for Temporal streaming activities.')
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             model_for_request = self._resolve_model(params, deps)
             async with model_for_request.request_stream(
@@ -237,9 +230,6 @@ class TemporalModel(WrapperModel):
     def _resolve_model(self, params: _RequestParams, deps: Any | None) -> Model:
         model_id = params.model_id
         if model_id is None:
-            # Re-infer the default model if provider_factory is set
-            if self._default_model_spec is not None:
-                return self._infer_model(self._default_model_spec, params, deps)
             return self.wrapped
 
         if model_id in self._model_instances:
