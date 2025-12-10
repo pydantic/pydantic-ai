@@ -3107,31 +3107,15 @@ def test_temporal_model_resolve_model_returns_wrapped_when_model_id_none(monkeyp
     test_model = TestModel()
     agent = Agent(test_model, name='resolve_reinfer_default')
 
-    provider_calls: list[tuple[RunContext[Any] | None, str]] = []
+    provider_factory_called = False
 
     def mock_provider_factory(
         run_context: RunContext[Any] | None,
         provider_name: str,
-    ) -> Provider[Any]:
-        provider_calls.append((run_context, provider_name))
-
-        class MockProvider(Provider[None]):
-            def __init__(self) -> None:
-                self._client = None
-
-            @property
-            def name(self) -> str:  # pragma: no cover
-                return 'mock'
-
-            @property
-            def base_url(self) -> str:  # pragma: no cover
-                return 'https://example.com'
-
-            @property
-            def client(self) -> None:  # pragma: no cover
-                return None
-
-        return MockProvider()
+    ) -> Provider[Any]:  # pragma: no cover
+        nonlocal provider_factory_called
+        provider_factory_called = True
+        raise AssertionError('provider_factory should not be called when model_id is None')
 
     temporal_agent = TemporalAgent(
         agent,
@@ -3141,13 +3125,12 @@ def test_temporal_model_resolve_model_returns_wrapped_when_model_id_none(monkeyp
 
     temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
 
-    infer_calls: list[str] = []
+    infer_model_called = False
 
-    def mock_infer_model(model_name: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:
-        infer_calls.append(model_name)
-        # Call the provider factory to verify it's wired correctly
-        provider_factory('test')
-        return TestModel()
+    def mock_infer_model(model_name: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:  # pragma: no cover
+        nonlocal infer_model_called
+        infer_model_called = True
+        raise AssertionError('infer_model should not be called when model_id is None')
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
 
@@ -3163,9 +3146,9 @@ def test_temporal_model_resolve_model_returns_wrapped_when_model_id_none(monkeyp
     result = temporal_model._resolve_model(params, {'key': 'value'})  # pyright: ignore[reportPrivateUsage]
     # When model_id is None, returns the wrapped model directly
     assert result is test_model
-    # No calls to infer_model or provider_factory when model_id is None
-    assert infer_calls == []
-    assert len(provider_calls) == 0
+    # Verify neither was called
+    assert not provider_factory_called
+    assert not infer_model_called
 
 
 def test_temporal_model_request_without_run_context(monkeypatch: MonkeyPatch):
