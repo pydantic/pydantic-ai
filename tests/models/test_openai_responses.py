@@ -8383,6 +8383,81 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         await _cleanup_openai_resources(file, vector_store, async_client)
 
 
+@pytest.mark.vcr()
+async def test_openai_responses_model_file_search_tool_with_results(allow_model_requests: None, openai_api_key: str):
+    """Test that openai_include_file_search_results setting includes file search results in the response."""
+    import asyncio
+    import os
+    import tempfile
+
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.builtin_tools import FileSearchTool
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
+        test_file_path = f.name
+
+    file = None
+    vector_store = None
+    try:
+        with open(test_file_path, 'rb') as f:
+            file = await async_client.files.create(file=f, purpose='assistants')
+
+        vector_store = await async_client.vector_stores.create(name='test-file-search-with-results')
+        await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
+
+        await asyncio.sleep(2)
+
+        m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            m,
+            instructions='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+        )
+
+        # Use the openai_include_file_search_results setting to include search results
+        result = await agent.run(
+            'What is the capital of France?',
+            model_settings={'openai_include_file_search_results': True},
+        )
+
+        messages = result.all_messages()
+        assert len(messages) == 2
+
+        # Check that the response has file search results
+        response = messages[1]
+        assert isinstance(response, ModelResponse)
+
+        # Find the BuiltinToolReturnPart
+        return_parts = [p for p in response.parts if isinstance(p, BuiltinToolReturnPart)]
+        assert len(return_parts) == 1
+
+        return_part = return_parts[0]
+        assert return_part.tool_name == 'file_search'
+        assert isinstance(return_part.content, dict)
+        assert return_part.content.get('status') == 'completed'
+
+        # When openai_include_file_search_results is True, results should be included
+        assert 'results' in return_part.content, (
+            'Expected file search results to be included when openai_include_file_search_results=True'
+        )
+        results = return_part.content['results']
+        assert isinstance(results, list)
+        assert len(results) > 0
+
+        # Verify the result structure contains expected fields
+        first_result = results[0]
+        assert 'text' in first_result or 'filename' in first_result or 'file_id' in first_result
+
+    finally:
+        os.unlink(test_file_path)
+        await _cleanup_openai_resources(file, vector_store, async_client)
+
+
 async def test_openai_responses_runs_with_instructions_only(
     allow_model_requests: None,
     openai_api_key: str,

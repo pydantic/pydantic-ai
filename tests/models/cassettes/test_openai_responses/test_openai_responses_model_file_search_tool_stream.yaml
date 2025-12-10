@@ -31,11 +31,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - cakewalk-technologies-gmbh-exelup
+      - test-org
       openai-processing-ms:
       - '187'
       openai-project:
-      - proj_KcWyWZeHlcio1nNFXqORaTwa
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -89,11 +89,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - cakewalk-technologies-gmbh-exelup
+      - test-org
       openai-processing-ms:
       - '488'
       openai-project:
-      - proj_KcWyWZeHlcio1nNFXqORaTwa
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -155,11 +155,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - cakewalk-technologies-gmbh-exelup
+      - test-org
       openai-processing-ms:
       - '961'
       openai-project:
-      - proj_KcWyWZeHlcio1nNFXqORaTwa
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -288,11 +288,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       openai-organization:
-      - cakewalk-technologies-gmbh-exelup
+      - test-org
       openai-processing-ms:
       - '104'
       openai-project:
-      - proj_KcWyWZeHlcio1nNFXqORaTwa
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -333,11 +333,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - cakewalk-technologies-gmbh-exelup
+      - test-org
       openai-processing-ms:
       - '262'
       openai-project:
-      - proj_KcWyWZeHlcio1nNFXqORaTwa
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -382,11 +382,11 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - cakewalk-technologies-gmbh-exelup
+      - test-org
       openai-processing-ms:
       - '1196'
       openai-project:
-      - proj_KcWyWZeHlcio1nNFXqORaTwa
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
