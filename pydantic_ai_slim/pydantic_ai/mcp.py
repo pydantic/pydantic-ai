@@ -590,6 +590,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             toolset=self,
             tool_def=tool_def,
             max_retries=self.max_retries,
+            max_uses=None,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
