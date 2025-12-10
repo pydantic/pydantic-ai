@@ -25,7 +25,6 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -682,9 +681,9 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -706,6 +705,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -734,6 +734,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     ),
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(

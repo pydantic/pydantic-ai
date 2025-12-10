@@ -31,7 +31,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -325,9 +324,9 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -356,6 +355,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -384,6 +384,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 run_id=IsStr(),
             ),
             ModelResponse(

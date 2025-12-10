@@ -23,7 +23,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -292,15 +291,12 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -331,6 +327,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -428,15 +425,12 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What is the capital of France?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -467,6 +461,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1184,15 +1179,12 @@ async def test_bedrock_model_thinking_part_from_other_model(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1253,6 +1245,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(

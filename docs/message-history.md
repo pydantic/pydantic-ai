@@ -42,15 +42,12 @@ print(result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -59,7 +56,7 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -86,15 +83,12 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                    ),
+                    )
                 ],
+                instructions='Be a helpful assistant.',
                 run_id='...',
             )
         ]
@@ -113,15 +107,12 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                    ),
+                    )
                 ],
+                instructions='Be a helpful assistant.',
                 run_id='...',
             ),
             ModelResponse(
@@ -169,15 +160,12 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -186,7 +174,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -198,6 +186,7 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -206,7 +195,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=61, output_tokens=26),
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -294,15 +283,12 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -311,7 +297,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -323,6 +309,7 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -331,7 +318,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=61, output_tokens=26),
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
         model_name='gemini-2.5-pro',
         timestamp=datetime.datetime(...),
         run_id='...',
