@@ -13,7 +13,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cerebras import (
         CerebrasModel,
         CerebrasModelSettings,
-        _cerebras_settings_to_openai_settings,
+        _cerebras_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
