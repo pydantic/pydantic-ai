@@ -9,6 +9,7 @@ from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
+from pydantic import TypeAdapter
 from typing_extensions import Self, TypeIs, TypeVar
 
 from pydantic_graph import End
@@ -24,6 +25,7 @@ from .. import (
     usage as _usage,
 )
 from .._json_schema import JsonSchema
+from .._output import flatten_output_type
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
@@ -124,10 +126,27 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
-        """The output JSON schema."""
-        raise NotImplementedError
+        """The output return JSON schema."""
+        if output_type is None:
+            output_type = self.output_type
+
+        flat_output_type = flatten_output_type(output_type=output_type)
+
+        json_schemas: list[JsonSchema] = []
+        for output_spec in flat_output_type:
+            json_schema = TypeAdapter(output_spec).json_schema(mode='serialization')
+            if json_schema not in json_schemas:
+                json_schemas.append(json_schema)
+
+        if len(json_schemas) == 1:
+            return json_schemas[0]
+        else:
+            json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
+            json_schema: JsonSchema = {'anyOf': json_schemas}
+            if all_defs:
+                json_schema['$defs'] = all_defs
+            return json_schema
 
     @overload
     async def run(

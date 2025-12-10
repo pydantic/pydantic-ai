@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
+from pydantic._internal._typing_extra import get_function_type_hints
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
@@ -1012,3 +1013,31 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
         else:
             outputs_flat.append(cast(_OutputSpecItem[T], output))
     return outputs_flat
+
+
+def flatten_output_type(
+    output_type: OutputSpec[OutputDataT],
+) -> list[OutputSpec[OutputDataT] | type[str]]:
+    flat_output_type: list[OutputSpec[OutputDataT] | type[str]] = []
+
+    # forces output_type to an iterable
+    output_type = _flatten_output_spec(output_type)
+    for output_spec in output_type:
+        if isinstance(output_spec, NativeOutput):
+            flat_output_type += _flatten_output_spec(output_spec.outputs)
+        elif isinstance(output_spec, PromptedOutput):
+            flat_output_type += _flatten_output_spec(output_spec.outputs)
+        elif isinstance(output_spec, TextOutput):
+            flat_output_type.append(str)
+        elif isinstance(output_spec, ToolOutput):
+            flat_output_type += _flatten_output_spec(output_spec.output)
+        elif inspect.isfunction(output_spec) or inspect.ismethod(output_spec):
+            type_hints = get_function_type_hints(output_spec)
+            if return_annotation := type_hints.get('return', None):
+                flat_output_type += _flatten_output_spec(return_annotation)
+            else:
+                flat_output_type.append(str)
+        else:
+            flat_output_type.append(output_spec)
+
+    return flat_output_type

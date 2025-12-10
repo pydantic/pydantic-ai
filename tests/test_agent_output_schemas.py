@@ -43,6 +43,12 @@ async def test_function_output_json_schema():
     agent = Agent('test', output_type=[func])
     assert agent.output_json_schema() == snapshot({'type': 'integer'})
 
+    def func_no_return_type_hint(x: int):
+        return x  # pragma: no cover
+
+    agent = Agent('test', output_type=[func_no_return_type_hint])
+    assert agent.output_json_schema() == snapshot({'type': 'string'})
+
 
 async def test_auto_output_json_schema():
     # one output

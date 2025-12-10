@@ -11,7 +11,6 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
-from pydantic import TypeAdapter
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
@@ -36,7 +35,7 @@ from .._agent_graph import (
     capture_run_messages,
 )
 from .._json_schema import JsonSchema
-from .._output import OutputToolset, _flatten_output_spec  # pyright: ignore[reportPrivateUsage]
+from .._output import OutputToolset, flatten_output_type
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
@@ -85,6 +84,8 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'JsonSchema',
+    'flatten_output_type',
 )
 
 
@@ -957,45 +958,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             assert not dynamic, "dynamic can't be True in this case"
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
-
-    def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
-        """The output return JSON schema."""
-        if output_type is None:
-            output_type = self.output_type
-
-        # forces output_type to an iterable
-        output_type = _flatten_output_spec(output_type)
-
-        flat_output_type: list[OutputSpec[OutputDataT | RunOutputDataT] | type[str]] = []
-        for output_spec in output_type:
-            if isinstance(output_spec, _output.NativeOutput):
-                flat_output_type += _flatten_output_spec(output_spec.outputs)
-            elif isinstance(output_spec, _output.PromptedOutput):
-                flat_output_type += _flatten_output_spec(output_spec.outputs)
-            elif isinstance(output_spec, _output.TextOutput):
-                flat_output_type.append(str)
-            elif isinstance(output_spec, _output.ToolOutput):
-                flat_output_type += _flatten_output_spec(output_spec.output)
-            elif inspect.isfunction(output_spec) or inspect.ismethod(output_spec):
-                return_annotation = inspect.signature(output_spec).return_annotation
-                flat_output_type += _flatten_output_spec(return_annotation)
-            else:
-                flat_output_type.append(output_spec)
-
-        json_schemas: list[JsonSchema] = []
-        for output_spec in flat_output_type:
-            json_schema = TypeAdapter(output_spec).json_schema(mode='serialization')
-            if json_schema not in json_schemas:
-                json_schemas.append(json_schema)
-
-        if len(json_schemas) == 1:
-            return json_schemas[0]
-        else:
-            json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
-            json_schema: JsonSchema = {'anyOf': json_schemas}
-            if all_defs:
-                json_schema['$defs'] = all_defs
-            return json_schema
 
     @overload
     def output_validator(
