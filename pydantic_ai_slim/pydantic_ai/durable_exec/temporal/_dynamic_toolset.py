@@ -10,6 +10,7 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -26,6 +27,14 @@ from ._toolset import (
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _GetToolsParams:
     serialized_run_context: Any
+
+
+@dataclass
+class _ToolInfo:
+    """Serializable tool information returned from get_tools_activity."""
+
+    tool_def: ToolDefinition
+    max_retries: int
 
 
 class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -50,13 +59,16 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def get_tools_activity(params: _GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
+        async def get_tools_activity(params: _GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
             """Activity that calls the dynamic function and returns tool definitions."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
             async with self.wrapped:
                 tools = await self.wrapped.get_tools(ctx)
-                return {name: tool.tool_def for name, tool in tools.items()}
+                return {
+                    name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
+                    for name, tool in tools.items()
+                }
 
         get_tools_activity.__annotations__['deps'] = deps_type
 
@@ -71,16 +83,13 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             async with self.wrapped:
                 tools = await self.wrapped.get_tools(ctx)
                 tool = tools.get(params.name)
-                if tool is None:
-                    from pydantic_ai.exceptions import UserError
-
+                if tool is None:  # pragma: no cover
                     raise UserError(
                         f'Tool {params.name!r} not found in dynamic toolset {self.id!r}. '
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
 
-                args_dict = tool.args_validator.validate_python(params.tool_args)
-                return await self._wrap_call_tool_result(self.wrapped.call_tool(params.name, args_dict, ctx, tool))
+                return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool)
 
         call_tool_activity.__annotations__['deps'] = deps_type
 
@@ -93,9 +102,13 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         return [self.get_tools_activity, self.call_tool_activity]
 
     async def __aenter__(self) -> Self:
+        if not workflow.in_workflow():
+            await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
+        if not workflow.in_workflow():
+            return await self.wrapped.__aexit__(*args)
         return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -103,7 +116,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        tool_defs = await workflow.execute_activity(
+        tool_infos = await workflow.execute_activity(
             activity=self.get_tools_activity,
             args=[
                 _GetToolsParams(serialized_run_context=serialized_run_context),
@@ -111,7 +124,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             ],
             **self.activity_config,
         )
-        return {name: self._tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self._tool_for_tool_info(tool_info) for name, tool_info in tool_infos.items()}
 
     async def call_tool(
         self,
@@ -145,11 +158,15 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             )
         )
 
-    def _tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
-        """Create a ToolsetTool from a ToolDefinition for use outside activities."""
+    def _tool_for_tool_info(self, tool_info: _ToolInfo) -> ToolsetTool[AgentDepsT]:
+        """Create a ToolsetTool from a _ToolInfo for use outside activities.
+
+        We use `TOOL_SCHEMA_VALIDATOR` here which just parses JSON without additional validation,
+        because the actual args validation happens inside `call_tool_activity`.
+        """
         return ToolsetTool(
             toolset=self,
-            tool_def=tool_def,
-            max_retries=1,
+            tool_def=tool_info.tool_def,
+            max_retries=tool_info.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )

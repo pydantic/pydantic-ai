@@ -9,9 +9,9 @@ from pydantic import ConfigDict, Discriminator, with_config
 from temporalio.workflow import ActivityConfig
 from typing_extensions import assert_never
 
-from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
+from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._run_context import TemporalRunContext
@@ -96,6 +96,21 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
             raise ModelRetry(result.message)
         else:
             assert_never(result)
+
+    async def _call_tool_in_activity(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> CallToolResult:
+        """Call a tool inside an activity, re-validating args that were deserialized.
+
+        The tool args will already have been validated into their proper types in the `ToolManager`,
+        but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
+        """
+        args_dict = tool.args_validator.validate_python(tool_args)
+        return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
 
 
 def temporalize_toolset(

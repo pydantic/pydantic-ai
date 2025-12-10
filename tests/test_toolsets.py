@@ -721,18 +721,28 @@ async def test_visit_and_replace():
         ]
     )
     visited_toolset = toolset.visit_and_replace(lambda toolset: WrapperToolset(toolset))
-    assert visited_toolset == CombinedToolset(
-        [
-            WrapperToolset(WrapperToolset(toolset1)),
-            DynamicToolset(
-                toolset_func=active_dynamic_toolset.toolset_func,
-                per_run_step=active_dynamic_toolset.per_run_step,
-                _toolset=WrapperToolset(toolset2),
-                _run_step=active_dynamic_toolset._run_step,  # pyright: ignore[reportPrivateUsage]
-            ),
-            WrapperToolset(inactive_dynamic_toolset),
-        ]
-    )
+
+    # Check the structure of the visited toolset
+    assert isinstance(visited_toolset, CombinedToolset)
+    assert len(visited_toolset.toolsets) == 3
+
+    # First toolset is doubly wrapped
+    assert isinstance(visited_toolset.toolsets[0], WrapperToolset)
+    assert isinstance(visited_toolset.toolsets[0].wrapped, WrapperToolset)
+    assert visited_toolset.toolsets[0].wrapped.wrapped is toolset1
+
+    # Second toolset is a DynamicToolset with wrapped inner toolset
+    visited_dynamic = visited_toolset.toolsets[1]
+    assert isinstance(visited_dynamic, DynamicToolset)
+    assert visited_dynamic.toolset_func is active_dynamic_toolset.toolset_func
+    assert visited_dynamic.per_run_step == active_dynamic_toolset.per_run_step
+    assert isinstance(visited_dynamic._toolset, WrapperToolset)  # pyright: ignore[reportPrivateUsage]
+    assert visited_dynamic._toolset.wrapped is toolset2  # pyright: ignore[reportPrivateUsage]
+    assert visited_dynamic._run_step == active_dynamic_toolset._run_step  # pyright: ignore[reportPrivateUsage]
+
+    # Third toolset is the inactive dynamic toolset wrapped
+    assert isinstance(visited_toolset.toolsets[2], WrapperToolset)
+    assert visited_toolset.toolsets[2].wrapped is inactive_dynamic_toolset
 
 
 async def test_dynamic_toolset():
@@ -822,3 +832,53 @@ async def test_dynamic_toolset_empty():
         assert tools == {}
 
         assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_dynamic_toolset_id():
+    """Test that DynamicToolset can have an id set."""
+
+    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return FunctionToolset()
+
+    # No id by default
+    toolset_no_id = DynamicToolset[None](toolset_func=toolset_func)
+    assert toolset_no_id.id is None
+
+    # Explicit id
+    toolset_with_id = DynamicToolset[None](toolset_func=toolset_func, id='my_dynamic_toolset')
+    assert toolset_with_id.id == 'my_dynamic_toolset'
+
+    # copy() preserves id
+    copied = toolset_with_id.copy()
+    assert copied.id == 'my_dynamic_toolset'
+
+
+def test_agent_toolset_decorator_id():
+    """Test that @agent.toolset decorator auto-assigns id from function name or accepts explicit id."""
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(TestModel())
+
+    @agent.toolset
+    def my_tools(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return FunctionToolset()
+
+    @agent.toolset(id='custom_id')
+    def other_tools(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return FunctionToolset()
+
+    # The toolsets are DynamicToolsets with auto-assigned or custom ids
+    toolsets = agent.toolsets
+    assert len(toolsets) == 3  # FunctionToolset for agent tools + 2 dynamic toolsets
+
+    # First is the agent's own FunctionToolset
+    assert isinstance(toolsets[0], FunctionToolset)
+
+    # Second toolset should have id from function name
+    assert isinstance(toolsets[1], DynamicToolset)
+    assert toolsets[1].id == 'my_tools'
+
+    # Third toolset should have explicit id
+    assert isinstance(toolsets[2], DynamicToolset)
+    assert toolsets[2].id == 'custom_id'
