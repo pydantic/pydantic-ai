@@ -183,20 +183,7 @@ async def test_judge_binary_output_mock(mocker: MockerFixture, image_content: Bi
     mock_run.assert_called_once()
     call_args, *_ = mock_run.call_args
 
-    assert call_args == snapshot(
-        (
-            [
-                '<Output>',
-                image_content,
-                '</Output>',
-                """\
-<Rubric>
-dummy rubric
-</Rubric>\
-""",
-            ],
-        )
-    )
+    assert call_args == snapshot((['<Output>', image_content, '</Output>', '<Rubric>', 'dummy rubric', '</Rubric>'],))
 
 
 async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, image_content: BinaryContent):
@@ -270,10 +257,24 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture, image_con
 
     # Verify the agent was called with correct prompt
     call_args = mock_run.call_args[0]
-    assert '<Input>\nHello\n</Input>' in call_args[0]
-    assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
-    assert '<Output>\nHello world\n</Output>' in call_args[0]
-    assert '<Rubric>\nOutput contains input\n</Rubric>' in call_args[0]
+    assert call_args == snapshot(
+        (
+            """\
+<Input>
+Hello
+</Input>
+<Output>
+Hello world
+</Output>
+<Rubric>
+Output contains input
+</Rubric>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>\
+""",
+        )
+    )
 
     result = await judge_input_output_expected(image_content, 'Hello world', 'Hello', 'Output contains input')
     assert isinstance(result, GradingOutput)
@@ -282,10 +283,24 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture, image_con
     assert result.score == 1.0
 
     call_args = mock_run.call_args[0]
-    assert image_content in call_args[0]
-    assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
-    assert '<Output>\nHello world\n</Output>' in call_args[0]
-    assert '<Rubric>\nOutput contains input\n</Rubric>' in call_args[0]
+    assert call_args == snapshot(
+        (
+            [
+                '<Input>',
+                image_content,
+                '</Input>',
+                '<Output>',
+                'Hello world',
+                '</Output>',
+                '<Rubric>',
+                'Output contains input',
+                '</Rubric>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
+            ],
+        )
+    )
 
 
 @pytest.mark.anyio
@@ -312,10 +327,24 @@ async def test_judge_input_output_expected_with_model_settings_mock(
     assert result.score == 1.0
 
     call_args, call_kwargs = mock_run.call_args
-    assert '<Input>\nHello settings\n</Input>' in call_args[0]
-    assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
-    assert '<Output>\nHello world with settings\n</Output>' in call_args[0]
-    assert '<Rubric>\nOutput contains input with settings\n</Rubric>' in call_args[0]
+    assert call_args == snapshot(
+        (
+            """\
+<Input>
+Hello settings
+</Input>
+<Output>
+Hello world with settings
+</Output>
+<Rubric>
+Output contains input with settings
+</Rubric>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>\
+""",
+        )
+    )
     assert call_kwargs['model_settings'] == test_model_settings
     # Check if 'model' kwarg is passed, its value will be the default model or None
     assert 'model' in call_kwargs
@@ -334,10 +363,24 @@ async def test_judge_input_output_expected_with_model_settings_mock(
     assert result.score == 1.0
 
     call_args, call_kwargs = mock_run.call_args
-    assert image_content in call_args[0]
-    assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
-    assert '<Output>\nHello world with settings\n</Output>' in call_args[0]
-    assert '<Rubric>\nOutput contains input with settings\n</Rubric>' in call_args[0]
+    assert call_args == snapshot(
+        (
+            [
+                '<Input>',
+                image_content,
+                '</Input>',
+                '<Output>',
+                'Hello world with settings',
+                '</Output>',
+                '<Rubric>',
+                'Output contains input with settings',
+                '</Rubric>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
+            ],
+        )
+    )
     assert call_kwargs['model_settings'] == test_model_settings
     # Check if 'model' kwarg is passed, its value will be the default model or None
     assert 'model' in call_kwargs
@@ -476,10 +519,21 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
     assert result.score == 1.0
 
     call_args, call_kwargs = mock_run.call_args
-    assert '<Input>' not in call_args[0]
-    assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
-    assert '<Output>' in call_args[0]
-    assert '<Rubric>\nOutput contains input with settings\n</Rubric>' in call_args[0]
+    assert call_args == snapshot(
+        (
+            [
+                '<Output>',
+                image_content,
+                '</Output>',
+                '<Rubric>',
+                'Output contains input with settings',
+                '</Rubric>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
+            ],
+        )
+    )
     assert call_kwargs['model_settings'] == test_model_settings
     # Check if 'model' kwarg is passed, its value will be the default model or None
     assert 'model' in call_kwargs

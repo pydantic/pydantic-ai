@@ -232,21 +232,12 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
         list[str | UserContent]: the tagged section as a list of strings or UserContent
     """
     sections: list[str | UserContent] = []
-    if isinstance(content, str):
-        sections.append(f'<{tag}>\n{content}\n</{tag}>')
-    else:
-        sections.append(f'<{tag}>')
-        if isinstance(content, Sequence):
-            for item in content:  # type: ignore[reportUnknownVariableType]
-                if isinstance(item, str | MultiModalContent):
-                    sections.append(item)
-                else:
-                    sections.append(_stringify(item))
-        elif isinstance(content, MultiModalContent):
-            sections.append(content)
-        else:
-            sections.append(_stringify(content))
-        sections.append(f'</{tag}>')
+    content = content if isinstance(content, Sequence) and not isinstance(content, str) else [content]
+
+    sections.append(f'<{tag}>')
+    for item in content:
+        sections.append(item if isinstance(item, str | MultiModalContent) else _stringify(item))
+    sections.append(f'</{tag}>')
     return sections
 
 
