@@ -1661,7 +1661,12 @@ class ToolCallPartDelta:
         if self.tool_name_delta is None:
             return None
 
-        return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
+        return ToolCallPart(
+            self.tool_name_delta,
+            self.args_delta,
+            self.tool_call_id or _generate_tool_call_id(),
+            provider_details=self.provider_details,
+        )
 
     @overload
     def apply(self, part: ModelResponsePart) -> ToolCallPart | BuiltinToolCallPart: ...
@@ -1721,9 +1726,18 @@ class ToolCallPartDelta:
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
+        if self.provider_details:
+            merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
+            delta = replace(delta, provider_details=merged_provider_details)
+
         # If we now have enough data to create a full ToolCallPart, do so
         if delta.tool_name_delta is not None:
-            return ToolCallPart(delta.tool_name_delta, delta.args_delta, delta.tool_call_id or _generate_tool_call_id())
+            return ToolCallPart(
+                delta.tool_name_delta,
+                delta.args_delta,
+                delta.tool_call_id or _generate_tool_call_id(),
+                provider_details=delta.provider_details,
+            )
 
         return delta
 
@@ -1747,6 +1761,11 @@ class ToolCallPartDelta:
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
+
+        if self.provider_details:
+            merged_provider_details = {**(part.provider_details or {}), **self.provider_details}
+            part = replace(part, provider_details=merged_provider_details)
+
         return part
 
     __repr__ = _utils.dataclasses_no_defaults_repr
