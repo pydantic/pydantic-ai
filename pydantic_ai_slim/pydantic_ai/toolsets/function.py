@@ -37,7 +37,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     tools: dict[str, Tool[Any]]
     max_retries: int
-    default_timeout: float | None
+    timeout: float | None
     _id: str | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -48,7 +48,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,
-        default_timeout: float | None = None,
+        timeout: float | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -64,7 +64,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
                 Applies to all tools, unless overridden when adding a tool.
-            default_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
+            timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
                 Defaults to None (no timeout).
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
@@ -87,7 +87,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 in which case the ID will be used to identify the toolset's activities within the workflow.
         """
         self.max_retries = max_retries
-        self.default_timeout = default_timeout
+        self.timeout = timeout
         self._id = id
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
@@ -366,8 +366,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
 
-        # Per-tool timeout takes precedence over default timeout
-        timeout = tool.timeout if tool.timeout is not None else self.default_timeout
+        # Per-tool timeout takes precedence over toolset timeout
+        timeout = tool.timeout if tool.timeout is not None else self.timeout
         if timeout is not None:
             try:
                 with anyio.fail_after(timeout):

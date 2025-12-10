@@ -2752,8 +2752,8 @@ async def test_per_tool_timeout_overrides_agent_timeout():
 
 
 def test_agent_tool_timeout_passed_to_toolset():
-    """Test that agent-level tool_timeout is passed to FunctionToolset as default_timeout."""
+    """Test that agent-level tool_timeout is passed to FunctionToolset as timeout."""
     agent = Agent(TestModel(), tool_timeout=30.0)
 
-    # The agent's tool_timeout should be passed to the toolset as default_timeout
-    assert agent._function_toolset.default_timeout == 30.0
+    # The agent's tool_timeout should be passed to the toolset as timeout
+    assert agent._function_toolset.timeout == 30.0

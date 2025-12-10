@@ -342,7 +342,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._function_toolset = _AgentFunctionToolset(
             tools,
             max_retries=self._max_tool_retries,
-            default_timeout=self._tool_timeout,
+            timeout=self._tool_timeout,
             output_schema=self._output_schema,
         )
         self._dynamic_toolsets = [
@@ -1428,7 +1428,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             function_toolset = _AgentFunctionToolset(
                 some_tools.value,
                 max_retries=self._max_tool_retries,
-                default_timeout=self._tool_timeout,
+                timeout=self._tool_timeout,
                 output_schema=self._output_schema,
             )
         else:
@@ -1536,12 +1536,12 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,
-        default_timeout: float | None = None,
+        timeout: float | None = None,
         id: str | None = None,
         output_schema: _output.OutputSchema[Any],
     ):
         self.output_schema = output_schema
-        super().__init__(tools, max_retries=max_retries, default_timeout=default_timeout, id=id)
+        super().__init__(tools, max_retries=max_retries, timeout=timeout, id=id)
 
     @property
     def id(self) -> str:
