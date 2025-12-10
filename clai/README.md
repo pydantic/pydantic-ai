@@ -59,7 +59,7 @@ Launch a web-based chat interface:
 clai web -m openai:gpt-5
 ```
 
-![Web Chat UI](https://github.com/user-attachments/assets/8a1c90dc-f62b-4e35-9d66-59459b45790d)
+![Web Chat UI](https://github.com/user-attachments/assets/462d4647-a74d-4c35-9120-af0d682b04cf)
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
 
