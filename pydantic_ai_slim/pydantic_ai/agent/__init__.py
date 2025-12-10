@@ -1280,7 +1280,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
             toolset_id = id if id is not None else func_.__name__
-            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step, _id=toolset_id))
+            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step, id=toolset_id))
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
@@ -1384,7 +1384,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Copy the dynamic toolsets to ensure each run has its own instances
         def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             if isinstance(toolset, DynamicToolset):
-                return dataclasses.replace(toolset)
+                return toolset.copy()
             else:
                 return toolset
 

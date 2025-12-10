@@ -12,6 +12,7 @@ from typing_extensions import assert_never
 from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._run_context import TemporalRunContext
 
@@ -126,8 +127,6 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
         )
-
-    from pydantic_ai.toolsets._dynamic import DynamicToolset
 
     if isinstance(toolset, DynamicToolset):
         from ._dynamic_toolset import TemporalDynamicToolset
