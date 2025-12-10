@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
-import mimetypes
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -27,25 +26,43 @@ from .usage import RequestUsage
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
-_mime_types = MimeTypes(tuple(mimetypes.knownfiles))
-# Register manually MIME types that are not in the standard library or override standard ones
+_mime_types = MimeTypes()
 # Document types
+_mime_types.add_type('application/msword', '.doc')
+_mime_types.add_type('application/pdf', '.pdf')
+_mime_types.add_type('application/xml', '.xml')
+_mime_types.add_type('application/rtf', '.rtf')
+_mime_types.add_type('application/vnd.ms-excel', '.xls')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 _mime_types.add_type('text/markdown', '.mdx')
+_mime_types.add_type('text/plain', '.txt')
 _mime_types.add_type('text/x-asciidoc', '.asciidoc')
+
+# Image types
+_mime_types.add_type('image/gif', '.gif')
+_mime_types.add_type('image/jpeg', '.jpeg')
+_mime_types.add_type('image/jpeg', '.jpg')
+_mime_types.add_type('image/png', '.png')
+_mime_types.add_type('image/webp', '.webp')
 
 # Video types
 _mime_types.add_type('video/3gpp', '.three_gp')
+_mime_types.add_type('video/mp4', '.mp4')
+_mime_types.add_type('video/mpeg', '.mpeg')
+_mime_types.add_type('video/mpeg', '.mpg')
+_mime_types.add_type('video/quicktime', '.mov')
+_mime_types.add_type('video/webm', '.webm')
 _mime_types.add_type('video/x-flv', '.flv')
 _mime_types.add_type('video/x-matroska', '.mkv')
 _mime_types.add_type('video/x-ms-wmv', '.wmv')
 
 # Audio types
+_mime_types.add_type('audio/aac', '.aac')
+_mime_types.add_type('audio/aiff', '.aiff')
 _mime_types.add_type('audio/flac', '.flac')
 _mime_types.add_type('audio/mpeg', '.mp3')
 _mime_types.add_type('audio/ogg', '.oga')
-# override stdlib mimetypes that use x- prefix with standard types
-_mime_types.add_type('audio/aac', '.aac')
-_mime_types.add_type('audio/aiff', '.aiff')
 _mime_types.add_type('audio/wav', '.wav')
 
 
