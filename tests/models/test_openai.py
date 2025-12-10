@@ -873,6 +873,33 @@ async def test_document_url_input(allow_model_requests: None, openai_api_key: st
     assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
 
 
+async def test_document_url_input_response_api(allow_model_requests: None, openai_api_key: str):
+    """Test DocumentUrl with Responses API sends URL directly (default behavior)."""
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert 'Dummy PDF' in result.output
+
+
+async def test_document_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+    """Test DocumentUrl with force_download=True downloads and sends as file_data."""
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(
+        url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+        force_download=True,
+    )
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert 'Dummy PDF' in result.output
+
+
 @pytest.mark.vcr()
 async def test_image_url_tool_response(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))

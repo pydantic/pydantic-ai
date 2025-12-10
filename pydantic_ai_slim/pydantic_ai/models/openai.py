@@ -1844,24 +1844,23 @@ class OpenAIResponsesModel(Model):
                             detail=detail,
                         )
                     )
-                elif isinstance(item, AudioUrl):  # pragma: no cover
-                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_data=downloaded_item['data'],
-                            filename=f'filename.{downloaded_item["data_type"]}',
+                elif isinstance(item, AudioUrl | DocumentUrl):
+                    if item.force_download:
+                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                        content.append(
+                            responses.ResponseInputFileParam(
+                                type='input_file',
+                                file_data=downloaded_item['data'],
+                                filename=f'filename.{downloaded_item["data_type"]}',
+                            )
                         )
-                    )
-                elif isinstance(item, DocumentUrl):
-                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_data=downloaded_item['data'],
-                            filename=f'filename.{downloaded_item["data_type"]}',
+                    else:
+                        content.append(
+                            responses.ResponseInputFileParam(
+                                type='input_file',
+                                file_url=item.url,
+                            )
                         )
-                    )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 elif isinstance(item, CachePoint):
