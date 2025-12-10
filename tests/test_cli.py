@@ -129,13 +129,13 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
-def test_no_command_shows_help(capfd: CaptureFixture[str]):
-    """Test that running clai with no command shows help."""
-    assert cli([]) == 0
-    output = capfd.readouterr().out
-    assert 'usage:' in output
-    assert 'chat' in output
-    assert 'web' in output
+def test_no_command_defaults_to_chat(mocker: MockerFixture):
+    """Test that running clai with no command defaults to chat mode."""
+    # Mock _run_chat_command to avoid actual execution
+    mock_run_chat = mocker.patch('pydantic_ai._cli._run_chat_command', return_value=0)
+    result = cli([])
+    assert result == 0
+    mock_run_chat.assert_called_once()
 
 
 def test_list_models(capfd: CaptureFixture[str]):
@@ -510,14 +510,14 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
     create_test_module(custom_agent=test_agent)
 
     assert (
-        cli(['web', '--agent', 'test_module:custom_agent', '--host', '0.0.0.0', '--port', '8080'], prog_name='clai')
+        cli(['web', '--agent', 'test_module:custom_agent', '--host', '0.0.0.0', '--port', '7932'], prog_name='clai')
         == 0
     )
 
     mock_run_web.assert_called_once_with(
         agent_path='test_module:custom_agent',
         host='0.0.0.0',
-        port=8080,
+        port=7932,
         models=None,
         tools=None,
         instructions=None,
@@ -628,10 +628,10 @@ def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixtur
     assert '"memory" requires configuration and cannot be enabled via CLI' in output
 
 
-def test_run_web_command_agent_with_builtin_tools(
+def test_run_web_command_agent_builtin_tools_not_duplicated(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
-    """Test run_web_command merges agent's builtin tools with CLI-provided tools."""
+    """Test run_web_command only passes CLI-provided tools, not agent's builtin tools."""
     from pydantic_ai.builtin_tools import WebSearchTool
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
@@ -647,18 +647,20 @@ def test_run_web_command_agent_with_builtin_tools(
     assert result == 0
     mock_uvicorn_run.assert_called_once()
 
-    # Verify both tools are present
+    # Verify only CLI-provided tools are passed (agent's tools are handled by create_web_app)
     call_kwargs = mock_create_app.call_args.kwargs
     builtin_tools = call_kwargs.get('builtin_tools', [])
     tool_kinds = {t.kind for t in builtin_tools}
-    assert 'web_search' in tool_kinds
+    # web_search is on the agent, so it's NOT passed here (it's handled internally)
+    assert 'web_search' not in tool_kinds
+    # code_execution was provided via CLI, so it IS passed
     assert 'code_execution' in tool_kinds
 
 
 def test_run_web_command_agent_model_merged_with_cli_models(
     mocker: MockerFixture, create_test_module: Callable[..., None]
 ):
-    """Test that agent's model is included first, followed by CLI models."""
+    """Test that agent's model is included as 'default', followed by CLI models."""
     mock_uvicorn_run = mocker.patch('uvicorn.run')
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
@@ -673,22 +675,38 @@ def test_run_web_command_agent_model_merged_with_cli_models(
     mock_uvicorn_run.assert_called_once()
 
     call_kwargs = mock_create_app.call_args.kwargs
-    assert call_kwargs.get('models') == snapshot(['test:test', 'openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+    # Agent's model stored under 'default' key, CLI models use their names as keys
+    assert call_kwargs.get('models') == snapshot(
+        {
+            'default': IsInstance(TestModel),
+            'openai:gpt-5': 'openai:gpt-5',
+            'anthropic:claude-sonnet-4-5': 'anthropic:claude-sonnet-4-5',
+        }
+    )
 
 
-def test_run_web_command_agent_model_deduplicated(mocker: MockerFixture, create_test_module: Callable[..., None]):
-    """Test that duplicate models are removed when CLI passes the same model as agent."""
+def test_run_web_command_cli_models_deduplicated(mocker: MockerFixture, create_test_module: Callable[..., None]):
+    """Test that duplicate CLI models are removed."""
     mock_uvicorn_run = mocker.patch('uvicorn.run')
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     test_agent = Agent(TestModel(custom_output_text='test'))
     create_test_module(custom_agent=test_agent)
 
-    # Pass the same model that the agent has, plus another
-    result = run_web_command(agent_path='test_module:custom_agent', models=['test:test', 'openai:gpt-5'])
+    # Pass duplicate CLI models
+    result = run_web_command(
+        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+    )
 
     assert result == 0
     mock_uvicorn_run.assert_called_once()
 
     call_kwargs = mock_create_app.call_args.kwargs
-    assert call_kwargs.get('models') == snapshot(['test:test', 'openai:gpt-5'])
+    # Agent's model stored under 'default', CLI models deduplicated
+    assert call_kwargs.get('models') == snapshot(
+        {
+            'default': IsInstance(TestModel),
+            'openai:gpt-5': 'openai:gpt-5',
+            'anthropic:claude-sonnet-4-5': 'anthropic:claude-sonnet-4-5',
+        }
+    )

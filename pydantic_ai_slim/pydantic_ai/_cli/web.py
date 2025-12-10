@@ -5,21 +5,20 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import (
     BUILTIN_TOOL_TYPES,
-    DEPRECATED_BUILTIN_TOOL_TYPES,
+    DEPRECATED_BUILTIN_TOOL_KINDS,
     AbstractBuiltinTool,
 )
-from pydantic_ai.models import infer_model
+from pydantic_ai.models import Model
 from pydantic_ai.ui._web import create_web_app
 
 from . import load_agent
 
 # Tools that require configuration and cannot be enabled via CLI
 # (includes deprecated tools plus tools needing config like mcp_server and memory)
-UNSUPPORTED_CLI_TOOLS = DEPRECATED_BUILTIN_TOOL_TYPES | frozenset({'mcp_server', 'memory'})
+UNSUPPORTED_CLI_TOOL_KINDS = DEPRECATED_BUILTIN_TOOL_KINDS | frozenset({'mcp_server', 'memory'})
 
 
-# TODO add MCP support issue https://github.com/pydantic/pydantic-ai/issues/3635
-def run_web_command(
+def run_web_command(  # noqa: C901
     agent_path: str | None = None,
     host: str = '127.0.0.1',
     port: int = 7932,
@@ -56,23 +55,24 @@ def run_web_command(
         console.print('[red]Error: At least one model (-m) is required when agent has no model[/red]')
         return 1
 
-    # build models list
-    if agent.model is not None:
-        resolved = infer_model(agent.model)
-        agent_model = f'{resolved.system}:{resolved.model_name}'
-        models = [agent_model] + [m for m in (models or []) if m != agent_model]
+    # build models dict: agent's model as 'default', plus any CLI models
+    models_dict: dict[str, str] | None = None
+    if agent.model is not None or models:
+        models_dict = {}
+        if agent.model is not None:
+            # Use 'default' key - create_web_app will use agent.model for the actual model
+            models_dict['default'] = agent.model.model_name if isinstance(agent.model, Model) else agent.model
+        if models:
+            for m in models:
+                if m not in models_dict.values():
+                    models_dict[m] = m
 
-    # collect builtin tools
-    all_tool_instances: list[AbstractBuiltinTool] = [
-        t
-        for t in agent._builtin_tools  # pyright: ignore[reportPrivateUsage]
-        if isinstance(t, AbstractBuiltinTool)
-    ]
-
-    # then CLI tools
+    # collect CLI builtin tools only (agent's builtin_tools are handled by create_web_app)
+    cli_tool_instances: list[AbstractBuiltinTool] | None = None
     if tools:
+        cli_tool_instances = []
         for tool_id in tools:
-            if tool_id in UNSUPPORTED_CLI_TOOLS:
+            if tool_id in UNSUPPORTED_CLI_TOOL_KINDS:
                 console.print(
                     f'[yellow]Warning: "{tool_id}" requires configuration and cannot be enabled via CLI, skipping[/yellow]'
                 )
@@ -81,7 +81,7 @@ def run_web_command(
             if tool_cls is None:
                 console.print(f'[yellow]Warning: Unknown tool "{tool_id}", skipping[/yellow]')
                 continue
-            all_tool_instances.append(tool_cls())
+            cli_tool_instances.append(tool_cls())
 
     # For generic agent, instructions are already in the agent.
     # For provided agent, pass instructions as extra instructions for each run.
@@ -89,8 +89,8 @@ def run_web_command(
 
     app = create_web_app(
         agent,
-        models=models,
-        builtin_tools=all_tool_instances or None,
+        models=models_dict,
+        builtin_tools=cli_tool_instances,
         instructions=run_instructions,
     )
 
