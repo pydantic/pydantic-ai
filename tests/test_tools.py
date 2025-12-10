@@ -23,7 +23,6 @@ from pydantic_ai import (
     PrefixedToolset,
     RetryPromptPart,
     RunContext,
-    RunUsage,
     TextPart,
     Tool,
     ToolCallPart,
