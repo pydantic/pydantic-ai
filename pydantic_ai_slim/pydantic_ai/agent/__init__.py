@@ -72,6 +72,7 @@ if TYPE_CHECKING:
 
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..ui._web import ModelsParam
 
 __all__ = (
     'Agent',
@@ -1513,9 +1514,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def to_web(
         self,
         *,
-        models: Sequence[models.Model | models.KnownModelName | str]
-        | dict[str, models.Model | models.KnownModelName | str]
-        | None = None,
+        models: ModelsParam = None,
         builtin_tools: list[AbstractBuiltinTool] | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -1534,15 +1533,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         To provide different `deps` for each request use the lower-level adapters directly.
 
         Args:
-            models: Models to make available in the UI. Can be:
+            models: Additional models to make available in the UI. Can be:
                 - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
                 - A dict mapping display labels to model names/instances
                   (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
-                If not provided, uses the agent's configured model.
-                Builtin tool support is automatically determined from each model's profile.
-            builtin_tools: Builtin tools to make available. If not provided, uses the
-                agent's configured builtin tools. Tool labels in the UI are derived
-                from the tool's `label` property.
+                The agent's model is always included. Builtin tool support is automatically
+                determined from each model's profile.
+            builtin_tools: Additional builtin tools to make available in the UI.
+                The agent's configured builtin tools are always included. Tool labels
+                in the UI are derived from the tool's `label` property.
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
@@ -1566,17 +1565,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Then run with: uvicorn app:app --reload
             ```
         """
-        from ..ui._web import ModelsParam, create_web_app
-
-        # weird ternary for typing purposes
-        resolved_models: ModelsParam = models or (self._model and [self._model])
-
-        resolved_builtin_tools = builtin_tools or [t for t in self._builtin_tools if isinstance(t, AbstractBuiltinTool)]
+        from ..ui._web import create_web_app
 
         return create_web_app(
             self,
-            models=resolved_models,
-            builtin_tools=resolved_builtin_tools,
+            models=models,
+            builtin_tools=builtin_tools,
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,

@@ -66,7 +66,9 @@ class ModelProfile:
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
     """
 
-    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(default_factory=lambda: SUPPORTED_BUILTIN_TOOLS)
+    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(
+        default_factory=lambda: SUPPORTED_BUILTIN_TOOLS
+    )
     """The set of builtin tool types that this model/profile supports.
 
     Defaults to ALL builtin tools. Profile functions should explicitly

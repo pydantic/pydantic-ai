@@ -492,13 +492,14 @@ class OpenAIChatModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         # Check for WebSearchTool before base validation to provide a helpful error message
-        if not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search:
-            for tool in model_request_parameters.builtin_tools:
-                if isinstance(tool, WebSearchTool):
-                    raise UserError(
-                        f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
-                        f'Please use `OpenAIResponsesModel` instead.'
-                    )
+        if (
+            any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
+            and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
+        ):
+            raise UserError(
+                f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
+                f'Please use `OpenAIResponsesModel` instead.'
+            )
         return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(

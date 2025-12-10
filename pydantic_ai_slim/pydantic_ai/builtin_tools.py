@@ -436,6 +436,7 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.kind
 
 
-SUPPORTED_BUILTIN_TOOLS = frozenset(cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_KINDS)
+SUPPORTED_BUILTIN_TOOLS = frozenset(
+    cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_KINDS
+)
 """Get the set of all builtin tool types (excluding deprecated tools)."""
-
