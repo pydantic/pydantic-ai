@@ -56,6 +56,7 @@ nav:
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Testing: testing.md
+      - Web Chat UI: web.md
 
   - Pydantic Evals:
       - Overview: evals.md
@@ -98,7 +99,6 @@ nav:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
           - Vercel AI: ui/vercel-ai.md
-      - Web Chat UI: web.md
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:

@@ -212,7 +212,7 @@ Special prompts:
         choices=_CLI_TOOL_IDS,
         action='append',
         dest='tools',
-        help=f'Builtin tool to enable (can be repeated, e.g., -t web_search -t code_execution). '
+        help=f'Builtin tool to make available in the UI (can be repeated, e.g., -t web_search -t code_execution). '
         f'Available: {", ".join(_CLI_TOOL_IDS)}.',
     )
     web_parser.add_argument(

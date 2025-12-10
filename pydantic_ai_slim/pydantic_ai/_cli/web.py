@@ -37,9 +37,7 @@ def run_web_command(  # noqa: C901
         port: Port to bind the server to.
         models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']).
         tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution']).
-        instructions: System instructions. For generic agent (no agent_path), these become
-            the agent's instructions. With an agent, these are passed as extra instructions
-            to each run.
+        instructions: System instructions passed as extra instructions to each agent run.
     """
     console = Console()
 
@@ -49,19 +47,19 @@ def run_web_command(  # noqa: C901
             console.print(f'[red]Error: Could not load agent from {agent_path}[/red]')
             return 1
     else:
-        agent = Agent(instructions=instructions)
+        agent = Agent()
 
     if agent.model is None and not models:
         console.print('[red]Error: At least one model (-m) is required when agent has no model[/red]')
         return 1
 
     # build models dict: agent's model as 'default', plus any CLI models
-    models_dict: dict[str, str] | None = None
+    models_dict: dict[str, Model | str] | None = None
     if agent.model is not None or models:
         models_dict = {}
         if agent.model is not None:
             # Use 'default' key - create_web_app will use agent.model for the actual model
-            models_dict['default'] = agent.model.model_name if isinstance(agent.model, Model) else agent.model
+            models_dict['default'] = agent.model
         if models:
             for m in models:
                 if m not in models_dict.values():
@@ -83,15 +81,11 @@ def run_web_command(  # noqa: C901
                 continue
             cli_tool_instances.append(tool_cls())
 
-    # For generic agent, instructions are already in the agent.
-    # For provided agent, pass instructions as extra instructions for each run.
-    run_instructions = instructions if agent_path else None
-
     app = create_web_app(
         agent,
         models=models_dict,
         builtin_tools=cli_tool_instances,
-        instructions=run_instructions,
+        instructions=instructions,
     )
 
     agent_desc = agent_path if agent_path else 'generic agent'
