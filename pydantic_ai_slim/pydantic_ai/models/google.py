@@ -718,9 +718,6 @@ class GeminiStreamedResponse(StreamedResponse):
             if not parts:
                 continue  # pragma: no cover
 
-            async for event in self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata):
-                yield event
-
             for part in parts:
                 provider_details: dict[str, Any] | None = None
                 if part.thought_signature:
@@ -782,6 +779,10 @@ class GeminiStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+
+            # Yield file search results after text content, so text appears first in the stream
+            async for event in self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata):
+                yield event
 
     async def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None

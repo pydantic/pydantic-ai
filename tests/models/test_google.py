@@ -4280,7 +4280,9 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_call_id=IsStr(),
                             provider_name='google-gla',
                         ),
-                        TextPart(content='The capital of France is Paris. The city is well-known for its'),
+                        TextPart(
+                            content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
+                        ),
                         BuiltinToolReturnPart(
                             tool_name='file_search',
                             content=[
@@ -4292,7 +4294,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             timestamp=IsDatetime(),
                             provider_name='google-gla',
                         ),
-                        TextPart(content=' famous landmarks, including the Eiffel Tower.'),
                     ],
                     usage=RequestUsage(
                         input_tokens=15,
@@ -4341,9 +4342,14 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is Paris. The city is well-known for its')),
+                PartDeltaEvent(
+                    index=1, delta=TextPartDelta(content_delta=' famous landmarks, including the Eiffel Tower.')
+                ),
                 PartEndEvent(
                     index=1,
-                    part=TextPart(content='The capital of France is Paris. The city is well-known for its'),
+                    part=TextPart(
+                        content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
+                    ),
                     next_part_kind='builtin-tool-return',
                 ),
                 PartStartEvent(
@@ -4359,12 +4365,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     ),
                     previous_part_kind='text',
                 ),
-                PartStartEvent(
-                    index=3,
-                    part=TextPart(content=' famous landmarks, including the Eiffel Tower.'),
-                    previous_part_kind='builtin-tool-return',
-                ),
-                PartEndEvent(index=3, part=TextPart(content=' famous landmarks, including the Eiffel Tower.')),
                 BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                     part=BuiltinToolCallPart(
                         tool_name='file_search',
