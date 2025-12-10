@@ -213,16 +213,6 @@ class SimpleAgentWorkflow:
         return result.output
 
 
-@workflow.defn
-class WorkflowWithAgents(PydanticAIWorkflow):
-    __pydantic_ai_agents__ = [simple_temporal_agent]
-
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt)
-        return result.output
-
-
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
@@ -2374,7 +2364,17 @@ async def test_beta_graph_parallel_execution_in_workflow(client: Client):
         assert sorted(output) == [20, 30, 40]
 
 
-async def test_passing_agent_through_workflow(allow_model_requests: None, client: Client):
+@workflow.defn
+class WorkflowWithAgents(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_passing_agents_through_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
