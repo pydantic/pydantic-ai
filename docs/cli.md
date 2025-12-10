@@ -9,7 +9,7 @@ We plan to continue adding new features, such as interaction with MCP servers, a
 
 ## Usage
 
-<!-- Keep this in sync with clai/README.md -->
+<!-- clai/README.md links here for full docs -->
 
 You'll need to set an environment variable depending on the provider you intend to use.
 
@@ -101,7 +101,7 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 | `--port` | Port to bind server (default: 7932) |
 
 !!! note "Memory Tool"
-    The `memory` tool requires the agent to have memory configured and cannot be enabled via `-t memory` alone. An agent with memory must be provided via `--agent`.
+    The [`memory`](builtin-tools.md#memory-tool) builtin tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent and provide it via `--agent`.
 
 The web chat UI can also be launched programmatically using [`Agent.to_web()`][pydantic_ai.Agent.to_web], see the [Web UI documentation](web.md).
 
