@@ -352,20 +352,14 @@ async def test_judge_input_output_expected_with_model_settings_mock(
         (
             """\
 <Input>
-
-
 123
-
 </Input>
-
 <Output>
 Hello world with settings
 </Output>
-
 <Rubric>
 Output contains input with settings
 </Rubric>
-
 <ExpectedOutput>
 Hello
 </ExpectedOutput>\
@@ -392,20 +386,14 @@ Hello
         (
             """\
 <Input>
-
-
 123
-
 </Input>
-
 <Output>
 Hello world with settings
 </Output>
-
 <Rubric>
 Output contains input with settings
 </Rubric>
-
 <ExpectedOutput>
 Hello
 </ExpectedOutput>\
@@ -481,7 +469,7 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
     call_args, call_kwargs = mock_run.call_args
     assert '<Input>' not in call_args[0]
     assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
-    assert '<Output>\n' in call_args[0]
+    assert '<Output>' in call_args[0]
     assert '<Rubric>\nOutput contains input with settings\n</Rubric>' in call_args[0]
     assert call_kwargs['model_settings'] == test_model_settings
     # Check if 'model' kwarg is passed, its value will be the default model or None

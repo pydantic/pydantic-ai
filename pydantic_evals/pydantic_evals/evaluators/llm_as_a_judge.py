@@ -226,7 +226,7 @@ def _add_section(sections: list[str | UserContent], content: Any, tag: str) -> N
     if isinstance(content, str):
         sections.append(f'<{tag}>\n{content}\n</{tag}>')
     else:
-        sections.append(f'<{tag}>\n')
+        sections.append(f'<{tag}>')
         if isinstance(content, Sequence):
             for item in content:  # type: ignore[reportUnknownVariableType]
                 if isinstance(item, str | MultiModalContent):
@@ -261,5 +261,5 @@ def _build_prompt(
         _add_section(sections, expected_output, 'ExpectedOutput')
 
     if all(isinstance(section, str) for section in sections):
-        return '\n\n'.join(sections)  # type: ignore[arg-type]
+        return '\n'.join(sections)  # type: ignore[arg-type]
     return sections
