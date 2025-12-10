@@ -14,7 +14,6 @@ from starlette.responses import HTMLResponse, Response
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.toolsets import AbstractToolset
 
 from .api import ModelsParam, create_api_routes
 
@@ -67,7 +66,6 @@ def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
     builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
@@ -81,9 +79,8 @@ def create_web_app(
             - A dict mapping display labels to model names/instances
                 (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
             If not provided, the UI will have no model options.
-        builtin_tools: Optional list of builtin tools. If not provided, no tools will be available.
-        toolsets: Optional list of toolsets (e.g., MCP servers). These provide additional tools
-            that work with any model.
+        builtin_tools: Optional list of additional builtin tools to make available in the UI.
+            Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
@@ -95,7 +92,6 @@ def create_web_app(
         agent=agent,
         models=models,
         builtin_tools=builtin_tools,
-        toolsets=toolsets,
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,
