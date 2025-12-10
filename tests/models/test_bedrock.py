@@ -1652,8 +1652,8 @@ async def test_tool_choice_string_values(
     assert tool_config.get('toolChoice') == expected_tool_choice
 
 
-async def test_tool_choice_none_falls_back_to_auto(bedrock_provider: BedrockProvider) -> None:
-    """Bedrock lacks 'none' support, so we fall back to auto with a warning."""
+async def test_tool_choice_none_filters_out_function_tools(bedrock_provider: BedrockProvider) -> None:
+    """tool_choice='none' filters out function tools, leaving only output tools (if any)."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -1664,23 +1664,10 @@ async def test_tool_choice_none_falls_back_to_auto(bedrock_provider: BedrockProv
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
 
     settings: BedrockModelSettings = {'tool_choice': 'none'}
-    with pytest.warns(UserWarning, match="Bedrock does not support tool_choice='none'. Falling back to 'auto'"):
-        tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
-    assert tool_config == snapshot(
-        {
-            'tools': [
-                {
-                    'toolSpec': {
-                        'name': 'my_tool',
-                        'description': 'Test tool',
-                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
-                    }
-                }
-            ],
-            'toolChoice': {'auto': {}},
-        }
-    )
+    # With no output_tools, filtering results in empty tools -> None returned
+    assert tool_config is None
 
 
 async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvider) -> None:
@@ -1703,6 +1690,7 @@ async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvide
     settings: BedrockModelSettings = {'tool_choice': ['tool_a']}
     tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
+    # With tool filtering, only the specified tool is sent
     assert tool_config == snapshot(
         {
             'tools': [
@@ -1710,13 +1698,6 @@ async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvide
                     'toolSpec': {
                         'name': 'tool_a',
                         'description': 'Test tool A',
-                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
-                    }
-                },
-                {
-                    'toolSpec': {
-                        'name': 'tool_b',
-                        'description': 'Test tool B',
                         'inputSchema': {'json': {'type': 'object', 'properties': {}}},
                     }
                 },
@@ -1768,6 +1749,7 @@ async def test_tool_choice_multiple_tools_falls_back_to_any(bedrock_provider: Be
             ],
             'toolChoice': {'any': {}},
         }
+    )
 
 
 async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):

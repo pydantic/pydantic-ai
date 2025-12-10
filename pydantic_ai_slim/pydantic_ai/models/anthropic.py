@@ -47,10 +47,10 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _resolve_tool_choice,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
-    resolve_tool_choice,
 )
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -395,10 +395,8 @@ class AnthropicModel(Model):
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
         """
-        tools = self._get_tools(model_request_parameters, model_settings)
+        tools, tool_choice = self._infer_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
-
-        tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
@@ -483,10 +481,8 @@ class AnthropicModel(Model):
             raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
 
         # standalone function to make it easier to override
-        tools = self._get_tools(model_request_parameters, model_settings)
+        tools, tool_choice = self._infer_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
-
-        tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
@@ -593,22 +589,6 @@ class AnthropicModel(Model):
             _provider_url=self._provider.base_url,
         )
 
-    def _get_tools(
-        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
-    ) -> list[BetaToolUnionParam]:
-        tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()
-        ]
-
-        # Add cache_control to the last tool if enabled
-        if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
-            # If True, use '5m'; otherwise use the specified ttl value
-            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
-            last_tool = tools[-1]
-            last_tool['cache_control'] = self._build_cache_control(ttl)
-
-        return tools
-
     def _add_builtin_tools(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
@@ -672,78 +652,84 @@ class AnthropicModel(Model):
                 )
         return tools, mcp_servers, beta_features
 
-    def _infer_tool_choice(
+    def _infer_tool_choice(  # noqa: C901
         self,
-        tools: list[BetaToolUnionParam],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaToolChoiceParam | None:
-        if not tools:
-            return None
+    ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
+        """Determine which tools to send and the API tool_choice value.
 
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
         thinking_enabled = model_settings.get('anthropic_thinking') is not None
-        tool_choice: BetaToolChoiceParam
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
 
-        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved = _resolve_tool_choice(model_settings, model_request_parameters)
 
         if resolved is None:
-            # Default behavior: infer from allow_text_output
+            tool_defs_to_send = [*function_tools, *output_tools]
+        else:
+            tool_defs_to_send = resolved.filter_tools(function_tools, output_tools)
+
+        # Map ToolDefinitions to Anthropic format
+        tools: list[BetaToolUnionParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
+
+        # Add cache_control to the last tool if enabled
+        if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
+            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
+            last_tool = tools[-1]
+            last_tool['cache_control'] = self._build_cache_control(ttl)
+
+        if not tools:
+            return tools, None
+
+        # Determine API tool_choice value
+        tool_choice: BetaToolChoiceParam
+
+        if resolved is None:
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
 
         elif resolved.mode == 'auto':
-            tool_choice = {'type': 'auto'}
+            if not model_request_parameters.allow_text_output:
+                tool_choice = {'type': 'any'}
+            else:
+                tool_choice = {'type': 'auto'}
 
         elif resolved.mode == 'required':
             if thinking_enabled:
-                warnings.warn(
-                    "tool_choice='required' is not supported with Anthropic thinking mode. Falling back to 'auto'.",
-                    UserWarning,
-                    stacklevel=6,
+                raise UserError(
+                    "tool_choice='required' is not supported with Anthropic thinking mode. "
+                    'Use `output_type=NativeOutput(...)` or `PromptedOutput(...)` instead.'
                 )
-                tool_choice = {'type': 'auto'}
-            else:
-                tool_choice = {'type': 'any'}
+            tool_choice = {'type': 'any'}
 
         elif resolved.mode == 'none':
-            if not resolved.output_tools_fallback:
+            if not output_tools:
                 tool_choice = {'type': 'none'}
+            elif len(output_tools) == 1:
+                tool_choice = {'type': 'tool', 'name': output_tools[0].name}
             else:
-                output_tool_names = [t.name for t in model_request_parameters.output_tools]
-                if len(output_tool_names) == 1:
-                    tool_choice = {'type': 'tool', 'name': output_tool_names[0]}
-                else:
-                    # Anthropic's tool_choice only supports forcing a single tool via {"type": "tool", "name": "..."}
-                    # See: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
-                    warnings.warn(
-                        'Anthropic only supports forcing a single tool. '
-                        "Falling back to 'auto' for multiple output tools.",
-                        UserWarning,
-                        stacklevel=6,
-                    )
-                    tool_choice = {'type': 'auto'}
-
-        elif resolved.mode == 'specific':
-            if not resolved.tool_names:  # pragma: no cover
-                # tool_names will always be filled out when mode=='specific' i.e. 'specific' will only be set when there are tool names
-                raise RuntimeError('Internal error: resolved.tool_names is empty for specific tool choice.')
-            if thinking_enabled:
                 warnings.warn(
-                    "Forcing specific tools is not supported with Anthropic thinking mode. Falling back to 'auto'.",
-                    UserWarning,
-                    stacklevel=6,
+                    "Anthropic only supports forcing a single tool. Falling back to 'auto' for multiple output tools."
                 )
                 tool_choice = {'type': 'auto'}
-            elif len(resolved.tool_names) == 1:
+
+        elif resolved.mode == 'specific':
+            if thinking_enabled:
+                raise UserError(
+                    'Forcing specific tools is not supported with Anthropic thinking mode. '
+                    'Use `output_type=NativeOutput(...)` or `PromptedOutput(...)` instead.'
+                )
+            if len(resolved.tool_names) == 1:
                 tool_choice = {'type': 'tool', 'name': resolved.tool_names[0]}
             else:
                 warnings.warn(
-                    'Anthropic only supports forcing a single tool. '
-                    "Falling back to 'any' (required) for multiple function tools.",
-                    UserWarning,
-                    stacklevel=6,
+                    "Anthropic only supports forcing a single tool. Falling back to 'any' for multiple specific tools."
                 )
                 tool_choice = {'type': 'any'}
 
@@ -751,10 +737,9 @@ class AnthropicModel(Model):
             assert_never(resolved.mode)
 
         if 'parallel_tool_calls' in model_settings and tool_choice.get('type') != 'none':
-            # only `BetaToolChoiceNoneParam` doesn't have this field
             tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']  # pyright: ignore[reportGeneralTypeIssues]
 
-        return tool_choice
+        return tools, tool_choice
 
     async def _map_message(  # noqa: C901
         self,

@@ -95,15 +95,15 @@ class ModelSettings(TypedDict, total=False):
     tool_choice: Literal['none', 'required', 'auto'] | list[str] | None
     """Control which function tools the model can use.
 
-    This setting only affects function tools registered on the agent, not output tools
-    used for structured output. The `tool_choice` value does not directly map to API values
-    because it is managed by PydanticAI to only apply to function tools.
+    This setting affects both which tools are sent to the model and the API tool_choice parameter.
+    Output tools (used for structured output) are managed separately and remain available when needed.
 
-    * `None` (default): Automatically determined based on output configuration
-    * `'auto'`: Model decides whether to use function tools
-    * `'required'`: Model must use one of the available function tools
-    * `'none'`: Model cannot use function tools (output tools remain available if needed)
-    * `list[str]`: Model must use one of the specified function tools (validated against registered tools)
+    * `None` (default): All tools sent, tool_choice determined by output configuration
+    * `'auto'`: All tools sent, model decides whether to use them
+    * `'required'`: Only function tools sent (no output tools), model must use one
+    * `'none'`: Only output tools sent (no function tools), or no tools if none needed
+    * `list[str]`: Only specified function tools sent (plus output tools), model must use one
+    * `[]` (empty list): Treated as `'none'`
 
     Supported by:
 
@@ -113,7 +113,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Mistral
     * HuggingFace
-    * Bedrock (note: `'none'` not supported)
+    * Bedrock
     """
 
     seed: int

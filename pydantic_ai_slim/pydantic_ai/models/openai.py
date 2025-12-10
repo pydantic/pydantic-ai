@@ -56,10 +56,10 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _resolve_tool_choice,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
-    resolve_tool_choice,
 )
 
 try:
@@ -203,78 +203,6 @@ def _resolve_openai_image_generation_size(
         )
 
     return mapped_size
-
-
-@dataclass
-class _OpenAIToolChoiceResult:
-    """Intermediate representation of resolved tool choice for OpenAI APIs."""
-
-    kind: Literal['literal', 'single_tool', 'allowed_tools']
-    """The kind of tool choice result."""
-
-    literal_value: Literal['auto', 'required', 'none'] | None = None
-    """For 'literal' kind: the literal value to pass to the API."""
-
-    tool_name: str | None = None
-    """For 'single_tool' kind: the specific tool name."""
-
-    tool_names: list[str] | None = None
-    """For 'allowed_tools' kind: the list of allowed tool names."""
-
-    allowed_mode: Literal['auto', 'required'] = 'required'
-    """For 'allowed_tools' kind: whether the model must use one of the tools or can choose not to."""
-
-
-def _resolve_openai_tool_choice(
-    model_settings: ModelSettings,
-    model_request_parameters: ModelRequestParameters,
-    profile: ModelProfile,
-) -> _OpenAIToolChoiceResult | None:
-    """Resolve tool choice settings into an intermediate representation for OpenAI APIs.
-
-    This centralizes the logic shared between Chat Completions and Responses APIs.
-    Returns None if there are no tools, otherwise returns an _OpenAIToolChoiceResult.
-    """
-    resolved = resolve_tool_choice(model_settings, model_request_parameters)
-    openai_profile = OpenAIModelProfile.from_profile(profile)
-
-    if resolved is None:
-        # Default behavior: infer from allow_text_output
-        if not model_request_parameters.allow_text_output and openai_profile.openai_supports_tool_choice_required:
-            return _OpenAIToolChoiceResult(kind='literal', literal_value='required')
-        return _OpenAIToolChoiceResult(kind='literal', literal_value='auto')
-
-    if resolved.mode == 'auto':
-        return _OpenAIToolChoiceResult(kind='literal', literal_value='auto')
-
-    if resolved.mode == 'required':
-        if not openai_profile.openai_supports_tool_choice_required:
-            warnings.warn(
-                "tool_choice='required' is not supported by this model. Falling back to 'auto'.",
-                UserWarning,
-                stacklevel=7,
-            )
-            return _OpenAIToolChoiceResult(kind='literal', literal_value='auto')
-        return _OpenAIToolChoiceResult(kind='literal', literal_value='required')
-
-    if resolved.mode == 'none':
-        if not resolved.output_tools_fallback:
-            return _OpenAIToolChoiceResult(kind='literal', literal_value='none')
-        output_tool_names = [t.name for t in model_request_parameters.output_tools]
-        allowed_mode: Literal['auto', 'required'] = (
-            'required' if not model_request_parameters.allow_text_output else 'auto'
-        )
-        if len(output_tool_names) == 1:
-            return _OpenAIToolChoiceResult(kind='single_tool', tool_name=output_tool_names[0])
-        return _OpenAIToolChoiceResult(kind='allowed_tools', tool_names=output_tool_names, allowed_mode=allowed_mode)
-
-    if resolved.tool_names:
-        allowed_mode = 'required' if not model_request_parameters.allow_text_output else 'auto'
-        if len(resolved.tool_names) == 1:
-            return _OpenAIToolChoiceResult(kind='single_tool', tool_name=resolved.tool_names[0])
-        return _OpenAIToolChoiceResult(kind='allowed_tools', tool_names=resolved.tool_names, allowed_mode=allowed_mode)
-
-    return None  # pragma: no cover
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -622,10 +550,8 @@ class OpenAIChatModel(Model):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
-
-        tool_choice = self._get_tool_choice(tools, model_settings, model_request_parameters)
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -822,38 +748,96 @@ class OpenAIChatModel(Model):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
-
     def _get_tool_choice(
         self,
-        tools: list[chat.ChatCompletionToolParam],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> ChatCompletionToolChoiceOptionParam | None:
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
+
+        resolved = _resolve_tool_choice(model_settings, model_request_parameters)
+
+        if resolved is None:
+            tool_defs_to_send = [*function_tools, *output_tools]
+        else:
+            tool_defs_to_send = resolved.filter_tools(function_tools, output_tools)
+
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
+
         if not tools:
-            return None
+            return tools, None
 
-        resolved = _resolve_openai_tool_choice(model_settings, model_request_parameters, self.profile)
-        if resolved is None:  # pragma: no cover
-            return None
+        # Determine API tool_choice value
+        tool_choice: ChatCompletionToolChoiceOptionParam
 
-        if resolved.kind == 'literal':
-            return resolved.literal_value
+        if resolved is None:
+            if not model_request_parameters.allow_text_output and openai_profile.openai_supports_tool_choice_required:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
 
-        if resolved.kind == 'single_tool':
-            return ChatCompletionNamedToolChoiceParam(type='function', function={'name': resolved.tool_name or ''})
+        elif resolved.mode == 'auto':
+            if not model_request_parameters.allow_text_output and openai_profile.openai_supports_tool_choice_required:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
 
-        if resolved.kind == 'allowed_tools' and resolved.tool_names:
-            return ChatCompletionAllowedToolChoiceParam(
-                type='allowed_tools',
-                allowed_tools=ChatCompletionAllowedToolsParam(
-                    mode=resolved.allowed_mode,
-                    tools=[{'type': 'function', 'function': {'name': n}} for n in resolved.tool_names],
-                ),
-            )
+        elif resolved.mode == 'required':
+            if openai_profile.openai_supports_tool_choice_required:
+                tool_choice = 'required'
+            else:
+                warnings.warn(
+                    f"tool_choice='required' is not supported by model {self.model_name!r}, falling back to 'auto'",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = 'auto'
 
-        return None  # pragma: no cover
+        elif resolved.mode == 'none':
+            if not output_tools:
+                tool_choice = 'none'
+            elif len(output_tools) == 1:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function', function={'name': output_tools[0].name}
+                )
+            else:
+                allowed_mode: Literal['auto', 'required'] = (
+                    'required' if not model_request_parameters.allow_text_output else 'auto'
+                )
+                tool_choice = ChatCompletionAllowedToolChoiceParam(
+                    type='allowed_tools',
+                    allowed_tools=ChatCompletionAllowedToolsParam(
+                        mode=allowed_mode,
+                        tools=[{'type': 'function', 'function': {'name': t.name}} for t in output_tools],
+                    ),
+                )
+
+        elif resolved.mode == 'specific':
+            if len(resolved.tool_names) == 1:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function', function={'name': resolved.tool_names[0]}
+                )
+            else:
+                allowed_mode = 'required' if not model_request_parameters.allow_text_output else 'auto'
+                tool_choice = ChatCompletionAllowedToolChoiceParam(
+                    type='allowed_tools',
+                    allowed_tools=ChatCompletionAllowedToolsParam(
+                        mode=allowed_mode,
+                        tools=[{'type': 'function', 'function': {'name': n}} for n in resolved.tool_names],
+                    ),
+                )
+
+        else:
+            assert_never(resolved.mode)
+
+        return tools, tool_choice
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
@@ -1456,13 +1440,13 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
-        tools = (
+        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        tools: list[responses.ToolParam] = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
-            + self._get_tools(model_request_parameters)
+            + function_tools
         )
         profile = OpenAIModelProfile.from_profile(self.profile)
-        tool_choice = self._get_responses_tool_choice(tools, model_settings, model_request_parameters)
 
         previous_response_id = model_settings.get('openai_previous_response_id')
         if previous_response_id == 'auto':
@@ -1572,36 +1556,85 @@ class OpenAIResponsesModel(Model):
             return OMIT
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
-
     def _get_responses_tool_choice(
         self,
-        tools: list[responses.ToolParam],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> ResponsesToolChoice | None:
-        if not tools:
-            return None
+    ) -> tuple[list[responses.FunctionToolParam], ResponsesToolChoice | None]:
+        """Determine which tools to send and the API tool_choice value.
 
-        resolved = _resolve_openai_tool_choice(model_settings, model_request_parameters, self.profile)
-        if resolved is None:  # pragma: no cover
-            return None
+        Returns:
+            A tuple of (filtered_function_tools, tool_choice).
+            Note: builtin tools are handled separately and should be added to this list.
+        """
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
 
-        if resolved.kind == 'literal':
-            return resolved.literal_value
+        resolved = _resolve_tool_choice(model_settings, model_request_parameters)
 
-        if resolved.kind == 'single_tool':
-            return ToolChoiceFunctionParam(type='function', name=resolved.tool_name or '')
+        if resolved is None:
+            tool_defs_to_send = [*function_tools, *output_tools]
+        else:
+            tool_defs_to_send = resolved.filter_tools(function_tools, output_tools)
+        tools: list[responses.FunctionToolParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
 
-        if resolved.kind == 'allowed_tools' and resolved.tool_names:
-            return ToolChoiceAllowedParam(
-                type='allowed_tools',
-                mode=resolved.allowed_mode,
-                tools=[{'type': 'function', 'name': n} for n in resolved.tool_names],
-            )
+        # Determine API tool_choice value
+        tool_choice: ResponsesToolChoice | None
 
-        return None  # pragma: no cover
+        if resolved is None:
+            if not model_request_parameters.allow_text_output and openai_profile.openai_supports_tool_choice_required:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+
+        elif resolved.mode == 'auto':
+            if not model_request_parameters.allow_text_output and openai_profile.openai_supports_tool_choice_required:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+
+        elif resolved.mode == 'required':
+            if openai_profile.openai_supports_tool_choice_required:
+                tool_choice = 'required'
+            else:
+                warnings.warn(
+                    f"tool_choice='required' is not supported by model {self.model_name!r}, falling back to 'auto'",
+                    UserWarning,
+                    stacklevel=6,
+                )
+                tool_choice = 'auto'
+
+        elif resolved.mode == 'none':
+            if not output_tools:
+                tool_choice = 'none'
+            elif len(output_tools) == 1:
+                tool_choice = ToolChoiceFunctionParam(type='function', name=output_tools[0].name)
+            else:
+                allowed_mode: Literal['auto', 'required'] = (
+                    'required' if not model_request_parameters.allow_text_output else 'auto'
+                )
+                tool_choice = ToolChoiceAllowedParam(
+                    type='allowed_tools',
+                    mode=allowed_mode,
+                    tools=[{'type': 'function', 'name': t.name} for t in output_tools],
+                )
+
+        elif resolved.mode == 'specific':
+            if len(resolved.tool_names) == 1:
+                tool_choice = ToolChoiceFunctionParam(type='function', name=resolved.tool_names[0])
+            else:
+                allowed_mode = 'required' if not model_request_parameters.allow_text_output else 'auto'
+                tool_choice = ToolChoiceAllowedParam(
+                    type='allowed_tools',
+                    mode=allowed_mode,
+                    tools=[{'type': 'function', 'name': n} for n in resolved.tool_names],
+                )
+
+        else:
+            assert_never(resolved.mode)
+
+        return tools, tool_choice
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []

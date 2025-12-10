@@ -3141,7 +3141,7 @@ async def test_tool_choice_required_explicit_unsupported(allow_model_requests: N
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=True)
     settings: OpenAIChatModelSettings = {'tool_choice': 'required'}
 
-    with pytest.warns(UserWarning, match="tool_choice='required' is not supported by this model"):
+    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'stub'"):
         await model._completions_create(  # pyright: ignore[reportPrivateUsage]
             messages=[],
             stream=False,
@@ -3162,7 +3162,7 @@ async def test_tool_choice_required_explicit_unsupported_responses_api(allow_mod
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=True)
     settings: OpenAIResponsesModelSettings = {'tool_choice': 'required'}
 
-    with pytest.warns(UserWarning, match="tool_choice='required' is not supported by this model"):
+    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'openai/gpt-oss'"):
         await model._responses_create(  # pyright: ignore[reportPrivateUsage]
             messages=[],
             stream=False,
@@ -3251,7 +3251,6 @@ async def test_cache_point_filtering_responses_model():
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
-        pytest.param('none', 'none', id='none'),
         pytest.param('auto', 'auto', id='auto'),
         pytest.param('required', 'required', id='required'),
     ],
@@ -3270,6 +3269,23 @@ async def test_tool_choice_string_values(allow_model_requests: None, tool_choice
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)
     assert kwargs[0]['tool_choice'] == expected
+
+
+async def test_tool_choice_none_filters_out_function_tools(allow_model_requests: None) -> None:
+    """tool_choice='none' filters out function tools, resulting in no tools sent."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert 'tools' not in kwargs[0]
+    assert 'tool_choice' not in kwargs[0]
 
 
 async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
@@ -3327,8 +3343,8 @@ async def test_tool_choice_specific_tools_multiple(allow_model_requests: None) -
     )
 
 
-async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
-    """Structured output tools persist even with tool_choice='none'."""
+async def test_tool_choice_none_with_output_tools(allow_model_requests: None) -> None:
+    """tool_choice='none' filters function tools but keeps output tools for structured output."""
 
     class Location(BaseModel):
         city: str
@@ -3359,11 +3375,12 @@ async def test_tool_choice_none_with_output_tools_warns(allow_model_requests: No
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
-        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+    result = await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     assert result.output == Location(city='Paris', country='France')
     kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # With tool_choice='none', only output tools are sent (function tool filtered out)
+    # Since there's only one output tool, tool_choice forces it
     assert kwargs[0]['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
 
 
@@ -3401,11 +3418,12 @@ async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests:
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
-        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+    result = await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     assert result.output == LocationA(city='Paris')
     kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # With tool_choice='none', only output tools are sent (function tool filtered out)
+    # Multiple output tools use allowed_tools
     assert kwargs[0]['tool_choice'] == {
         'type': 'allowed_tools',
         'allowed_tools': {
@@ -3421,7 +3439,6 @@ async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests:
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
-        pytest.param('none', 'none', id='none'),
         pytest.param('auto', 'auto', id='auto'),
         pytest.param('required', 'required', id='required'),
     ],
@@ -3554,11 +3571,12 @@ async def test_responses_tool_choice_none_with_output_tools_warns(allow_model_re
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
-        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+    result = await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     assert result.output == Location(city='Paris', country='France')
     kwargs = get_mock_responses_kwargs(mock_client)
+    # With tool_choice='none', only output tools are sent (function tool filtered out)
+    # Single output tool is forced
     assert kwargs[0]['tool_choice'] == {'type': 'function', 'name': 'final_result'}
 
 
@@ -3592,11 +3610,12 @@ async def test_responses_tool_choice_none_with_multiple_output_tools(allow_model
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
-        result = await agent.run('hello', model_settings={'tool_choice': 'none'})
+    result = await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     assert result.output == LocationA(city='Paris')
     kwargs = get_mock_responses_kwargs(mock_client)
+    # With tool_choice='none', only output tools are sent (function tool filtered out)
+    # Multiple output tools use allowed_tools
     assert kwargs[0]['tool_choice'] == {
         'type': 'allowed_tools',
         'mode': 'required',

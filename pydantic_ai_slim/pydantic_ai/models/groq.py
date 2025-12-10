@@ -48,9 +48,9 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _resolve_tool_choice,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     get_user_agent,
-    resolve_tool_choice,
 )
 
 try:
@@ -267,9 +267,8 @@ class GroqModel(Model):
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         tools += self._get_builtin_tools(model_request_parameters)
-        tool_choice = self._get_tool_choice(tools, model_settings, model_request_parameters)
 
         groq_messages = self._map_messages(messages, model_request_parameters)
 
@@ -372,52 +371,71 @@ class GroqModel(Model):
             _provider_name=self._provider.name,
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
-
     def _get_tool_choice(
         self,
-        tools: list[chat.ChatCompletionToolParam],
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> ChatCompletionToolChoiceOptionParam | None:
-        if not tools:
-            return None
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        """Determine which tools to send and the API tool_choice value.
 
-        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
+
+        resolved = _resolve_tool_choice(model_settings, model_request_parameters)
 
         if resolved is None:
-            # Default behavior: infer from allow_text_output
+            tool_defs_to_send = [*function_tools, *output_tools]
+        else:
+            tool_defs_to_send = resolved.filter_tools(function_tools, output_tools)
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
+
+        if not tools:
+            return tools, None
+
+        # Determine API tool_choice value
+        tool_choice: ChatCompletionToolChoiceOptionParam
+
+        if resolved is None:
             if not model_request_parameters.allow_text_output:
-                return 'required'
-            return 'auto'
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
 
-        if resolved.mode in ('auto', 'required'):
-            return resolved.mode
+        elif resolved.mode == 'auto':
+            if not model_request_parameters.allow_text_output:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
 
-        if resolved.mode == 'none':
-            if not resolved.output_tools_fallback:
-                return 'none'
-            output_tool_names = [t.name for t in model_request_parameters.output_tools]
-            return ChatCompletionNamedToolChoiceParam(
-                type='function',
-                function={'name': output_tool_names[0]},
-            )
+        elif resolved.mode == 'required':
+            tool_choice = 'required'
 
-        if resolved.tool_names:
+        elif resolved.mode == 'none':
+            if not output_tools:
+                tool_choice = 'none'
+            else:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function',
+                    function={'name': output_tools[0].name},
+                )
+
+        elif resolved.mode == 'specific':
             if len(resolved.tool_names) == 1:
-                return ChatCompletionNamedToolChoiceParam(
+                tool_choice = ChatCompletionNamedToolChoiceParam(
                     type='function',
                     function={'name': resolved.tool_names[0]},
                 )
-            warnings.warn(
-                "Groq only supports forcing a single tool. Falling back to 'required' for multiple function tools.",
-                UserWarning,
-                stacklevel=6,
-            )
-            return 'required'
+            else:
+                warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
+                tool_choice = 'required'
 
-        return None  # pragma: no cover
+        else:
+            assert_never(resolved.mode)
+
+        return tools, tool_choice
 
     def _get_builtin_tools(
         self, model_request_parameters: ModelRequestParameters

@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -46,9 +45,9 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _resolve_tool_choice,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     get_user_agent,
-    resolve_tool_choice,
 )
 
 try:
@@ -229,13 +228,15 @@ class MistralModel(Model):
         if model_request_parameters.builtin_tools:
             raise UserError('Mistral does not support built-in tools')
 
+        tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
+
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
                 messages=self._map_messages(messages, model_request_parameters),
                 n=1,
-                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters, model_settings),
+                tools=tools or UNSET,
+                tool_choice=tool_choice,
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 temperature=model_settings.get('temperature', UNSET),
@@ -268,14 +269,16 @@ class MistralModel(Model):
         if model_request_parameters.builtin_tools:
             raise UserError('Mistral does not support built-in tools')
 
-        if model_request_parameters.function_tools:
-            # Function Calling
+        tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
+
+        if tools:
+            # Function Calling mode (with filtered tools)
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
                 n=1,
-                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters, model_settings),
+                tools=tools,
+                tool_choice=tool_choice,
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -288,7 +291,7 @@ class MistralModel(Model):
 
         elif model_request_parameters.output_tools:
             # TODO: Port to native "manual JSON" mode
-            # Json Mode
+            # Json Mode (only output tools, no function tools filtered in)
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
@@ -304,7 +307,7 @@ class MistralModel(Model):
             )
 
         else:
-            # Stream Mode
+            # Stream Mode (no tools at all)
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
@@ -318,59 +321,64 @@ class MistralModel(Model):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: MistralModelSettings,
-    ) -> MistralToolChoiceEnum | None:
-        """Get tool choice for the model.
+    ) -> tuple[list[MistralTool] | None, MistralToolChoiceEnum | None]:
+        """Get tools and tool choice for the model.
 
+        Returns a tuple of (tools, tool_choice):
+        - tools: List of MistralTool definitions to send, or None if no tools
+        - tool_choice: "auto", "any", "none", "required", or None
+
+        Tool choice semantics:
         - "auto": Default mode. Model decides if it uses the tool or not.
         - "any": Select any tool.
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
-            return None
-
-        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+        resolved = _resolve_tool_choice(model_settings, model_request_parameters)
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
 
         if resolved is None:
-            # Default behavior: infer from allow_text_output
-            if not model_request_parameters.allow_text_output:
-                return 'required'
-            return 'auto'
+            tool_defs_to_send = [*function_tools, *output_tools]
+        else:
+            tool_defs_to_send = resolved.filter_tools(function_tools, output_tools)
 
-        if resolved.mode in ('auto', 'required'):
-            return resolved.mode
+        if not tool_defs_to_send:
+            return None, None
 
-        if resolved.mode == 'none':
-            if resolved.output_tools_fallback:
-                return 'required'
-            return 'none'
-
-        if resolved.tool_names:
-            warnings.warn(
-                "Mistral does not support forcing specific tools. Falling back to 'required'.",
-                UserWarning,
-                stacklevel=6,
-            )
-            return 'required'
-
-        return None  # pragma: no cover
-
-    def _map_function_and_output_tools_definition(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[MistralTool] | None:
-        """Map function and output tools to MistralTool format.
-
-        Returns None if both function_tools and output_tools are empty.
-        """
         tools = [
             MistralTool(
                 function=MistralFunction(
                     name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
                 )
             )
-            for r in model_request_parameters.tool_defs.values()
+            for r in tool_defs_to_send
         ]
-        return tools if tools else None
+
+        # Determine tool_choice value
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                tool_choice: MistralToolChoiceEnum = 'required'
+            else:
+                tool_choice = 'auto'
+        elif resolved.mode == 'auto':
+            if not model_request_parameters.allow_text_output:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+        elif resolved.mode == 'required':
+            tool_choice = 'required'
+        elif resolved.mode == 'none':
+            # We've filtered to output tools only, use 'required' if there are output tools
+            tool_choice = 'required' if output_tools else 'none'
+        elif resolved.mode == 'specific':
+            # Mistral doesn't support specific tool forcing, use 'required'
+            tool_choice = 'required'
+        else:
+            assert_never(resolved.mode)
+
+        return tools, tool_choice
 
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""

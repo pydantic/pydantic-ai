@@ -5637,7 +5637,6 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
-        pytest.param('none', 'none', id='none'),
         pytest.param('auto', 'auto', id='auto'),
         pytest.param('required', 'required', id='required'),
     ],
@@ -5730,8 +5729,7 @@ async def test_tool_choice_none_with_output_tools(allow_model_requests: None) ->
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match="tool_choice='none' is set but output tools are required"):
-        await agent.run('hello', model_settings={'tool_choice': 'none'})
+    await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
