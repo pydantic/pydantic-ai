@@ -283,10 +283,13 @@ async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
                     'gen_ai.request.model': 'text-embedding-3-small',
                     'input_type': 'query',
                     'server.address': 'api.openai.com',
+                    'documents_count': 1,
                     'gen_ai.prompt': 'Hello, world!',
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
+                            'input_type': {'type': 'string'},
+                            'documents_count': {'type': 'integer'},
                             'embedding_settings': {'type': 'object'},
                             'gen_ai.prompt': {'type': ['string', 'array']},
                         },
@@ -299,6 +302,73 @@ async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
                     'gen_ai.embeddings.dimension.count': 1536,
                 },
             }
+        ]
+    )
+
+    assert capfire.get_collected_metrics() == snapshot(
+        [
+            {
+                'name': 'gen_ai.client.token.usage',
+                'description': 'Measures number of input and output tokens used',
+                'unit': '{token}',
+                'data': {
+                    'data_points': [
+                        {
+                            'attributes': {
+                                'gen_ai.provider.name': 'openai',
+                                'gen_ai.operation.name': 'embeddings',
+                                'gen_ai.request.model': 'text-embedding-3-small',
+                                'gen_ai.response.model': 'text-embedding-3-small',
+                                'gen_ai.token.type': 'input',
+                            },
+                            'start_time_unix_nano': 1765405564786519761,
+                            'time_unix_nano': 1765405564979671854,
+                            'count': 1,
+                            'sum': 4,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': 2097151, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 4,
+                            'max': 4,
+                            'exemplars': [],
+                        }
+                    ],
+                    'aggregation_temporality': 1,
+                },
+            },
+            {
+                'name': 'operation.cost',
+                'description': 'Monetary cost',
+                'unit': '{USD}',
+                'data': {
+                    'data_points': [
+                        {
+                            'attributes': {
+                                'gen_ai.provider.name': 'openai',
+                                'gen_ai.operation.name': 'embeddings',
+                                'gen_ai.request.model': 'text-embedding-3-small',
+                                'gen_ai.response.model': 'text-embedding-3-small',
+                                'gen_ai.token.type': 'input',
+                            },
+                            'start_time_unix_nano': 1765405564786777491,
+                            'time_unix_nano': 1765405564979671854,
+                            'count': 1,
+                            'sum': 8e-08,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': -24720625, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 8e-08,
+                            'max': 8e-08,
+                            'exemplars': [],
+                        }
+                    ],
+                    'aggregation_temporality': 1,
+                },
+            },
         ]
     )
 

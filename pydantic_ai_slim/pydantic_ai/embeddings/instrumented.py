@@ -10,7 +10,12 @@ from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai.models.instrumented import ANY_ADAPTER, CostCalculationFailedWarning, InstrumentationSettings
+from pydantic_ai.models.instrumented import (
+    ANY_ADAPTER,
+    GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    CostCalculationFailedWarning,
+    InstrumentationSettings,
+)
 
 from .base import EmbeddingModel, EmbedInputType
 from .result import EmbeddingResult
@@ -21,6 +26,8 @@ if TYPE_CHECKING:
     pass
 
 __all__ = 'instrument_embedding_model', 'InstrumentedEmbeddingModel'
+
+GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 
 
 def instrument_embedding_model(model: EmbeddingModel, instrument: InstrumentationSettings | bool) -> EmbeddingModel:
@@ -70,10 +77,13 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         operation = 'embeddings'
         span_name = f'{operation} {self.model_name}'
 
+        documents_count = 1 if isinstance(documents, str) else len(documents)
+
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
-            'input_type': input_type,
             **self.model_attributes(self.wrapped),
+            'input_type': input_type,
+            'documents_count': documents_count,
         }
 
         if settings:
@@ -86,22 +96,52 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             {
                 'type': 'object',
                 'properties': {
+                    'input_type': {'type': 'string'},
+                    'documents_count': {'type': 'integer'},
                     'embedding_settings': {'type': 'object'},
                     'gen_ai.prompt': {'type': ['string', 'array']},
                 },
             }
         )
 
+        record_metrics: Callable[[], None] | None = None
         try:
             with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
                 def finish(result: EmbeddingResult):
+                    # Prepare metric recording closure first so metrics are recorded
+                    # even if the span is not recording.
+                    provider_name = attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE]
+                    request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
+                    response_model = result.model_name or request_model
+                    price_calculation = None
+
+                    def _record_metrics():
+                        token_attributes = {
+                            GEN_AI_PROVIDER_NAME_ATTRIBUTE: provider_name,
+                            'gen_ai.operation.name': operation,
+                            GEN_AI_REQUEST_MODEL_ATTRIBUTE: request_model,
+                            'gen_ai.response.model': response_model,
+                            'gen_ai.token.type': 'input',
+                        }
+                        tokens = result.usage.input_tokens or 0
+                        if tokens:
+                            self.instrumentation_settings.tokens_histogram.record(tokens, token_attributes)
+                            if price_calculation is not None:
+                                self.instrumentation_settings.cost_histogram.record(
+                                    float(getattr(price_calculation, 'input_price', 0.0)),
+                                    token_attributes,
+                                )
+
+                    nonlocal record_metrics
+                    record_metrics = _record_metrics
+
                     if not span.is_recording():
                         return
 
                     attributes_to_set: dict[str, AttributeValue] = {
                         **result.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': result.model_name or self.model_name,
+                        'gen_ai.response.model': response_model,
                     }
 
                     try:
@@ -125,17 +165,17 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
 
                     span.set_attributes(attributes_to_set)
 
-                    # TODO (DouweM): Record cost metric
-
                 yield finish
         finally:
-            pass
+            if record_metrics:
+                # Record metrics after the span finishes to avoid duplication.
+                record_metrics()
 
     @staticmethod
     def model_attributes(model: EmbeddingModel) -> dict[str, AttributeValue]:
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.provider.name': model.system,
-            'gen_ai.request.model': model.model_name,
+            GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,
+            GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
         }
         if base_url := model.base_url:
             try:
