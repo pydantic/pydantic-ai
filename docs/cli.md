@@ -22,7 +22,7 @@ export OPENAI_API_KEY='your-api-key-here'
 Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
 ```bash
-uvx clai chat
+uvx clai
 ```
 
 Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools), run:
@@ -30,7 +30,7 @@ Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools
 ```bash
 uv tool install clai
 ...
-clai chat
+clai
 ```
 
 Or with `pip`, run:
@@ -38,10 +38,10 @@ Or with `pip`, run:
 ```bash
 pip install clai
 ...
-clai chat
+clai
 ```
 
-Either way, running `clai chat` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
@@ -50,13 +50,15 @@ Either way, running `clai chat` will start an interactive session where you can 
 
 ### Web Chat UI
 
-Launch a web-based chat interface for your agent:
+Launch a web-based chat interface:
 
 ```bash
-clai web --agent module:agent_variable
+clai web -m openai:gpt-5
 ```
 
-For example, if you have an agent defined in `my_agent.py`:
+This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
+
+You can also serve an existing agent. For example, if you have an agent defined in `my_agent.py`:
 
 ```python
 from pydantic_ai import Agent
@@ -69,8 +71,6 @@ Launch the web UI with:
 ```bash
 clai web --agent my_agent:my_agent
 ```
-
-This will start a web server (default: http://127.0.0.1:7932) with a chat interface for your agent.
 
 #### CLI Options
 
@@ -93,9 +93,9 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 
 | Option | Description |
 |--------|-------------|
-| `--agent`, `-a` | Agent to serve in `module:variable` format |
-| `--model`, `-m` | Model to make available (repeatable, agent's model is default if present) |
-| `--tool`, `-t` | [Builtin tool](builtin-tools.md) to enable (repeatable). See [available tools](ui/web.md#builtin-tool-support). |
+| `--agent`, `-a` | Agent to serve in [`module:variable` format](#custom-agents) |
+| `--model`, `-m` | Models to list as options in the UI (repeatable, agent's model is default if present) |
+| `--tool`, `-t` | [Builtin tool](builtin-tools.md)s to list as options in the UI (repeatable). See [available tools](web.md#builtin-tool-support). |
 | `--instructions`, `-i` | System instructions. In generic mode (no `--agent`), these are the agent instructions. With `--agent`, these are passed as extra instructions to each run. |
 | `--host` | Host to bind server (default: 127.0.0.1) |
 | `--port` | Port to bind server (default: 7932) |
@@ -103,7 +103,7 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 !!! note "Memory Tool"
     The `memory` tool requires the agent to have memory configured and cannot be enabled via `-t memory` alone. An agent with memory must be provided via `--agent`.
 
-For programmatic usage with `Agent.to_web()`, see the [Web UI documentation](ui/web.md).
+The web chat UI can also be launched programmatically using [`Agent.to_web()`][pydantic_ai.Agent.to_web], see the [Web UI documentation](web.md).
 
 ### Help
 
