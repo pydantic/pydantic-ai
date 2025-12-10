@@ -339,6 +339,7 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument,
                 this is inferred if unset.
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
+            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             name: Name of the tool, inferred from the function if `None`.
             description: Description of the tool, inferred from the function if `None`.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this

@@ -1316,8 +1316,6 @@ def test_tool_max_uses():
     def tool_with_max_use(ctx: RunContext[None]) -> str:
         return 'Used'
 
-    # Force the agent to use this tool now
-
     result = agent.run_sync('Hello')
     assert result.output == snapshot('{"tool_with_max_use":"Used"}')
     messages = result.all_messages()
