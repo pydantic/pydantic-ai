@@ -80,7 +80,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     args_validator=tool.args_validator,
                     source_toolset=toolset,
                     source_tool=tool,
-                    timeout=tool.timeout,
                 )
         return all_tools
 
