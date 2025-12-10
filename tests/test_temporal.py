@@ -3127,7 +3127,9 @@ def test_temporal_model_resolve_model_returns_wrapped_when_model_id_none(monkeyp
 
     infer_model_called = False
 
-    def mock_infer_model(model_name: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:  # pragma: no cover
+    def mock_infer_model(
+        model_name: str, provider_factory: Callable[[str], Provider[Any]]
+    ) -> TestModel:  # pragma: no cover
         nonlocal infer_model_called
         infer_model_called = True
         raise AssertionError('infer_model should not be called when model_id is None')
