@@ -351,7 +351,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    # Inside workflows, only registered names or provider strings are valid.
     async def run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
@@ -395,6 +394,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+                Inside workflows, only registered model instances, registered names, or provider strings are valid.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -413,12 +413,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             )
 
-        selection: str | None = None
+        model_id: str | None = None
         if workflow.in_workflow() and model is not None:
-            selection = self._select_model(model)
+            model_id = self._select_model(model)
             model = None
 
-        with self._temporal_overrides(selection if workflow.in_workflow() else None):
+        with self._temporal_overrides(model_id=model_id if workflow.in_workflow() else None):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
