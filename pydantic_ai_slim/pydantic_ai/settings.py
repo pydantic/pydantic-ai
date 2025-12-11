@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
 
@@ -7,8 +9,10 @@ from typing_extensions import TypedDict
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers,
+    Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
+
+    All types must be JSON-serializable.
     """
 
     max_tokens: int
@@ -86,6 +90,30 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    """
+
+    tool_choice: Literal['none', 'required', 'auto'] | list[str] | None
+    """Control which function tools the model can use.
+
+    This setting affects both which tools are sent to the model and the API tool_choice parameter.
+    Output tools (used for structured output) are managed separately and remain available when needed.
+
+    * `None` (default): All tools sent, tool_choice determined by output configuration
+    * `'auto'`: All tools sent, model decides whether to use them
+    * `'required'`: Only function tools sent (no output tools), model must use one
+    * `'none'`: Only output tools sent (no function tools), or no tools if none needed
+    * `list[str]`: Only specified function tools sent (plus output tools), model must use one
+    * `[]` (empty list): Treated as `'none'`
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic (note: `'required'` and specific tools not supported with thinking/extended thinking)
+    * Gemini
+    * Groq
+    * Mistral
+    * HuggingFace
+    * Bedrock
     """
 
     seed: int

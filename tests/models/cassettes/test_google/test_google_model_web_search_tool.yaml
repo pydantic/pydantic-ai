@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '247'
+      - '277'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: What is the weather in San Francisco today?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -32,11 +34,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '9827'
+      - '11738'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=8115
+      - gfet4t7; dur=9106
       transfer-encoding:
       - chunked
       vary:
@@ -48,15 +50,13 @@ interactions:
       - content:
           parts:
           - text: |-
-              ## Weather in San Francisco is Mild and Partly Cloudy
+              **San Francisco Experiences a Mostly Cloudy Day with Mild Temperatures**
 
-              **San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+              As of Monday in San Francisco, the weather is predominantly mostly cloudy with a current temperature of 51°F, which feels more like 49°F. Other reports describe the sky as partly cloudy. The forecast for the day indicates that cloudy conditions will persist with a slight 10% chance of rain.
 
-              According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+              The high temperature for the day is expected to reach the low to mid-50s, with forecasts predicting a high of 54°F. The low for tonight is anticipated to be in the mid-40s, with some forecasts calling for a low of 45°F.
 
-              As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
-
-              Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.
+              Humidity levels are relatively high, reported at 77%. Winds are generally light, coming from the north at 5 to 10 mph. Visibility has been noted as being around 1.5 to 2 miles. There is also a possibility of dense fog in some areas.
           role: model
         finishReason: STOP
         groundingMetadata:
@@ -65,51 +65,79 @@ interactions:
               title: Weather information for San Francisco, CA, US
               uri: https://www.google.com/search?q=weather+in+San Francisco, CA,+US
           - web:
-              title: weather.gov
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==
+              title: cbsnews.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHs0KxAufAKly9TnNAnn-Baxlk1USk6vVjzW1FEEUCZKnE5eeatKXcIXJ4HZNDI7ROs1q3IuHTZp5bZwB3hc-u1sXnXI0rosZTNt-t6H9FTF9owH4M5u-54bnuL01OC1C3fEnU7MNRV
           - web:
               title: wunderground.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGIi3F3lZlGrWP6vK_zucR90Esg-PCBYRgHOK0gvSIwbHM1jKGKhLwKbv-chvrUhyhc5IZ9XAjo59IBjM6Tk5p2qQK7QGW-WgFi0Nrus7IrBqgNJfWCAMTgqkde8RXWk-T2edNf90TJGVoJIKXhcuWxpuE=
+          - web:
+              title: accuweather.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFUEG5HLOGJoFbOTpesMFek1T82haMch6RGzVbNaG-m-B7mbwLkfb4pHpCE8CH_RHUMa5GKNPUxev47neFe9YXiKJdXKo4gMABpBHjb3AjAXg5UNoY3hvMfhBVw-mxSLTzHuRzdxvjgMpDbskeuMVt0jM543GJnG06EVVzeYm8UUemWTS2UJyE=
+          - web:
+              title: theweathernetwork.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHtG8yKh-VGE2kjUi05sHqdu5HUVFr6NUs9F3SdvzlnHjubasE5fLourWIMk6Wmgd6VFmAj8NcY3HNeFosMwnxMc3zyvlZ2V6gNDMFuGgJCofZD1vlE0t2vv4KFC13o1LnElXVvzht7u-6kfwQybN_57kHs63NjwCQLiYECj8Ub7yDRhCYAzCU=
+          - web:
+              title: weather.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHggnMLBYdYahOGPJ6dykd1mBx7bs82NTc6T-pndOKmIdb8s-3QQ2571SFt8NPG6_UstE9rYG5g2yegUOlsiREqykqesDB7UP58H3ApEe2hDCMTqSyRllMUusJecf2jVHF8kb2Y1rCBNkzaXKuhtxgx6OPvoaYNnYDhIo73
           groundingSupports:
           - groundingChunkIndices:
             - 0
             segment:
-              endIndex: 216
-              startIndex: 55
-              text: '**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with
-                partly cloudy skies and temperatures hovering around 69°F.'
-          - groundingChunkIndices:
-            - 0
-            segment:
-              endIndex: 271
-              startIndex: 217
-              text: There is a very low chance of rain throughout the day.
+              endIndex: 213
+              startIndex: 74
+              text: As of Monday in San Francisco, the weather is predominantly mostly cloudy with a current temperature of
+                51°F, which feels more like 49°F.
           - groundingChunkIndices:
             - 1
             segment:
-              endIndex: 434
-              startIndex: 273
-              text: According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny,
-                with highs ranging from the mid-60s to the lower 80s.
+              endIndex: 262
+              startIndex: 214
+              text: Other reports describe the sky as partly cloudy.
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 367
+              startIndex: 263
+              text: The forecast for the day indicates that cloudy conditions will persist with a slight 10% chance of rain.
+          - groundingChunkIndices:
+            - 2
+            - 3
+            segment:
+              endIndex: 485
+              startIndex: 369
+              text: The high temperature for the day is expected to reach the low to mid-50s, with forecasts predicting a
+                high of 54°F.
+          - groundingChunkIndices:
+            - 3
+            segment:
+              endIndex: 590
+              startIndex: 486
+              text: The low for tonight is anticipated to be in the mid-40s, with some forecasts calling for a low of 45°F.
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 645
+              startIndex: 592
+              text: Humidity levels are relatively high, reported at 77%.
           - groundingChunkIndices:
             - 2
             segment:
-              endIndex: 493
-              startIndex: 435
-              text: Winds are predicted to come from the west at 10 to 15 mph.
+              endIndex: 710
+              startIndex: 646
+              text: Winds are generally light, coming from the north at 5 to 10 mph.
           - groundingChunkIndices:
-            - 1
+            - 4
+            - 5
             segment:
-              endIndex: 614
-              startIndex: 495
-              text: As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping
-                to the upper 50s.
+              endIndex: 768
+              startIndex: 711
+              text: Visibility has been noted as being around 1.5 to 2 miles.
           - groundingChunkIndices:
-            - 0
+            - 2
             segment:
-              endIndex: 701
-              startIndex: 615
-              text: There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+              endIndex: 824
+              startIndex: 769
+              text: There is also a possibility of dense fog in some areas.
           searchEntryPoint:
             renderedContent: |
               <style>
@@ -233,26 +261,26 @@ interactions:
                   <div class="gradient-container"><div class="gradient"></div></div>
                 </div>
                 <div class="carousel">
-                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGpaVYtZtg0AbOkyluH7ZfyxRSvLNFvK5HnFIwTqMQdOecLCFYzxIHes41UAd1GgIx1aL-q51HCGjUQXXLrnESB-F5HEvrsMB2_mb3hOwZrelCAn-F28bDl6IQvgTriNrfzd3IlnDYc42uD37aYMQjIWgznihXP-MiUdY5Cchwxn7_GcQNdbsPMQX6K9S0SQX_5GChPnOvfO48W-ULhcHTR">weather in San Francisco today</a>
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHYi9CDfoqDHMbuxANn04bg0jc0HZNnGSZBOAvwQ4PYX7cBTfLxy1Bm7zUoqDYGAzk0yZYpmLxSfoYKKMbV7q1NAIP0BaWYZqKWkpwdLhFJTij1I4ZRW8cL1BO0_mJar3rvs4HWWycLc_nm69WuvnNmErdK4t9FqNHw0rGc9JDNSX2N8umj2vNc-HvbildKmkskpf2BsRbjwDIFkVEY2X9I">weather in San Francisco today</a>
                 </div>
               </div>
           webSearchQueries:
           - weather in San Francisco today
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: btnJaOrqE4_6qtsP7bOboQs
+      responseId: y1I3aaeTDvOLmtkPgevhkAE
       usageMetadata:
-        candidatesTokenCount: 201
+        candidatesTokenCount: 215
         promptTokenCount: 17
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 17
-        thoughtsTokenCount: 213
-        toolUsePromptTokenCount: 119
+        thoughtsTokenCount: 444
+        toolUsePromptTokenCount: 103
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 119
-        totalTokenCount: 550
+          tokenCount: 103
+        totalTokenCount: 779
     status:
       code: 200
       message: OK
@@ -265,7 +293,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1184'
+      - '1232'
       content-type:
       - application/json
       host:
@@ -278,20 +306,20 @@ interactions:
         role: user
       - parts:
         - text: |-
-            ## Weather in San Francisco is Mild and Partly Cloudy
+            **San Francisco Experiences a Mostly Cloudy Day with Mild Temperatures**
 
-            **San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+            As of Monday in San Francisco, the weather is predominantly mostly cloudy with a current temperature of 51°F, which feels more like 49°F. Other reports describe the sky as partly cloudy. The forecast for the day indicates that cloudy conditions will persist with a slight 10% chance of rain.
 
-            According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+            The high temperature for the day is expected to reach the low to mid-50s, with forecasts predicting a high of 54°F. The low for tonight is anticipated to be in the mid-40s, with some forecasts calling for a low of 45°F.
 
-            As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
-
-            Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.
+            Humidity levels are relatively high, reported at 77%. Winds are generally light, coming from the north at 5 to 10 mph. Visibility has been noted as being around 1.5 to 2 miles. There is also a possibility of dense fog in some areas.
         role: model
       - parts:
         - text: how about Mexico City?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful chatbot.
@@ -304,11 +332,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '8690'
+      - '10879'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=6875
+      - gfet4t7; dur=7699
       transfer-encoding:
       - chunked
       vary:
@@ -320,43 +348,83 @@ interactions:
       - content:
           parts:
           - text: |-
-              In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
+              **Mexico City Sees a Mix of Clouds and Sun with Mild Temperatures**
 
-              Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
+              Today in Mexico City, residents can expect partly to mostly cloudy skies with a high temperature reaching the upper 60s, with some forecasts predicting a high of 67°F or 68°F. There is a slight chance of showers, with precipitation probabilities ranging from 25% to 40%.
 
-              There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+              Currently, the temperature is around 58°F, feeling like 58°F. The wind is relatively calm, coming from the north-northwest at approximately 6 mph. Humidity levels are at 56%.
 
-              Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).
+              Tonight, the skies are expected to be partly cloudy with a low temperature in the upper 40s to low 50s. There is still a chance of rain showers this evening, clearing up overnight. The sun rose at 6:58 AM and is set to go down at 5:58 PM.
           role: model
         finishReason: STOP
         groundingMetadata:
           groundingChunks:
           - web:
-              title: theweathernetwork.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEvigSUuLwtMoqPNq2bvqCduH6yYQLKmhzoj0-SQbxBb2rs_ow380KClss6yfKqxmQ-3HIrmzasviLVdO2FhQ_uEIGfpv6-_r4XOSSLu57LKZgAFYTsswd5Q--VkuO2eEr4Vh8b0aK4KFi3Rt3k_r99frmOa-8mCHzWrXI_HeS58IvIpda0XNtWVEjg
+              title: weatherbug.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGNALHx6WbEk-l7IywrVofZAc2f2B3liR_LzjbU-1am45jWx9hcx90BpU7s99-o3AlvyF3rFjbEUsCFf3iXkMtOTRQ6jXV-dANbcpH5Xay-cxn0bEap1w1Pc1LRW3vBu_SENFOfmxLEZ34c-OxqZ31RL75U6sjx2i4ZDkZ4PFh2AU96STIf3d1jHA==
+          - web:
+              title: accuweather.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH7JB3O5Oy3_PWu31FwdJElbZYSRGZeZWlIDXoEOtOaIQuIX_wPZaP8LyNT1K3_nPEGsobbg_tSkYiqLn_D1SD_-wGu0-RwwxF4bN8UcM5GCOMVdf7gI3a2WVyBBUL7_BPiW9Rrnf2eDjjOv0jtEIJw1tDGDvJh9R54phebi_Cls5aDD7ajlg==
+          - web:
+              title: accuweather.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGrARwtoF8hUa_8zy1oHzNBmQTFitFKcqATKStBQC2h_7YLvNzHVV4XzGridgTcihzPfjXUTW_0OZ0qs6iG_157KwIdS2ePZTccfXIQ3XdTii0DIT-4L-xmQl8dPpHm1Lmx1Q8XSiOJA55QXjvXsstMI3OJ8PyT8ewzhD136NdMbdPV0Ftp
           - web:
               title: wunderground.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq
-          - web:
-              title: wunderground.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHoTyQZHYOqP2WvRsPSvTGoKXpwgkZVJipTrznFmWt1mDux7eNnL5Wh46MfZ5CghEY7e7aIGejO5NvpK5DJQ2e3wV-smAcf2MYbm-4nIXi17hXJ6X4Rb7wXNGsD4GzyQe45Qcqqnt8xw39vUBut
           groundingSupports:
           - groundingChunkIndices:
             - 0
             - 1
-            - 2
             segment:
-              endIndex: 542
-              startIndex: 386
-              text: There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation,
-                especially from mid-afternoon into the evening.
+              endIndex: 246
+              startIndex: 69
+              text: Today in Mexico City, residents can expect partly to mostly cloudy skies with a high temperature reaching
+                the upper 60s, with some forecasts predicting a high of 67°F or 68°F.
           - groundingChunkIndices:
-            - 1
             - 2
+            - 3
             segment:
-              endIndex: 618
-              startIndex: 543
-              text: Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+              endIndex: 341
+              startIndex: 247
+              text: There is a slight chance of showers, with precipitation probabilities ranging from 25% to 40%.
+          - groundingChunkIndices:
+            - 3
+            segment:
+              endIndex: 406
+              startIndex: 343
+              text: Currently, the temperature is around 58°F, feeling like 58°F.
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 491
+              startIndex: 407
+              text: The wind is relatively calm, coming from the north-northwest at approximately 6 mph.
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 519
+              startIndex: 492
+              text: Humidity levels are at 56%.
+          - groundingChunkIndices:
+            - 0
+            - 1
+            - 3
+            segment:
+              endIndex: 624
+              startIndex: 521
+              text: Tonight, the skies are expected to be partly cloudy with a low temperature in the upper 40s to low 50s.
+          - groundingChunkIndices:
+            - 3
+            segment:
+              endIndex: 701
+              startIndex: 625
+              text: There is still a chance of rain showers this evening, clearing up overnight.
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 759
+              startIndex: 702
+              text: The sun rose at 6:58 AM and is set to go down at 5:58 PM.
           searchEntryPoint:
             renderedContent: |
               <style>
@@ -480,26 +548,26 @@ interactions:
                   <div class="gradient-container"><div class="gradient"></div></div>
                 </div>
                 <div class="carousel">
-                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGbyM4W4itB9H_ZJw2_8WIuXcL7VHN0Ek1Cm5mXlJ9nwPPb-OBVlLWqvK6Zu3T72A8yNEzw9czyIcQ6Q0d7lWJhUGqPEJj5CzI9ZG8zJs0D1p5vZxrurYFVVkH2_lSsF7OXc09V2aZ9lXKeYqweKX5UG6wDWM3Pz4UVB8QTe7iSINZaYrn_RMncMcDqXjXuxbZvLMuMtGBTtep4wuc57z9Xjw==">current weather in Mexico City</a>
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFkPCkMkdzoKEYlbMN6KZIkazXrXeVJYoRizodSWf9DKXunl6o7g6DaioHZn_51L3jcgaXBqW5UvMNzB8_MZv2Si0V5uuF2JD0VB0DZ2YaZfuauMogremXPcFPM7fOI9HL5BLEklVKz6OASOk-q6uyeFRiVA44Jm_zxhjs0FzD71NK6YMy5Kra5O7djaCQhZ9naFxuPb-dEL5dbZ-pMJQ==">weather in Mexico City today</a>
                 </div>
               </div>
           webSearchQueries:
-          - current weather in Mexico City
+          - weather in Mexico City today
         index: 0
       modelVersion: gemini-2.5-pro
-      responseId: dtnJaKyTAri3qtsPu4imqQs
+      responseId: 01I3ab71ENy4mtkPpNOJsQY
       usageMetadata:
-        candidatesTokenCount: 206
-        promptTokenCount: 209
+        candidatesTokenCount: 213
+        promptTokenCount: 223
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 209
-        thoughtsTokenCount: 131
-        toolUsePromptTokenCount: 286
+          tokenCount: 223
+        thoughtsTokenCount: 169
+        toolUsePromptTokenCount: 318
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 286
-        totalTokenCount: 832
+          tokenCount: 318
+        totalTokenCount: 923
     status:
       code: 200
       message: OK

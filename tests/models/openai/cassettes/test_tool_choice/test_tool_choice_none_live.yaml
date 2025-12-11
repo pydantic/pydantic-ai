@@ -1,0 +1,103 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '398'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Paris? Use the tool if available.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1952'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '8417'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: "I can’t fetch live weather data right now (I don’t have access to the live-data tool at the moment). I
+            can, however, give you a quick summary of what Paris is typically like at this time of year and some ways to check
+            the current conditions.\n\nTypical conditions for Paris in early December:\n- Temperatures: roughly 3–10°C (37–50°F)
+            — nights near freezing, daytime cool.  \n- Sky: often cloudy or overcast.  \n- Precipitation: light rain or drizzle
+            is common.  \n- Wind: usually mild to moderate.  \n- Daylight: short days; evenings get dark early.\n\nHow to
+            get the current, live weather right now:\n- Check a weather website or app (Météo‑France, BBC Weather, Weather.com,
+            or your phone’s weather app).  \n- Ask a smart assistant on your phone/speaker (Siri, Google Assistant, Alexa).
+            \ \n- If you want, I can fetch the current conditions and forecast once live-data access is available — or I can
+            show you step‑by‑step how to check on a specific site or app.\n\nDo you want clothing/recommendation (what to
+            pack or wear today) based on the typical conditions, or would you like instructions for checking a live forecast
+            on a particular site or app?"
+          refusal: null
+          role: assistant
+      created: 1765242183
+      id: chatcmpl-CkgQ36TEJeOvaM8LWdzjbLgRDgqyE
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 661
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 138
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 799
+    status:
+      code: 200
+      message: OK
+version: 1

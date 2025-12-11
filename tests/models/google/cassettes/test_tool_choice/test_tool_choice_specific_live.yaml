@@ -1,0 +1,203 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '690'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a city.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '981'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=721
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: london
+              name: get_weather
+            thoughtSignature: CpwBAXLI2nxEoEhTeMVzLexhKwKasOzkFC0bxq2oUKvhzugqQrAVkBdNTxOIQXr1zYxmfcYExomV0gQ0WUX0Z+BCp+TNtPk/Qtg8NXSwiCmjIb3YiibIRwKu50Hp9D7iX6zTeDQmfo02c/TC5g6R9uxBNhK8Vf/LO4KSdog2Bx92X5t758usIeMh4efyDFQxtmAE3NWanNKN39MHdqao
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: x3U3aeFFgqea2Q-Ox8zQBQ
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 87
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 87
+        thoughtsTokenCount: 26
+        totalTokenCount: 128
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1280'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: london
+            id: pyd_ai_f35a67b6c40f41109c88db5ceb13d04d
+            name: get_weather
+          thoughtSignature: CpwBAXLI2nxEoEhTeMVzLexhKwKasOzkFC0bxq2oUKvhzugqQrAVkBdNTxOIQXr1zYxmfcYExomV0gQ0WUX0Z-BCp-TNtPk_Qtg8NXSwiCmjIb3YiibIRwKu50Hp9D7iX6zTeDQmfo02c_TC5g6R9uxBNhK8Vf_LO4KSdog2Bx92X5t758usIeMh4efyDFQxtmAE3NWanNKN39MHdqao
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_f35a67b6c40f41109c88db5ceb13d04d
+            name: get_weather
+            response:
+              return_value: The weather in london is sunny and 72°F.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a city.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1248'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=992
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: london
+              name: get_weather
+            thoughtSignature: CuACAXLI2nweDEQEjYyylY2PvbSSKEsJ4XMlPi/inEA/cxp9KJJVRng9i4K3xMmQL/nShtRd3u5AKKyQsrCX5wQ39XWHQYhp9gsZIQ0BJAxPTqrZ+UWDDRcziH7vsLBvKynoiIOjtUUmCl3rID4hukDPrmibK2jfre9mKJddVDwRQvjT208GMJ3vaefH61JroyLQRq3RKBbyMzS9QsbU12HL75miNS2cnMn5/wd9zz9tuyH/1u1hMWP/P++LhWHFiYFY4x9wRISuACiMKvMv+s84UkrHh0EkdfPZ3bfX90PhKz7ISIAbrnBlaueVUqt1YZYg3meY9w66aGJ+tVExrYaU8c1U6gl3N7zYCMRJZpw6QFmR56OG5h3Edg0Bz08LwhPiqaOGsuglBsyVzCrVwGiRxjIyvj0pnQRc4Znbh/lEcOCRaSDVIvA5kn0X2fE8FkHw8HLRgbgJpaGrh6Sh9i0MeA==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: yHU3ad6JCbmoqtsPrLvesQU
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 131
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 131
+        thoughtsTokenCount: 69
+        totalTokenCount: 215
+    status:
+      code: 200
+      message: OK
+version: 1

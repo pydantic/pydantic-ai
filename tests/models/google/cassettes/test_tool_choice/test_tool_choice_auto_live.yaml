@@ -1,0 +1,79 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '435'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Get the weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '898'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=886
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: 2+2 is 4.
+            thoughtSignature: CuUBAXLI2nwEslcG7V2JKQpujVGAgAu5E2OIH6Xv9Q0Lw17n7eK2bQF4zGkpnazh569f5aKwJm3Ez+RAprR0K5pFq8BU9BA+6lrLck72CdxodJx+Cm78Weu3PPsNbVL/cKbPO4xDXr+g7a+ZBwJCJSugUN4yCm2NWqJt5mYNPuVgxIYF9jJ4hC2pPXU+o9mhYds8b3fQrr9hODf7lzhLvVDsqvO8bJv1ry5Mtg0tX4oU17zPaFyn/PmFdapho9sJLol7TODoOY2b7snleDX4/oUtMbdUSrohrzlqc3jW5hzbwnLby50wtQ==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: wHU3ab_LC-iyqtsPqabQoA4
+      usageMetadata:
+        candidatesTokenCount: 7
+        promptTokenCount: 47
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 47
+        thoughtsTokenCount: 44
+        totalTokenCount: 98
+    status:
+      code: 200
+      message: OK
+version: 1

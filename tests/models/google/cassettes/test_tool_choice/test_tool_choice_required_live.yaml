@@ -1,0 +1,203 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '786'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature in Paris? Use the weather tool and return the temperature as a number.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                type: integer
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3310'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2824
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+              name: get_weather
+            thoughtSignature: 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
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: w3U3abbnHLy1qtsPlPqJgQ4
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 98
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 98
+        thoughtsTokenCount: 448
+        totalTokenCount: 561
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '3702'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature in Paris? Use the weather tool and return the temperature as a number.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: Paris
+            id: pyd_ai_0fc4eeb753d3446b9d330f2fd0ed6068
+            name: get_weather
+          thoughtSignature: Cu4OAXLI2nxCjXhrluC5vgwVpXhM4jIrPXckWL6T5uS34j11LPzSrV0fm5ghN6wxkV3Fxur9jvvfhQ-QahGCYxChW1q-e3yvPq-D-ml8FBhLkIjfpE_YoK3iowdTlW6yhW3MqsMjfuQc1nULCXCa_K1lx0WHi2-6e9ZMSl8Mto7kibHDC_ItWSv0I9mBjcRwSYOBS5dgrdECEBlah_m4iyG4nEkNDikFYfQZ17WjV6jrgybtqB3JGjbOt0csUC_gV0gfweqL6E1L3IP8LXYhyTmWuW_aQO5OEuuIVsPHMMns36LxVWpPp3DIA2u_OF5uCz6lkfVL9M_nEUgzDWP7dxBDpPVPVAijGaW11b1-pbLwS7wk8AabHPhlit-LfCdGiSy2pdpKviXVvIpBxQcsz2N_wqS70stlrSt7YRxp-JATnV8fzebYqZWQB7AmrbX6WycqliDuyADQZotFAVzFAjCP6BpMJXf6tmFmhzF1UY0hKwYTtPQpiHP5AYUW30yOA9JBcmv3lIGc6yR58mCN7moBWY-PZuqUelYWMOqAbtH6eGCUbxs00KmyJ1pltw2cMPmhNjP6yh8aggRmm9l3ou44fcw7l70cpz3BKKD_RKu2cdij4tuMGyL8eytZwFgl1M5gZfzJpldxUoEXYPgdeqr5NxmfVr7K2kjXUBHFtXQb_ngbuNNMb67q5U2jsB2ZCb2za1ZhRQcYeFYvZP1hF0HE9EKIjgVyxd_OM85Jr9l1Fnzc7xaXZMtVp2uNDlv3_tcr2SPFpxtpZ1qbadXespV5N_ULInfTtpeNCQ96wawdfjChFkbQURHYJFnKQF2ZtCOKzkb5hHmkhimxTVJAMs0EIKXNlTc1rz3uKqtihWV3JMezYBUDEzevNcO26T-H58hAVYeaQyh-ACnBi4U8WIDMoS1dnW2Qw_4cKUPe57bg26uZYb0fT8UM9as2JEhFQ161N9TZ9-hqG2yLiSsC9If7QJsa3MtyxWtc-1f_PQdfjEPNTrXZlLsTy8UFtNI-qERcG3ESPpsDHuClceVr2WFbSHhv7Rh3ecRlOS7gq3nuVqka-apg1F1FaK2SAyQlFHnNfiH3Rfnp_pv5emY1HxGzKzE1rzlOPYEV8gOBaDf0MCbizWgI7na_6cFeN6j4cZr-YXFhl3d5fM2D7px1KFB0DcHUB_g97_E2Q9QyO5UDTcM-97xPFifVGwQNn8-qhWJ3_RtP3QMHhdo7MuxwLjqCsMOwi-IK2GsR2oBODN3ddKvJN-pIHCuiC4eghqv_93O-2McIpYITaUjqtXS6wuuY9vtYpl55ssIhFRLgfGEbsh6wTNRmKjJXZqMxyTzQMLs1SltnVKFKAltlz5L4xKiAfzHFw-KPYINAQLY_UyQXWsDUZPyLdCYxwqJX-yB-haH4qIMpGF6sjV8ftvv8q_Wj1OhEBzHu7CGZin1a6chpZrUG8MrI6XmMZriz0XLPqR0cpTfbvN1c4wM6TmgO4QlqaNUmn74A0YY80qza1d5vkiid7gBvApgKm2C48mN4rCXmIPNDjzFME-_M-wS_mLQ2T7cC8w4DWCNrF7eoxE8wrl1SxPvK7rbpVibRdg_qbs4f1m3PNaQLGJvzmgFIStJyq5K9ADjg60lB9ZFC26x8zfsSZxw0loLUlTnqlKtdogTIjlZk-ZSvCQIp8JgMuwDCxKbeC7XGAyDNtoCt6vTAurGPJKBCB_kfGAEbF-Eaf1i9L05bMUWHpawUq4S0_ukqz0R-g9HwdPEN6pkq60XYn2-_l0C8_q_GLVPIxYEv9I12oLxCU-A9b1h2RqnD2lW-43U8PM-ce8OATPQ5L_GLhoFWZbHEswejNA4Ib_sIoNADk7DwHHCKX-xGpj6td9cmGaTK3d7MIHKwqEsrYRl1zUTLj7EBTlkaBLsTcFgGJz0bwVttM4CqUeOGqcEF4sgLAhQjpsZ_6GMHWbn7xv1_JAyT1nQt-M0W5Ly8Z724zcYMxdG4dKfUDlqAf7PbfPM2aYXHNlfOCrteMqWkp-HFanRTvcT8DnMRIsCwvmDfSn6fPhnhW7BAWirfDXQUEW-aE7aAdafKDifNj8DtF1c-Lw9Gz0jOeOa4OqhciGJi5IWTKfouSa5RN89G9kyAXpm6RPAhcaFV5G6FGq1rbReqoVrLyTaeQy1M4Q1YMCcosEXS7JR9NTtLfEixksVPsNinJtroZIEFN6Hpyx6SSC8-dAAUNxiLJvwAM2atxP4lCgziPJgegTOz_2fVCEHheSgU9fAecppI05Sp7CYtKdfmpgnG9GauI6hGUSpz07_aRoaoWuJSGZh_oBVNOd2iVPxGMPiIRDThHf2ATqxAQ7FY0WjFS2luehWoDOr3rmBhlu9Qc1wPNpVS96IT45y6wnqf6xWZzL95ahW4joyDWSGrV9tCplM-jK-G0G8hK_oTwcVQ9j3seKe_pJ6WvH6Z6-LZH_MAgm33WFLD-FgR6W1hQRSWFdJtxAOv_pvgQiAvh7-JYI8-tq4HhK09AjsG6gK2DR3ndUhxlNNi5_b4pSeF
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_0fc4eeb753d3446b9d330f2fd0ed6068
+            name: get_weather
+            response:
+              return_value: The weather in Paris is sunny and 72°F.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                type: integer
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1372'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1144
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                response: 72
+              name: final_result
+            thoughtSignature: Cr8DAXLI2nwnpfBQvh11KgRwYj3C3IsAsfFH8UnMQ45ClCxZR8osUSbK/oaRvkQccAQT2l2t5RZ8Ycqsl0bgrpxRvoFKRq8dVHv6pH8jG8VCXKMBQK9XsVLBBATtk2gJhMi1ttne6kLHZa5EvrVC1tizuVOEQu+iLi6xNImJpUs7YYCCBJgZP39Aa9XZT7StVSspC5cZk1WOhgedbGw1hUmMkAgKBaLhxpdwAf3lesM7xNdgFhDdj/k4KdaGgUXN0sJEjk3UZ43glcJTl/GjLiQVcyXJOSuMTlJmqvWl4x7UDoP7iYiVgiVMy/ptZHouexsbaLXwBXazpP2gc2zClxNXoTUPdFcLKEe6JoaLbHu2+fRlLwvBee+UVURrnxYlS9imcq0gsejt2yQwAEZZ0xlrtP/Ag5s7ZBx1v4Xz27Ad3vQDVB5ZK2NAm3H8tyren9yVVE9hGNflUH858AHBS+UZxjsjZmHB2zmALoXd5gXHFKngSGRIBSCPF5TZRl+vtItVmkmqEPufR+9vx/SUhnDEc/dg7bvN2iFVbiYinaxiyXp8ZGYQZPT4DGriOWznSKvUViTET28cy9gsimlUCx6n
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: xHU3adjNL_WkqtsP_7iBkQ4
+      usageMetadata:
+        candidatesTokenCount: 16
+        promptTokenCount: 142
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 142
+        thoughtsTokenCount: 114
+        totalTokenCount: 272
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -545,6 +545,90 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class _ResolvedToolChoice:
+    """Provider-agnostic resolved tool choice.
+
+    This is the result of validating and resolving the user's `tool_choice` setting.
+    Providers should map this to their API-specific format.
+    """
+
+    mode: Literal['none', 'auto', 'required', 'specific']
+    """The resolved tool choice mode."""
+
+    tool_names: list[str] = field(default_factory=list)
+    """For 'specific' mode, the list of tool names to force. Empty for other modes."""
+
+    def filter_tools(
+        self,
+        function_tools: list[ToolDefinition],
+        output_tools: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        """Filter tools based on the resolved mode.
+
+        - 'none': only output_tools
+        - 'required': only function_tools
+        - 'specific': specified function_tools + output_tools
+        - 'auto': all tools
+        """
+        if self.mode == 'none':
+            return list(output_tools)
+        elif self.mode == 'required':
+            return list(function_tools)
+        elif self.mode == 'specific':
+            allowed = set(self.tool_names)
+            return [t for t in function_tools if t.name in allowed] + list(output_tools)
+        else:  # 'auto'
+            return [*function_tools, *output_tools]
+
+
+def _resolve_tool_choice(  # pyright: ignore[reportUnusedFunction]
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+) -> _ResolvedToolChoice | None:
+    """Resolve and validate tool_choice from model settings.
+
+    This centralizes the common logic for handling tool_choice across all providers:
+    - Validates tool names in list[str] against available function_tools
+    - Returns a provider-agnostic _ResolvedToolChoice for the provider to map to their API format
+
+    Args:
+        model_settings: The model settings containing tool_choice.
+        model_request_parameters: The request parameters containing tool definitions.
+
+    Returns:
+        _ResolvedToolChoice if an explicit tool_choice was provided and validated,
+        None if tool_choice was not set (provider should use default behavior based on allow_text_output).
+
+    Raises:
+        UserError: If tool names in list[str] are invalid.
+    """
+    user_tool_choice = (model_settings or {}).get('tool_choice')
+
+    if user_tool_choice is None:
+        return None
+
+    if user_tool_choice == 'none':
+        return _ResolvedToolChoice(mode='none')
+
+    if user_tool_choice in ('auto', 'required'):
+        return _ResolvedToolChoice(mode=user_tool_choice)
+
+    if isinstance(user_tool_choice, list):
+        if not user_tool_choice:
+            return _ResolvedToolChoice(mode='none')
+        function_tool_names = {t.name for t in model_request_parameters.function_tools}
+        invalid_names = set(user_tool_choice) - function_tool_names
+        if invalid_names:
+            raise UserError(
+                f'Invalid tool names in `tool_choice`: {invalid_names}. '
+                f'Available function tools: {function_tool_names or "none"}'
+            )
+        return _ResolvedToolChoice(mode='specific', tool_names=list(user_tool_choice))
+
+    return None  # pragma: no cover
+
+
 class Model(ABC):
     """Abstract class for a model."""
 

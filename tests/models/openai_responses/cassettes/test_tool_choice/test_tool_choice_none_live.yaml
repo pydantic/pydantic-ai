@@ -1,0 +1,143 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '424'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the weather in Paris? Use the tool if available.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: none
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '7089'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '9379'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765242214
+      error: null
+      id: resp_082274208daf287000693775667280819da6969c47dc18abd5
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpN3Vv98sW7fVOKvvSGYJHrHIL1CT9xp6yWoYpYaf-BXroQZ0cOkGGaO2XQ1gyHktEw2gtX6hFHQPMabuXVhb5IjMZoAltic3KPFWbJFpkUvJHelNghYKU2k5erL6RRstYiWPov2r2ZenVaVn7QMBuIao0KN8J76mpqNiFSTs_o4AgCkqWAsvOz5QfI4qalaWuBfYvfy6nan6TbXyUWejrC_rtg8SZMqo4HhEFONMFA6novL1dV1i9DXvu1xG90gcJzF7jwesY2CZ9VcD6Og1Xy4-pztCmLJMln8lEDnHGx32j2xWfWX5Z8HfMk3KUIl50ch5LM7rdjwd-0LH9dh3aCPBChcPJnDg6V95YaotBBI964S-imZ7t553ZpJilRnawK4-xzqWufuw5nu8nIjK6ru1LQqI3I0LJ00SItJUASeJcMfFg-YxcJH9YMJ8M4UhzTI_xgF08gKmVVsoaCl5FXP0VPo0JuerDu0Djf_N0a6USCez05ut0nkIz4gdAStLzYlI3cIC_Dco_Ao7hGNUIJiyIVM5LcLbuPaBut5o3d6_4STS6Pw2HlIjQOLJ2TeeioJjxLsfVX9VOqDk2NSpAVEE_l_RtVOIXmyOzVcRRx7NVrxROb_wr5Bcs85A1mVm_T9A5-qDe8Y2C7iWtBKjbvl4YVvcGO2d0bpSi43ZSj8ejcbOMNiSnwKQlII_aVrjQgM9vZCTHRFRa_9xgHHqT3KmRHTqpj_5FcBmIVeNnk9Bl8PNoLnmAkZEOps-5nuxUDGQV3Osa7Yge54Yx3tcQ6Mle0yDQJKKHCzultcwi_TMkQuWO_GJlUJPMyPKGM9ZJHO5xY8m2dq2jKXb6ePYqWQXzolpKa2GvtC8kDr83NDbBkAvh2OHik80IjyaIe9ijbiYcdrWXPpGQbedjvc6ntG0vSDmS-9aLHfj7WQdDphwWS0S95cG5Ltz3BZxQBv-jhKZGjZAMLwpRj5fmrSmfBVw6KwjRQOO64buD_4cWjvRCNEP3h6GnEgCz4wjQtaPPTgQBTKF6Du-lcTU7ug9L9hTODlFNaD3wZpMM3P2VUKdUHe5PmePiR0Vw9ATENum3fcc_xIi0vJm7Ote2mY3-W8V_Ov0Xq-Qm1TMusa3atD9nOHuPRGc29Ig4klqz9IDTdOALFT83SYdeE5l2VdGGNbv3g2D-znpLsN3Rw8ZBaCyW7v7IMKU97jxsLmCLVQ12hT8IDu69EJy5n-Rqqp8bBU9G-MMARTPBecJcrGgpKgLmZZthhFdpJARNftQg39W68VZ6nlQV3vOuDzzQ5Wna0yPJdSL8M4Iy18SwY03EYhyqBUxCJBaJuydxN6WocJaxT-5BN2Lkw4jKuYGp7jfIjF8tQijU2kvCJ4_HRU2YcefheEL7Vsivh7pN7WWN-4Fstm1cRF7l33rMhKKVKUmkjaKqLSXjJ8wcJVTg7nKC1Too_nR0DGN7jVSGBiGSLse5QAKAhs8WhLBzvKRP7ViCGZVh466R2kU5GLLK0qRKwaAu-z-n54cmb1-6PIXhDfCTNe0Ev6bwrEI3xQg6eplS0uc0xSAuhtBdoloFbaB6Tuj1_zmswYjF_YpsLEoAq0FEBELs5mficFUVWRwoBAV-qRkOFW5fjohVwgthJwozAqO_4kpdOIxwNFciVn7kpXE3q5AdWnAlDJS6k1OzKlmLJCrNgaLfIwiSJRzpzDuC3ojxKs0V-PSu7r28HuA2-bn5KbZj4CRbzo-oW45-KtfrVOsegPgEkaHQ7e3w9xrLmgMp5_vz7PhrdfpJGqgXzLLw3XmQF2FQmgmU3MqbcTZpHb0uoYM2qtL3oikPj1duqvXsDkeiNOuWKm5a1TgjvM37WTAcpQ3ouh7zFKsZtEK5w68vEG3-r06nI8ZqZsfMbxGrIMnfW4-2HyEgurlegg4RJ2fVbZCVRgwvG4hRph5WJOuoRtkItpoWjBJ5-inHtADk_6zsvzZe2pKVrt4m3z7qlRIoEDJqNo4k2ICx1aiDKvBQPs2ZMsxJ4fawEiiVrmIfAZnBJ8bgfs3SpGCRi-PSgBz6wr-nFV6nmJKSFw_Ii6boJy-BaD8Gbu4iwx0XwH5203BqbuirQB3xJ98VufFKU9Hbu5P3EsS7GqFu7FLS6zA6JTlyanVUofijlSCq1Xq5EY4dC94cWZ_tT8aLb2maVCUi42OAOfsfNHV9Y3xYABnoXowQtKQxEH6vtd8yxTkFRUXXecJ8yqgD_An0CVGR9yA8sAw3WeAxhJBN46TRp1H_UFNnXCZ3hJouDO9Lid-dXOpEtgrMSls3CRh3aOW2sYjSOn0JqrFA8GiFWOvIZhg_ilWpL47ch9M4t92-P5lOj2Ch9OyGqIGInC_jor61lSzkTzPua0YcZo896Tv3FpFEGV2v3x0qTbIPJh-hhxbthbqIrkn-8JsFhfLoo0CT_vtlW0St1PkbPh0KlbfdFr5QELBBvogVes0oTcFqP3rHJI4ZLIzeNp6OVak54GUbn_nd0FsPKoWFErmmYbx8hMylQQfwvhVHYohtI52pwRA8_aLKNKKL8ST8lnnWSG0ZjQQpWbp1gVHFlxrAWq8HYMKk3Kcn3FHJ0_yRxqpuR1IZfCWfPnOFyKbBMu6HG7uV439s8xRZdaQLo9gW1M8ArzLYOUWow-i5gNIZZ9gVKaili6yLSmpnp9hHMAK4cZME7I7m2e8FPFK44FcSUXlg1T0inOWJNdXloxXsOl1ec6SE5AVXZ-gWW2aEOKfARrwfS_SWALu3c71dU64b4jA4UL59q7nZymfUBEtp3G6EQynGg0QRcvRTfRpSLlF3beEgT1RwwMH5w3zgSjuxAmD4jwR_zSs6H50td9xMnWyYyAsf2OLAbXF-L3Epc3zcAY5rrM6CGEJxGif6yR5z9yFG5K46zeosVtw611NX8WIGrT5Fd2R4nstSt4vdgwYxFogQ3AmC7db7eNcpAKd2uiwL-ImNqTNt0bwOxgDSw1ExAgrWo0qOu1YIjx-Ge4PPy4l6ymr5Hx-EK83WhX807JG3ZugnrIO6ol5fD6WAcpphlkQuNWK0jG5YwolK3h6Uour8qkdTXTNLrdI-Cs5Vx5tGaosVX5tJQxwETQb8mWzlZCcphId4EBgiVWyV6WF74zcqV6REJ5-vIV9cEQlj-bw4UbbNeHyVYTwCj5OkfW-ymxBiUEeAxP_LqryWtcPs11B2U-1IHegEWOgBtdyi4xA0S6Gh12HXK8CIy0nccTf61qyTJkfcho5yDTisJgcsk0mHDxcc2qOPIclGH3bII7BNzfXKe1iubBUOn1LS-CgS9YS6bTWM2pT_CY-6pQ0t6DLjiQgPashazaQAVDrEmweczMtwunvMhYSvgeIp3RlZhZqqsUZjlv3Xy06fryFAyFseqlJOMaQnAENuf5n3ZQdl1lo-KIr-M0bjzpl73spXLCFVi6xKr57d2zpgJyzhYD5CFZp9sH8XbNa2HjYY4khYgz0eqOhICmWf7LuNCN8H1mJIVMZXAh54WIIWnDz52-q-1QxFUha9aaAnWz0tbMvDKjdbocUwH7Vx7hOFdMRdh4T2yy-Mi5pZDdDTXGxr8L-PCRj6OahttZZZoaiB0-KNLwz35bGQUASPIgfZH6lXEpQaapZ7jvHy58ENcykkIE9L3OIACI8FxSSQPuOidZhp-ACWsZ0JTg49sLVDyvn7fO0IK2Pm89Qx9mzSTmDyZ88iW8EOEWbw6N92G8_1sDmmLmJmnvVxM-JXXAd_oNaJw_uNly8ThVDNiixiZM8lAzvlpbiUZH6Xfept8qJGFgSzB_9FJPaVGVsKOGRn2HGVK2cZVgb1lHUZKemXS79yNnOidRQVhn9bs6JnxEh1aMZcrXJ0-pavXNhLVp8z--dfDEGCW4d6Sm7oF3VGIRRqIC9gL0Q22yravoCj6G1UmXmclXT-OKLnaPc-Sq0lQYMOFJy2is6tTeniJN4EkMnPtunWH8N62Rm6PjhAq9HbIsBZIHiWmIMELyxaGd4FxXvxG9b5VtTRYfLvDU7Ff5M81y2QXUrbpUu0TjwAxR9ZHsx4UrSaMWQE6tV6N86acfR0zVt14EWq5AcTvx9ZLmxVNj7ueJXkDcw1qxpGo-b2Ydmuei2ATR88iO6Xu8CfQ3dhDAobmMQ=
+        id: rs_082274208daf28700069377566ede4819d9b74f9088caeac29
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            I don't have access to live weather data right now, so I can't fetch the current conditions for Paris. I can, however:
+
+            - Give a quick typical/seasonal description for Paris in early December: generally cool and damp. Daytime highs often around 4–9°C (39–48°F), nights near 0–5°C (32–41°F). Skies are frequently overcast with a good chance of rain or drizzle; occasional wind but usually not severe.
+            - Tell you how to get an up-to-date forecast: check a weather site or app (Météo‑France, Weather.com, AccuWeather), use a smartphone assistant, or ask a smart speaker.
+            - If you share a specific date/time you care about, I can give a climatological (typical) forecast for that date.
+            - If you want, I can fetch the live weather for you once live-data access is available — or you can paste the current conditions you see and I’ll help interpret them.
+
+            Which would you like?
+          type: output_text
+        id: msg_082274208daf2870006937756d1b1c819dad473afd73fbe874
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: none
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 56
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 726
+        output_tokens_details:
+          reasoning_tokens: 512
+        total_tokens: 782
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

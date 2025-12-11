@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
+import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -41,7 +42,13 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    _resolve_tool_choice,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -254,9 +261,6 @@ class BedrockConverseModel(Model):
         """The model provider."""
         return self._provider.name
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
-
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
@@ -422,7 +426,7 @@ class BedrockConverseModel(Model):
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters)
+        tool_config = self._map_tool_config(model_request_parameters, model_settings)
         if tool_config:
             params['toolConfig'] = tool_config
 
@@ -478,16 +482,57 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
-        tools = self._get_tools(model_request_parameters)
-        if not tools:
+    def _map_tool_config(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: BedrockModelSettings | None,
+    ) -> ToolConfigurationTypeDef | None:
+        resolved = _resolve_tool_choice(model_settings, model_request_parameters)
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
+
+        if resolved is None:
+            tool_defs_to_send = [*function_tools, *output_tools]
+        else:
+            tool_defs_to_send = resolved.filter_tools(function_tools, output_tools)
+
+        if not tool_defs_to_send:
             return None
 
+        tools = [self._map_tool_definition(t) for t in tool_defs_to_send]
         tool_choice: ToolChoiceTypeDef
-        if not model_request_parameters.allow_text_output:
+
+        if resolved is None:
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                tool_choice = {'any': {}}
+            else:
+                tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'auto':
+            if not model_request_parameters.allow_text_output:
+                tool_choice = {'any': {}}
+            else:
+                tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'required':
             tool_choice = {'any': {}}
-        else:
+
+        elif resolved.mode == 'none':
+            # We've already filtered to only output tools, use 'auto' to let model choose
             tool_choice = {'auto': {}}
+
+        elif resolved.mode == 'specific':
+            if not resolved.tool_names:  # pragma: no cover
+                raise RuntimeError('Internal error: resolved.tool_names is empty for specific tool choice.')
+            if len(resolved.tool_names) == 1:
+                tool_choice = {'tool': {'name': resolved.tool_names[0]}}
+            else:
+                warnings.warn("Bedrock only supports forcing a single tool. Falling back to 'any'.")
+                tool_choice = {'any': {}}
+
+        else:
+            assert_never(resolved.mode)
 
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
         if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:
