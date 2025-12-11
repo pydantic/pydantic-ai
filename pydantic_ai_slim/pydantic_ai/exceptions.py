@@ -25,8 +25,6 @@ __all__ = (
     'ModelAPIError',
     'ModelHTTPError',
     'ContentFilterError',
-    'PromptContentFilterError',
-    'ResponseContentFilterError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
@@ -155,6 +153,10 @@ class UnexpectedModelBehavior(AgentRunError):
             return self.message
 
 
+class ContentFilterError(UnexpectedModelBehavior):
+    """Raised when content filtering is triggered by the model provider."""
+
+
 class ModelAPIError(AgentRunError):
     """Raised when a model provider API request fails."""
 
@@ -180,30 +182,6 @@ class ModelHTTPError(ModelAPIError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
-
-
-class ContentFilterError(ModelHTTPError):
-    """Raised when content filtering is triggered by the model provider."""
-
-    def __init__(self, message: str, status_code: int, model_name: str, body: object | None = None):
-        super().__init__(status_code, model_name, body)
-        self.message = message
-
-
-class PromptContentFilterError(ContentFilterError):
-    """Raised when the prompt triggers a content filter."""
-
-    def __init__(self, status_code: int, model_name: str, body: object | None = None):
-        message = f"Model '{model_name}' content filter was triggered by the user's prompt"
-        super().__init__(message, status_code, model_name, body)
-
-
-class ResponseContentFilterError(ContentFilterError):
-    """Raised when the generated response triggers a content filter."""
-
-    def __init__(self, model_name: str, body: object | None = None, status_code: int = 200):
-        message = f"Model '{model_name}' triggered its content filter while generating a response"
-        super().__init__(message, status_code, model_name, body)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

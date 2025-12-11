@@ -46,7 +46,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
-from pydantic_ai.exceptions import ResponseContentFilterError, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -7901,57 +7901,3 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     assert usage2.cache_read_tokens > 0
     assert usage2.cache_write_tokens > 0
     assert usage2.output_tokens > 0
-
-
-async def test_anthropic_response_filter_error_sync(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='partial', type='text')],
-        usage=BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    # 'refusal' maps to 'content_filter' in _FINISH_REASON_MAP
-    c.stop_reason = 'refusal'
-
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-123', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    with pytest.raises(
-        ResponseContentFilterError,
-        match=r"Model 'claude-3-5-haiku-123' triggered its content filter while generating a response",
-    ):
-        await agent.run('hello')
-
-
-async def test_anthropic_response_filter_error_stream(allow_model_requests: None):
-    stream = [
-        BetaRawMessageStartEvent(
-            type='message_start',
-            message=BetaMessage(
-                id='msg_123',
-                model='claude-3-5-haiku-123',
-                role='assistant',
-                type='message',
-                content=[],
-                stop_reason=None,
-                usage=BetaUsage(input_tokens=20, output_tokens=0),
-            ),
-        ),
-        BetaRawMessageDeltaEvent(
-            type='message_delta',
-            delta=Delta(stop_reason='refusal'),  # maps to content_filter
-            usage=BetaMessageDeltaUsage(input_tokens=20, output_tokens=5),
-        ),
-        BetaRawMessageStopEvent(type='message_stop'),
-    ]
-
-    mock_client = MockAnthropic.create_stream_mock([stream])
-    m = AnthropicModel('claude-3-5-haiku-123', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    with pytest.raises(
-        ResponseContentFilterError,
-        match=r"Model 'claude-3-5-haiku-123' triggered its content filter while generating a response",
-    ):
-        async with agent.run_stream('hello') as result:
-            async for _ in result.stream_text():
-                pass

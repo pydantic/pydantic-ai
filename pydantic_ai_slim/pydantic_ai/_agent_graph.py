@@ -534,6 +534,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
+        if response.finish_reason == 'content_filter':
+            raise exceptions.ContentFilterError(f'Content filter triggered for model {response.model_name}')
+
         response.run_id = response.run_id or ctx.state.run_id
         # Update usage
         ctx.state.usage.incr(response.usage)

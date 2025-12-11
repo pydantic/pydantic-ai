@@ -22,6 +22,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
@@ -538,3 +539,23 @@ async def test_return_empty():
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass
+
+
+async def test_central_content_filter_handling():
+    """
+    Test that the agent graph correctly raises ContentFilterError
+    when ANY model returns finish_reason='content_filter'.
+    """
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Simulate a model response that was cut off by a content filter
+        return ModelResponse(
+            parts=[TextPart('Partially generated content...')], model_name='test-model', finish_reason='content_filter'
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model)
+
+    # The exception should be raised by _agent_graph.py
+    with pytest.raises(ContentFilterError, match='Content filter triggered for model test-model'):
+        await agent.run('Trigger filter')

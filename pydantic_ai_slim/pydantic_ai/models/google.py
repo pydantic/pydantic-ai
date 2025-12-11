@@ -14,7 +14,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
-from ..exceptions import ModelAPIError, ModelHTTPError, ResponseContentFilterError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -494,10 +494,6 @@ class GoogleModel(Model):
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         if candidate.content is None or candidate.content.parts is None:
-            if finish_reason == 'content_filter' and raw_finish_reason:
-                raise ResponseContentFilterError(
-                    model_name=response.model_version or self._model_name, body=response.model_dump_json()
-                )
             parts = []  # pragma: no cover
         else:
             parts = candidate.content.parts or []
@@ -697,10 +693,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
             if candidate.content is None or candidate.content.parts is None:
-                if self.finish_reason == 'content_filter' and raw_finish_reason:
-                    raise ResponseContentFilterError(model_name=self.model_name, body=chunk.model_dump_json())
-                else:  # pragma: no cover
-                    continue
+                continue
 
             parts = candidate.content.parts
             if not parts:

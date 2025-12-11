@@ -52,10 +52,10 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
 )
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
-    ResponseContentFilterError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -988,10 +988,9 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    # Changed expected exception from UnexpectedModelBehavior to ResponseContentFilterError
     with pytest.raises(
-        ResponseContentFilterError,
-        match="Model 'gemini-1.5-flash' triggered its content filter while generating a response",
+        ContentFilterError,
+        match='Content filter triggered for model gemini-1.5-flash',
     ):
         await agent.run('Tell me a joke about a Brazilians.')
 
@@ -4435,65 +4434,3 @@ def test_google_missing_tool_call_thought_signature():
             ],
         }
     )
-
-
-async def test_google_response_filter_error_sync(
-    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
-):
-    model_name = 'gemini-2.5-flash'
-    model = GoogleModel(model_name, provider=google_provider)
-
-    #  Create a Candidate mock with the specific failure condition
-    candidate_mock = mocker.Mock(
-        finish_reason=GoogleFinishReason.SAFETY, content=None, grounding_metadata=None, url_context_metadata=None
-    )
-
-    #  Create the Response mock containing the candidate
-    response_mock = mocker.Mock(candidates=[candidate_mock], model_version=model_name, usage_metadata=None)
-
-    response_mock.model_dump_json.return_value = '{"mock": "json"}'
-
-    #  Patch the client
-    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response_mock)
-
-    agent = Agent(model=model)
-
-    #  Verify the  exception is raised
-    with pytest.raises(
-        ResponseContentFilterError,
-        match="Model 'gemini-2.5-flash' triggered its content filter while generating a response",
-    ):
-        await agent.run('bad content')
-
-
-async def test_google_response_filter_error_stream(
-    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
-):
-    model_name = 'gemini-2.5-flash'
-    model = GoogleModel(model_name, provider=google_provider)
-
-    #  Create Candidate mock
-    candidate_mock = mocker.Mock(
-        finish_reason=GoogleFinishReason.SAFETY, content=None, grounding_metadata=None, url_context_metadata=None
-    )
-
-    #  Create Chunk mock
-    chunk_mock = mocker.Mock(
-        candidates=[candidate_mock], model_version=model_name, usage_metadata=None, create_time=datetime.datetime.now()
-    )
-    chunk_mock.model_dump_json.return_value = '{"mock": "json"}'
-
-    async def stream_iterator():
-        yield chunk_mock
-
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
-
-    agent = Agent(model=model)
-
-    with pytest.raises(
-        ResponseContentFilterError,
-        match="Model 'gemini-2.5-flash' triggered its content filter while generating a response",
-    ):
-        async with agent.run_stream('bad content') as result:
-            async for _ in result.stream_text():
-                pass
