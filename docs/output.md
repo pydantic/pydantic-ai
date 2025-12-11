@@ -308,7 +308,7 @@ _(This example is complete, it can be run "as is")_
 
 ##### Parallel Output Tool Calls
 
-When the model calls multiple tools in a final response, you can control how tool calls are executed with the `end_strategy`:
+When the model calls other tools in parallel with an output tool, you can control how tool calls are executed with the `end_strategy`:
 
 - `'early'` (default): Tools are executed in order until a valid final result is found, then remaining tool calls are skipped
 - `'exhaustive'`: All tools are executed with the first valid result becoming the final output
