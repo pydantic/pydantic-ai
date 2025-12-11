@@ -111,6 +111,16 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
+def _uploaded_file_identifier_source(file: Any) -> str:
+    if isinstance(file, str):
+        return file
+    for attr in ('id', 'uri', 'name'):
+        value = getattr(file, attr, None)
+        if isinstance(value, str):
+            return value
+    return repr(file)
+
+
 @dataclass(init=False, repr=False)
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
@@ -636,6 +646,59 @@ class BinaryImage(BinaryContent):
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
 
 
+@dataclass(init=False, repr=False)
+class UploadedFile:
+    """File uploaded to the LLM provider.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel],
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel].
+
+    - For OpenAI-compatible models, provide an `openai.types.FileObject` or a file ID string returned by the Files API.
+    - For Gemini, provide a `google.genai.types.File` or the file URI string returned by the Files API.
+
+    Other models raise `NotImplementedError` when they receive this part.
+    """
+
+    file: Any
+    """A provider-specific file object, e.g. a file ID or a file URL."""
+
+    _: KW_ONLY
+
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+    """Optional identifier for the uploaded file."""
+
+    kind: Literal['uploaded-file'] = 'uploaded-file'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    def __init__(
+        self,
+        file: Any,
+        *,
+        identifier: str | None = None,
+        kind: Literal['uploaded-file'] = 'uploaded-file',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ):
+        self.file = file
+        self._identifier = identifier or _identifier
+        self.kind = kind
+
+    @pydantic.computed_field
+    @property
+    def identifier(self) -> str:
+        """Identifier for the uploaded file, usually derived from the provider's reference."""
+        identifier = self._identifier
+        if identifier is not None:
+            return identifier
+
+        return _multi_modal_content_identifier(_uploaded_file_identifier_source(self.file))
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass
 class CachePoint:
     """A cache point marker for prompt caching.
@@ -659,7 +722,7 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
@@ -777,11 +840,17 @@ class UserPromptPart:
                 if settings.include_content and settings.include_binary_content:
                     converted_part['content'] = base64.b64encode(part.data).decode()
                 parts.append(converted_part)
+            elif isinstance(part, UploadedFile):
+                uploaded_part: _otel_messages.UploadedFilePart = {
+                    'type': 'uploaded-file',
+                    'identifier': part.identifier,
+                }
+                if settings.include_content:
+                    uploaded_part['file'] = _uploaded_file_identifier_source(part.file)
+                parts.append(uploaded_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
-            else:
-                parts.append({'type': part.kind})  # pragma: no cover
         return parts
 
     __repr__ = _utils.dataclasses_no_defaults_repr

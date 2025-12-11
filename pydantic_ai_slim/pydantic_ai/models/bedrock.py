@@ -34,6 +34,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
     _utils,
@@ -671,6 +672,8 @@ class BedrockConverseModel(Model):
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('Uploaded files are not supported yet.')
                 elif isinstance(item, CachePoint):
                     # Bedrock support has not been implemented yet: https://github.com/pydantic/pydantic-ai/issues/3418
                     pass

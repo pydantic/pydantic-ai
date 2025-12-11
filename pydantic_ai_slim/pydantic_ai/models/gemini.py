@@ -35,6 +35,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -392,6 +393,8 @@ class GeminiModel(Model):
                     else:  # pragma: lax no cover
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('Uploaded files are not supported for GeminiModel.')
                 elif isinstance(item, CachePoint):
                     # Gemini doesn't support prompt caching via CachePoint
                     pass

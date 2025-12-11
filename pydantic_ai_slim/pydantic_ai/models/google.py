@@ -34,6 +34,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -62,6 +63,7 @@ try:
         CountTokensConfigDict,
         ExecutableCode,
         ExecutableCodeDict,
+        File,
         FileDataDict,
         FinishReason as GoogleFinishReason,
         FunctionCallDict,
@@ -638,12 +640,39 @@ class GoogleModel(Model):
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                         content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                elif isinstance(item, UploadedFile):
+                    content.append({'file_data': self._map_uploaded_file(item)})
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass
                 else:
                     assert_never(item)
         return content
+
+    @staticmethod
+    def _map_uploaded_file(item: UploadedFile) -> FileDataDict:
+        """Convert an UploadedFile into the structure expected by Gemini."""
+        file = item.file
+        if isinstance(file, File):
+            file_uri = file.uri
+            mime_type = file.mime_type
+            display_name = getattr(file, 'display_name', None)
+        elif isinstance(file, str):
+            file_uri = file
+            mime_type = None
+            display_name = None
+        else:
+            raise UserError('UploadedFile.file must be a genai.types.File or file URI string')
+
+        if not file_uri:
+            raise UserError('UploadedFile.file must include a file URI')
+
+        file_data: FileDataDict = {'file_uri': file_uri}
+        if mime_type:
+            file_data['mime_type'] = mime_type
+        if display_name:
+            file_data['display_name'] = display_name
+        return file_data
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()

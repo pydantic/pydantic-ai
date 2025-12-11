@@ -33,6 +33,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UploadedFile,
     UserError,
     UserPromptPart,
 )
@@ -58,7 +59,7 @@ from .mock_openai import (
 
 with try_import() as imports_successful:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI
-    from openai.types import chat
+    from openai.types import FileObject, chat
     from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
@@ -79,6 +80,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        _map_uploaded_file,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -3137,6 +3139,80 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
     assert result.output == snapshot('Paris.')
 
 
+def test_openai_uploaded_file_accepts_id_string(openai_api_key: str):
+    file_id = 'file-abc123'
+    provider = OpenAIProvider(api_key=openai_api_key)
+
+    assert _map_uploaded_file(UploadedFile(file=file_id), provider) == file_id
+
+
+def test_openai_uploaded_file_accepts_object_with_id(openai_api_key: str):
+    class FileStub:
+        id = 'file-stub'
+
+    provider = OpenAIProvider(api_key=openai_api_key)
+
+    assert _map_uploaded_file(UploadedFile(file=FileStub()), provider) == 'file-stub'
+
+
+def test_openai_uploaded_file_requires_id(openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+
+    class FileStub:
+        pass
+
+    with pytest.raises(
+        UserError, match='UploadedFile\\.file must be a file ID string or an object with an `id` attribute'
+    ):
+        _map_uploaded_file(UploadedFile(file=FileStub()), provider)
+
+
+async def test_openai_responses_uploaded_file_mapping(openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    responses_model = OpenAIResponsesModel('gpt-4o-mini', provider=provider)
+
+    msg = await responses_model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=[UploadedFile(file='file-xyz')])
+    )
+
+    assert msg == {
+        'role': 'user',
+        'content': [{'file_id': 'file-xyz', 'type': 'input_file'}],
+    }
+
+
+async def test_uploaded_file_input(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIChatModel('gpt-4o', provider=provider)
+    # VCR recording breaks when dealing with openai file upload request due to
+    # binary contents. For that reason, we have manually run once the upload
+    # and rebuild the FileObject manually (from the print command output).
+    # with open('tests/assets/dummy.pdf', 'rb') as f:
+    #     file_bytes = f.read()
+    # openai_file = await provider.client.files.create(
+    #     file=('image.pdf', file_bytes, 'application/pdf'),
+    #     purpose='user_data',
+    # )
+    # print(openai_file)
+    openai_file = FileObject(
+        id='file-2bkCwDLR2p8cDXfT9he8tV',
+        bytes=13264,
+        created_at=1764177089,
+        filename='image.pdf',  # OpenAI file upload API only accepts pdf
+        object='file',
+        purpose='user_data',
+        status='processed',
+        expires_at=None,
+        status_details=None,
+    )
+    agent = Agent(m)
+
+    result = await agent.run(['Give me a short description of this image', UploadedFile(file=openai_file)])
+    assert result.output == snapshot(
+        'The file you uploaded is a "Dummy PDF file." There are no further descriptions or details available within its content. The file likely contains filler or placeholder text for testing purposes. If you need a specific type of content or have another file, please let me know!'
+    )
+
+
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
@@ -3193,7 +3269,8 @@ async def test_cache_point_filtering_responses_model():
     """Test that CachePoint is filtered out in OpenAI Responses API requests."""
     # Test the static method directly to trigger line 1680
     msg = await OpenAIResponsesModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=['text before', CachePoint(), 'text after'])
+        None,  # type: ignore
+        UserPromptPart(content=['text before', CachePoint(), 'text after']),
     )
 
     # CachePoint should be filtered out, only text content should remain

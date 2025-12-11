@@ -1,0 +1,86 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '206'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: Give me a short description of this image
+          type: text
+        - file:
+            file_id: file-2bkCwDLR2p8cDXfT9he8tV
+          type: file
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1080'
+      content-type:
+      - application/json
+      openai-organization:
+      - coplane
+      openai-processing-ms:
+      - '1905'
+      openai-project:
+      - proj_KGkpeAYM2vPXvZOVtXfnuZ9r
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The file you uploaded is a "Dummy PDF file." There are no further descriptions or details available within
+            its content. The file likely contains filler or placeholder text for testing purposes. If you need a specific
+            type of content or have another file, please let me know!
+          refusal: null
+          role: assistant
+      created: 1764177247
+      id: chatcmpl-CgDNf5yzHe6V6DQHxio2IdIAdMyoR
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 53
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 234
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 287
+    status:
+      code: 200
+      message: OK
+version: 1
