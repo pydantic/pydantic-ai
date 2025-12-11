@@ -8,11 +8,22 @@ import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    get_args,
+    get_origin,
+    overload,
+)
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
@@ -41,8 +52,13 @@ if TYPE_CHECKING:
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
+_prefer_blocking_execution: ContextVar[bool] = ContextVar('_prefer_blocking_execution', default=False)
+
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    if _prefer_blocking_execution.get():
+        return func(*args, **kwargs)
+
     wrapped_func = partial(func, *args, **kwargs)
     return await run_sync(wrapped_func)
 

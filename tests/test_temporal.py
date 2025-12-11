@@ -199,6 +199,21 @@ simple_agent = Agent(model, name='simple_agent')
 simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVITY_CONFIG)
 
 
+def drop_first_message_sync(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Sync history processor for testing blocking execution mode."""
+    return messages[1:] if len(messages) > 1 else messages
+
+
+agent_with_sync_history_processor = Agent(
+    TestModel(custom_output_text='The capital of Mexico is Mexico City.'),
+    name='agent_with_sync_history_processor',
+    history_processors=[drop_first_message_sync],
+)
+temporal_agent_with_sync_history_processor = TemporalAgent(
+    agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
 @workflow.defn
 class SimpleAgentWorkflow:
     @workflow.run
@@ -1247,6 +1262,36 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
                 id=SimpleAgentWorkflowWithRunSync.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+@workflow.defn
+class AgentWithSyncHistoryProcessorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_history_processor.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_history_processor(client: Client):
+    """Test that sync history processors work inside Temporal workflows.
+
+    This validates that the _prefer_blocking_execution ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync history processors to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncHistoryProcessorWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_history_processor)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncHistoryProcessorWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncHistoryProcessorWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
 @workflow.defn
