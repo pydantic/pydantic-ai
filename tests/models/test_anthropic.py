@@ -8716,3 +8716,51 @@ async def test_tool_choice_none_with_multiple_output_tools_falls_back_to_auto(al
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
     assert kwargs['tool_choice']['type'] == 'auto'
+
+
+async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
+    """When tool_choice='auto' but structured output is required, falls back to 'any'."""
+
+    class Location(BaseModel):
+        city: str
+        country: str
+
+    c = completion_message(
+        [BetaToolUseBlock(id='1', type='tool_use', name='final_result', input={'city': 'Paris', 'country': 'France'})],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, output_type=Location)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'auto'})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    # With structured output (allow_text_output=False), 'auto' becomes 'any'
+    assert kwargs['tool_choice'] == snapshot({'type': 'any'})
+
+
+async def test_tool_choice_none_without_output_tools(allow_model_requests: None) -> None:
+    """When tool_choice='none' with no output tools, no tools are sent at all."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    # Function tools filtered out, no output tools → tools is Omit (sentinel value)
+    from anthropic import Omit
+
+    assert isinstance(kwargs.get('tools'), Omit)  # pyright: ignore[reportUnknownMemberType]
+    # tool_choice is also Omit when no tools are sent
+    assert isinstance(kwargs.get('tool_choice'), Omit)  # pyright: ignore[reportUnknownMemberType]

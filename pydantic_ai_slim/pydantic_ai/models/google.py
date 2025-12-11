@@ -428,7 +428,7 @@ class GoogleModel(Model):
             )
 
         elif resolved.mode == 'none':
-            if not output_tools:
+            if not output_tools:  # pragma: no cover
                 tool_config = ToolConfigDict(
                     function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.NONE)
                 )

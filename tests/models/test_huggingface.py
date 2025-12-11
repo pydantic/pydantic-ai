@@ -1172,3 +1172,25 @@ def test_tool_choice_none_with_output_tools_keeps_output_tools() -> None:
     assert tools[0].function['name'] == 'output_tool'
     assert isinstance(result_tool_choice, ChatCompletionInputToolChoiceClass)
     assert result_tool_choice.function == ChatCompletionInputFunctionName(name='output_tool')  # type: ignore[call-arg]
+
+
+def test_tool_choice_auto_with_required_output() -> None:
+    """When tool_choice='auto' but output is required, falls back to 'required'."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    # allow_text_output=False simulates structured output requirement
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
+
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'ok', 'role': 'assistant'}))  # type: ignore
+    )
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    settings: HuggingFaceModelSettings = {'tool_choice': 'auto'}
+    tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
+
+    assert len(tools) == 1
+    # With allow_text_output=False, 'auto' becomes 'required'
+    assert result_tool_choice == 'required'

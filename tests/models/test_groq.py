@@ -5733,3 +5733,40 @@ async def test_tool_choice_none_with_output_tools(allow_model_requests: None) ->
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
+
+
+async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
+    """When tool_choice='auto' but structured output is required, falls back to 'required'."""
+
+    class MyOutput(BaseModel):
+        result: str
+
+    tool_call_response = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='call_1',
+                    type='function',
+                    function=chat.chat_completion_message_tool_call.Function(
+                        name='final_result', arguments='{"result": "done"}'
+                    ),
+                )
+            ],
+        )
+    )
+
+    mock_client = MockGroq.create_mock(tool_call_response)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent: Agent[None, MyOutput] = Agent(m, output_type=MyOutput)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'auto'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # With structured output (allow_text_output=False), 'auto' becomes 'required'
+    assert kwargs['tool_choice'] == 'required'

@@ -289,7 +289,7 @@ class MistralModel(Model):
                 http_headers={'User-Agent': get_user_agent()},
             )
 
-        elif model_request_parameters.output_tools:
+        elif model_request_parameters.output_tools:  # pragma: no cover
             # TODO: Port to native "manual JSON" mode
             # Json Mode (only output tools, no function tools filtered in)
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]

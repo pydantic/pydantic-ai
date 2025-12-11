@@ -3436,6 +3436,45 @@ async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests:
     }
 
 
+async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
+    """When tool_choice='auto' but structured output is required, falls back to 'required'."""
+
+    class Location(BaseModel):
+        city: str
+        country: str
+
+    mock_client = MockOpenAI.create_mock(
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='1',
+                        type='function',
+                        function=Function(
+                            name='final_result',
+                            arguments='{"city": "Paris", "country": "France"}',
+                        ),
+                    ),
+                ],
+            )
+        )
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, output_type=Location)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'auto'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # With structured output (allow_text_output=False), 'auto' becomes 'required'
+    assert kwargs[0]['tool_choice'] == 'required'
+
+
 @pytest.mark.parametrize(
     'tool_choice,expected',
     [
@@ -3624,6 +3663,41 @@ async def test_responses_tool_choice_none_with_multiple_output_tools(allow_model
             {'type': 'function', 'name': 'final_result_LocationB'},
         ],
     }
+
+
+async def test_responses_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
+    """When tool_choice='auto' but structured output is required, falls back to 'required' (Responses API)."""
+
+    class Location(BaseModel):
+        city: str
+        country: str
+
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseFunctionToolCall(
+                    id='call_123',
+                    call_id='call_123',
+                    name='final_result',
+                    arguments='{"city": "Paris", "country": "France"}',
+                    type='function_call',
+                    status='completed',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, output_type=Location)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'auto'})
+
+    kwargs = get_mock_responses_kwargs(mock_client)
+    # With structured output (allow_text_output=False), 'auto' becomes 'required'
+    assert kwargs[0]['tool_choice'] == 'required'
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):

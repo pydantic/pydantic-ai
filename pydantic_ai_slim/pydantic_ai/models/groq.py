@@ -414,7 +414,7 @@ class GroqModel(Model):
             tool_choice = 'required'
 
         elif resolved.mode == 'none':
-            if not output_tools:
+            if not output_tools:  # pragma: no cover
                 tool_choice = 'none'
             else:
                 tool_choice = ChatCompletionNamedToolChoiceParam(

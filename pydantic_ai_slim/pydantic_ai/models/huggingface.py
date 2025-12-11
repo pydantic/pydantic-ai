@@ -362,7 +362,7 @@ class HuggingFaceModel(Model):
                 tool_choice = ChatCompletionInputToolChoiceClass(
                     function=ChatCompletionInputFunctionName(name=output_tools[0].name)  # pyright: ignore[reportCallIssue]
                 )
-            else:
+            else:  # pragma: no cover
                 tool_choice = 'none'
         elif resolved.mode == 'specific':
             if len(resolved.tool_names) == 1:

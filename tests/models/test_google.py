@@ -4577,6 +4577,27 @@ def test_tool_choice_none_with_output_tools_keeps_output_tools(google_provider: 
     assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['output_tool']})
 
 
+def test_tool_choice_auto_with_required_output(google_provider: GoogleProvider) -> None:
+    """When tool_choice='auto' but output is required, falls back to ANY mode."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    # allow_text_output=False simulates structured output requirement
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'auto'}
+    tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tools is not None
+    assert tool_config is not None
+    # With allow_text_output=False, 'auto' becomes ANY to force tool use
+    fcc = tool_config.get('function_calling_config')
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY})
+
+
 async def test_google_streaming_tool_call_thought_signature(
     allow_model_requests: None, google_provider: GoogleProvider
 ):

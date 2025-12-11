@@ -801,7 +801,7 @@ class OpenAIChatModel(Model):
                 tool_choice = 'auto'
 
         elif resolved.mode == 'none':
-            if not output_tools:
+            if not output_tools:  # pragma: no cover
                 tool_choice = 'none'
             elif len(output_tools) == 1:
                 tool_choice = ChatCompletionNamedToolChoiceParam(
@@ -1606,7 +1606,7 @@ class OpenAIResponsesModel(Model):
                 tool_choice = 'auto'
 
         elif resolved.mode == 'none':
-            if not output_tools:
+            if not output_tools:  # pragma: no cover
                 tool_choice = 'none'
             elif len(output_tools) == 1:
                 tool_choice = ToolChoiceFunctionParam(type='function', name=output_tools[0].name)
