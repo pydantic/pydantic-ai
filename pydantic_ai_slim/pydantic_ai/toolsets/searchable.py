@@ -40,7 +40,7 @@ def _search_tool_validator() -> SchemaValidatorProt:
 
 @dataclass
 class _SearchTool(ToolsetTool[AgentDepsT]):
-    """A tool that searches for more relevant tools from a SearchableToolSet"""
+    """A tool that searches for more relevant tools from a SearchableToolSet."""
 
     tool_def: ToolDefinition = field(default_factory=_search_tool_def)
     args_validator: SchemaValidatorProt = field(default_factory=_search_tool_validator)
