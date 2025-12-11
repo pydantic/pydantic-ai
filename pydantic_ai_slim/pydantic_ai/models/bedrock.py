@@ -43,7 +43,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BedrockModelProfile
+from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -154,13 +154,6 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
-
-_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.')
-"""Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
-
-Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
-which does not accept profile IDs. Extend if new geos appear (e.g., 'global.', 'us-gov.').
-"""
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -337,6 +330,7 @@ class BedrockConverseModel(Model):
             _model_name=self.model_name,
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
@@ -388,6 +382,7 @@ class BedrockConverseModel(Model):
             model_name=self.model_name,
             provider_response_id=response_id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -591,7 +586,8 @@ class BedrockConverseModel(Model):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
-                bedrock_messages.append({'role': 'assistant', 'content': content})
+                if content:
+                    bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(message)
 
@@ -693,9 +689,9 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
         """Remove inference geographic prefix from model ID if present."""
-        for prefix in _AWS_BEDROCK_INFERENCE_GEO_PREFIXES:
-            if model_name.startswith(prefix):
-                return model_name.removeprefix(prefix)
+        for prefix in BEDROCK_GEO_PREFIXES:
+            if model_name.startswith(f'{prefix}.'):
+                return model_name.removeprefix(f'{prefix}.')
         return model_name
 
 
@@ -706,6 +702,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
@@ -792,6 +789,11 @@ class BedrockStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
