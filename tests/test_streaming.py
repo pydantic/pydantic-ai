@@ -190,7 +190,7 @@ def test_streamed_text_sync_response():
         RunUsage(
             requests=2,
             input_tokens=103,
-            output_tokens=5,
+            output_tokens=11,
             tool_calls=1,
         )
     )
