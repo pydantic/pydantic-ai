@@ -929,7 +929,7 @@ async def test_image_url_force_download_chat() -> None:
             )
         ]
 
-        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
         mock_download.assert_called_once()
         assert mock_download.call_args[0][0].url == 'https://example.com/image.png'
@@ -959,7 +959,7 @@ async def test_image_url_no_force_download_chat() -> None:
             )
         ]
 
-        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
         mock_download.assert_not_called()
 
