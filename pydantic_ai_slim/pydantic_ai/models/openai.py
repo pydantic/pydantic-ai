@@ -720,7 +720,7 @@ class OpenAIChatModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _provider_timestamp=first_chunk.created,
+            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
         )
 
     @property
@@ -1315,8 +1315,9 @@ class OpenAIResponsesModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            # type of created_at is float but it's actually a Unix timestamp in seconds
-            _provider_timestamp=int(first_chunk.response.created_at),
+            _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
+            if first_chunk.response.created_at
+            else None,
         )
 
     @overload
@@ -1927,7 +1928,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionChunk]
     _provider_name: str
     _provider_url: str
-    _provider_timestamp: int | None = None
+    _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -2049,7 +2050,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         if self._provider_timestamp is not None:  # pragma: no branch
             if provider_details is None:
                 provider_details = {}
-            provider_details['timestamp'] = number_to_datetime(self._provider_timestamp)
+            provider_details['timestamp'] = self._provider_timestamp
         return provider_details or None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
@@ -2093,7 +2094,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
-    _provider_timestamp: int | None = None
+    _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -2110,7 +2111,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
                 if self._provider_timestamp is not None:  # pragma: no branch
-                    provider_details['timestamp'] = number_to_datetime(self._provider_timestamp)
+                    provider_details['timestamp'] = self._provider_timestamp
                 self.provider_details = provider_details or None
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):

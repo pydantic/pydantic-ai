@@ -950,7 +950,6 @@ def _process_response_from_parts(
     return ModelResponse(
         parts=items,
         model_name=model_name,
-        timestamp=_utils.now_utc(),
         usage=usage,
         provider_response_id=vendor_id,
         provider_details=vendor_details,

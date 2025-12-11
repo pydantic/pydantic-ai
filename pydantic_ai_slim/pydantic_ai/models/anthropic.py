@@ -559,7 +559,6 @@ class AnthropicModel(Model):
             parts=items,
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
-            timestamp=_utils.now_utc(),
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,

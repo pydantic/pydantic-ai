@@ -4569,6 +4569,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4601,6 +4602,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(

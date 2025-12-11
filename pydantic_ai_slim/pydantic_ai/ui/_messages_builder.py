@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import cast
 
-from pydantic_ai._utils import get_union_args, now_utc as _now_utc
+from pydantic_ai._utils import get_union_args
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart
 
 
@@ -19,7 +19,7 @@ class MessagesBuilder:
             if isinstance(last_message, ModelRequest):
                 last_message.parts = [*last_message.parts, part]
             else:
-                self.messages.append(ModelRequest(parts=[part], timestamp=_now_utc()))
+                self.messages.append(ModelRequest(parts=[part]))
         else:
             part = cast(ModelResponsePart, part)
             if isinstance(last_message, ModelResponse):

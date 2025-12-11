@@ -207,7 +207,6 @@ class GroqModel(Model):
                     return ModelResponse(
                         parts=[tool_call_part],
                         model_name=e.model_name,
-                        timestamp=_utils.now_utc(),
                         provider_name=self._provider.name,
                         provider_url=self.base_url,
                         finish_reason='error',
@@ -348,7 +347,6 @@ class GroqModel(Model):
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            timestamp=_utils.now_utc(),
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self.base_url,
@@ -374,7 +372,7 @@ class GroqModel(Model):
             _model_profile=self.profile,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=first_chunk.created,
+            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -528,7 +526,7 @@ class GroqStreamedResponse(StreamedResponse):
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _provider_name: str
     _provider_url: str
-    _provider_timestamp: int | None = None
+    _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -552,7 +550,7 @@ class GroqStreamedResponse(StreamedResponse):
                     provider_details_dict['finish_reason'] = raw_finish_reason
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                 if self._provider_timestamp is not None:  # pragma: no branch
-                    provider_details_dict['timestamp'] = number_to_datetime(self._provider_timestamp)
+                    provider_details_dict['timestamp'] = self._provider_timestamp
                 if provider_details_dict:  # pragma: no branch
                     self.provider_details = provider_details_dict
 

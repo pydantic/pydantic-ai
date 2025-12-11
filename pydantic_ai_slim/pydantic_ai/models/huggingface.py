@@ -11,7 +11,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
+from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -272,8 +272,6 @@ class HuggingFaceModel(Model):
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = _now_utc()
-
         choice = response.choices[0]
         content = choice.message.content
         tool_calls = choice.message.tool_calls
@@ -296,7 +294,6 @@ class HuggingFaceModel(Model):
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self.base_url,
@@ -322,7 +319,9 @@ class HuggingFaceModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=first_chunk.created,
+            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
+            if first_chunk.created
+            else None,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -471,7 +470,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _provider_name: str
     _provider_url: str
-    _provider_timestamp: int | None = None
+    _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -493,7 +492,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                     cast(TextGenerationOutputFinishReason, raw_finish_reason), None
                 )
             if self._provider_timestamp is not None:  # pragma: no branch
-                provider_details_dict['timestamp'] = datetime.fromtimestamp(self._provider_timestamp, tz=timezone.utc)
+                provider_details_dict['timestamp'] = self._provider_timestamp
             if provider_details_dict:  # pragma: no branch
                 self.provider_details = provider_details_dict
 

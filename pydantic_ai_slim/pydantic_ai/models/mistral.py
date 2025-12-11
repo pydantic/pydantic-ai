@@ -348,8 +348,6 @@ class MistralModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         assert response.choices, 'Unexpected empty response choice.'
 
-        timestamp = _now_utc()
-
         choice = response.choices[0]
         content = choice.message.content
         tool_calls = choice.message.tool_calls
@@ -376,7 +374,6 @@ class MistralModel(Model):
             parts=parts,
             usage=_map_usage(response),
             model_name=response.model,
-            timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
@@ -403,7 +400,7 @@ class MistralModel(Model):
             _model_name=first_chunk.data.model,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _provider_timestamp=first_chunk.data.created,
+            _provider_timestamp=number_to_datetime(first_chunk.data.created) if first_chunk.data.created else None,
         )
 
     @staticmethod
@@ -611,7 +608,7 @@ class MistralStreamedResponse(StreamedResponse):
     _response: AsyncIterable[MistralCompletionEvent]
     _provider_name: str
     _provider_url: str
-    _provider_timestamp: int | None = None
+    _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
     _delta_content: str = field(default='', init=False)
@@ -634,7 +631,7 @@ class MistralStreamedResponse(StreamedResponse):
                 provider_details_dict['finish_reason'] = raw_finish_reason
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
             if self._provider_timestamp is not None:  # pragma: no branch
-                provider_details_dict['timestamp'] = number_to_datetime(self._provider_timestamp)
+                provider_details_dict['timestamp'] = self._provider_timestamp
             if provider_details_dict:  # pragma: no branch
                 self.provider_details = provider_details_dict
 

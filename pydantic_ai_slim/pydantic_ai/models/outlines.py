@@ -507,7 +507,6 @@ class OutlinesModel(Model):
             parts=cast(
                 list[ModelResponsePart], split_content_into_text_and_thinking(response, self.profile.thinking_tags)
             ),
-            timestamp=_utils.now_utc(),
         )
 
     async def _process_streamed_response(

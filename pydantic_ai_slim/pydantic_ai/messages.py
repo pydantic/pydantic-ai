@@ -1001,6 +1001,8 @@ class ModelRequest:
 
     _: KW_ONLY
 
+    # Default is None for backwards compatibility with old serialized messages that don't have this field.
+    # Using a default_factory would incorrectly fill in the current time for deserialized historical messages.
     timestamp: datetime | None = None
     """The timestamp when the request was sent to the model."""
 

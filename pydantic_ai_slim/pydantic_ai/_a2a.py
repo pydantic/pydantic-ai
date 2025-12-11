@@ -25,7 +25,6 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
     VideoUrl,
-    _utils,
 )
 
 from .agent import AbstractAgent, AgentDepsT, OutputDataT
@@ -201,9 +200,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         model_messages: list[ModelMessage] = []
         for message in history:
             if message['role'] == 'user':
-                model_messages.append(
-                    ModelRequest(parts=self._request_parts_from_a2a(message['parts']), timestamp=_utils.now_utc())
-                )
+                model_messages.append(ModelRequest(parts=self._request_parts_from_a2a(message['parts'])))
             else:
                 model_messages.append(ModelResponse(parts=self._response_parts_from_a2a(message['parts'])))
         return model_messages
