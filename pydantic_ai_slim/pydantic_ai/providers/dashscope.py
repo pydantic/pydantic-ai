@@ -17,23 +17,21 @@ try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to use the Qwen provider, '
+        'Please install the `openai` package to use the DashScope provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 
-class QwenProvider(Provider[AsyncOpenAI]):
-    """Provider for Qwen / DashScope OpenAI-compatible API."""
+class DashScopeProvider(Provider[AsyncOpenAI]):
+    """Provider for DashScope (Qwen) OpenAI-compatible API."""
 
     @property
     def name(self) -> str:
-        return 'qwen'
+        return 'dashscope'
 
     @property
     def base_url(self) -> str:
-        # Using the international endpoint by default as it's more standard for global users
-        # Users in China region can override this via passing `openai_client` or implementing logic to check region
-        return 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -55,10 +53,10 @@ class QwenProvider(Provider[AsyncOpenAI]):
     def __init__(self) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -67,20 +65,24 @@ class QwenProvider(Provider[AsyncOpenAI]):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        api_key = api_key or os.getenv('QWEN_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
-        if not api_key and openai_client is None:
-            raise UserError(
-                'Set the `QWEN_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable or pass it via '
-                '`QwenProvider(api_key=...)` to use the Qwen provider.'
-            )
-
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._base_url = str(openai_client.base_url)
         else:
-            http_client = cached_async_http_client(provider='qwen')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            api_key = api_key or os.getenv('DASHSCOPE_API_KEY')
+            if not api_key:
+                raise UserError(
+                    'Set the `DASHSCOPE_API_KEY` environment variable or pass it via '
+                    '`DashScopeProvider(api_key=...)` to use the DashScope provider.'
+                )
+
+            self._base_url = base_url or 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
+
+            if http_client is None:
+                http_client = cached_async_http_client(provider='dashscope')
+
+            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)

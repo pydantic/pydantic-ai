@@ -1008,6 +1008,7 @@ class OpenAIChatModel(Model):
                 assert_never(part)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
+        profile = OpenAIModelProfile.from_profile(self.profile)
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1041,7 +1042,6 @@ class OpenAIChatModel(Model):
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        profile = OpenAIModelProfile.from_profile(self.profile)
                         if profile.openai_chat_audio_input_encoding == 'uri':
                             audio = InputAudio(data=item.data_uri, format=item.format)
                         else:
@@ -1060,18 +1060,13 @@ class OpenAIChatModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    downloaded_item = await download_item(item, data_format='base64', type_format='extension')
+                    data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
+                    downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
                     assert downloaded_item['data_type'] in (
                         'wav',
                         'mp3',
                     ), f'Unsupported audio format: {downloaded_item["data_type"]}'
-                    profile = OpenAIModelProfile.from_profile(self.profile)
-                    if profile.openai_chat_audio_input_encoding == 'uri':
-                        mime_type = item.media_type or f'audio/{downloaded_item["data_type"]}'
-                        data_uri = f'data:{mime_type};base64,{downloaded_item["data"]}'
-                        audio = InputAudio(data=data_uri, format=downloaded_item['data_type'])
-                    else:
-                        audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
                     if self._is_text_like_media_type(item.media_type):

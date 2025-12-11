@@ -179,7 +179,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
-    env.set('QWEN_API_KEY', 'testing')
+    env.set('DASHSCOPE_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()

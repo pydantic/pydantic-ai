@@ -67,7 +67,7 @@ class OpenAIModelProfile(ModelProfile):
     """The encoding to use for audio input in Chat Completions requests.
 
     - `'base64'`: Raw base64 encoded string. (Default, used by OpenAI)
-    - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`). (Used by Qwen Omni)
+    - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`).
     """
 
     openai_supports_encrypted_reasoning_content: bool = False

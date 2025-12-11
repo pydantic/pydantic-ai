@@ -114,11 +114,12 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
 
     audio_url = AudioUrl('https://example.com/audio.mp3')
 
-    # Mock download_item to return base64 data
+    # Mock download_item to return Data URI (since we're calling with data_format='base64_uri')
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
+    data_uri = f'data:audio/mpeg;base64,{fake_base64_data}'
 
     with patch('pydantic_ai.models.openai.download_item') as mock_download:
-        mock_download.return_value = {'data': fake_base64_data, 'data_type': 'mp3'}
+        mock_download.return_value = {'data': data_uri, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])
 
@@ -130,8 +131,7 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     audio_part = next(part for part in user_message['content'] if part['type'] == 'input_audio')
 
     # Expect Data URI with correct MIME type for mp3
-    expected_data = f'data:audio/mpeg;base64,{fake_base64_data}'
-    assert audio_part['input_audio']['data'] == expected_data
+    assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
 
 
@@ -149,9 +149,11 @@ async def test_openai_chat_audio_url_custom_media_type(allow_model_requests: Non
     audio_url = AudioUrl('https://example.com/audio.mp3', media_type='audio/custom-weird-format')
 
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
+    # download_item with data_format='base64_uri' should use the custom media_type from AudioUrl
+    data_uri = f'data:audio/custom-weird-format;base64,{fake_base64_data}'
 
     with patch('pydantic_ai.models.openai.download_item') as mock_download:
-        mock_download.return_value = {'data': fake_base64_data, 'data_type': 'mp3'}
+        mock_download.return_value = {'data': data_uri, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])
 
@@ -162,6 +164,5 @@ async def test_openai_chat_audio_url_custom_media_type(allow_model_requests: Non
     audio_part = next(part for part in user_message['content'] if part['type'] == 'input_audio')
 
     # Expect Data URI with the CUSTOM MIME type
-    expected_data = f'data:audio/custom-weird-format;base64,{fake_base64_data}'
-    assert audio_part['input_audio']['data'] == expected_data
+    assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'

@@ -307,6 +307,50 @@ agent = Agent(model)
 ...
 ```
 
+### DashScope
+
+To use Qwen models via [Alibaba Cloud DashScope](https://www.alibabacloud.com/en/product/modelstudio), you can set the `DASHSCOPE_API_KEY` environment variable and use [`DashScopeProvider`][pydantic_ai.providers.dashscope.DashScopeProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('dashscope:qwen-max')
+...
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.dashscope import DashScopeProvider
+
+model = OpenAIChatModel(
+    'qwen-max',
+    provider=DashScopeProvider(api_key='your-dashscope-api-key'),
+)
+agent = Agent(model)
+...
+```
+
+The `DashScopeProvider` uses the international DashScope compatible endpoint `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` by default. You can override this by passing a custom `base_url`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.dashscope import DashScopeProvider
+
+model = OpenAIChatModel(
+    'qwen-max',
+    provider=DashScopeProvider(
+        api_key='your-dashscope-api-key',
+        base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',  # China region
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### Ollama
 
 Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (running locally or remotely) and [Ollama Cloud](https://ollama.com/cloud).
@@ -695,33 +739,3 @@ result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ```
-
-### Qwen
-
-To use Qwen models via the OpenAI-compatible API from [Alibaba Cloud DashScope](https://www.alibabacloud.com/help/doc-detail/2712576.html), you can set the `QWEN_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable and use [`QwenProvider`][pydantic_ai.providers.qwen.QwenProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('qwen:qwen-max')
-...
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.qwen import QwenProvider
-
-model = OpenAIChatModel(
-    'qwen-max',
-    provider=QwenProvider(api_key='your-qwen-api-key'),
-)
-agent = Agent(model)
-...
-```
-
-The `QwenProvider` uses the international DashScope compatible endpoint `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` by default.
-
-When using **Qwen Omni** models (e.g. `qwen-omni-turbo`), this provider automatically handles audio input using the Data URI format required by the DashScope API.
