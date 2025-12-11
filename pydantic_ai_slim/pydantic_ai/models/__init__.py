@@ -134,7 +134,6 @@ KnownModelName = TypeAliasType(
         'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cerebras:qwen-3-32b',
         'cerebras:zai-glm-4.6',
         'cohere:c4ai-aya-expanse-32b',
@@ -1009,7 +1008,6 @@ def infer_model(  # noqa: C901
         'openai',
         'azure',
         'deepseek',
-        'cerebras',
         'fireworks',
         'github',
         'grok',
@@ -1046,14 +1044,14 @@ def infer_model(  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif model_kind == 'openrouter':
-        from .openrouter import OpenRouterModel
-
-        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1066,6 +1064,10 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 

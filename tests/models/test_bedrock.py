@@ -1640,3 +1640,33 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out, message should still be valid
     assert len(messages) == 1
     assert messages[0]['role'] == 'user'
+
+
+async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):
+    """Test that ModelResponse with empty parts (e.g. content_filtered) is skipped in message mapping."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    # Create a message history that includes a ModelResponse with empty parts
+    req = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[],
+            usage=RequestUsage(input_tokens=100, output_tokens=1),
+            model_name='us.amazon.nova-micro-v1:0',
+            provider_name='bedrock',
+            provider_details={'finish_reason': 'content_filtered'},
+            finish_reason='content_filter',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow up question')]),
+    ]
+
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+
+    # The empty ModelResponse should be skipped, so we should only have 2 user messages
+    # that get merged into one since they're consecutive after the empty response is skipped
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
+        ]
+    )
