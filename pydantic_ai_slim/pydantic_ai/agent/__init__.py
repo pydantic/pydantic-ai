@@ -702,16 +702,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             run_metadata = graph_run.state.metadata
 
                     final_result = agent_run.result
-                    if instrumentation_settings and run_span.is_recording():
-                        if instrumentation_settings.include_content and final_result is not None:
-                            run_span.set_attribute(
-                                'final_result',
-                                (
-                                    final_result.output
-                                    if isinstance(final_result.output, str)
-                                    else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                                ),
-                            )
+                    if (
+                        instrumentation_settings
+                        and instrumentation_settings.include_content
+                        and run_span.is_recording()
+                        and final_result is not None
+                    ):
+                        run_span.set_attribute(
+                            'final_result',
+                            (
+                                final_result.output
+                                if isinstance(final_result.output, str)
+                                else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                            ),
+                        )
         finally:
             try:
                 if instrumentation_settings and run_span.is_recording():
