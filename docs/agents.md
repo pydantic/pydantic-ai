@@ -127,9 +127,11 @@ The example below shows how to stream events and text output. You can also [stre
 !!! note
     As the `run_stream()` method will consider the first output matching the [output type](output.md#structured-output) to be the final output,
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+    This behavior is controlled by the [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
+    Alternatively, you can set `end_strategy='exhaustive'` to execute all tools even after a final result is found — see [Handling Multiple Tool Calls](output.md#handling-multiple-tool-calls) for details.
 
 ```python {title="run_stream_event_stream_handler.py"}
 import asyncio
