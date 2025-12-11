@@ -395,13 +395,11 @@ class GoogleModel(Model):
             ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs_to_send
         ]
 
-        # Add builtin tools
         tools.extend(builtin_tools)
 
         if not tools:
             return None, None, image_config
 
-        # Determine API tool_config value
         tool_config: ToolConfigDict | None
 
         if resolved is None:
@@ -428,17 +426,12 @@ class GoogleModel(Model):
             )
 
         elif resolved.mode == 'none':
-            if not output_tools:  # pragma: no cover
-                tool_config = ToolConfigDict(
-                    function_calling_config=FunctionCallingConfigDict(mode=FunctionCallingConfigMode.NONE)
+            tool_config = ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=[t.name for t in output_tools],
                 )
-            else:
-                tool_config = ToolConfigDict(
-                    function_calling_config=FunctionCallingConfigDict(
-                        mode=FunctionCallingConfigMode.ANY,
-                        allowed_function_names=[t.name for t in output_tools],
-                    )
-                )
+            )
 
         elif resolved.mode == 'specific':
             tool_config = ToolConfigDict(

@@ -685,7 +685,6 @@ class AnthropicModel(Model):
         if not tools:
             return tools, None
 
-        # Determine API tool_choice value
         tool_choice: BetaToolChoiceParam
 
         if resolved is None:
@@ -709,9 +708,7 @@ class AnthropicModel(Model):
             tool_choice = {'type': 'any'}
 
         elif resolved.mode == 'none':
-            if not output_tools:
-                tool_choice = {'type': 'none'}
-            elif len(output_tools) == 1:
+            if len(output_tools) == 1:
                 tool_choice = {'type': 'tool', 'name': output_tools[0].name}
             else:
                 warnings.warn(
@@ -736,8 +733,8 @@ class AnthropicModel(Model):
         else:
             assert_never(resolved.mode)
 
-        if 'parallel_tool_calls' in model_settings and tool_choice.get('type') != 'none':
-            tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']  # pyright: ignore[reportGeneralTypeIssues]
+        if 'parallel_tool_calls' in model_settings:
+            tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']
 
         return tools, tool_choice
 

@@ -774,7 +774,6 @@ class OpenAIChatModel(Model):
         if not tools:
             return tools, None
 
-        # Determine API tool_choice value
         tool_choice: ChatCompletionToolChoiceOptionParam
 
         if resolved is None:
@@ -801,9 +800,7 @@ class OpenAIChatModel(Model):
                 tool_choice = 'auto'
 
         elif resolved.mode == 'none':
-            if not output_tools:  # pragma: no cover
-                tool_choice = 'none'
-            elif len(output_tools) == 1:
+            if len(output_tools) == 1:
                 tool_choice = ChatCompletionNamedToolChoiceParam(
                     type='function', function={'name': output_tools[0].name}
                 )
@@ -1579,7 +1576,6 @@ class OpenAIResponsesModel(Model):
             tool_defs_to_send = resolved.filter_tools(function_tools, output_tools)
         tools: list[responses.FunctionToolParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
 
-        # Determine API tool_choice value
         tool_choice: ResponsesToolChoice | None
 
         if resolved is None:
@@ -1606,9 +1602,7 @@ class OpenAIResponsesModel(Model):
                 tool_choice = 'auto'
 
         elif resolved.mode == 'none':
-            if not output_tools:  # pragma: no cover
-                tool_choice = 'none'
-            elif len(output_tools) == 1:
+            if len(output_tools) == 1:
                 tool_choice = ToolChoiceFunctionParam(type='function', name=output_tools[0].name)
             else:
                 allowed_mode: Literal['auto', 'required'] = (

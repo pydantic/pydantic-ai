@@ -357,13 +357,9 @@ class HuggingFaceModel(Model):
         elif resolved.mode == 'required':
             tool_choice = 'required'
         elif resolved.mode == 'none':
-            # We've filtered to output tools only, force the first output tool if available
-            if output_tools:
-                tool_choice = ChatCompletionInputToolChoiceClass(
-                    function=ChatCompletionInputFunctionName(name=output_tools[0].name)  # pyright: ignore[reportCallIssue]
-                )
-            else:  # pragma: no cover
-                tool_choice = 'none'
+            tool_choice = ChatCompletionInputToolChoiceClass(
+                function=ChatCompletionInputFunctionName(name=output_tools[0].name)  # pyright: ignore[reportCallIssue]
+            )
         elif resolved.mode == 'specific':
             if len(resolved.tool_names) == 1:
                 tool_choice = ChatCompletionInputToolChoiceClass(

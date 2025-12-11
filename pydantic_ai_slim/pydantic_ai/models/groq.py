@@ -395,7 +395,6 @@ class GroqModel(Model):
         if not tools:
             return tools, None
 
-        # Determine API tool_choice value
         tool_choice: ChatCompletionToolChoiceOptionParam
 
         if resolved is None:
@@ -414,13 +413,10 @@ class GroqModel(Model):
             tool_choice = 'required'
 
         elif resolved.mode == 'none':
-            if not output_tools:  # pragma: no cover
-                tool_choice = 'none'
-            else:
-                tool_choice = ChatCompletionNamedToolChoiceParam(
-                    type='function',
-                    function={'name': output_tools[0].name},
-                )
+            tool_choice = ChatCompletionNamedToolChoiceParam(
+                type='function',
+                function={'name': output_tools[0].name},
+            )
 
         elif resolved.mode == 'specific':
             if len(resolved.tool_names) == 1:
