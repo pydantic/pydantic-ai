@@ -27,6 +27,9 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.builtin_tools import ImageGenerationTool
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.settings import ModelSettings
 
 from .conftest import IsDatetime, IsNow, IsStr
 
@@ -449,7 +452,7 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],
@@ -693,3 +696,45 @@ def test_binary_content_from_path(tmp_path: Path):
     assert binary_content == snapshot(
         BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
     )
+
+
+def test_model_request_tool_tracking_excluded_from_serialization():
+    """Test that request metadata is accessible but not serialized."""
+    tool_def = ToolDefinition(
+        name='test_tool',
+        description='A test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool_def = ToolDefinition(
+        name='request_output',
+        description='An output tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[tool_def],
+        builtin_tools=[ImageGenerationTool()],
+        output_tools=[output_tool_def],
+    )
+    model_settings = ModelSettings(max_tokens=256)
+
+    request = ModelRequest(
+        parts=[UserPromptPart('test prompt')],
+        instructions='test instructions',
+        model_request_parameters=model_request_parameters,
+        model_settings=model_settings,
+    )
+
+    # Verify the metadata is accessible
+    assert request.model_request_parameters is model_request_parameters
+    assert request.model_settings == model_settings
+    params = request.model_request_parameters
+    assert params is not None
+    assert params.function_tools == [tool_def]
+    assert params.builtin_tools == [ImageGenerationTool()]
+    assert params.output_tools == [output_tool_def]
+
+    # Serialize - fields ARE excluded
+    serialized = ModelMessagesTypeAdapter.dump_python([request], mode='json')
+    assert 'model_request_parameters' not in serialized[0]
+    assert 'model_settings' not in serialized[0]
