@@ -473,6 +473,32 @@ async def main():
    request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
+## Client Identification
+
+When connecting to an MCP server, you can optionally specify an [Implementation](https://modelcontextprotocol.io/specification/2025-11-25/schema#implementation) object as client information that will be sent to the server during initialization. This is useful for:
+
+- Identifying your application in server logs
+- Allowing servers to provide custom behavior based on the client
+- Debugging and monitoring MCP connections
+- Version-specific feature negotiation
+
+All MCP client classes ([`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio], [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP], and [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE]) support the `client_info` parameter:
+
+```python {title="mcp_client_with_name.py"}
+from mcp import types as mcp_types
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerSSE
+
+server = MCPServerSSE(
+    'http://localhost:3001/sse',
+    client_info=mcp_types.Implementation(
+        name='MyApplication',
+        version='2.1.0',
+    ),
+)
+```
+
 ## MCP Sampling
 
 !!! info "What is MCP Sampling?"

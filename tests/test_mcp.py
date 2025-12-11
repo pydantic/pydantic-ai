@@ -54,6 +54,7 @@ with try_import() as imports_successful:
         ElicitRequestParams,
         ElicitResult,
         ImageContent,
+        Implementation,
         TextContent,
     )
 
@@ -2022,6 +2023,38 @@ async def test_instructions(mcp_server: MCPServerStdio) -> None:
         mcp_server.instructions
     async with mcp_server:
         assert mcp_server.instructions == 'Be a helpful assistant.'
+
+
+async def test_client_info_passed_to_session() -> None:
+    """Test that provided client_info is passed unchanged to ClientSession."""
+    implementation = Implementation(
+        name='MyCustomClient',
+        version='2.5.3',
+        title='Custom MCP client',
+        websiteUrl='https://example.com/client',
+    )
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], client_info=implementation)
+
+    async with server:
+        result = await server.direct_call_tool('get_client_info', {})
+        assert result == {
+            'name': 'MyCustomClient',
+            'version': '2.5.3',
+            'title': 'Custom MCP client',
+            'websiteUrl': 'https://example.com/client',
+        }
+
+
+async def test_client_info_not_set() -> None:
+    """Test that when client_info is not set, the default MCP client info is used."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    async with server:
+        result = await server.direct_call_tool('get_client_info', {})
+        # When client_info is not set, the MCP library provides default client info
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result['name'] == 'mcp'
 
 
 async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):
