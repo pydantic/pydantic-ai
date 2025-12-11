@@ -58,6 +58,7 @@ with try_import() as imports_successful:
     from ag_ui.core import (
         AssistantMessage,
         BaseEvent,
+        BinaryInputContent,
         CustomEvent,
         DeveloperMessage,
         EventType,
@@ -66,6 +67,7 @@ with try_import() as imports_successful:
         RunAgentInput,
         StateSnapshotEvent,
         SystemMessage,
+        TextInputContent,
         Tool,
         ToolCall,
         ToolMessage,
@@ -264,6 +266,24 @@ async def test_basic_user_message() -> None:
     assert events == simple_result()
 
 
+async def test_complex_user_message() -> None:
+    """Test basic user message with text response. But using TextInputContent instead of str"""
+    agent = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[TextInputContent(text='Hello, how are you?')],
+        )
+    )
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
 async def test_empty_messages() -> None:
     """Test handling of empty messages."""
 
@@ -343,6 +363,80 @@ async def test_messages_with_history() -> None:
         ),
     )
 
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_img_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[BinaryInputContent(url='https://example.com/img.png', mime_type='image/png', filename='img.png')],
+        )
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_video_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(id='msg_1', content=[BinaryInputContent(url='https://example.com/vid.mp4', mime_type='video/mp4')])
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_audio_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1', content=[BinaryInputContent(url='https://example.com/audio.oga', mime_type='audio/ogg')]
+        )
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_document_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[BinaryInputContent(url='https://example.com/document.pdf', mime_type='application/pdf')],
+        )
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_binary_file_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(id='msg_1', content=[BinaryInputContent(data='VGVzdCBEb2M=', mime_type='text/plain')])
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_test_and_binary_file_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[
+                TextInputContent(text='Write a summary of this file:', type='text'),
+                BinaryInputContent(data='VGVzdCBEb2M=', mime_type='text/plain'),
+            ],
+        )
+    )
     events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
