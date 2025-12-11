@@ -2,23 +2,25 @@
 
 Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
 
-## DuckDuckGo Search Tool
+## DuckDuckGo Tools
 
-The DuckDuckGo search tool allows you to search the web for information. It is built on top of the
+The DuckDuckGo tools allow you to search the web for text, images, videos, and news. They are built on top of the
 [DuckDuckGo API](https://github.com/deedy5/ddgs).
 
 ### Installation
 
-To use [`duckduckgo_search_tool`][pydantic_ai.common_tools.duckduckgo.duckduckgo_search_tool], you need to install
+To use the DuckDuckGo tools, you need to install
 [`pydantic-ai-slim`](install.md#slim-install) with the `duckduckgo` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[duckduckgo]"
 ```
 
-### Usage
+### Text Search
 
-Here's an example of how you can use the DuckDuckGo search tool with an agent:
+The [`duckduckgo_search_tool`][pydantic_ai.common_tools.duckduckgo.duckduckgo_search_tool] searches for text results.
+
+Here's an example of how you can use the DuckDuckGo text search tool with an agent:
 
 ```py {title="duckduckgo_search.py" test="skip"}
 from pydantic_ai import Agent
@@ -79,6 +81,30 @@ the 2025 year‑end box‑office tallies are in or to consult a regularly update
 
 Would you like help finding a current source or additional details on where to look for the complete updated list?
 """
+```
+
+### Images Search
+
+The [`duckduckgo_images_search_tool`][pydantic_ai.common_tools.duckduckgo.duckduckgo_images_search_tool] searches for images with support for filtering by size, color, type, layout, and license.
+
+```py {title="duckduckgo_images.py"}
+--8<-- "examples/pydantic_ai_examples/duckduckgo_images.py"
+```
+
+### Videos Search
+
+The [`duckduckgo_videos_search_tool`][pydantic_ai.common_tools.duckduckgo.duckduckgo_videos_search_tool] searches for videos with support for filtering by resolution, duration, and license.
+
+```py {title="duckduckgo_videos.py"}
+--8<-- "examples/pydantic_ai_examples/duckduckgo_videos.py"
+```
+
+### News Search
+
+The [`duckduckgo_news_search_tool`][pydantic_ai.common_tools.duckduckgo.duckduckgo_news_search_tool] searches for recent news articles.
+
+```py {title="duckduckgo_news.py"}
+--8<-- "examples/pydantic_ai_examples/duckduckgo_news.py"
 ```
 
 ## Tavily Search Tool
