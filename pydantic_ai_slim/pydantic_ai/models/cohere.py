@@ -225,6 +225,7 @@ class CohereModel(Model):
             usage=_map_usage(response),
             model_name=self._model_name,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )

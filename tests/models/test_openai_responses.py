@@ -1,7 +1,7 @@
 import json
 import re
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -32,17 +32,19 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openai import _resolve_openai_image_generation_size  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
@@ -53,7 +55,11 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
-    from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
+    from openai.types.responses.response_reasoning_item import (
+        Content as ReasoningContent,
+        ResponseReasoningItem,
+        Summary,
+    )
     from openai.types.responses.response_usage import ResponseUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -122,6 +128,37 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+@pytest.mark.parametrize(
+    ('aspect_ratio', 'explicit_size', 'expected_size'),
+    [
+        ('1:1', 'auto', '1024x1024'),
+        ('2:3', '1024x1536', '1024x1536'),
+        ('3:2', 'auto', '1536x1024'),
+    ],
+)
+def test_openai_responses_image_generation_tool_aspect_ratio_mapping(
+    aspect_ratio: ImageAspectRatio,
+    explicit_size: Literal['1024x1024', '1024x1536', '1536x1024', 'auto'],
+    expected_size: Literal['1024x1024', '1024x1536', '1536x1024'],
+) -> None:
+    tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=explicit_size)
+    assert _resolve_openai_image_generation_size(tool) == expected_size
+
+
+def test_openai_responses_image_generation_tool_aspect_ratio_invalid() -> None:
+    tool = ImageGenerationTool(aspect_ratio='16:9')
+
+    with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
+        _resolve_openai_image_generation_size(tool)
+
+
+def test_openai_responses_image_generation_tool_aspect_ratio_conflicts_with_size() -> None:
+    tool = ImageGenerationTool(aspect_ratio='1:1', size='1536x1024')
+
+    with pytest.raises(UserError, match='cannot combine `aspect_ratio` with a conflicting `size`'):
+        _resolve_openai_image_generation_size(tool)
 
 
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
@@ -269,6 +306,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
                 finish_reason='stop',
@@ -306,6 +344,7 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
                 finish_reason='stop',
@@ -351,6 +390,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
                 finish_reason='stop',
@@ -385,6 +425,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
                 finish_reason='stop',
@@ -487,6 +528,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                         model_name='gpt-4o-2024-08-06',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        provider_url='https://api.openai.com/v1/',
                         provider_details={'finish_reason': 'completed'},
                         provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
                         finish_reason='stop',
@@ -665,6 +707,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0e3d55e9502941380068c4aa9a62f48195a373978ed720ac63',
                 finish_reason='stop',
@@ -698,6 +741,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
                 finish_reason='stop',
@@ -762,6 +806,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_028829e50fbcad090068c9c82e1e0081958ddc581008b39428',
                 finish_reason='stop',
@@ -822,6 +867,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_028829e50fbcad090068c9c83b9fb88195b6b84a32e1fc83c0',
                 finish_reason='stop',
@@ -892,6 +938,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b385a0fdc82fd920068c4aaf3ced88197a88711e356b032c4',
                 finish_reason='stop',
@@ -963,6 +1010,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b4f29854724a3120068c4ab0b660081919707b95b47552782',
                 finish_reason='stop',
@@ -1047,6 +1095,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00a60507bf41223d0068c9d2fbf93481a0ba2a7796ae2cab4c',
                 finish_reason='stop',
@@ -1266,6 +1315,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00a60507bf41223d0068c9d31574d881a090c232646860a771',
                 finish_reason='stop',
@@ -1374,6 +1424,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
                 finish_reason='stop',
@@ -1403,6 +1454,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
                 finish_reason='stop',
@@ -1463,6 +1515,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
                 finish_reason='stop',
@@ -1490,6 +1543,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
                 finish_reason='stop',
@@ -1542,6 +1596,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
                 finish_reason='stop',
@@ -1569,6 +1624,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
                 finish_reason='stop',
@@ -1623,6 +1679,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
                 finish_reason='stop',
@@ -1650,6 +1707,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
                 finish_reason='stop',
@@ -1700,6 +1758,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
                 finish_reason='stop',
@@ -1727,6 +1786,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
                 finish_reason='stop',
@@ -1781,6 +1841,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
                 finish_reason='stop',
@@ -1808,6 +1869,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
                 finish_reason='stop',
@@ -2019,6 +2081,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1',
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -2064,6 +2127,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42c902794819cb9335264c342f65407460311b0c8d3de',
                 finish_reason='stop',
@@ -2108,6 +2172,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
@@ -2161,6 +2226,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0114iHK2ditgTf1N8FWomc4E',
                 finish_reason='stop',
@@ -2208,6 +2274,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
                 finish_reason='stop',
@@ -2271,6 +2338,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
@@ -2343,6 +2411,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
                 finish_reason='stop',
@@ -2368,6 +2437,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
                 finish_reason='stop',
@@ -2419,6 +2489,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1',
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -2495,6 +2566,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1',
                 provider_response_id='123',
                 run_id=IsStr(),
             ),
@@ -2563,6 +2635,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
                 finish_reason='stop',
@@ -2616,6 +2689,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
                 finish_reason='stop',
@@ -2700,6 +2774,7 @@ If you intended different grouping with parentheses, let me know.\
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdba511c7081a389e67b16621029c609b7445677780c8f',
                 finish_reason='stop',
@@ -2735,6 +2810,7 @@ If you intended different grouping with parentheses, let me know.\
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
@@ -2833,6 +2909,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507',
                 finish_reason='stop',
@@ -3608,6 +3685,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
                 finish_reason='stop',
@@ -3639,6 +3717,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
                 finish_reason='stop',
@@ -3771,6 +3850,7 @@ plt.show()\r
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdc382bc98819083a5b47ec92e077b0187028ba77f15f7',
                 finish_reason='stop',
@@ -3930,6 +4010,7 @@ If you want different colors or a holographic gradient background, tell me your 
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
                 finish_reason='stop',
@@ -4015,6 +4096,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
                 finish_reason='stop',
@@ -5509,6 +5591,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5581,6 +5664,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5673,6 +5757,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5852,6 +5937,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdec1f3290819f99d9caba8703b251079003437d26d0c0',
                 finish_reason='stop',
@@ -5909,6 +5995,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdec61d0a0819fac14ed057a9946a1079003437d26d0c0',
                 finish_reason='stop',
@@ -6013,6 +6100,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
                 finish_reason='stop',
@@ -6047,6 +6135,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
                 finish_reason='stop',
@@ -6131,6 +6220,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
                 finish_reason='stop',
@@ -6204,6 +6294,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
                 finish_reason='stop',
@@ -6259,6 +6350,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
                 finish_reason='stop',
@@ -6309,6 +6401,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
                 finish_reason='stop',
@@ -6412,6 +6505,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
                 finish_reason='stop',
@@ -6485,6 +6579,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
@@ -6567,6 +6662,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_001fd29e2d5573f70068ece2e6dfbc819c96557f0de72802be',
                 finish_reason='stop',
@@ -6741,6 +6837,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0083938b3a28070e0068fabd81970881a0a1195f2cab45bd04',
                 finish_reason='stop',
@@ -6788,6 +6885,7 @@ The monorepo is organized into these main packages:  \n\
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021',
                 finish_reason='stop',
@@ -7008,6 +7106,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
                 finish_reason='stop',
@@ -7386,6 +7485,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0558010cf1416a490068faa0f945bc81a0b6a6dfb7391030d5',
                 finish_reason='stop',
@@ -7441,6 +7541,583 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
                 'status': 'completed',
             },
         ]
+    )
+
+
+async def test_openai_responses_raw_cot_only(allow_model_requests: None):
+    """Test raw CoT content from gpt-oss models (no summary, only raw content)."""
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[],
+                type='reasoning',
+                content=[
+                    ReasoningContent(text='Let me think about this...', type='reasoning_text'),
+                    ReasoningContent(text='The answer is 4.', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_123',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Let me think about this...', 'The answer is 4.']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None):
+    """Test raw CoT content with summary from gpt-oss models.
+
+    When both summary and raw content exist, raw content is stored in provider_details
+    while summary goes in content.
+    """
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[Summary(text='Summary of thinking', type='summary_text')],
+                type='reasoning',
+                encrypted_content='encrypted_sig',
+                content=[
+                    ReasoningContent(text='Raw thinking step 1', type='reasoning_text'),
+                    ReasoningContent(text='Raw thinking step 2', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Summary of thinking',
+                        id='rs_123',
+                        signature='encrypted_sig',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Raw thinking step 1', 'Raw thinking step 2']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_multiple_summaries(allow_model_requests: None):
+    """Test reasoning item with multiple summaries.
+
+    When a reasoning item has multiple summary texts, each should become a separate ThinkingPart.
+    """
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[
+                    Summary(text='First summary', type='summary_text'),
+                    Summary(text='Second summary', type='summary_text'),
+                    Summary(text='Third summary', type='summary_text'),
+                ],
+                type='reasoning',
+                encrypted_content='encrypted_sig',
+                content=[
+                    ReasoningContent(text='Raw thinking step 1', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='Done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('Test multiple summaries')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Test multiple summaries',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='First summary',
+                        id='rs_123',
+                        signature='encrypted_sig',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Raw thinking step 1']},
+                    ),
+                    ThinkingPart(content='Second summary', id='rs_123'),
+                    ThinkingPart(content='Third summary', id='rs_123'),
+                    TextPart(content='Done', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: None, openrouter_api_key: str):
+    """Test streaming raw CoT content from gpt-oss via OpenRouter.
+
+    This is a live test (with cassette) that verifies the streaming raw CoT implementation
+    works end-to-end with a real gpt-oss model response.
+    """
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    model = OpenAIResponsesModel('openai/gpt-oss-20b', provider=OpenRouterProvider(api_key=openrouter_api_key))
+    agent = Agent(model=model)
+    async with agent.run_stream('What is 2+2?') as result:
+        output = await result.get_output()
+    assert output == snapshot('4')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_tmp_2kbe7x16sax',
+                        provider_details={
+                            'raw_content': [
+                                'The user asks: "What is 2+2?" They expect a straightforward answer: 4. Just answer 4.'
+                            ]
+                        },
+                    ),
+                    TextPart(content='4', id='msg_tmp_8cjof4f6zpw'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=78,
+                    output_tokens=37,
+                    details={'is_byok': 0, 'reasoning_tokens': 22},
+                ),
+                model_name='openai/gpt-oss-20b',
+                timestamp=IsDatetime(),
+                provider_name='openrouter',
+                provider_url='https://openrouter.ai/api/v1',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='gen-1764265411-Fu1iEX7h5MRWiL79lb94',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: None):
+    """Test that raw CoT and summaries are sent back correctly in multi-turn conversations.
+
+    Tests three distinct cases across turns:
+    - Turn 1: Only raw content (no summary) - gpt-oss style
+    - Turn 2: Summary AND raw content - hybrid case
+    - Turn 3: Only summary (no raw content) - official OpenAI style
+    """
+    # Track messages sent to OpenAI
+    sent_openai_messages: list[Any] = []
+
+    # Turn 1: Only raw content, no summary
+    c1 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[],
+                type='reasoning',
+                content=[
+                    ReasoningContent(text='Raw CoT step 1', type='reasoning_text'),
+                    ReasoningContent(text='Raw CoT step 2', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+
+    # Turn 2: Summary and raw content
+    c2 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_456',
+                summary=[
+                    Summary(text='First summary', type='summary_text'),
+                    Summary(text='Second summary', type='summary_text'),
+                ],
+                type='reasoning',
+                encrypted_content='encrypted_sig_abc',
+                content=[
+                    ReasoningContent(text='More raw thinking', type='reasoning_text'),
+                ],
+            ),
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+
+    # Turn 3: Only summary, no raw content
+    c3 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_789',
+                summary=[
+                    Summary(text='Final summary', type='summary_text'),
+                ],
+                type='reasoning',
+                encrypted_content='encrypted_sig_xyz',
+                content=[],
+            ),
+            ResponseOutputMessage(
+                id='msg_789',
+                content=cast(list[Content], [ResponseOutputText(text='42', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+
+    mock_client = MockOpenAIResponses.create_mock([c1, c2, c3])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Hook into model to capture sent messages
+    original_map_messages = model._map_messages  # pyright: ignore[reportPrivateUsage]
+
+    async def capture_messages(*args: Any, **kwargs: Any) -> Any:
+        result = await original_map_messages(*args, **kwargs)
+        sent_openai_messages.append(result[1])  # result is (instructions, messages)
+        return result
+
+    model._map_messages = capture_messages  # type: ignore[method-assign]
+
+    agent = Agent(model=model)
+
+    # Turn 1: Only raw content, no summary
+    result1 = await agent.run('What is 2+2?')
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_123',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Turn 2: Summary and raw content
+    result2 = await agent.run('Add 5 to that', message_history=result1.all_messages())
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_123',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Add 5 to that',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='First summary',
+                        id='rs_456',
+                        signature='encrypted_sig_abc',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['More raw thinking']},
+                    ),
+                    ThinkingPart(content='Second summary', id='rs_456'),
+                    TextPart(content='9', id='msg_456'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Turn 3: Only summary, no raw content
+    result3 = await agent.run('What next?', message_history=result2.all_messages())
+    assert result3.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_123',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['Raw CoT step 1', 'Raw CoT step 2']},
+                    ),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Add 5 to that',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='First summary',
+                        id='rs_456',
+                        signature='encrypted_sig_abc',
+                        provider_name='openai',
+                        provider_details={'raw_content': ['More raw thinking']},
+                    ),
+                    ThinkingPart(content='Second summary', id='rs_456'),
+                    TextPart(content='9', id='msg_456'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What next?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Final summary',
+                        id='rs_789',
+                        signature='encrypted_sig_xyz',
+                        provider_name='openai',
+                    ),
+                    TextPart(content='42', id='msg_789'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Verify what was sent to the API in each turn
+    assert len(sent_openai_messages) == 3
+
+    # Turn 2 messages: should contain raw-only reasoning item from turn 1
+    turn2_messages = sent_openai_messages[1]
+    turn2_reasoning = [msg for msg in turn2_messages if msg.get('type') == 'reasoning']
+    assert len(turn2_reasoning) == 1
+    assert turn2_reasoning[0] == snapshot(
+        {
+            'type': 'reasoning',
+            'summary': [],
+            'encrypted_content': None,
+            'id': 'rs_123',
+            'content': [
+                {'type': 'reasoning_text', 'text': 'Raw CoT step 1'},
+                {'type': 'reasoning_text', 'text': 'Raw CoT step 2'},
+            ],
+        }
+    )
+
+    # Turn 3 messages: should contain both reasoning items
+    turn3_messages = sent_openai_messages[2]
+    turn3_reasoning = [msg for msg in turn3_messages if msg.get('type') == 'reasoning']
+    assert len(turn3_reasoning) == 2
+    assert turn3_reasoning[0] == snapshot(
+        {
+            'type': 'reasoning',
+            'summary': [],
+            'encrypted_content': None,
+            'id': 'rs_123',
+            'content': [
+                {'type': 'reasoning_text', 'text': 'Raw CoT step 1'},
+                {'type': 'reasoning_text', 'text': 'Raw CoT step 2'},
+            ],
+        }
+    )
+    assert turn3_reasoning[1] == snapshot(
+        {
+            'type': 'reasoning',
+            'summary': [
+                {'type': 'summary_text', 'text': 'First summary'},
+                {'type': 'summary_text', 'text': 'Second summary'},
+            ],
+            'encrypted_content': 'encrypted_sig_abc',
+            'id': 'rs_456',
+            'content': [
+                {'type': 'reasoning_text', 'text': 'More raw thinking'},
+            ],
+        }
     )
 
 
