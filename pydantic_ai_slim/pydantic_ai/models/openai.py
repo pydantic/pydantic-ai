@@ -913,6 +913,17 @@ class OpenAIChatModel(Model):
         return response_format_param
 
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
+
+        if _has_dict_typed_params(f.parameters_json_schema):
+            warnings.warn(
+                f"Tool '{f.name}' has dict-typed parameters that OpenAI's API will silently ignore. "
+                f"Use a Pydantic BaseModel with explicit fields instead of dict types, "
+                f"or switch to a different provider which supports dict types. "
+                f"See: https://github.com/pydantic/pydantic-ai/issues/3654",
+                UserWarning,
+                stacklevel=4,
+            )
+
         tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {
@@ -1527,6 +1538,17 @@ class OpenAIResponsesModel(Model):
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+
+        if _has_dict_typed_params(f.parameters_json_schema):
+            warnings.warn(
+                f"Tool '{f.name}' has dict-typed parameters that OpenAI's API will silently ignore. "
+                f"Use a Pydantic BaseModel with explicit fields instead of dict types, "
+                f"or switch to a different provider which supports dict types. "
+                f"See: https://github.com/pydantic/pydantic-ai/issues/3654",
+                UserWarning,
+                stacklevel=4,
+            )
+
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
@@ -2677,3 +2699,38 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+def _has_dict_typed_params(json_schema: dict[str, Any]) -> bool:
+    """Detect if a JSON schema contains dict-typed parameters.
+
+    Dict types manifest as objects with additionalProperties that is:
+    - True (allows any additional properties)
+    - A schema object (e.g., {'type': 'string'})
+
+    These are incompatible with OpenAI's API which silently drops them.
+
+    c.f. https://github.com/pydantic/pydantic-ai/issues/3654
+    """
+    properties = json_schema.get('properties', {})
+    for prop_schema in properties.values():
+        if isinstance(prop_schema, dict):
+            # Check for object type with additionalProperties
+            if prop_schema.get('type') == 'object':
+                additional_props = prop_schema.get('additionalProperties')
+                # If additionalProperties is True or a schema object (not False/absent)
+                if additional_props not in (False, None):
+                    return True
+
+            # Check arrays of objects with additionalProperties
+            if prop_schema.get('type') == 'array':
+                items = prop_schema.get('items', {})
+                if isinstance(items, dict) and items.get('type') == 'object':
+                    if items.get('additionalProperties') not in (False, None):
+                        return True
+
+            # Recursively check nested objects
+            if 'properties' in prop_schema and _has_dict_typed_params(prop_schema):
+                return True
+
+    return False
