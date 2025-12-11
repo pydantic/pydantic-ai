@@ -6,6 +6,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Anthropic](anthropic.md)
 * [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
 * [Bedrock](bedrock.md)
+* [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
@@ -18,7 +19,6 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [Cerebras](openai.md#cerebras)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
 - [GitHub Models](openai.md#github-models)

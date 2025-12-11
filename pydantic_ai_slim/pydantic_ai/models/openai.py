@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Se
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from pydantic_core import to_json
@@ -19,7 +19,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageAspectRatio, ImageGenerationTool, MCPServerTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -55,7 +55,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -90,27 +90,13 @@ try:
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+
+    OMIT = omit
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-if TYPE_CHECKING:
-    from openai import Omit, omit
-
-    OMIT = omit
-else:
-    # Backward compatibility with openai<2
-    try:
-        from openai import Omit, omit
-
-        OMIT = omit
-    except ImportError:  # pragma: lax no cover
-        from openai import NOT_GIVEN, NotGiven
-
-        OMIT = NOT_GIVEN
-        Omit = NotGiven
 
 
 __all__ = (
@@ -158,6 +144,36 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'cancelled': 'error',
     'failed': 'error',
 }
+
+_OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
+    '1:1': '1024x1024',
+    '2:3': '1024x1536',
+    '3:2': '1536x1024',
+}
+
+
+def _resolve_openai_image_generation_size(
+    tool: ImageGenerationTool,
+) -> Literal['auto', '1024x1024', '1024x1536', '1536x1024']:
+    """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
+    aspect_ratio = tool.aspect_ratio
+    if aspect_ratio is None:
+        return tool.size
+
+    mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
+    if mapped_size is None:
+        supported = ', '.join(_OPENAI_ASPECT_RATIO_TO_SIZE)
+        raise UserError(
+            f'OpenAI image generation only supports `aspect_ratio` values: {supported}. '
+            'Specify one of those values or omit `aspect_ratio`.'
+        )
+
+    if tool.size not in ('auto', mapped_size):
+        raise UserError(
+            '`ImageGenerationTool` cannot combine `aspect_ratio` with a conflicting `size` when using OpenAI.'
+        )
+
+    return mapped_size
 
 
 def _check_azure_content_filter(e: APIStatusError) -> bool:
@@ -213,6 +229,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Enables [predictive outputs](https://platform.openai.com/docs/guides/predicted-outputs).
 
     This feature is currently only supported for some OpenAI models.
+    """
+
+    openai_prompt_cache_key: str
+    """Used by OpenAI to cache responses for similar requests to optimize your cache hit rates.
+
+    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
+    """
+
+    openai_prompt_cache_retention: Literal['in-memory', '24h']
+    """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
+
+    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
 
@@ -564,6 +592,8 @@ class OpenAIChatModel(Model):
                 logit_bias=model_settings.get('logit_bias', OMIT),
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -661,6 +691,7 @@ class OpenAIChatModel(Model):
             provider_details=self._process_provider_details(response),
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
@@ -1282,6 +1313,7 @@ class OpenAIResponsesModel(Model):
             provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -1422,6 +1454,8 @@ class OpenAIResponsesModel(Model):
                 user=model_settings.get('openai_user', OMIT),
                 text=text or OMIT,
                 include=include or OMIT,
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1511,6 +1545,7 @@ class OpenAIResponsesModel(Model):
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
+                size = _resolve_openai_image_generation_size(tool)
                 tools.append(
                     responses.tool_param.ImageGeneration(
                         type='image_generation',
@@ -1521,7 +1556,7 @@ class OpenAIResponsesModel(Model):
                         output_format=tool.output_format or 'png',
                         partial_images=tool.partial_images,
                         quality=tool.quality,
-                        size=tool.size,
+                        size=size,
                     )
                 )
             else:
@@ -2065,6 +2100,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -2395,6 +2435,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

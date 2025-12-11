@@ -134,7 +134,6 @@ KnownModelName = TypeAliasType(
         'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cerebras:qwen-3-32b',
         'cerebras:zai-glm-4.6',
         'cohere:c4ai-aya-expanse-32b',
@@ -315,6 +314,7 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-5.1-chat-latest',
         'gateway/openai:gpt-5.1-codex',
         'gateway/openai:gpt-5.1-mini',
+        'gateway/openai:gpt-5.1-codex-max',
         'gateway/openai:o1',
         'gateway/openai:o1-2024-12-17',
         'gateway/openai:o1-mini',
@@ -490,6 +490,7 @@ KnownModelName = TypeAliasType(
         'openai:gpt-5.1-chat-latest',
         'openai:gpt-5.1-codex',
         'openai:gpt-5.1-mini',
+        'openai:gpt-5.1-codex-max',
         'openai:o1',
         'openai:o1-2024-12-17',
         'openai:o1-mini',
@@ -876,6 +877,7 @@ class StreamedResponse(ABC):
             timestamp=self.timestamp,
             usage=self.usage(),
             provider_name=self.provider_name,
+            provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
@@ -896,6 +898,12 @@ class StreamedResponse(ABC):
     @abstractmethod
     def provider_name(self) -> str | None:
         """Get the provider name."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
         raise NotImplementedError()
 
     @property
@@ -1002,7 +1010,6 @@ def infer_model(  # noqa: C901
         'openai',
         'azure',
         'deepseek',
-        'cerebras',
         'fireworks',
         'github',
         'grok',
@@ -1039,14 +1046,14 @@ def infer_model(  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif model_kind == 'openrouter':
-        from .openrouter import OpenRouterModel
-
-        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1059,6 +1066,10 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
