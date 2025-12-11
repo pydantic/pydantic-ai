@@ -720,8 +720,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             ) as stream_result:
                 yield stream_result
 
-        async_result = _utils.get_event_loop().run_until_complete(anext(_consume_stream()))
-        return result.StreamedRunResultSync(async_result)
+        return result.StreamedRunResultSync(_consume_stream())
 
     @overload
     def run_stream_events(
