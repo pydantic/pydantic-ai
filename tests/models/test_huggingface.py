@@ -80,6 +80,7 @@ class MockHuggingFace:
     stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    model: str = 'https://api-inference.huggingface.co'
 
     @cached_property
     def chat(self) -> Any:
@@ -239,6 +240,7 @@ async def test_request_structured_response(
             model_name='hf-model',
             timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             provider_name='huggingface',
+            provider_url='https://api-inference.huggingface.co',
             provider_details={'finish_reason': 'stop'},
             provider_response_id='123',
             run_id=IsStr(),
@@ -375,6 +377,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -402,6 +405,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -422,6 +426,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -750,14 +755,13 @@ async def test_model_client_response_error(allow_model_requests: None) -> None:
     request_info.headers = {}
     request_info.real_url = 'http://test.com'
     error = aiohttp.ClientResponseError(request_info, history=(), status=400, message='Bad Request')
-    error.response_error_payload = {'error': 'test error'}  # type: ignore
 
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('hello')
-    assert str(exc_info.value) == snapshot("status_code: 400, model_name: not_a_model, body: {'error': 'test error'}")
+    assert str(exc_info.value) == snapshot('status_code: 400, model_name: not_a_model, body: Bad Request')
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
@@ -815,6 +819,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -835,6 +840,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),

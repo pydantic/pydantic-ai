@@ -205,7 +205,7 @@ def test_docs_examples(
         for req in requires.split(','):
             known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
-                (tmp_path_cwd / req).write_text(ex.source)
+                (tmp_path_cwd / req).write_text(ex.source, encoding='utf-8')
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
@@ -328,6 +328,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
     'What is 7 plus 5?': 'The answer is 12.',
+    'What is the weather like?': "It's currently raining in London.",
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
@@ -346,6 +347,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
     'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
+    'Compare the documentation at https://ai.pydantic.dev and https://docs.pydantic.dev': (
+        'Both sites provide comprehensive documentation for Pydantic projects. '
+        'ai.pydantic.dev focuses on PydanticAI, a framework for building AI agents, '
+        'while docs.pydantic.dev covers Pydantic, the data validation library. '
+        'They share similar documentation styles and both emphasize type safety and developer experience.'
+    ),
     'Give me some examples of my products.': 'Here are some examples of my data: Pen, Paper, Pencil.',
     'Put my money on square eighteen': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 18}, tool_call_id='pyd_ai_tool_call_id'
@@ -506,6 +513,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
+    'Give me a value of 5.': ToolCallPart(tool_name='final_result', args={'x': 5}),
     'Write a creative story about space exploration': 'In the year 2157, Captain Maya Chen piloted her spacecraft through the vast expanse of the Andromeda Galaxy. As she discovered a planet with crystalline mountains that sang in harmony with the cosmic winds, she realized that space exploration was not just about finding new worlds, but about finding new ways to understand the universe and our place within it.',
     'Create a person': ToolCallPart(
         tool_name='final_result',
@@ -530,6 +538,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
+    'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -681,6 +690,12 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
+        elif m.content == 'Generate a wide illustration of an axolotl city skyline.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='wide-axolotl-city')),
                 ]
             )
         elif m.content == 'Generate a chart of y=x^2 for x=-5 to 5.':
@@ -874,6 +889,30 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
+    elif isinstance(m, UserPromptPart) and m.content == 'Now create a backup of README.md':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='update_file',
+                    args={'path': 'README.md.bak', 'content': 'Hello, world!'},
+                    tool_call_id='update_file_backup',
+                )
+            ],
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in m.content:
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    "Here's what I've done:\n"
+                    '- Attempted to delete __init__.py, but deletion is not allowed.\n'
+                    '- Updated README.md with: Hello, world!\n'
+                    '- Cleared .env (set to empty).\n'
+                    '- Created a backup at README.md.bak containing: Hello, world!\n'
+                    '\n'
+                    'If you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know.'
+                )
+            ],
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
@@ -883,7 +922,7 @@ async def model_logic(  # noqa: C901
         raise RuntimeError(f'Unexpected message: {m}')
 
 
-async def stream_model_logic(  # noqa C901
+async def stream_model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: lax no cover
     async def stream_text_response(r: str) -> AsyncIterator[str]:

@@ -25,8 +25,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
-        supports_json_schema_output=not is_image_model,
-        supports_json_object_output=not is_image_model,
+        supports_json_schema_output=is_3_or_newer or not is_image_model,
+        supports_json_object_output=is_3_or_newer or not is_image_model,
         supports_tools=not is_image_model,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
     )

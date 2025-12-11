@@ -38,7 +38,7 @@ from pydantic_ai.mcp import (
     ServerCapabilities,
     load_mcp_servers,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -57,7 +57,7 @@ with try_import() as imports_successful:
         TextContent,
     )
 
-    from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
+    from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -95,7 +95,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(18)
+        assert len(tools) == snapshot(19)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -156,7 +156,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(18)
+        assert len(tools) == snapshot(19)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -248,6 +248,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
@@ -279,6 +280,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
@@ -417,6 +419,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
@@ -452,6 +455,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
@@ -497,6 +501,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
@@ -528,6 +533,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
@@ -573,6 +579,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
@@ -604,6 +611,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
@@ -651,6 +659,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
@@ -687,6 +696,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
@@ -736,6 +746,7 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
@@ -772,6 +783,7 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
@@ -802,6 +814,7 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -830,6 +843,7 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -859,16 +873,12 @@ async def test_tool_returning_audio_resource_link(
                 ),
                 ModelResponse(
                     parts=[
-                        ThinkingPart(
-                            content='',
-                            signature=IsStr(),
-                            provider_name='google-gla',
-                        ),
                         ToolCallPart(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
-                        ),
+                            provider_details={'thought_signature': IsStr()},
+                        )
                     ],
                     usage=RequestUsage(
                         input_tokens=605, output_tokens=168, details={'thoughts_tokens': 154, 'text_prompt_tokens': 605}
@@ -876,6 +886,7 @@ async def test_tool_returning_audio_resource_link(
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
@@ -910,6 +921,7 @@ async def test_tool_returning_audio_resource_link(
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
@@ -955,6 +967,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
                     finish_reason='tool_call',
@@ -993,6 +1006,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
                     finish_reason='stop',
@@ -1032,6 +1046,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
@@ -1063,6 +1078,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
@@ -1106,6 +1122,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
                     finish_reason='tool_call',
@@ -1137,6 +1154,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
                     finish_reason='stop',
@@ -1184,6 +1202,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
@@ -1221,6 +1240,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
@@ -1256,6 +1276,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
@@ -1295,6 +1316,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
@@ -1326,6 +1348,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
@@ -1373,6 +1396,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
                     finish_reason='tool_call',
@@ -1420,6 +1444,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
                     finish_reason='stop',
@@ -1527,6 +1552,49 @@ def test_map_from_mcp_params_model_response():
             )
         ]
     )
+
+
+def test_map_from_pai_messages_with_binary_content():
+    """Test that map_from_pai_messages correctly converts image and audio content to MCP format.
+
+    Note: `data` in this case are base64-encoded bytes (e.g., base64.b64encode(b'raw')).
+    map_from_pai_messages decodes this to get the base64 string for MCP.
+    """
+
+    message = ModelRequest(
+        parts=[
+            UserPromptPart(content='text message'),
+            UserPromptPart(content=[BinaryContent(data=b'raw_image_bytes', media_type='image/png')]),
+            # TODO uncomment when audio content is supported
+            # UserPromptPart(content=[BinaryContent(data=b'raw_audio_bytes', media_type='audio/wav'), 'text after audio']),
+        ]
+    )
+    system_prompt, sampling_msgs = map_from_pai_messages([message])
+    assert system_prompt == ''
+    assert [m.model_dump(by_alias=True) for m in sampling_msgs] == snapshot(
+        [
+            {'role': 'user', 'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None}},
+            {
+                'role': 'user',
+                'content': {
+                    'type': 'image',
+                    'data': 'cmF3X2ltYWdlX2J5dGVz',
+                    'mimeType': 'image/png',
+                    'annotations': None,
+                    '_meta': None,
+                },
+            },
+        ]
+    )
+
+    # Unsupported content type raises NotImplementedError
+    message_with_video = ModelRequest(
+        parts=[UserPromptPart(content=[BinaryContent(data=b'raw_video_bytes', media_type='video/mp4')])]
+    )
+    with pytest.raises(
+        NotImplementedError, match="Unsupported content type: <class 'pydantic_ai.messages.BinaryContent'>"
+    ):
+        map_from_pai_messages([message_with_video])
 
 
 def test_map_from_model_response():
@@ -1690,17 +1758,19 @@ async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None
 def test_load_mcp_servers(tmp_path: Path):
     config = tmp_path / 'mcp.json'
 
-    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}', encoding='utf-8')
     server = load_mcp_servers(config)[0]
     assert server == MCPServerStreamableHTTP(url='https://example.com/mcp', id='potato', tool_prefix='potato')
 
-    config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
+    config.write_text(
+        '{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}', encoding='utf-8'
+    )
     server = load_mcp_servers(config)[0]
     assert server == MCPServerStdio(
         command='python', args=['-m', 'tests.mcp_server'], id='potato', tool_prefix='potato'
     )
 
-    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}', encoding='utf-8')
     server = load_mcp_servers(config)[0]
     assert server == MCPServerSSE(url='https://example.com/sse', id='potato', tool_prefix='potato')
 
@@ -1715,7 +1785,9 @@ def test_load_mcp_servers_with_env_vars(tmp_path: Path, monkeypatch: pytest.Monk
     # Test with environment variables in command
     monkeypatch.setenv('PYTHON_CMD', 'python3')
     monkeypatch.setenv('MCP_MODULE', 'tests.mcp_server')
-    config.write_text('{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "${MCP_MODULE}"]}}}')
+    config.write_text(
+        '{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "${MCP_MODULE}"]}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
 
@@ -1736,7 +1808,8 @@ def test_load_mcp_servers_env_var_in_env_dict(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setenv('API_KEY', 'secret123')
     config.write_text(
         '{"mcpServers": {"my_server": {"command": "python", "args": ["-m", "tests.mcp_server"], '
-        '"env": {"API_KEY": "${API_KEY}"}}}}'
+        '"env": {"API_KEY": "${API_KEY}"}}}}',
+        encoding='utf-8',
     )
 
     servers = load_mcp_servers(config)
@@ -1754,7 +1827,9 @@ def test_load_mcp_servers_env_var_expansion_url(tmp_path: Path, monkeypatch: pyt
     # Test with environment variables in URL
     monkeypatch.setenv('SERVER_HOST', 'example.com')
     monkeypatch.setenv('SERVER_PORT', '8080')
-    config.write_text('{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}')
+    config.write_text(
+        '{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
 
@@ -1771,7 +1846,7 @@ def test_load_mcp_servers_undefined_env_var(tmp_path: Path, monkeypatch: pytest.
     # Make sure the environment variable is not set
     monkeypatch.delenv('UNDEFINED_VAR', raising=False)
 
-    config.write_text('{"mcpServers": {"my_server": {"command": "${UNDEFINED_VAR}", "args": []}}}')
+    config.write_text('{"mcpServers": {"my_server": {"command": "${UNDEFINED_VAR}", "args": []}}}', encoding='utf-8')
 
     with pytest.raises(ValueError, match='Environment variable \\$\\{UNDEFINED_VAR\\} is not defined'):
         load_mcp_servers(config)
@@ -1783,7 +1858,7 @@ def test_load_mcp_servers_partial_env_vars(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setenv('HOST', 'example.com')
     monkeypatch.setenv('PATH_SUFFIX', 'mcp')
-    config.write_text('{"mcpServers": {"server": {"url": "https://${HOST}/api/${PATH_SUFFIX}"}}}')
+    config.write_text('{"mcpServers": {"server": {"url": "https://${HOST}/api/${PATH_SUFFIX}"}}}', encoding='utf-8')
 
     servers = load_mcp_servers(config)
 
@@ -1802,7 +1877,8 @@ def test_load_mcp_servers_with_non_string_values(tmp_path: Path, monkeypatch: py
     monkeypatch.setenv('PYTHON_CMD', 'python')
     config.write_text(
         '{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "tests.mcp_server"], '
-        '"metadata": {"count": 42, "enabled": true, "value": null}}}}'
+        '"metadata": {"count": 42, "enabled": true, "value": null}}}}',
+        encoding='utf-8',
     )
 
     # This should successfully expand env vars and ignore the metadata field
@@ -1820,7 +1896,9 @@ def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytes
 
     # Test with undefined variable using default
     monkeypatch.delenv('UNDEFINED_VAR', raising=False)
-    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-python3}", "args": []}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-python3}", "args": []}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1830,7 +1908,9 @@ def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytes
 
     # Test with defined variable (should use actual value, not default)
     monkeypatch.setenv('DEFINED_VAR', 'actual_value')
-    config.write_text('{"mcpServers": {"server": {"command": "${DEFINED_VAR:-default_value}", "args": []}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "${DEFINED_VAR:-default_value}", "args": []}}}', encoding='utf-8'
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1840,7 +1920,7 @@ def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytes
 
     # Test with empty string as default
     monkeypatch.delenv('UNDEFINED_VAR', raising=False)
-    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-}", "args": []}}}')
+    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-}", "args": []}}}', encoding='utf-8')
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1856,7 +1936,10 @@ def test_load_mcp_servers_with_default_values_in_url(tmp_path: Path, monkeypatch
     # Test with default values in URL
     monkeypatch.delenv('HOST', raising=False)
     monkeypatch.setenv('PROTOCOL', 'https')
-    config.write_text('{"mcpServers": {"server": {"url": "${PROTOCOL:-http}://${HOST:-localhost}:${PORT:-8080}/mcp"}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"url": "${PROTOCOL:-http}://${HOST:-localhost}:${PORT:-8080}/mcp"}}}',
+        encoding='utf-8',
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1873,7 +1956,8 @@ def test_load_mcp_servers_with_default_values_in_env_dict(tmp_path: Path, monkey
     monkeypatch.setenv('CUSTOM_VAR', 'custom_value')
     config.write_text(
         '{"mcpServers": {"server": {"command": "python", "args": [], '
-        '"env": {"API_KEY": "${API_KEY:-default_key}", "CUSTOM": "${CUSTOM_VAR:-fallback}"}}}}'
+        '"env": {"API_KEY": "${API_KEY:-default_key}", "CUSTOM": "${CUSTOM_VAR:-fallback}"}}}}',
+        encoding='utf-8',
     )
 
     servers = load_mcp_servers(config)
@@ -1889,7 +1973,10 @@ def test_load_mcp_servers_with_complex_default_values(tmp_path: Path, monkeypatc
 
     monkeypatch.delenv('PATH_VAR', raising=False)
     # Test default with slashes, dots, and dashes
-    config.write_text('{"mcpServers": {"server": {"command": "${PATH_VAR:-/usr/local/bin/python-3.10}", "args": []}}}')
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "${PATH_VAR:-/usr/local/bin/python-3.10}", "args": []}}}',
+        encoding='utf-8',
+    )
 
     servers = load_mcp_servers(config)
     assert len(servers) == 1
@@ -1905,7 +1992,8 @@ def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.setenv('REQUIRED_VAR', 'required_value')
     monkeypatch.delenv('OPTIONAL_VAR', raising=False)
     config.write_text(
-        '{"mcpServers": {"server": {"command": "${REQUIRED_VAR}", "args": ["${OPTIONAL_VAR:-default_arg}"]}}}'
+        '{"mcpServers": {"server": {"command": "${REQUIRED_VAR}", "args": ["${OPTIONAL_VAR:-default_arg}"]}}}',
+        encoding='utf-8',
     )
 
     servers = load_mcp_servers(config)
@@ -1976,3 +2064,154 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
     assert output == snapshot(
         'The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer experience.'
     )
+
+
+async def test_custom_http_client_not_closed():
+    custom_http_client = cached_async_http_client()
+
+    assert not custom_http_client.is_closed
+
+    my_mcp_server = MCPServerStreamableHTTP(
+        url='https://mcp.deepwiki.com/mcp', http_client=custom_http_client, timeout=30
+    )
+
+    tools = await my_mcp_server.list_tools()
+    assert len(tools) > 0
+
+    assert not custom_http_client.is_closed
+
+
+# ============================================================================
+# Tool and Resource Caching Tests
+# ============================================================================
+
+
+async def test_tools_caching_enabled_by_default() -> None:
+    """Test that list_tools() caches results by default."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # First call - should fetch from server and cache
+        tools1 = await server.list_tools()
+        assert len(tools1) > 0
+        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call - should return cached value (cache is still populated)
+        tools2 = await server.list_tools()
+        assert tools2 == tools1
+        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_tools_no_caching_when_disabled() -> None:
+    """Test that list_tools() does not cache when cache_tools=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_tools=False)
+    async with server:
+        # First call - should not populate cache
+        tools1 = await server.list_tools()
+        assert len(tools1) > 0
+        assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call - cache should still be None
+        tools2 = await server.list_tools()
+        assert tools2 == tools1
+        assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_tools_cache_invalidation_on_notification() -> None:
+    """Test that tools cache is invalidated when ToolListChangedNotification is received."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Get initial tools - hidden_tool should NOT be present (it's disabled at startup)
+        tools1 = await server.list_tools()
+        tool_names1 = [t.name for t in tools1]
+        assert 'hidden_tool' not in tool_names1
+        assert 'enable_hidden_tool' in tool_names1
+
+        # Enable the hidden tool (server sends ToolListChangedNotification)
+        await server.direct_call_tool('enable_hidden_tool', {})
+
+        # Get tools again - hidden_tool should now be present (cache was invalidated)
+        tools2 = await server.list_tools()
+        tool_names2 = [t.name for t in tools2]
+        assert 'hidden_tool' in tool_names2
+
+
+async def test_resources_caching_enabled_by_default() -> None:
+    """Test that list_resources() caches results by default."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.resources
+
+        # First call - should fetch from server and cache
+        resources1 = await server.list_resources()
+        assert server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call - should return cached value (cache is still populated)
+        resources2 = await server.list_resources()
+        assert resources2 == resources1
+        assert server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_resources_no_caching_when_disabled() -> None:
+    """Test that list_resources() does not cache when cache_resources=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_resources=False)
+    async with server:
+        assert server.capabilities.resources
+
+        # First call - should not populate cache
+        resources1 = await server.list_resources()
+        assert server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call - cache should still be None
+        resources2 = await server.list_resources()
+        assert resources2 == resources1
+        assert server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_resources_cache_invalidation_on_notification() -> None:
+    """Test that resources cache is invalidated when ResourceListChangedNotification is received."""
+    from mcp.types import ResourceListChangedNotification, ServerNotification
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.resources
+
+        # Populate cache
+        await server.list_resources()
+        assert server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
+
+        # Simulate receiving a resource list changed notification
+        notification = ServerNotification(ResourceListChangedNotification())
+        await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
+
+        # Cache should be invalidated
+        assert server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_cache_cleared_on_connection_close() -> None:
+    """Test that caches are cleared when the connection is closed."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # First connection
+    async with server:
+        await server.list_tools()
+        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+
+    # After exiting, cache should be cleared by __aexit__
+    assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+
+    # Reconnect and verify cache starts empty
+    async with server:
+        assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+        # Fetch again to populate
+        await server.list_tools()
+        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_server_capabilities_list_changed_fields() -> None:
+    """Test that ServerCapabilities correctly parses listChanged fields."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        caps = server.capabilities
+        assert isinstance(caps.prompts_list_changed, bool)
+        assert isinstance(caps.tools_list_changed, bool)
+        assert isinstance(caps.resources_list_changed, bool)

@@ -63,7 +63,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -138,15 +138,12 @@ async def test_model_tools(allow_model_requests: None):
                 {
                     'name': 'foo',
                     'description': 'This is foo',
-                    'parameters': {
-                        'type': 'object',
-                        'properties': {'bar': {'type': 'number'}},
-                    },
+                    'parameters_json_schema': {'type': 'object', 'properties': {'bar': {'type': 'number'}}},
                 },
                 {
                     'name': 'apple',
                     'description': 'This is apple',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'type': 'object',
                         'properties': {'banana': {'type': 'array', 'items': {'type': 'number'}}},
                     },
@@ -154,7 +151,7 @@ async def test_model_tools(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'type': 'object',
                         'properties': {'spam': {'type': 'number'}},
                         'required': ['spam'],
@@ -189,7 +186,7 @@ async def test_require_response_tool(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {'type': 'object', 'properties': {'spam': {'type': 'number'}}},
+                    'parameters_json_schema': {'type': 'object', 'properties': {'spam': {'type': 'number'}}},
                 }
             ]
         }
@@ -277,13 +274,8 @@ async def test_json_def_replaced(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
-                        'properties': {
-                            'locations': {
-                                'items': {'$ref': '#/$defs/Location'},
-                                'type': 'array',
-                            }
-                        },
+                    'parameters_json_schema': {
+                        'properties': {'locations': {'items': {'$ref': '#/$defs/Location'}, 'type': 'array'}},
                         'required': ['locations'],
                         'type': 'object',
                         '$defs': {
@@ -367,7 +359,7 @@ async def test_json_def_enum(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'properties': {
                             'progress': {
                                 'default': None,
@@ -416,17 +408,14 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'properties': {
                             'op_location': {'default': None, 'anyOf': [{'$ref': '#/$defs/Location'}, {'type': 'null'}]}
                         },
                         'type': 'object',
                         '$defs': {
                             'Location': {
-                                'properties': {
-                                    'lat': {'type': 'number'},
-                                    'lng': {'type': 'number'},
-                                },
+                                'properties': {'lat': {'type': 'number'}, 'lng': {'type': 'number'}},
                                 'required': ['lat', 'lng'],
                                 'type': 'object',
                             }
@@ -480,7 +469,7 @@ async def test_json_def_date(allow_model_requests: None):
                 {
                     'name': 'result',
                     'description': 'This is the tool for the final Result',
-                    'parameters': {
+                    'parameters_json_schema': {
                         'properties': {
                             'd': {'type': 'string', 'description': 'Format: date'},
                             'dt': {'type': 'string', 'description': 'Format: date-time'},
@@ -579,6 +568,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -599,6 +589,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -611,6 +602,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -639,6 +631,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -705,6 +698,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -727,6 +721,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -752,6 +747,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -914,6 +910,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -933,6 +930,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -1005,6 +1003,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -1031,7 +1030,10 @@ async def test_empty_text_ignored():
         {
             'role': 'model',
             'parts': [
-                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
+                {
+                    'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
+                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                },
                 {'text': 'xxx'},
             ],
         }
@@ -1044,7 +1046,12 @@ async def test_empty_text_ignored():
     assert content == snapshot(
         {
             'role': 'model',
-            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
+            'parts': [
+                {
+                    'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}},
+                    'thought_signature': b'context_engineering_is_the_way_to_go',
+                }
+            ],
         }
     )
 
@@ -1177,7 +1184,7 @@ async def test_safety_settings_safe(
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
-    m = GeminiModel('gemini-2.5-pro-preview-03-25', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-3-pro-preview', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1197,21 +1204,15 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-I need to use the `get_image` tool to see the image first.
-
-"""
-                    ),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
-                ],
+                parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=38, output_tokens=389, details={'thoughts_tokens': 361, 'text_prompt_tokens': 38}
+                    input_tokens=33, output_tokens=74, details={'thoughts_tokens': 64, 'text_prompt_tokens': 33}
                 ),
-                model_name='gemini-2.5-pro-preview-03-25',
+                model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -1225,7 +1226,10 @@ I need to use the `get_image` tool to see the image first.
                     UserPromptPart(
                         content=[
                             'This is file 1c8566:',
-                            image_content,
+                            BinaryContent(
+                                data=IsBytes(),
+                                media_type='image/png',
+                            ),
                         ],
                         timestamp=IsDatetime(),
                     ),
@@ -1233,15 +1237,44 @@ I need to use the `get_image` tool to see the image first.
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
+                parts=[
+                    TextPart(content='6'),
+                    TextPart(
+                        content="""\
+ 1c8566
+The image shows a **kiwi** fruit that has been sliced in half.
+
+You can see:
+*   The **bright green flesh**.
+*   The ring of tiny **black seeds**.
+*   The **white core** in the center.
+*   The fuzzy **brown skin** around the outside.
+
+It's positioned against a plain white background.\
+"""
+                    ),
+                    TextPart(
+                        content="""\
+The fruit in the image is a **kiwi** (specifically, a sliced green kiwifruit).
+
+You can clearly identify it by its signature features:
+*   **Green flesh** with a radial pattern.
+*   A ring of small **black seeds**.
+*   A cream-colored **white core** in the center.
+*   Fuzzy **brown skin** visible on the exterior edge.\
+"""
+                    ),
+                ],
                 usage=RequestUsage(
-                    input_tokens=360,
-                    output_tokens=212,
-                    details={'thoughts_tokens': 201, 'text_prompt_tokens': 102, 'image_prompt_tokens': 258},
+                    input_tokens=1185,
+                    output_tokens=552,
+                    details={'thoughts_tokens': 381, 'image_prompt_tokens': 1107, 'text_prompt_tokens': 78},
                 ),
-                model_name='gemini-2.5-pro-preview-03-25',
+                model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
                 run_id=IsStr(),
             ),
         ]
@@ -1344,7 +1377,7 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
     assert result.output == snapshot(
-        'I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n'
+        'I am sorry, I cannot provide you with your Chinese zodiac sign because you are not old enough. You must be at least 18 years old.'
     )
 
 
@@ -1368,6 +1401,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -1382,7 +1416,7 @@ class CurrentLocation(BaseModel, extra='forbid'):
 
 @pytest.mark.vcr()
 async def test_gemini_additional_properties_is_false(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1391,14 +1425,14 @@ async def test_gemini_additional_properties_is_false(allow_model_requests: None,
 
     result = await agent.run('What is the temperature in Tokyo?')
     assert result.output == snapshot(
-        'The available tools lack the ability to access real-time information, including current temperature.  Therefore, I cannot answer your question.\n'
+        'I need the country to find the temperature in Tokyo. Could you please tell me which country Tokyo is in?\n'
     )
 
 
 @pytest.mark.vcr()
 async def test_gemini_additional_properties_is_true(allow_model_requests: None, gemini_api_key: str):
     """Test that additionalProperties with schemas now work natively (no warning since Nov 2025 announcement)."""
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1407,7 +1441,7 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
 
     result = await agent.run('What is the temperature in Tokyo?')
     assert result.output == snapshot(
-        'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
+        'I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is being processed by the tool.'
     )
 
 
@@ -1476,6 +1510,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
                 finish_reason='stop',
@@ -1509,6 +1544,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
                 finish_reason='stop',
@@ -1569,6 +1605,7 @@ Just as you wouldn't just run blindly into a busy street, you shouldn't just jum
                 ),
                 model_name='gemini-2.5-flash-preview-04-17',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -1613,6 +1650,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
             ),
@@ -1686,6 +1724,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -1714,6 +1753,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -1768,6 +1808,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -1796,6 +1837,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -1857,6 +1899,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='TT9IaNfGN_DmqtsPzKnE4AE',
                 run_id=IsStr(),
@@ -1926,10 +1969,11 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=17, output_tokens=20, details={'text_prompt_tokens': 17, 'text_candidates_tokens': 20}
+                    input_tokens=8, output_tokens=20, details={'text_prompt_tokens': 8, 'text_candidates_tokens': 20}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -1987,6 +2031,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -2030,6 +2075,7 @@ async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -2075,6 +2121,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -2097,6 +2144,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
@@ -2146,6 +2194,7 @@ async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemin
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),

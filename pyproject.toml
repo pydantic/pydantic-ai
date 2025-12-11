@@ -56,7 +56,7 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
 outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
-outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}"]
+outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 
@@ -75,6 +75,7 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+pydantic-docs = { git = "https://github.com/pydantic/pydantic-docs" }
 
 [tool.uv.workspace]
 members = [
@@ -118,18 +119,22 @@ docs = [
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-llmstxt>=0.2.0",
-    'mkdocs-redirects>=1.2.2',
+    "mkdocs-redirects>=1.2.2",
     "mkdocs-material[imaging]>=9.5.45",
     "mkdocstrings-python>=1.12.2",
     "griffe-warnings-deprecated>=1.1.0",
+    "pydantic-docs",
 ]
 docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
 
 [tool.hatch.build.targets.wheel]
-only-include = ["/README.md"]
+bypass-selection = true
 
 [tool.hatch.build.targets.sdist]
-include = ["/README.md", "/Makefile", "/tests"]
+include = ["/README.md", "/Makefile"]
+# We are excluding the tests because we have 100MB of test data in this repository.
+# Obviously that's a problem, but for now, we'll just exclude them.
+exclude = ["/tests"]
 
 [tool.ruff]
 line-length = 120
@@ -145,6 +150,7 @@ include = [
 ]
 
 [tool.ruff.lint]
+preview = true  # For `PLW1514`
 extend-select = [
     "Q",
     "RUF100",
@@ -154,6 +160,7 @@ extend-select = [
     "I",
     "D",
     "TID251",
+    "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -176,6 +183,7 @@ convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
+"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it

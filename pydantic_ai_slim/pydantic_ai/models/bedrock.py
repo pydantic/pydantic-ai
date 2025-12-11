@@ -9,7 +9,6 @@ from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
-import anyio
 import anyio.to_thread
 from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
@@ -41,10 +40,10 @@ from pydantic_ai import (
     usage,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BedrockModelProfile
+from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -104,6 +103,7 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
     'anthropic.claude-opus-4-20250514-v1:0',
     'us.anthropic.claude-opus-4-20250514-v1:0',
+    'global.anthropic.claude-opus-4-5-20251101-v1:0',
     'anthropic.claude-sonnet-4-20250514-v1:0',
     'us.anthropic.claude-sonnet-4-20250514-v1:0',
     'eu.anthropic.claude-sonnet-4-20250514-v1:0',
@@ -154,13 +154,6 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
-
-_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.')
-"""Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
-
-Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
-which does not accept profile IDs. Extend if new geos appear (e.g., 'global.', 'us-gov.').
-"""
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -312,8 +305,10 @@ class BedrockConverseModel(Model):
         try:
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
-            raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            if isinstance(status_code, int):
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -335,6 +330,7 @@ class BedrockConverseModel(Model):
             _model_name=self.model_name,
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
@@ -386,6 +382,7 @@ class BedrockConverseModel(Model):
             model_name=self.model_name,
             provider_response_id=response_id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -459,8 +456,10 @@ class BedrockConverseModel(Model):
             else:
                 model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
-            raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            if isinstance(status_code, int):
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return model_response
 
     @staticmethod
@@ -587,7 +586,8 @@ class BedrockConverseModel(Model):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
-                bedrock_messages.append({'role': 'assistant', 'content': content})
+                if content:
+                    bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(message)
 
@@ -689,9 +689,9 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
         """Remove inference geographic prefix from model ID if present."""
-        for prefix in _AWS_BEDROCK_INFERENCE_GEO_PREFIXES:
-            if model_name.startswith(prefix):
-                return model_name.removeprefix(prefix)
+        for prefix in BEDROCK_GEO_PREFIXES:
+            if model_name.startswith(f'{prefix}.'):
+                return model_name.removeprefix(f'{prefix}.')
         return model_name
 
 
@@ -702,6 +702,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
@@ -747,24 +748,25 @@ class BedrockStreamedResponse(StreamedResponse):
                     delta = content_block_delta['delta']
                     if 'reasoningContent' in delta:
                         if redacted_content := delta['reasoningContent'].get('redactedContent'):
-                            yield self._parts_manager.handle_thinking_delta(
+                            for event in self._parts_manager.handle_thinking_delta(
                                 vendor_part_id=index,
                                 id='redacted_content',
                                 signature=redacted_content.decode('utf-8'),
                                 provider_name=self.provider_name,
-                            )
+                            ):
+                                yield event
                         else:
                             signature = delta['reasoningContent'].get('signature')
-                            yield self._parts_manager.handle_thinking_delta(
+                            for event in self._parts_manager.handle_thinking_delta(
                                 vendor_part_id=index,
                                 content=delta['reasoningContent'].get('text'),
                                 signature=signature,
                                 provider_name=self.provider_name if signature else None,
-                            )
+                            ):
+                                yield event
                     if text := delta.get('text'):
-                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=text)
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                            yield event
                     if 'toolUse' in delta:
                         tool_use = delta['toolUse']
                         maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -787,6 +789,11 @@ class BedrockStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

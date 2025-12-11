@@ -336,7 +336,10 @@ def test_video_url_invalid():
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
     original_delta = ThinkingPartDelta(
-        content_delta='original', signature_delta='sig1', provider_name='original_provider'
+        content_delta='original',
+        signature_delta='sig1',
+        provider_name='original_provider',
+        provider_details={'foo': 'bar', 'baz': 'qux'},
     )
 
     # Test applying delta with no content or signature - should raise error
@@ -361,6 +364,47 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
     assert result.provider_name == 'new_provider'
+
+    # Test applying delta with provider_details
+    provider_details_delta = ThinkingPartDelta(
+        content_delta='', provider_details={'finish_reason': 'STOP', 'foo': 'qux'}
+    )
+    result = provider_details_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.provider_details == {'foo': 'qux', 'baz': 'qux', 'finish_reason': 'STOP'}
+
+    # Test chaining callable provider_details in delta-to-delta
+    delta1 = ThinkingPartDelta(
+        content_delta='first',
+        provider_details=lambda d: {**(d or {}), 'first': 1},
+    )
+    delta2 = ThinkingPartDelta(
+        content_delta=' second',
+        provider_details=lambda d: {**(d or {}), 'second': 2},
+    )
+    chained = delta2.apply(delta1)
+    assert isinstance(chained, ThinkingPartDelta)
+    assert callable(chained.provider_details)
+    # Apply chained delta to actual ThinkingPart to verify both callables ran
+    part = ThinkingPart(content='')
+    result_part = chained.apply(part)
+    assert result_part.provider_details == {'first': 1, 'second': 2}
+
+    # Test applying dict delta to callable delta (dict should merge with callable result)
+    delta_callable = ThinkingPartDelta(
+        content_delta='callable',
+        provider_details=lambda d: {**(d or {}), 'from_callable': 'yes'},
+    )
+    delta_dict = ThinkingPartDelta(
+        content_delta=' dict',
+        provider_details={'from_dict': 'also'},
+    )
+    chained = delta_dict.apply(delta_callable)
+    assert isinstance(chained, ThinkingPartDelta)
+    assert callable(chained.provider_details)
+    part = ThinkingPart(content='')
+    result_part = chained.apply(part)
+    assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
 
 def test_pre_usage_refactor_messages_deserializable():
@@ -452,6 +496,7 @@ def test_file_part_serialization_roundtrip():
                         'id': None,
                         'provider_name': None,
                         'part_kind': 'file',
+                        'provider_details': None,
                     }
                 ],
                 'usage': {
@@ -468,6 +513,7 @@ def test_file_part_serialization_roundtrip():
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
+                'provider_url': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,

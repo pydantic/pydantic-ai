@@ -61,6 +61,10 @@ class TemporalStreamedResponse(StreamedResponse):
         return self.response.provider_name or ''  # pragma: no cover
 
     @property
+    def provider_url(self) -> str | None:
+        return self.response.provider_url  # pragma: no cover
+
+    @property
     def timestamp(self) -> datetime:
         return self.response.timestamp  # pragma: no cover
 
