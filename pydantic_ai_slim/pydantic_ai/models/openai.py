@@ -1413,7 +1413,7 @@ class OpenAIResponsesModel(Model):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')
-        if model_settings.get('openai_include_file_search_results'):  # pragma: no cover
+        if model_settings.get('openai_include_file_search_results'):
             include.append('file_search_call.results')
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
