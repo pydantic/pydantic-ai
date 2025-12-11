@@ -1015,29 +1015,32 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
     return outputs_flat
 
 
-def flatten_output_type(
-    output_type: OutputSpec[OutputDataT],
-) -> list[OutputSpec[OutputDataT] | type[str]]:
-    flat_output_type: list[OutputSpec[OutputDataT] | type[str]] = []
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+    outputs: Sequence[OutputSpec[T]]
+    if isinstance(output_spec, Sequence):
+        outputs = output_spec
+    else:
+        outputs = (output_spec,)
 
-    # forces output_type to an iterable
-    output_type = _flatten_output_spec(output_type)
-    for output_spec in output_type:
-        if isinstance(output_spec, NativeOutput):
-            flat_output_type += _flatten_output_spec(output_spec.outputs)
-        elif isinstance(output_spec, PromptedOutput):
-            flat_output_type += _flatten_output_spec(output_spec.outputs)
-        elif isinstance(output_spec, TextOutput):
-            flat_output_type.append(str)
-        elif isinstance(output_spec, ToolOutput):
-            flat_output_type += _flatten_output_spec(output_spec.output)
-        elif inspect.isfunction(output_spec) or inspect.ismethod(output_spec):
-            type_hints = get_function_type_hints(output_spec)
+    outputs_flat: list[T | type[str]] = []
+    for output in outputs:
+        if isinstance(output, NativeOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))
+        elif isinstance(output, PromptedOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))
+        elif isinstance(output, TextOutput):
+            outputs_flat.append(str)
+        elif isinstance(output, ToolOutput):
+            outputs_flat.extend(types_from_output_spec(output.output))
+        elif union_types := _utils.get_union_args(output):
+            outputs_flat.extend(union_types)
+        elif inspect.isfunction(output) or inspect.ismethod(output):
+            type_hints = get_function_type_hints(output)
             if return_annotation := type_hints.get('return', None):
-                flat_output_type += _flatten_output_spec(return_annotation)
+                outputs_flat.extend(types_from_output_spec(return_annotation))
             else:
-                flat_output_type.append(str)
+                outputs_flat.append(str)
         else:
-            flat_output_type.append(output_spec)
+            outputs_flat.append(cast(T, output))
 
-    return flat_output_type
+    return outputs_flat

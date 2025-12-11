@@ -25,7 +25,7 @@ from .. import (
     usage as _usage,
 )
 from .._json_schema import JsonSchema
-from .._output import flatten_output_type
+from .._output import types_from_output_spec
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
@@ -131,11 +131,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         if output_type is None:
             output_type = self.output_type
 
-        flat_output_type = flatten_output_type(output_type=output_type)
+        return_types = types_from_output_spec(output_spec=output_type)
 
         json_schemas: list[JsonSchema] = []
-        for output_spec in flat_output_type:
-            json_schema = TypeAdapter(output_spec).json_schema(mode='serialization')
+        for return_type in return_types:
+            json_schema = TypeAdapter(return_type).json_schema(mode='serialization')
             if json_schema not in json_schemas:
                 json_schemas.append(json_schema)
 
