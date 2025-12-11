@@ -764,7 +764,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> dict[str, Any] | None:
         run_context = build_run_context(graph_run_ctx)
         resolved_metadata = self._get_metadata(run_context, metadata)
-        run_context.metadata = resolved_metadata
         graph_run_ctx.state.metadata = resolved_metadata
         return resolved_metadata
 
