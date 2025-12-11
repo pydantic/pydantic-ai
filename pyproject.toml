@@ -121,7 +121,7 @@ docs = [
     "mkdocs-llmstxt>=0.2.0",
     "mkdocs-redirects>=1.2.2",
     "mkdocs-material[imaging]>=9.5.45",
-    "mkdocstrings-python>=1.12.2",
+    "mkdocstrings-python>=2.0.0",
     "griffe-warnings-deprecated>=1.1.0",
     "pydantic-docs",
 ]

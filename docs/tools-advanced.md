@@ -126,7 +126,7 @@ This separation allows you to provide rich context to the model while maintainin
 
 ## Custom Tool Schema
 
-If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description, JSON schema, and whether the function takes a `RunContext` for the function directly:
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] function. With this you provide the name, description, JSON schema, and whether the function takes a `RunContext` for the function directly:
 
 ```python
 from pydantic_ai import Agent, Tool
@@ -169,8 +169,8 @@ customize the definition of the tool passed to the model, or omit the tool compl
 
 A `prepare` method can be registered via the `prepare` kwarg to any of the tool registration mechanisms:
 
-- [`@agent.tool`][pydantic_ai.Agent.tool] decorator
-- [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator
+- [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator
+- [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator
 - [`Tool`][pydantic_ai.tools.Tool] dataclass
 
 The `prepare` method, should be of type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc], a function which takes [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and should either return that `ToolDefinition` with or without modifying it, return a new `ToolDefinition`, or return `None` to indicate this tools should not be registered for that step.
