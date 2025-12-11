@@ -1069,7 +1069,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content={
-                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'sources': [{'type': 'api', 'name': 'oai-weather'}],
                             'status': 'completed',
                         },
                         tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1156,7 +1156,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed', 'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}]},
+                    content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -1250,7 +1250,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}], 'status': 'completed'},
+                    content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -1289,7 +1289,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content={
-                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'sources': [{'type': 'api', 'name': 'oai-weather'}],
                             'status': 'completed',
                         },
                         tool_call_id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
