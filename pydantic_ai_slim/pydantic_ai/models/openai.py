@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Se
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from pydantic_core import to_json
@@ -55,7 +55,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -90,27 +90,13 @@ try:
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+
+    OMIT = omit
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-if TYPE_CHECKING:
-    from openai import Omit, omit
-
-    OMIT = omit
-else:
-    # Backward compatibility with openai<2
-    try:
-        from openai import Omit, omit
-
-        OMIT = omit
-    except ImportError:  # pragma: lax no cover
-        from openai import NOT_GIVEN, NotGiven
-
-        OMIT = NOT_GIVEN
-        Omit = NotGiven
 
 
 __all__ = (
