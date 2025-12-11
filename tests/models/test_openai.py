@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
+import warnings
 
 import httpx
 import pytest
@@ -3325,3 +3326,76 @@ response\
 """,
         }
     )
+
+
+def test_has_dict_typed_params_simple_dict():
+    """Test detection of simple dict[str, str] type."""
+    from pydantic_ai.models.openai import _has_dict_typed_params
+
+    schema = {
+        'properties': {
+            'my_dict': {
+                'type': 'object',
+                'additionalProperties': {'type': 'string'}
+            }
+        }
+    }
+    assert _has_dict_typed_params(schema) is True
+
+
+def test_has_dict_typed_params_nested_dict():
+    """Test detection of nested dict types."""
+    from pydantic_ai.models.openai import _has_dict_typed_params
+
+    schema = {
+        'properties': {
+            'nested': {
+                'type': 'object',
+                'properties': {
+                    'inner_dict': {
+                        'type': 'object',
+                        'additionalProperties': True
+                    }
+                }
+            }
+        }
+    }
+    assert _has_dict_typed_params(schema) is True
+
+
+def test_has_dict_typed_params_array_of_dicts():
+    """Test detection of list[dict[str, int]] type."""
+    from pydantic_ai.models.openai import _has_dict_typed_params
+
+    schema = {
+        'properties': {
+            'dict_list': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'additionalProperties': {'type': 'integer'}
+                }
+            }
+        }
+    }
+    assert _has_dict_typed_params(schema) is True
+
+
+def test_has_dict_typed_params_basemodel_no_warning():
+    """Test that BaseModel with explicit fields doesn't trigger warning."""
+    from pydantic_ai.models.openai import _has_dict_typed_params
+
+    schema = {
+        'properties': {
+            'name': {'type': 'string'},
+            'age': {'type': 'integer'},
+            'nested_object': {
+                'type': 'object',
+                'properties': {
+                    'field1': {'type': 'string'}
+                },
+                'additionalProperties': False
+            }
+        }
+    }
+    assert _has_dict_typed_params(schema) is False
