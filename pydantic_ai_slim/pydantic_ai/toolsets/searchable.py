@@ -51,7 +51,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
     """A toolset that implements tool search and deferred tool loading."""
 
     toolset: AbstractToolset[AgentDepsT]
-    _active_tool_names: set[str] = {}
+    _active_tool_names: set[str] = field(default_factory=set)
 
     @property
     def id(self) -> str | None:
@@ -73,8 +73,8 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
             # TODO proper error handling
             assert tool_name != _SEARCH_TOOL_NAME
 
-            if tool.name in self._active_tool_names:
-                all_tools[tool.name] = tool
+            if tool_name in self._active_tool_names:
+                all_tools[tool_name] = tool
         return all_tools
 
     async def call_tool(
@@ -83,7 +83,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         if isinstance(tool, _SearchTool):
             adapter = TypeAdapter(_SearchToolArgs)
             typed_args = adapter.validate_python(tool_args)
-            return await self.call_search_tool(tool, typed_args)
+            return await self.call_search_tool(typed_args, ctx)
         else:
             return await self.toolset.call_tool(name, tool_args, ctx, tool)
 
@@ -109,8 +109,8 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         return replace(self, toolset=self.toolset.visit_and_replace(visitor))
 
     async def __aenter__(self) -> Self:
-        await self.wrapped.__aenter__()
+        await self.toolset.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        return await self.wrapped.__aexit__(*args)
+        return await self.toolset.__aexit__(*args)
