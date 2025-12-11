@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -183,6 +184,7 @@ async def test_evaluation_renderer_with_reasons(sample_report: EvaluationReport)
 
 async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport):
     """Test EvaluationRenderer with baseline comparison."""
+    sample_case = cast(ReportCase, sample_report.cases[0])
     baseline_report = EvaluationReport(
         cases=[
             ReportCase(
@@ -198,7 +200,7 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
                         name='MockEvaluator',
                         value=2.5,
                         reason=None,
-                        source=sample_report.cases[0].scores['score1'].source,
+                        source=sample_case.scores['score1'].source,
                     )
                 },
                 labels={
@@ -206,7 +208,7 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
                         name='MockEvaluator',
                         value='hello',
                         reason=None,
-                        source=sample_report.cases[0].labels['label1'].source,
+                        source=sample_case.labels['label1'].source,
                     )
                 },
                 assertions={},
@@ -218,7 +220,6 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
         ],
         name='baseline_report',
     )
-
     renderer = EvaluationRenderer(
         include_input=True,
         include_metadata=True,
@@ -988,13 +989,19 @@ async def test_evaluation_renderer_with_experiment_metadata(sample_report_case: 
 │ temperature: 0.7                  │
 │ prompt_version: v2                │
 ╰───────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Inputs                    ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ {'query': 'What is 2+2?'} │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │  100.0ms │
-├───────────┼───────────────────────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────┤
-│ Averages  │                           │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
-└───────────┴───────────────────────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃          ┃          ┃           ┃          ┃           ┃ Assertio ┃          ┃
+┃ Case ID  ┃ Inputs   ┃ Scores    ┃ Labels   ┃ Metrics   ┃ ns       ┃ Duration ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_ca… │ {'query' │ score1:   │ label1:  │ accuracy: │ ✔        │  100.0ms │
+│          │ : 'What  │ 2.50      │ hello    │ 0.950     │          │          │
+│          │ is       │           │          │           │          │          │
+│          │ 2+2?'}   │           │          │           │          │          │
+├──────────┼──────────┼───────────┼──────────┼───────────┼──────────┼──────────┤
+│ Averages │          │ score1:   │ label1:  │ accuracy: │ 100.0% ✔ │  100.0ms │
+│          │          │ 2.50      │ {'hello' │ 0.950     │          │          │
+│          │          │           │ : 1.0}   │           │          │          │
+└──────────┴──────────┴───────────┴──────────┴───────────┴──────────┴──────────┘
 """)
 
 
@@ -1048,11 +1055,12 @@ async def test_evaluation_renderer_with_long_experiment_metadata(sample_report_c
 │ frequency_penalty: 0.1                     │
 │ presence_penalty: 0.1                      │
 ╰────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
@@ -1098,13 +1106,16 @@ async def test_evaluation_renderer_diff_with_experiment_metadata(sample_report_c
 │ model: gpt-4 → gpt-4o                           │
 │ temperature: 0.5 → 0.7                          │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │  100.0ms │
-├───────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────┤
-│ Averages  │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
-└───────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+├───────────┼─────────────┼──────────────┼─────────────┼────────────┼──────────┤
+│ Averages  │ score1:     │ label1:      │ accuracy:   │ 100.0% ✔   │  100.0ms │
+│           │ 2.50        │ {'hello':    │ 0.950       │            │          │
+│           │             │ 1.0}         │             │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
@@ -1150,11 +1161,12 @@ async def test_evaluation_renderer_diff_with_only_new_metadata(sample_report_cas
 │ + model: gpt-4o                                 │
 │ + temperature: 0.7                              │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
@@ -1200,11 +1212,12 @@ async def test_evaluation_renderer_diff_with_only_baseline_metadata(sample_repor
 │ - model: gpt-4                                  │
 │ - temperature: 0.5                              │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
@@ -1251,11 +1264,12 @@ async def test_evaluation_renderer_diff_with_same_metadata(sample_report_case: R
 │ model: gpt-4o                                   │
 │ temperature: 0.7                                │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
@@ -1311,11 +1325,12 @@ async def test_evaluation_renderer_diff_with_changed_metadata(sample_report_case
 │ preserved-key: preserved value                  │
 │ updated-key: original value → updated value     │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
@@ -1355,10 +1370,11 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
         include_errors=False,  # Prevent failures table from being added
     )
     assert output == snapshot("""\
-                    Evaluation Diff: baseline_report → new_report                     \n\
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+                 Evaluation Diff: baseline_report → new_report                  \n\
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
