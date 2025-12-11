@@ -838,7 +838,7 @@ def test_dynamic_toolset_id():
     """Test that DynamicToolset can have an id set."""
 
     def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
-        return FunctionToolset()
+        return FunctionToolset()  # pragma: no cover
 
     # No id by default
     toolset_no_id = DynamicToolset[None](toolset_func=toolset_func)
@@ -862,11 +862,11 @@ def test_agent_toolset_decorator_id():
 
     @agent.toolset
     def my_tools(ctx: RunContext[None]) -> FunctionToolset[None]:
-        return FunctionToolset()
+        return FunctionToolset()  # pragma: no cover
 
     @agent.toolset(id='custom_id')
     def other_tools(ctx: RunContext[None]) -> FunctionToolset[None]:
-        return FunctionToolset()
+        return FunctionToolset()  # pragma: no cover
 
     # The toolsets are DynamicToolsets with auto-assigned or custom ids
     toolsets = agent.toolsets

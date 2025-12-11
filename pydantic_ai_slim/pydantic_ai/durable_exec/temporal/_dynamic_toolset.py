@@ -137,7 +137,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.tool_activity_config.get(name)
-        if tool_activity_config is False:
+        if tool_activity_config is False:  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
         merged_config = self.activity_config | (tool_activity_config or {})
