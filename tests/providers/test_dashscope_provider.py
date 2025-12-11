@@ -10,48 +10,40 @@ with try_import() as imports_successful:
     import openai
 
     from pydantic_ai.providers import infer_provider
-    from pydantic_ai.providers.qwen import QwenProvider
+    from pydantic_ai.providers.dashscope import DashScopeProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
-def test_qwen_provider_init():
-    provider = QwenProvider(api_key='test-key')
-    assert provider.name == 'qwen'
+def test_dashscope_provider_init():
+    provider = DashScopeProvider(api_key='test-key')
+    assert provider.name == 'dashscope'
     assert provider.base_url == 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)
     assert provider.client.api_key == 'test-key'
 
 
-def test_qwen_provider_env_key(env: TestEnv):
-    env.set('QWEN_API_KEY', 'env-key')
-    provider = QwenProvider()
+def test_dashscope_provider_env_key(env: TestEnv):
+    env.set('DASHSCOPE_API_KEY', 'env-key')
+    provider = DashScopeProvider()
     assert provider.client.api_key == 'env-key'
 
 
-def test_qwen_provider_dashscope_env_key_fallback(env: TestEnv):
-    env.remove('QWEN_API_KEY')
-    env.set('DASHSCOPE_API_KEY', 'dash-key')
-    provider = QwenProvider()
-    assert provider.client.api_key == 'dash-key'
-
-
-def test_qwen_provider_missing_key(env: TestEnv):
-    env.remove('QWEN_API_KEY')
+def test_dashscope_provider_missing_key(env: TestEnv):
     env.remove('DASHSCOPE_API_KEY')
-    with pytest.raises(UserError, match='Set the `QWEN_API_KEY`'):
-        QwenProvider()
+    with pytest.raises(UserError, match='Set the `DASHSCOPE_API_KEY`'):
+        DashScopeProvider()
 
 
 def test_infer_provider(env: TestEnv):
     # infer_provider instantiates the class, so we need an env var or it raises UserError
-    env.set('QWEN_API_KEY', 'key')
-    provider = infer_provider('qwen')
-    assert isinstance(provider, QwenProvider)
+    env.set('DASHSCOPE_API_KEY', 'key')
+    provider = infer_provider('dashscope')
+    assert isinstance(provider, DashScopeProvider)
 
 
 def test_qwen_omni_profile_audio_uri():
-    provider = QwenProvider(api_key='key')
+    provider = DashScopeProvider(api_key='key')
     # Omni model -> expect 'uri' encoding
     profile = provider.model_profile('qwen-omni-turbo')
     assert isinstance(profile, OpenAIModelProfile)
@@ -59,22 +51,28 @@ def test_qwen_omni_profile_audio_uri():
 
 
 def test_qwen_non_omni_profile_default():
-    provider = QwenProvider(api_key='key')
+    provider = DashScopeProvider(api_key='key')
     # Non-omni model -> expect default (base64)
     profile = provider.model_profile('qwen-max')
     assert isinstance(profile, OpenAIModelProfile)
     assert profile.openai_chat_audio_input_encoding == 'base64'
 
 
-def test_qwen_provider_with_openai_client():
+def test_dashscope_provider_with_openai_client():
     client = openai.AsyncOpenAI(api_key='foo')
-    provider = QwenProvider(openai_client=client)
+    provider = DashScopeProvider(openai_client=client)
     assert provider.client is client
 
 
-def test_qwen_provider_with_http_client():
+def test_dashscope_provider_with_http_client():
     http_client = httpx.AsyncClient()
-    provider = QwenProvider(api_key='foo', http_client=http_client)
+    provider = DashScopeProvider(api_key='foo', http_client=http_client)
     assert provider.client.api_key == 'foo'
     # The line `self._client = AsyncOpenAI(..., http_client=http_client)` is executed,
     # which is enough for coverage.
+
+
+def test_dashscope_provider_custom_base_url():
+    provider = DashScopeProvider(api_key='test-key', base_url='https://custom.endpoint.com/v1')
+    assert provider.base_url == 'https://custom.endpoint.com/v1'
+    assert str(provider.client.base_url).rstrip('/') == 'https://custom.endpoint.com/v1'
