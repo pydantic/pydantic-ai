@@ -29,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
@@ -2343,3 +2344,133 @@ By following these steps, you can ensure a safe crossing.\
             ),
         ]
     )
+
+
+async def test_image_url_force_download() -> None:
+    """Test that force_download=True calls download_item for ImageUrl in MistralModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+            'data_type': 'image/png',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/image.png'
+        assert mock_download.call_args[1]['data_format'] == 'base64_uri'
+
+
+async def test_image_url_no_force_download() -> None:
+    """Test that force_download=False does not call download_item for ImageUrl in MistralModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_not_called()
+
+
+async def test_document_url_force_download() -> None:
+    """Test that force_download=True calls download_item for DocumentUrl PDF in MistralModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:application/pdf;base64,JVBERi0xLjQKJdPr6eEKMSAwIG9iago8PC9UeXBlL',
+            'data_type': 'application/pdf',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test PDF',
+                            DocumentUrl(
+                                url='https://example.com/document.pdf',
+                                media_type='application/pdf',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/document.pdf'
+        assert mock_download.call_args[1]['data_format'] == 'base64_uri'
+
+
+async def test_document_url_no_force_download() -> None:
+    """Test that force_download=False does not call download_item for DocumentUrl PDF in MistralModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test PDF',
+                            DocumentUrl(
+                                url='https://example.com/document.pdf',
+                                media_type='application/pdf',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_not_called()
