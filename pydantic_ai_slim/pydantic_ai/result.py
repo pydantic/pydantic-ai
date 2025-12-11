@@ -787,7 +787,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`stream_responses`][pydantic_ai.result.StreamedRunResultSync.stream_responses] or
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
-        return self._streamed_run_result.is_complete
+        return self._async_to_sync(lambda result: result.is_complete)
 
 
 @dataclass(repr=False)
