@@ -306,7 +306,7 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling Multiple Tool Calls
+##### Parallel Output Tool Calls
 
 When the model calls multiple tools in a final response, you can control how tool calls are executed with the `end_strategy`:
 
