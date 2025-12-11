@@ -132,6 +132,10 @@ class MyResponseStream(StreamedResponse):
         return 'openai'
 
     @property
+    def provider_url(self) -> str:
+        return 'https://api.openai.com'
+
+    @property
     def timestamp(self) -> datetime:
         return datetime(2022, 1, 1)
 

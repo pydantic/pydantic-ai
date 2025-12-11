@@ -330,6 +330,7 @@ class BedrockConverseModel(Model):
             _model_name=self.model_name,
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
@@ -381,6 +382,7 @@ class BedrockConverseModel(Model):
             model_name=self.model_name,
             provider_response_id=response_id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -584,7 +586,8 @@ class BedrockConverseModel(Model):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
-                bedrock_messages.append({'role': 'assistant', 'content': content})
+                if content:
+                    bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(message)
 
@@ -699,6 +702,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
@@ -785,6 +789,11 @@ class BedrockStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

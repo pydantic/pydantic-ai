@@ -142,6 +142,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -321,6 +322,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -351,6 +353,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -457,6 +460,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -486,6 +490,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -776,6 +781,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -833,6 +839,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -861,6 +868,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -901,6 +909,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -936,6 +945,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -984,6 +994,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1020,6 +1031,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1084,6 +1096,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1228,6 +1241,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
                 finish_reason='stop',
@@ -1271,6 +1285,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1424,6 +1439,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1624,3 +1640,33 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out, message should still be valid
     assert len(messages) == 1
     assert messages[0]['role'] == 'user'
+
+
+async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):
+    """Test that ModelResponse with empty parts (e.g. content_filtered) is skipped in message mapping."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    # Create a message history that includes a ModelResponse with empty parts
+    req = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[],
+            usage=RequestUsage(input_tokens=100, output_tokens=1),
+            model_name='us.amazon.nova-micro-v1:0',
+            provider_name='bedrock',
+            provider_details={'finish_reason': 'content_filtered'},
+            finish_reason='content_filter',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow up question')]),
+    ]
+
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+
+    # The empty ModelResponse should be skipped, so we should only have 2 user messages
+    # that get merged into one since they're consecutive after the empty response is skipped
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
+        ]
+    )
