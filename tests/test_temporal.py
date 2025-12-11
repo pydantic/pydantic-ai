@@ -205,9 +205,7 @@ def drop_first_message_sync(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 
 agent_with_sync_history_processor = Agent(
-    TestModel(custom_output_text='The capital of Mexico is Mexico City.'),
-    name='agent_with_sync_history_processor',
-    history_processors=[drop_first_message_sync],
+    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message_sync]
 )
 temporal_agent_with_sync_history_processor = TemporalAgent(
     agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
@@ -1272,7 +1270,7 @@ class AgentWithSyncHistoryProcessorWorkflow:
         return result.output
 
 
-async def test_temporal_agent_with_sync_history_processor(client: Client):
+async def test_temporal_agent_with_sync_history_processor(allow_model_requests: None, client: Client):
     """Test that sync history processors work inside Temporal workflows.
 
     This validates that the _prefer_blocking_execution ContextVar is properly set
