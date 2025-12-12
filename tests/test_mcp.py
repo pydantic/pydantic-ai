@@ -1227,6 +1227,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_name='get_error',
                             tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                             timestamp=IsDatetime(),
+                            retry_message='Fix the errors and try again.',
                         )
                     ],
                     run_id=IsStr(),

@@ -360,6 +360,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='Wrong location, please try again',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -5372,6 +5373,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_name='get_something_by_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again',
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
@@ -5504,6 +5506,7 @@ We need to output the call.\
                         tool_name='get_something_by_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again',
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',

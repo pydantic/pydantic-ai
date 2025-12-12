@@ -237,6 +237,7 @@ def test_tool_retry():
                         tool_name='my_ret',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),

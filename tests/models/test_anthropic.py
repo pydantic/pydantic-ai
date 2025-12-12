@@ -1156,6 +1156,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),

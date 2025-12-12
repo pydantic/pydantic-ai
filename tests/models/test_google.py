@@ -607,6 +607,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -3515,6 +3516,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                         content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),

@@ -389,6 +389,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -831,6 +832,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                         content='Response is invalid',
                         tool_name=None,
                         tool_call_id=IsStr(),
+                        retry_message='Fix the errors and try again.',
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],

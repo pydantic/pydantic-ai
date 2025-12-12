@@ -1995,6 +1995,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             tool_name='get_weather_in_city',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            retry_message='Fix the errors and try again.',
                         )
                     ],
                     run_id=IsStr(),

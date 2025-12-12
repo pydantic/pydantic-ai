@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
+from textwrap import dedent
 
 if TYPE_CHECKING:
     from ._run_context import RunContext as _RunContext
@@ -37,18 +38,32 @@ class PromptTemplates:
     Note: Custom messages set via `ToolDenied` are preserved unless this template is explicitly overridden.
     """
 
-    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix these errors and try again'
+    default_model_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again'
+    """Default message sent when a `ModelRetry` exception is raised."""
+
+    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again'
     """Message appended to validation errors when asking the model to retry."""
 
     model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'Fix these errors and try again.'
+        'Fix the errors and try again.'
     )
     """Message sent when a `ModelRetry` exception is raised from a tool."""
 
     model_retry_string_no_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'Fix these errors and try again.'
+        'Fix the errors and try again.'
     )
     """Message sent when a `ModelRetry` exception is raised outside of a tool context."""
+
+    prompted_output_template: str = dedent(
+        """
+        Always respond with a JSON object that's compatible with this schema:
+
+        {schema}
+
+        Don't include any text or Markdown fencing before or after.
+        """
+    )
+
 
     def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):

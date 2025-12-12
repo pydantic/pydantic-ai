@@ -320,6 +320,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again.',
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -5961,6 +5962,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -6124,6 +6126,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         content='Please return text or include your response in a tool call.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),

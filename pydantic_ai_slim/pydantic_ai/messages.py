@@ -956,7 +956,7 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    retry_message: str | None = None
+    retry_message: str | None = 'Fix the errors and try again.'
     """The retry message rendered using the user's prompt template. It is populated after checking the conditions for the retry so that the correct template is used."""
 
     def model_response(self) -> str:
@@ -964,22 +964,16 @@ class RetryPromptPart:
         if isinstance(self.content, str):
             if self.tool_name is None:
                 description = f'Validation feedback:\n{self.content}'
-                if self.retry_message:
-                    description += f'\n\n{self.retry_message}'
             else:
                 description = self.content
-                if self.retry_message:
-                    description += f'\n\n{self.retry_message}'
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
-            if self.retry_message:
-                description += f'\n\n{self.retry_message}'
 
-        return description
+        return f'{description}\n\n{self.retry_message}'
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:
