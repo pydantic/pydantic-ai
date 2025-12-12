@@ -308,6 +308,8 @@ exclude_lines = [
     'except ImportError as _import_error:',
     '$\s*pass$',
     'assert False',
+    '@pytest\.mark\.skip',
+    '@pytest\.mark\.xfail',
 ]
 
 [tool.logfire]

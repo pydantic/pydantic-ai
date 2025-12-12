@@ -116,7 +116,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _name: str | None
     end_strategy: EndStrategy
-    """Strategy for handling tool calls when a final result is found."""
+    """The strategy for handling multiple tool calls when a final result is found.
+
+    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+    - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+    """
 
     model_settings: ModelSettings | None
     """Optional model request settings to use for this agents's runs, by default.

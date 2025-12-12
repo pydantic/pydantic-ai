@@ -513,6 +513,7 @@ def test_file_part_serialization_roundtrip():
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
+                'provider_url': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,

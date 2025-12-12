@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError
 from inline_snapshot import snapshot
+from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -17,6 +18,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -35,15 +37,11 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
-from pydantic_ai.providers.bedrock import BedrockProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -51,7 +49,10 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
-    pass
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
@@ -142,6 +143,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -150,6 +152,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     )
 
 
+@pytest.mark.vcr()
 async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
@@ -159,14 +162,15 @@ async def test_bedrock_model_usage_limit_exceeded(
 
     with pytest.raises(
         UsageLimitExceeded,
-        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=19\\)',
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=23\\)',
     ):
         await agent.run(
-            'The quick brown fox jumps over the lazydog.',
+            ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
             usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
         )
 
 
+@pytest.mark.vcr()
 async def test_bedrock_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
@@ -321,6 +325,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -351,6 +356,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -457,6 +463,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -486,6 +493,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -722,11 +730,13 @@ async def test_text_document_url_input(allow_model_requests: None, bedrock_provi
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
-    assert result.output == snapshot("""\
+    assert result.output == snapshot(
+        """\
 Based on the text in the <document_content> tag, the main content of this document appears to be:
 
 An example text describing the use of "John Doe" as a placeholder name in legal cases, hospitals, and other contexts where a party's real identity is unknown or needs to be withheld. It provides background on how "John Doe" and "Jane Doe" are commonly used in the United States and Canada for this purpose, in contrast to other English speaking countries that use names like "Joe Bloggs". The text gives examples of using John/Jane Doe for legal cases, unidentified corpses, and as generic names on forms. It also mentions how "Baby Doe" and "Precious Doe" are used for unidentified children.\
-""")
+"""
+    )
 
 
 @pytest.mark.vcr()
@@ -737,7 +747,8 @@ async def test_text_as_binary_content_input(allow_model_requests: None, bedrock_
     text_content = BinaryContent(data=b'This is a test document.', media_type='text/plain')
 
     result = await agent.run(['What is the main content on this document?', text_content])
-    assert result.output == snapshot("""\
+    assert result.output == snapshot(
+        """\
 The document you're referring to appears to be a test document, which means its primary purpose is likely to serve as an example or a placeholder rather than containing substantive content. Test documents are commonly used for various purposes such as:
 
 1. **Software Testing**: To verify that a system can correctly handle, display, or process documents.
@@ -746,7 +757,8 @@ The document you're referring to appears to be a test document, which means its 
 4. **Placeholders**: To fill space in a system or application where real content will eventually be placed.
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
-""")
+"""
+    )
 
 
 @pytest.mark.vcr()
@@ -776,6 +788,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -833,6 +846,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -861,6 +875,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -901,6 +916,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -936,6 +952,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -984,6 +1001,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1020,6 +1038,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1084,6 +1103,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1228,6 +1248,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
                 finish_reason='stop',
@@ -1271,6 +1292,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1295,11 +1317,13 @@ async def test_bedrock_anthropic_tool_with_thinking(allow_model_requests: None, 
         return 'Mexico'
 
     result = await agent.run('What is the largest city in the user country?')
-    assert result.output == snapshot("""\
+    assert result.output == snapshot(
+        """\
 Based on your location in Mexico, the largest city is Mexico City (Ciudad de México). It's not only the capital but also the most populous city in Mexico with a metropolitan area population of over 21 million people, making it one of the largest urban agglomerations in the world.
 
 Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.\
-""")
+"""
+    )
 
 
 async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
@@ -1324,7 +1348,7 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     ]
 
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1424,6 +1448,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1445,7 +1470,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Models other than Mistral support toolResult.content with text, not json
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1461,7 +1486,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Mistral requires toolResult.content to hold json, not text
     model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1485,7 +1510,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Amazon Nova supports tool_choice
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1506,7 +1531,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Anthropic supports tool_choice
     model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1527,7 +1552,7 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
 
     # Other models don't support tool_choice
     model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1615,15 +1640,477 @@ async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provi
     assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
 
 
-async def test_cache_point_filtering():
-    """Test that CachePoint is filtered out in Bedrock message mapping."""
-    from itertools import count
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-lite-v1:0', id='nova-lite'),
+    ],
+)
+async def test_bedrock_cache_point_adds_cache_control(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Record a real Bedrock call to confirm cache points reach AWS (requires ~1k tokens)."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    long_context = 'ONLY SINGLE NUMBER IN RESPONSE\n' * 100  # More tokens to activate a cache
 
-    # Test the static method directly
-    messages = await BedrockConverseModel._map_user_prompt(UserPromptPart(content=['text', CachePoint()]), count())  # pyright: ignore[reportPrivateUsage]
-    # CachePoint should be filtered out, message should still be valid
-    assert len(messages) == 1
-    assert messages[0]['role'] == 'user'
+    result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
+    assert result.output == snapshot('5')
+    # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
+    usage = result.usage()
+    assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
+    assert usage.input_tokens <= 20
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Integration test covering all cache settings using a recorded cassette.
+
+    This test enables all 3 cache settings plus 2 manual CachePoints (5 total),
+    which triggers the _limit_cache_points logic to strip the oldest one (limit is 4).
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_instructions=True,  # 1 cache point
+            bedrock_cache_tool_definitions=True,  # 1 cache point
+            bedrock_cache_messages=True,  # 1 cache point (on last user message)
+        ),
+    )
+
+    @agent.tool_plain
+    def catalog_lookup() -> str:  # pragma: no cover - exercised via agent call
+        return 'catalog-ok'
+
+    @agent.tool_plain
+    def diagnostics() -> str:  # pragma: no cover - exercised via agent call
+        return 'diagnostics-ok'
+
+    long_context = 'Newer response with something except single number\n' * 10
+    document = BinaryContent(data=b'You are a great mathematician', media_type='text/plain')
+    # 2 CachePoints, more that maximum allowed, so will be stripped.
+    run_args = [long_context, CachePoint(), document, CachePoint(), 'What is 10 + 11?']
+
+    first = await agent.run(run_args)
+    assert first.output == snapshot('21')
+    first_usage = first.usage()
+    assert first_usage == snapshot(RunUsage(input_tokens=2, cache_write_tokens=1322, output_tokens=5, requests=1))
+
+    second = await agent.run(run_args)
+    assert second.output == snapshot('21')
+    second_usage = second.usage()
+    assert second_usage == snapshot(RunUsage(input_tokens=2, output_tokens=5, cache_read_tokens=1322, requests=1))
+
+
+async def test_bedrock_cache_point_as_first_content_raises_error(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """CachePoint should raise a UserError if it appears before any other content."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should fail'])])]
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
+        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+# Bedrock currently errors if a cache point immediately follows non-text content, so we inject a newline block.
+async def test_bedrock_cache_point_after_binary_content_workaround(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Process the attached text file. Return the answer only.',
+                        BinaryContent(data=b'What is 2+2? Provide the answer only.', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Process the attached text file. Return the answer only.'},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'What is 2+2? Provide the answer only.'},
+                }
+            },
+            {'text': '\n'},  # Empty line after BinaryContent as temp workaround unless bedrock will fix the bug
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-3-5-haiku-20241022-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'First chunk'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Second chunk'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Question'},
+        ]
+    )
+
+
+async def test_bedrock_cache_skipped_for_unsupported_models(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """All cache settings should be silently skipped for models that don't support prompt caching."""
+    # Meta models don't support prompt caching
+    model = BedrockConverseModel('meta.llama3-70b-instruct-v1:0', provider=bedrock_provider)
+
+    # Test CachePoint markers are skipped
+    messages_with_cache_points: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages_with_cache_points, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [{'text': 'First chunk'}, {'text': 'Second chunk'}, {'text': 'Question'}]
+    )
+
+    # Test bedrock_cache_instructions is skipped
+    messages_with_system: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages_with_system, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_instructions=True)
+    )
+    assert system_prompt == snapshot([{'text': 'System instructions.'}])
+
+    # Test bedrock_cache_messages is skipped
+    messages_user: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='User message.')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages_user, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    assert bedrock_messages[0]['content'] == snapshot([{'text': 'User message.'}])
+
+
+async def test_bedrock_cache_tool_definitions_skipped_for_nova(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Tool caching should be skipped for Nova models (they only support system/messages caching, not tools)."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions=True),
+    )
+    # Nova doesn't support tool caching, so no cachePoint should be added
+    assert tool_config and len(tool_config['tools']) == 2
+    assert all('cachePoint' not in tool for tool in tool_config['tools'])
+
+
+async def test_bedrock_cache_tool_definitions(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions=True),
+    )
+    assert tool_config and len(tool_config['tools']) == 3
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default'}}
+
+
+async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions to cache.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions to cache.'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages adds cache point to the last user message."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='User message to cache.')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'User message to cache.'},
+                    {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_binary_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that bedrock_cache_messages adds newline workaround for non-text content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        BinaryContent(data=b'Test document content', media_type='text/plain'),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should add newline text block before cache point when last content is not text
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Test document content'},
+                }
+            },
+            {'text': '\n'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_does_not_duplicate(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages does not add duplicate cache point if already present."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['User message', CachePoint()])])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should not add another cache point since one already exists
+    cache_point_count = sum(1 for block in bedrock_messages[0]['content'] if 'cachePoint' in block)
+    assert cache_point_count == 1
+
+
+async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages handles case with no user messages."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Only assistant message, no user message
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Assistant response')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should not crash, no cache point added since no user message
+    assert len(bedrock_messages) == 1
+    assert bedrock_messages[0]['role'] == 'assistant'
+
+
+async def test_get_last_user_message_content_non_dict_block(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test _get_last_user_message_content returns None when last block is not a dict."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Directly test the helper with a message that has non-dict content
+    messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': ['string content']}]  # type: ignore[list-item]
+    result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+async def test_get_last_user_message_content_empty_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test _get_last_user_message_content returns None when content is empty or not a list."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Test with empty content list
+    messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': []}]
+    result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+def test_limit_cache_points_filters_excess_cache_points(bedrock_provider: BedrockProvider):
+    """Test that _limit_cache_points filters out excess cache points beyond the limit of 4."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+
+    # Create system prompt (no cache points)
+    system_prompt: list[SystemContentBlockTypeDef] = [{'text': 'System prompt'}]
+
+    # Create messages with 5 standalone cachePoint blocks (limit is 4)
+    bedrock_messages: list[MessageUnionTypeDef] = [
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'Context 1'},
+                {'cachePoint': {'type': 'default'}},  # Will be filtered (oldest, over limit)
+                {'text': 'Context 2'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (4th newest)
+                {'text': 'Context 3'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (3rd newest)
+                {'text': 'Context 4'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (2nd newest)
+                {'text': 'Question'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (newest)
+            ],
+        },
+    ]
+
+    # Apply limit with no tools (max 4 cache points, we have 5)
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    # Verify only 4 cache points remain (the newest ones)
+    content = bedrock_messages[0]['content']
+    assert isinstance(content, list)
+
+    # Count remaining cache points
+    cache_points = [b for b in content if isinstance(b, dict) and 'cachePoint' in b]
+    assert len(cache_points) == 4  # Only 4 kept (the limit)
+
+    # Verify no empty blocks exist
+    empty_blocks = [b for b in content if isinstance(b, dict) and not b]
+    assert len(empty_blocks) == 0
+
+
+async def test_limit_cache_points_with_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that cache points are limited when using bedrock_cache_messages + CachePoint markers."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Create messages with 4 CachePoint markers + 1 from bedrock_cache_messages = 5 total
+    # Only 4 should be kept (limit)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Context 1',
+                        CachePoint(),  # Oldest, should be removed
+                        'Context 2',
+                        CachePoint(),  # Should be kept
+                        'Context 3',
+                        CachePoint(),  # Should be kept
+                        'Context 4',
+                        CachePoint(),  # Should be kept
+                        'Question',
+                    ]
+                )
+            ]
+        )
+    ]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Apply limit (this is normally called in _messages_create)
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    # Count cache points in messages
+    cache_count = 0
+    for msg in bedrock_messages:
+        for block in msg['content']:
+            if 'cachePoint' in block:
+                cache_count += 1
+
+    # Should have exactly 4 cache points (the limit)
+    assert cache_count == 4
+
+
+async def test_limit_cache_points_all_settings(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test cache point limiting with all cache settings enabled."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+
+    # Create messages with 3 CachePoint markers
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System instructions.'),
+                UserPromptPart(
+                    content=[
+                        'Context 1',
+                        CachePoint(),  # Oldest, should be removed
+                        'Context 2',
+                        CachePoint(),  # Should be kept
+                        'Context 3',
+                        CachePoint(),  # Should be kept
+                        'Question',
+                    ]
+                ),
+            ]
+        )
+    ]
+
+    # Map messages with cache_instructions enabled (uses 1 cache point)
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+
+    # Create tools with cache point (uses 1 cache point)
+    tools: list[ToolTypeDef] = [
+        {'toolSpec': {'name': 'tool_one', 'inputSchema': {'json': {}}}},
+        {'cachePoint': {'type': 'default'}},
+    ]
+
+    # Apply limit: 1 (system) + 1 (tools) = 2 used, 2 remaining for messages
+    model._limit_cache_points(system_prompt, bedrock_messages, tools)  # pyright: ignore[reportPrivateUsage]
+
+    # Count cache points in messages only
+    cache_count = 0
+    for msg in bedrock_messages:
+        for block in msg['content']:
+            if 'cachePoint' in block:
+                cache_count += 1
+
+    # Should have exactly 2 cache points in messages (4 total - 1 system - 1 tool = 2)
+    assert cache_count == 2
 
 
 async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):
@@ -1645,7 +2132,7 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     ]
 
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     # The empty ModelResponse should be skipped, so we should only have 2 user messages
     # that get merged into one since they're consecutive after the empty response is skipped
