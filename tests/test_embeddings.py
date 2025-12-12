@@ -293,7 +293,7 @@ class TestSentenceTransformers:
         return model
 
     @pytest.fixture
-    def embedder(self, stsb_bert_tiny_model: SentenceTransformer) -> Embedder:
+    def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
         return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
 
     async def test_infer_model(self):
