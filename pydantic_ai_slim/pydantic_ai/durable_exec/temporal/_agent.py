@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -40,7 +40,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
-from ._model import TemporalModel
+from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
@@ -58,6 +58,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         name: str | None = None,
+        additional_models: Mapping[str, Model] | None = None,
+        provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
@@ -83,6 +85,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Args:
             wrapped: The agent to wrap.
             name: Optional unique agent name to use in the Temporal activities' names. If not provided, the agent's `name` will be used.
+            additional_models:
+                Optional mapping of additional models to register with the agent.
+                Keys define the names that can be referenced at runtime and the values are `Model` instances.
+                Registered model instances can be passed directly to `run(model=...)` and will be resolved to their key.
+                Model strings (e.g., `'openai:gpt-4'`) don't need to be pre-registered and can be passed directly to `run(model=...)`.
+            provider_factory:
+                Optional callable used when instantiating models from provider strings (both pre-registered and those supplied at runtime).
+                The callable receives the provider name, the current run context (if available) and the run dependencies, allowing custom configuration such as injecting API keys stored on `deps`.
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             activity_config: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
             model_activity_config: The Temporal activity config to use for model request activities. This is merged with the base activity config.
@@ -104,6 +114,19 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = event_stream_handler
         self.run_context_type = run_context_type
 
+        if self.name is None:
+            raise UserError(
+                "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
+            )
+
+        wrapped_model = wrapped.model
+        if not isinstance(wrapped_model, Model):
+            raise UserError(
+                'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
+            )
+
+        self._registered_model_instances: dict[str, Model] = {'default': wrapped_model}
+
         # start_to_close_timeout is required
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
 
@@ -121,18 +144,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolset_activity_config = toolset_activity_config or {}
         tool_activity_config = tool_activity_config or {}
 
-        if self.name is None:
-            raise UserError(
-                "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
-            )
-
         activity_name_prefix = f'agent__{self.name}'
 
         activities: list[Callable[..., Any]] = []
-        if not isinstance(wrapped.model, Model):
-            raise UserError(
-                'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
-            )
 
         async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
             # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
@@ -154,15 +168,23 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
         activities.append(self.event_stream_handler_activity)
 
+        if additional_models:
+            for key, value in additional_models.items():
+                key = self._normalize_model_name(key)
+                self._registered_model_instances[key] = value
+
         temporal_model = TemporalModel(
-            wrapped.model,
+            wrapped_model,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config | model_activity_config,
             deps_type=self.deps_type,
             run_context_type=self.run_context_type,
             event_stream_handler=self.event_stream_handler,
+            model_instances=self._registered_model_instances,
+            provider_factory=provider_factory,
         )
         activities.extend(temporal_model.temporal_activities)
+        self._temporal_model = temporal_model
 
         def temporalize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             id = toolset.id
@@ -185,11 +207,43 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
 
-        self._model = temporal_model
         self._toolsets = temporal_toolsets
         self._temporal_activities = activities
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
+
+    def _normalize_model_name(self, name: str) -> str:
+        normalized = name.strip()
+        if not normalized:
+            raise UserError('Model names must be non-empty strings.')
+        if normalized == 'default':
+            raise UserError("Model name 'default' is reserved for the agent's primary model.")
+        if normalized in self._registered_model_instances:
+            raise UserError(f'Duplicate model name {normalized!r} provided to `additional_models`.')
+        return normalized
+
+    def _select_model(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
+        """Select the appropriate model based on the runtime parameter.
+
+        Returns a string that will be checked against registered model instances,
+        or passed to infer_model if not found. Returns None to use the default model.
+        """
+        if model is None or model == 'default':
+            return None
+
+        if isinstance(model, Model):
+            # Check if this model instance is already registered
+            for key, registered_model in self._registered_model_instances.items():
+                if registered_model is model:
+                    if key == 'default':
+                        return None
+                    return key
+            raise UserError(
+                'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. '
+                'Register the model via `additional_models` or reference a registered model by name.'
+            )
+
+        return model
 
     @property
     def name(self) -> str | None:
@@ -203,7 +257,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def model(self) -> Model:
-        return self._model
+        return self._temporal_model
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
@@ -242,9 +296,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(self) -> Iterator[None]:
+    def _temporal_overrides(self, *, model_id: str | None = None) -> Iterator[None]:
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
+        with (
+            super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
+            self._temporal_model.using_model(model_id),
+        ):
             token = self._temporal_overrides_active.set(True)
             try:
                 yield
@@ -338,6 +395,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+                Inside workflows, only registered model instances, registered names, or provider strings are valid.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -356,7 +414,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             )
 
-        with self._temporal_overrides():
+        model_id: str | None = None
+        if workflow.in_workflow() and model is not None:
+            model_id = self._select_model(model)
+            model = None
+
+        with self._temporal_overrides(model_id=model_id if workflow.in_workflow() else None):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
@@ -888,10 +951,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                 )
 
-            if model is not None:
-                raise UserError(
-                    'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-                )
             if toolsets is not None:
                 raise UserError(
                     'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
