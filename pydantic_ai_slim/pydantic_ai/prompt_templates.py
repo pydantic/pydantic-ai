@@ -93,8 +93,9 @@ class PromptTemplates:
                 template = self.model_retry_string_tool
         else:
             template = self.validation_errors_retry
-        
+
         return template
+
     def _apply_retry_tempelate(
         self,
         message_part: RetryPromptPart,
@@ -105,7 +106,7 @@ class PromptTemplates:
             message_part = replace(message_part, retry_message=template)
         else:
             message_part = replace(message_part, retry_message=template(message_part, ctx))
-        
+
         return message_part
 
     def _apply_tool_template(
@@ -120,6 +121,7 @@ class PromptTemplates:
         else:
             message_part = replace(message_part, content=template(message_part, ctx))
         return message_part
+
     def get_prompted_output_template(self, output_schema: OutputSchema[Any]) -> str | None:
         """Get the prompted output template for the given output schema."""
         from ._output import PromptedOutputSchema
