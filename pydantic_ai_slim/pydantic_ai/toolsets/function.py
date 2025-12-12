@@ -26,6 +26,12 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
+    timeout: float | None = None
+    """Timeout in seconds for tool execution.
+
+    If the tool takes longer than this, a retry prompt is returned to the model.
+    Defaults to None (no timeout).
+    """
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):

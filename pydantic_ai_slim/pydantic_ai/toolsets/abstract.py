@@ -57,12 +57,6 @@ class ToolsetTool(Generic[AgentDepsT]):
 
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
-    timeout: float | None = None
-    """Timeout in seconds for tool execution.
-
-    If the tool takes longer than this, a retry prompt is returned to the model.
-    Defaults to None (no timeout).
-    """
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
