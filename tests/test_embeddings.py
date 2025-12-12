@@ -287,11 +287,7 @@ class TestCohere:
 @pytest.mark.skipif(not sentence_transformers_imports_successful, reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
-    def model_name(self) -> str:
-        return 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
-
-    @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self) -> SentenceTransformer:
+    def stsb_bert_tiny_model(self):
         model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
@@ -360,5 +356,13 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     generated_names = sorted(openai_names + cohere_names)
 
-    known_embedding_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
-    assert generated_names == known_embedding_model_names
+    known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
+    if generated_names != known_model_names:
+        errors: list[str] = []
+        missing_names = set(generated_names) - set(known_model_names)
+        if missing_names:
+            errors.append(f'Missing names: {missing_names}')
+        extra_names = set(known_model_names) - set(generated_names)
+        if extra_names:
+            errors.append(f'Extra names: {extra_names}')
+        raise AssertionError('\n'.join(errors))
