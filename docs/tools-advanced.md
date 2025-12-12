@@ -371,6 +371,38 @@ def my_flaky_tool(query: str) -> str:
 
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
+### Tool Timeout
+
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+# Set a default timeout for all tools on the agent
+agent = Agent('test', tool_timeout=30)
+
+
+@agent.tool_plain
+async def slow_tool() -> str:
+    """This tool will use the agent's default timeout (30 seconds)."""
+    await asyncio.sleep(10)
+    return 'Done'
+
+
+@agent.tool_plain(timeout=5)
+async def fast_tool() -> str:
+    """This tool has its own timeout (5 seconds) that overrides the agent default."""
+    await asyncio.sleep(1)
+    return 'Done'
+```
+
+- **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.Agent] to apply a default timeout to all tools.
+- **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.Agent.tool], [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
+
+When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+
 ### Parallel tool calls & concurrency
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
