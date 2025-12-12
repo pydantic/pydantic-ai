@@ -2951,6 +2951,10 @@ class OutputType(BaseModel):
 class TestMultipleToolCalls:
     """Tests for scenarios where multiple tool calls are made in a single response."""
 
+    # NOTE: When changing these tests:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_streaming.py::TestMultipleToolCallsStreaming` as well
+
     def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
         tool_called: list[str] = []
