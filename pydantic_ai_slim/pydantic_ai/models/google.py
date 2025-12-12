@@ -790,7 +790,9 @@ class GeminiStreamedResponse(StreamedResponse):
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
-            # Yield file search results after text content, so text appears first in the stream
+            # Grounding metadata is attached to the final text chunk, so 
+            # we emit the `BuiltinToolReturnPart` after the text delta so 
+            # that the delta is properly added to the same `TextPart` as earlier chunks
             async for event in self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata):
                 yield event
 
