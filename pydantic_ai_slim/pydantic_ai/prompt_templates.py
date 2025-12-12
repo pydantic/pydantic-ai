@@ -37,9 +37,7 @@ class PromptTemplates:
     Note: Custom messages set via `ToolDenied` are preserved unless this template is explicitly overridden.
     """
 
-    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'Fix these errors and try again'
-    )
+    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix these errors and try again'
     """Message appended to validation errors when asking the model to retry."""
 
     model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
