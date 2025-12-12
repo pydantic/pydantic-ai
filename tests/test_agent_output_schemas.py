@@ -433,6 +433,28 @@ async def test_deferred_output_json_schema():
         }
     )
 
+
+def test_build_instructions_appends_schema_placeholder():
+    """Test that build_instructions appends {schema} when template doesn't contain it."""
+    from pydantic_ai._output import OutputObjectDefinition, PromptedOutputSchema
+    from pydantic_ai.prompt_templates import DEFAULT_PROMPT_TEMPLATES
+
+    object_def = OutputObjectDefinition(
+        json_schema={'type': 'object', 'properties': {'name': {'type': 'string'}}},
+        name='TestOutput',
+        description='A test output',
+    )
+    # Template without {schema} - should append it automatically
+
+    result = PromptedOutputSchema.build_instructions(DEFAULT_PROMPT_TEMPLATES.prompted_output_template, object_def)
+    assert result == snapshot("""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"type": "object", "properties": {"name": {"type": "string"}}, "title": "TestOutput", "description": "A test output"}
+
+Don't include any text or Markdown fencing before or after.
+""")
     # special case of only BinaryImage and DeferredToolRequests
     agent = Agent('test', output_type=[BinaryImage, DeferredToolRequests])
     assert agent.output_json_schema() == snapshot(
