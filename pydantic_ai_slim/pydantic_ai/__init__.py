@@ -21,6 +21,9 @@ from .builtin_tools import (
 )
 from .embeddings import (
     Embedder,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
 )
 from .exceptions import (
     AgentRunError,
@@ -128,6 +131,9 @@ __all__ = (
     'InstrumentationSettings',
     # embeddings
     'Embedder',
+    'EmbeddingModel',
+    'EmbeddingSettings',
+    'EmbeddingResult',
     # exceptions
     'AgentRunError',
     'CallDeferred',

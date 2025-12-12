@@ -25,7 +25,7 @@ __all__ = [
     'EmbeddingResult',
     'merge_embedding_settings',
     'KnownEmbeddingModelName',
-    'infer_model',
+    'infer_embedding_model',
     'WrapperEmbeddingModel',
     'InstrumentedEmbeddingModel',
     'instrument_embedding_model',
@@ -54,7 +54,7 @@ KnownEmbeddingModelName = TypeAliasType(
 OpenAIEmbeddingsCompatibleProvider = OpenAIChatCompatibleProvider | OpenAIResponsesCompatibleProvider
 
 
-def infer_model(
+def infer_embedding_model(
     model: EmbeddingModel | KnownEmbeddingModelName | str,
     *,
     provider_factory: Callable[[str], Provider[Any]] = infer_provider,
@@ -133,7 +133,7 @@ class Embedder:
                 or pass an `InstrumentationSettings` instance to customize. If `None`, uses the value
                 from `Embedder.instrument_all()`.
         """
-        self._model = model if defer_model_check else infer_model(model)
+        self._model = model if defer_model_check else infer_embedding_model(model)
         self._settings = settings
         self.instrument = instrument
 
@@ -160,7 +160,7 @@ class Embedder:
         model: EmbeddingModel | KnownEmbeddingModelName | str | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         if _utils.is_set(model):
-            model_token = self._override_model.set(infer_model(model))
+            model_token = self._override_model.set(infer_embedding_model(model))
         else:
             model_token = None
 
@@ -228,7 +228,7 @@ class Embedder:
         if some_model := self._override_model.get():
             model_ = some_model
         else:
-            model_ = self._model = infer_model(self.model)
+            model_ = self._model = infer_embedding_model(self.model)
 
         instrument = self.instrument
         if instrument is None:

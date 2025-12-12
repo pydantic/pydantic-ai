@@ -20,23 +20,28 @@ class EmbeddingResult:
 
     _: KW_ONLY
 
-    inputs: Sequence[str] | None = None
+    inputs: Sequence[str]
 
-    input_type: EmbedInputType | None = None
+    input_type: EmbedInputType
 
-    usage: RequestUsage = field(default_factory=RequestUsage)
+    model_name: str
 
-    model_name: str | None = None
+    provider_name: str
 
     timestamp: datetime = field(default_factory=_now_utc)
 
-    provider_name: str | None = None
+    usage: RequestUsage = field(default_factory=RequestUsage)
 
     provider_details: dict[str, Any] | None = None
 
     provider_response_id: str | None = None
 
-    # TODO (DouweM): Support `result[idx: int]` and `result[document: str]`
+    def __getitem__(self, item: int | str) -> Sequence[float]:
+        """Get the embedding for an input or input index."""
+        if isinstance(item, str):
+            item = self.inputs.index(item)
+
+        return self.embeddings[item]
 
     def cost(self) -> genai_types.PriceCalculation:
         """Calculate the cost of the usage.

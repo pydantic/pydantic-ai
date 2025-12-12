@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -49,14 +50,18 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
     _model_name: str = field(repr=False)
     _model: SentenceTransformer | None = field(repr=False, default=None)
 
-    def __init__(self, model_name: str, *, settings: EmbeddingSettings | None = None) -> None:
+    def __init__(self, model: SentenceTransformer | str, *, settings: EmbeddingSettings | None = None) -> None:
         """Initialize a Sentence-Transformers embedding model.
 
         Args:
-            model_name: The model name or local path to load with `SentenceTransformer`.
+            model: The model name or local path to load with `SentenceTransformer`, or a `SentenceTransformer` instance.
             settings: Model-specific settings that will be used as defaults for this model.
         """
-        self._model_name = model_name
+        if isinstance(model, str):
+            self._model_name = model
+        else:
+            self._model = deepcopy(model)
+            self._model_name = model.model_card_data.model_id or model.model_card_data.base_model or 'unknown'
 
         super().__init__(settings=settings)
 

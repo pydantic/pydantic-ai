@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
@@ -21,9 +21,6 @@ from .base import EmbeddingModel, EmbedInputType
 from .result import EmbeddingResult
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = 'instrument_embedding_model', 'InstrumentedEmbeddingModel'
 

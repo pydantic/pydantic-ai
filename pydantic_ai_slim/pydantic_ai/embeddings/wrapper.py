@@ -23,10 +23,10 @@ class WrapperEmbeddingModel(EmbeddingModel):
     """The underlying embedding model being wrapped."""
 
     def __init__(self, wrapped: EmbeddingModel | str):
-        from . import infer_model
+        from . import infer_embedding_model
 
         super().__init__()
-        self.wrapped = infer_model(wrapped) if isinstance(wrapped, str) else wrapped
+        self.wrapped = infer_embedding_model(wrapped) if isinstance(wrapped, str) else wrapped
 
     async def embed(
         self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None

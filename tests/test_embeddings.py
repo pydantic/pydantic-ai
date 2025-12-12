@@ -8,7 +8,7 @@ import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
-from pydantic_ai.embeddings import Embedder, EmbeddingResult, KnownEmbeddingModelName, infer_model
+from pydantic_ai.embeddings import Embedder, EmbeddingResult, KnownEmbeddingModelName, infer_embedding_model
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import RequestUsage
 
@@ -16,7 +16,6 @@ from .conftest import IsDatetime, IsInt, IsList, try_import
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.vcr,
 ]
 
 with try_import() as openai_imports_successful:
@@ -28,14 +27,17 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as sentence_transformers_imports_successful:
+    from sentence_transformers import SentenceTransformer
+
     from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
 
 
 @pytest.mark.skipif(not openai_imports_successful, reason='OpenAI not installed')
+@pytest.mark.vcr
 class TestOpenAI:
     async def test_infer_model(self, openai_api_key: str):
         with patch.dict(os.environ, {'OPENAI_API_KEY': openai_api_key}):
-            model = infer_model('openai:text-embedding-3-small')
+            model = infer_embedding_model('openai:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
@@ -50,7 +52,7 @@ class TestOpenAI:
                 'OPENAI_API_VERSION': '2023-03-15-preview',
             },
         ):
-            model = infer_model('azure:text-embedding-3-small')
+            model = infer_embedding_model('azure:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'azure'
@@ -130,12 +132,121 @@ class TestOpenAI:
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
 
+    async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
+        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
+        embedder = Embedder(model, instrument=True)
+        await embedder.embed_query('Hello, world!')
+
+        assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+            [
+                {
+                    'name': 'embeddings text-embedding-3-small',
+                    'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                    'parent': None,
+                    'start_time': 1000000000,
+                    'end_time': 2000000000,
+                    'attributes': {
+                        'gen_ai.operation.name': 'embeddings',
+                        'gen_ai.provider.name': 'openai',
+                        'gen_ai.request.model': 'text-embedding-3-small',
+                        'input_type': 'query',
+                        'server.address': 'api.openai.com',
+                        'documents_count': 1,
+                        'gen_ai.prompt': 'Hello, world!',
+                        'logfire.json_schema': {
+                            'type': 'object',
+                            'properties': {
+                                'input_type': {'type': 'string'},
+                                'documents_count': {'type': 'integer'},
+                                'embedding_settings': {'type': 'object'},
+                                'gen_ai.prompt': {'type': ['string', 'array']},
+                            },
+                        },
+                        'logfire.span_type': 'span',
+                        'logfire.msg': 'embeddings text-embedding-3-small',
+                        'gen_ai.usage.input_tokens': 4,
+                        'operation.cost': 8e-08,
+                        'gen_ai.response.model': 'text-embedding-3-small',
+                        'gen_ai.embeddings.dimension.count': 1536,
+                    },
+                }
+            ]
+        )
+
+        assert capfire.get_collected_metrics() == snapshot(
+            [
+                {
+                    'name': 'gen_ai.client.token.usage',
+                    'description': 'Measures number of input and output tokens used',
+                    'unit': '{token}',
+                    'data': {
+                        'data_points': [
+                            {
+                                'attributes': {
+                                    'gen_ai.provider.name': 'openai',
+                                    'gen_ai.operation.name': 'embeddings',
+                                    'gen_ai.request.model': 'text-embedding-3-small',
+                                    'gen_ai.response.model': 'text-embedding-3-small',
+                                    'gen_ai.token.type': 'input',
+                                },
+                                'start_time_unix_nano': IsInt(),
+                                'time_unix_nano': IsInt(),
+                                'count': 1,
+                                'sum': 4,
+                                'scale': 20,
+                                'zero_count': 0,
+                                'positive': {'offset': 2097151, 'bucket_counts': [1]},
+                                'negative': {'offset': 0, 'bucket_counts': [0]},
+                                'flags': 0,
+                                'min': 4,
+                                'max': 4,
+                                'exemplars': [],
+                            }
+                        ],
+                        'aggregation_temporality': 1,
+                    },
+                },
+                {
+                    'name': 'operation.cost',
+                    'description': 'Monetary cost',
+                    'unit': '{USD}',
+                    'data': {
+                        'data_points': [
+                            {
+                                'attributes': {
+                                    'gen_ai.provider.name': 'openai',
+                                    'gen_ai.operation.name': 'embeddings',
+                                    'gen_ai.request.model': 'text-embedding-3-small',
+                                    'gen_ai.response.model': 'text-embedding-3-small',
+                                    'gen_ai.token.type': 'input',
+                                },
+                                'start_time_unix_nano': IsInt(),
+                                'time_unix_nano': IsInt(),
+                                'count': 1,
+                                'sum': 8e-08,
+                                'scale': 20,
+                                'zero_count': 0,
+                                'positive': {'offset': -24720625, 'bucket_counts': [1]},
+                                'negative': {'offset': 0, 'bucket_counts': [0]},
+                                'flags': 0,
+                                'min': 8e-08,
+                                'max': 8e-08,
+                                'exemplars': [],
+                            }
+                        ],
+                        'aggregation_temporality': 1,
+                    },
+                },
+            ]
+        )
+
 
 @pytest.mark.skipif(not cohere_imports_successful, reason='Cohere not installed')
+@pytest.mark.vcr
 class TestCohere:
     async def test_infer_model(self, co_api_key: str):
         with patch.dict(os.environ, {'CO_API_KEY': co_api_key}):
-            model = infer_model('cohere:embed-v4.0')
+            model = infer_embedding_model('cohere:embed-v4.0')
         assert isinstance(model, CohereEmbeddingModel)
         assert model.model_name == 'embed-v4.0'
         assert model.system == 'cohere'
@@ -204,186 +315,76 @@ class TestCohere:
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful, reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
+    @pytest.fixture(scope='session')
+    def model_name(self) -> str:
+        return 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
+
+    @pytest.fixture(scope='session')
+    def stsb_bert_tiny_model(self) -> SentenceTransformer:
+        model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
+        model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
+        return model
+
+    @pytest.fixture
+    def embedder(self, stsb_bert_tiny_model: SentenceTransformer) -> Embedder:
+        return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
+
     async def test_infer_model(self):
-        model = infer_model('sentence-transformers:all-MiniLM-L6-v2')
+        model = infer_embedding_model('sentence-transformers:all-MiniLM-L6-v2')
         assert isinstance(model, SentenceTransformerEmbeddingModel)
         assert model.model_name == 'all-MiniLM-L6-v2'
         assert model.system == 'sentence-transformers'
         assert model.base_url is None
 
-    async def test_query(self):
-        model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
-        embedder = Embedder(model)
+    async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
             EmbeddingResult(
                 embeddings=IsList(
                     IsList(
-                        snapshot(-0.03817721828818321),
-                        snapshot(0.032911062240600586),
-                        snapshot(-0.0054594180546700954),
-                        length=384,
+                        snapshot(-0.37296685576438904),
+                        snapshot(0.24662961065769196),
+                        snapshot(0.2667076289653778),
+                        length=128,
                     ),
                     length=1,
                 ),
                 inputs=['Hello, world!'],
                 input_type='query',
-                model_name='all-MiniLM-L6-v2',
+                model_name='sentence-transformers-testing/stsb-bert-tiny-safetensors',
                 timestamp=IsDatetime(),
                 provider_name='sentence-transformers',
             )
         )
 
-    async def test_documents(self):
-        model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
-        embedder = Embedder(model)
+    async def test_documents(self, embedder: Embedder):
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
                 embeddings=IsList(
                     IsList(
-                        snapshot(-0.06277172267436981),
-                        snapshot(0.05495882406830788),
-                        snapshot(0.052164893597364426),
-                        length=384,
-                    ),
-                    IsList(
-                        snapshot(-0.030238090083003044),
-                        snapshot(0.03164675831794739),
-                        snapshot(-0.06337423622608185),
-                        length=384,
+                        snapshot(0.2728135883808136),
+                        snapshot(0.5866574645042419),
+                        snapshot(-0.6559390425682068),
+                        length=128,
                     ),
                     length=2,
                 ),
                 inputs=['hello', 'world'],
                 input_type='document',
-                model_name='all-MiniLM-L6-v2',
+                model_name='sentence-transformers-testing/stsb-bert-tiny-safetensors',
                 timestamp=IsDatetime(),
                 provider_name='sentence-transformers',
             )
         )
 
-    async def test_max_input_tokens(self):
-        model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
-        embedder = Embedder(model)
+    async def test_max_input_tokens(self, embedder: Embedder):
         max_input_tokens = await embedder.max_input_tokens()
-        assert max_input_tokens == snapshot(256)
+        assert max_input_tokens == snapshot(512)
 
-    async def test_count_tokens(self):
-        model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
-        embedder = Embedder(model)
+    async def test_count_tokens(self, embedder: Embedder):
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(6)
-
-
-@pytest.mark.skipif(not openai_imports_successful, reason='OpenAI not installed')
-async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
-    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
-    embedder = Embedder(model, instrument=True)
-    await embedder.embed_query('Hello, world!')
-
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
-        [
-            {
-                'name': 'embeddings text-embedding-3-small',
-                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
-                'parent': None,
-                'start_time': 1000000000,
-                'end_time': 2000000000,
-                'attributes': {
-                    'gen_ai.operation.name': 'embeddings',
-                    'gen_ai.provider.name': 'openai',
-                    'gen_ai.request.model': 'text-embedding-3-small',
-                    'input_type': 'query',
-                    'server.address': 'api.openai.com',
-                    'documents_count': 1,
-                    'gen_ai.prompt': 'Hello, world!',
-                    'logfire.json_schema': {
-                        'type': 'object',
-                        'properties': {
-                            'input_type': {'type': 'string'},
-                            'documents_count': {'type': 'integer'},
-                            'embedding_settings': {'type': 'object'},
-                            'gen_ai.prompt': {'type': ['string', 'array']},
-                        },
-                    },
-                    'logfire.span_type': 'span',
-                    'logfire.msg': 'embeddings text-embedding-3-small',
-                    'gen_ai.usage.input_tokens': 4,
-                    'operation.cost': 8e-08,
-                    'gen_ai.response.model': 'text-embedding-3-small',
-                    'gen_ai.embeddings.dimension.count': 1536,
-                },
-            }
-        ]
-    )
-
-    assert capfire.get_collected_metrics() == snapshot(
-        [
-            {
-                'name': 'gen_ai.client.token.usage',
-                'description': 'Measures number of input and output tokens used',
-                'unit': '{token}',
-                'data': {
-                    'data_points': [
-                        {
-                            'attributes': {
-                                'gen_ai.provider.name': 'openai',
-                                'gen_ai.operation.name': 'embeddings',
-                                'gen_ai.request.model': 'text-embedding-3-small',
-                                'gen_ai.response.model': 'text-embedding-3-small',
-                                'gen_ai.token.type': 'input',
-                            },
-                            'start_time_unix_nano': IsInt(),
-                            'time_unix_nano': IsInt(),
-                            'count': 1,
-                            'sum': 4,
-                            'scale': 20,
-                            'zero_count': 0,
-                            'positive': {'offset': 2097151, 'bucket_counts': [1]},
-                            'negative': {'offset': 0, 'bucket_counts': [0]},
-                            'flags': 0,
-                            'min': 4,
-                            'max': 4,
-                            'exemplars': [],
-                        }
-                    ],
-                    'aggregation_temporality': 1,
-                },
-            },
-            {
-                'name': 'operation.cost',
-                'description': 'Monetary cost',
-                'unit': '{USD}',
-                'data': {
-                    'data_points': [
-                        {
-                            'attributes': {
-                                'gen_ai.provider.name': 'openai',
-                                'gen_ai.operation.name': 'embeddings',
-                                'gen_ai.request.model': 'text-embedding-3-small',
-                                'gen_ai.response.model': 'text-embedding-3-small',
-                                'gen_ai.token.type': 'input',
-                            },
-                            'start_time_unix_nano': IsInt(),
-                            'time_unix_nano': IsInt(),
-                            'count': 1,
-                            'sum': 8e-08,
-                            'scale': 20,
-                            'zero_count': 0,
-                            'positive': {'offset': -24720625, 'bucket_counts': [1]},
-                            'negative': {'offset': 0, 'bucket_counts': [0]},
-                            'flags': 0,
-                            'min': 8e-08,
-                            'max': 8e-08,
-                            'exemplars': [],
-                        }
-                    ],
-                    'aggregation_temporality': 1,
-                },
-            },
-        ]
-    )
 
 
 @pytest.mark.skipif(
