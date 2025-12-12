@@ -118,7 +118,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
-    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function tool calls are skipped
+    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
     - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
     """
 
