@@ -271,7 +271,7 @@ class UsageLimits:
     (from calling the model's `count_tokens` method before making the actual request) and is disabled by default.
 
     Supported by:
-    
+
     - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (only for OpenAI models)
     - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] (excluding Bedrock client)
