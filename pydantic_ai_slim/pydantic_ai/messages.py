@@ -961,7 +961,6 @@ class RetryPromptPart:
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
-
         if isinstance(self.content, str):
             if self.tool_name is None:
                 description = f'Validation feedback:\n{self.content}'

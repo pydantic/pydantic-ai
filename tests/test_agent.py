@@ -261,7 +261,7 @@ def test_prompt_templates_callable():
         FunctionModel(return_model),
         output_type=Foo,
         prompt_templates=PromptTemplates(
-            validation_errors_retry=lambda part, ctx: f'Please fix these validation errors and try again.',
+            validation_errors_retry=lambda part, ctx: 'Please fix these validation errors and try again.',
             final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
             output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
             function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
