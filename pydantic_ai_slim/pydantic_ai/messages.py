@@ -961,22 +961,26 @@ class RetryPromptPart:
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
-        if self.retry_message:
-            # We added this based on a provided prompt template so let us use this instead of our usual string
-            return self.retry_message
 
         if isinstance(self.content, str):
             if self.tool_name is None:
                 description = f'Validation feedback:\n{self.content}'
+                if self.retry_message:
+                    description += f'\n\n{self.retry_message}'
             else:
                 description = self.content
+                if self.retry_message:
+                    description += f'\n\n{self.retry_message}'
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
-        return f'{description}\n\nFix the errors and try again.'
+            if self.retry_message:
+                description += f'\n\n{self.retry_message}'
+
+        return description
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:

@@ -17,10 +17,9 @@ class PromptTemplates:
     Each template can be a static string or a callable that receives context and returns a string.
     """
 
-    retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
-    """Message sent to the model after validation failures or invalid responses.
+    retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again.'
+    """Default message sent to the model after validation failures or invalid responses.
 
-    Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
     """
 
     final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'Final result processed.'
@@ -45,6 +44,18 @@ class PromptTemplates:
     tool_call_denied: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'The tool call was denied.'
     """Message sent when a tool call is denied."""
 
+    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix these validation errors and try again.'
+    """Message sent to the model after validation errors."""
+
+    model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'The previous response was invalid. Please try again.'
+    """Message sent to the model when a ModelRetry exception is raised and tool is present."""
+
+    model_retry_string_no_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'The previous response was invalid. Please try again without using any tools.'
+    """Message sent to the model when a ModelRetry exception is raised and no tool is present."""
+
+    
+    
+
     def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
             if message_part.return_kind == 'final-result-processed':
@@ -59,11 +70,26 @@ class PromptTemplates:
                     return self._apply_tool_template(message_part, ctx, self.tool_call_denied)
                 return message_part
         elif isinstance(message_part, RetryPromptPart) and self.retry_prompt:
-            if isinstance(self.retry_prompt, str):
-                return replace(message_part, retry_message=self.retry_prompt)
-            else:
-                return replace(message_part, retry_message=self.retry_prompt(message_part, ctx))
+            template = self._get_template_for_retry(message_part)
+            return self._apply_retry_tempelate(message_part, ctx, template)
         return message_part  # Returns the original message if no template is applied
+    
+    def _get_template_for_retry(self, message: RetryPromptPart) -> str | Callable[[RetryPromptPart, _RunContext[Any]], str]:
+        if isinstance(message.content, str):
+            if message.tool_name is None:
+                return self.model_retry_string_no_tool
+            else:
+                return self.model_retry_string_tool
+        else:
+            return self.validation_errors_retry
+
+    def _apply_retry_tempelate(self, message: RetryPromptPart, ctx: _RunContext[Any], template: str | Callable[[RetryPromptPart, _RunContext[Any]], str]):
+        if isinstance(template, str):
+            return replace(message, retry_message=template)
+        else:
+            return replace(message, retry_message=template(message, ctx))
+
+        
 
     def _apply_tool_template(
         self,
