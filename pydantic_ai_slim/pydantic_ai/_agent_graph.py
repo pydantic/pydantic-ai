@@ -147,7 +147,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
-    prompt_templates: _prompt_templates.PromptTemplates = _prompt_templates.DEFAULT_PROMPT_TEMPLATES
+    prompt_templates: _prompt_templates.PromptTemplates = dataclasses.field(
+        default_factory=lambda: _prompt_templates.DEFAULT_PROMPT_TEMPLATES
+    )
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy

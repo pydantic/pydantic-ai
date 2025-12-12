@@ -1353,16 +1353,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _get_prompt_templates(
         self, prompt_templates: _prompt_templates.PromptTemplates | None
-    ) -> _prompt_templates.PromptTemplates | None:
+    ) -> _prompt_templates.PromptTemplates:
         """Get prompt_templates for a run.
 
         If we've overridden prompt_templates via `_override_prompt_templates`, use that,
-        otherwise use the prompt_templates passed to the call, falling back to the agent default.
+        otherwise use the prompt_templates passed to the call, falling back to the agent default,
+        and finally falling back to the global default.
         """
         if some_prompt_templates := self._override_prompt_templates.get():
             return some_prompt_templates.value
         else:
-            return prompt_templates or self.prompt_templates
+            return prompt_templates or self.prompt_templates or _prompt_templates.DEFAULT_PROMPT_TEMPLATES
 
     def _normalize_instructions(
         self,

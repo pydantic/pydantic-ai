@@ -54,7 +54,11 @@ class PromptTemplates:
             elif message_part.return_kind == 'function-tool-not-executed':
                 return self._apply_tool_template(message_part, ctx, self.function_tool_not_executed)
             elif message_part.return_kind == 'tool-denied':
-                return self._apply_tool_template(message_part, ctx, self.tool_call_denied)
+                # For tool-denied, only apply template if user configured a custom one
+                # The content may already have a custom message from ToolDenied
+                if self.tool_call_denied != DEFAULT_PROMPT_TEMPLATES.tool_call_denied:
+                    return self._apply_tool_template(message_part, ctx, self.tool_call_denied)
+                return message_part
         elif isinstance(message_part, RetryPromptPart) and self.retry_prompt:
             if isinstance(self.retry_prompt, str):
                 return replace(message_part, retry_message=self.retry_prompt)
