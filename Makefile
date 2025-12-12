@@ -79,48 +79,31 @@ update-examples: ## Update documentation examples
 update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need to set API keys as appropriate
 	uv run -m pytest --record-mode=rewrite tests
 
-# `--no-strict` so you can build the docs without insiders packages
+# `--no-strict` so you can build the docs without fixing all warnings
 .PHONY: docs
 docs: ## Build the documentation
 	uv run mkdocs build --no-strict
 
-# `--no-strict` so you can build the docs without insiders packages
+# `--no-strict` so you can build the docs without fixing all warnings
 .PHONY: docs-serve
 docs-serve: ## Build and serve the documentation
 	uv run mkdocs serve --no-strict
 
-.PHONY: .docs-insiders-install
-.docs-insiders-install: ## Install insiders packages for docs if necessary
-ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
-	@echo 'insiders packages already installed'
-else ifeq ($(PPPR_TOKEN),)
-	@echo "Error: PPPR_TOKEN is not set, can't install insiders packages"
-	@exit 1
-else
-	@echo 'installing insiders packages...'
-	@uv pip install --reinstall --no-deps \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
-		mkdocs-material mkdocstrings-python
-endif
-
+# Note: insiders packages are no longer needed - all features are now public
+# These targets are kept for backwards compatibility with CI
 .PHONY: docs-insiders
-docs-insiders: .docs-insiders-install ## Build the documentation using insiders packages
-	uv run --no-sync mkdocs build -f mkdocs.insiders.yml
+docs-insiders: docs ## Build docs (insiders packages no longer needed)
 
 .PHONY: docs-serve-insiders
-docs-serve-insiders: .docs-insiders-install ## Build and serve the documentation using insiders packages
-	uv run --no-sync mkdocs serve -f mkdocs.insiders.yml
+docs-serve-insiders: docs-serve ## Serve docs (insiders packages no longer needed)
 
 .PHONY: cf-pages-build
 cf-pages-build: ## Install uv, install dependencies and build the docs, used on CloudFlare Pages
 	curl -LsSf https://astral.sh/uv/install.sh | sh
 	uv python install 3.12
 	uv sync --python 3.12 --frozen --group docs
-	uv pip install --reinstall --no-deps \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
-		mkdocs-material mkdocstrings-python
 	uv pip freeze
-	uv run --no-sync mkdocs build -f mkdocs.insiders.yml
+	uv run mkdocs build
 
 .PHONY: all
 all: format lint typecheck testcov ## Run code formatting, linting, static type checks, and tests with coverage report generation
