@@ -8,35 +8,35 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '451'
+      - '480'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      max_completion_tokens: 1
       messages:
-      - content: You are a helpful assistant with access to weather tools.
-        role: system
-      - content: What is the weather in Paris?
-        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Paris"}'
+            name: get_weather
+          id: call_paris
+          type: function
+        - function:
+            arguments: '{"city": "London"}'
+            name: get_weather
+          id: call_london
+          type: function
+      - content: 'Paris: Sunny, 22°C'
+        role: tool
+        tool_call_id: call_paris
+      - content: 'London: Rainy, 15°C'
+        role: tool
+        tool_call_id: call_london
       model: gpt-4o
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: Get weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
     uri: https://api.openai.com/v1/chat/completions
   response:
     headers:
@@ -47,13 +47,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1079'
+      - '806'
       content-type:
       - application/json
       openai-organization:
       - user-hmtx7ob9xfpodrsdmshpnklm
       openai-processing-ms:
-      - '595'
+      - '210'
       openai-project:
       - proj_98JsR0JYQV1Ovk2AT0cljXCL
       openai-version:
@@ -64,387 +64,32 @@ interactions:
       - chunked
     parsed_body:
       choices:
-      - finish_reason: tool_calls
+      - finish_reason: length
         index: 0
         logprobs: null
         message:
           annotations: []
-          content: null
+          content: The
           refusal: null
           role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"city":"Paris"}'
-              name: get_weather
-            id: call_XnRrZPDZpUPizTWrEn2zYuUZ
-            type: function
-      created: 1765482665
-      id: chatcmpl-ClgynBUie17OQwqvFiAm9pRAvCEb8
+      created: 1765512507
+      id: chatcmpl-Clok7GWh0Ih1wsCPJ7yDjRw1PwuLD
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
       system_fingerprint: fp_83554c687e
       usage:
-        completion_tokens: 14
+        completion_tokens: 1
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 61
+        prompt_tokens: 84
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 75
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '751'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=X5iQNtPOwemWQoO.WP3_5mFqL4KZRIxEn.86qWyVdDQ-1765482666-1.0.1.1-ZXG77N5vVT_AZRG_CVu88LBn17B5fJ7iHp7CMW_tbAzRzOvux2HOAnnN2JlxJuxSw6PH6S3o5C7yOkV5QJp1NWx0ygBz7nWabbfbj_07dWA;
-        _cfuvid=Y.p2_4YujWPpkMA_jajIBixgIqdh1zUw4JfDDicwhSs-1765482666109-0.0.1.1-604800000
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a helpful assistant with access to weather tools.
-        role: system
-      - content: What is the weather in Paris?
-        role: user
-      - content: null
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"city":"Paris"}'
-            name: get_weather
-          id: call_XnRrZPDZpUPizTWrEn2zYuUZ
-          type: function
-      - content: 'Temperature: 15°C, Conditions: Cloudy in Paris'
-        role: tool
-        tool_call_id: call_XnRrZPDZpUPizTWrEn2zYuUZ
-      model: gpt-4o
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: Get weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '870'
-      content-type:
-      - application/json
-      openai-organization:
-      - user-hmtx7ob9xfpodrsdmshpnklm
-      openai-processing-ms:
-      - '594'
-      openai-project:
-      - proj_98JsR0JYQV1Ovk2AT0cljXCL
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        logprobs: null
-        message:
-          annotations: []
-          content: The current weather in Paris is cloudy with a temperature of 15°C.
-          refusal: null
-          role: assistant
-      created: 1765482666
-      id: chatcmpl-ClgyogERmacPgoNdginzW7JAiSDSg
-      model: gpt-4o-2024-08-06
-      object: chat.completion
-      service_tier: default
-      system_fingerprint: fp_83554c687e
-      usage:
-        completion_tokens: 16
-        completion_tokens_details:
-          accepted_prediction_tokens: 0
-          audio_tokens: 0
-          reasoning_tokens: 0
-          rejected_prediction_tokens: 0
-        prompt_tokens: 95
-        prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 0
-        total_tokens: 111
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '895'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=X5iQNtPOwemWQoO.WP3_5mFqL4KZRIxEn.86qWyVdDQ-1765482666-1.0.1.1-ZXG77N5vVT_AZRG_CVu88LBn17B5fJ7iHp7CMW_tbAzRzOvux2HOAnnN2JlxJuxSw6PH6S3o5C7yOkV5QJp1NWx0ygBz7nWabbfbj_07dWA;
-        _cfuvid=Y.p2_4YujWPpkMA_jajIBixgIqdh1zUw4JfDDicwhSs-1765482666109-0.0.1.1-604800000
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a helpful assistant with access to weather tools.
-        role: system
-      - content: What is the weather in Paris?
-        role: user
-      - content: null
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"city":"Paris"}'
-            name: get_weather
-          id: call_XnRrZPDZpUPizTWrEn2zYuUZ
-          type: function
-      - content: 'Temperature: 15°C, Conditions: Cloudy in Paris'
-        role: tool
-        tool_call_id: call_XnRrZPDZpUPizTWrEn2zYuUZ
-      - content: The current weather in Paris is cloudy with a temperature of 15°C.
-        role: assistant
-      - content: And in London?
-        role: user
-      model: gpt-4o
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: Get weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '1082'
-      content-type:
-      - application/json
-      openai-organization:
-      - user-hmtx7ob9xfpodrsdmshpnklm
-      openai-processing-ms:
-      - '655'
-      openai-project:
-      - proj_98JsR0JYQV1Ovk2AT0cljXCL
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        logprobs: null
-        message:
-          annotations: []
-          content: null
-          refusal: null
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"city":"London"}'
-              name: get_weather
-            id: call_y5nYQ4tKXuCAug8iJjECmzxW
-            type: function
-      created: 1765482666
-      id: chatcmpl-Clgyoj3xBj75wFLUIwrLaMZNrgLil
-      model: gpt-4o-2024-08-06
-      object: chat.completion
-      service_tier: default
-      system_fingerprint: fp_83554c687e
-      usage:
-        completion_tokens: 14
-        completion_tokens_details:
-          accepted_prediction_tokens: 0
-          audio_tokens: 0
-          reasoning_tokens: 0
-          rejected_prediction_tokens: 0
-        prompt_tokens: 122
-        prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 0
-        total_tokens: 136
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '1197'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=X5iQNtPOwemWQoO.WP3_5mFqL4KZRIxEn.86qWyVdDQ-1765482666-1.0.1.1-ZXG77N5vVT_AZRG_CVu88LBn17B5fJ7iHp7CMW_tbAzRzOvux2HOAnnN2JlxJuxSw6PH6S3o5C7yOkV5QJp1NWx0ygBz7nWabbfbj_07dWA;
-        _cfuvid=Y.p2_4YujWPpkMA_jajIBixgIqdh1zUw4JfDDicwhSs-1765482666109-0.0.1.1-604800000
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a helpful assistant with access to weather tools.
-        role: system
-      - content: What is the weather in Paris?
-        role: user
-      - content: null
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"city":"Paris"}'
-            name: get_weather
-          id: call_XnRrZPDZpUPizTWrEn2zYuUZ
-          type: function
-      - content: 'Temperature: 15°C, Conditions: Cloudy in Paris'
-        role: tool
-        tool_call_id: call_XnRrZPDZpUPizTWrEn2zYuUZ
-      - content: The current weather in Paris is cloudy with a temperature of 15°C.
-        role: assistant
-      - content: And in London?
-        role: user
-      - content: null
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"city":"London"}'
-            name: get_weather
-          id: call_y5nYQ4tKXuCAug8iJjECmzxW
-          type: function
-      - content: 'Temperature: 15°C, Conditions: Cloudy in London'
-        role: tool
-        tool_call_id: call_y5nYQ4tKXuCAug8iJjECmzxW
-      model: gpt-4o
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: Get weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '880'
-      content-type:
-      - application/json
-      openai-organization:
-      - user-hmtx7ob9xfpodrsdmshpnklm
-      openai-processing-ms:
-      - '448'
-      openai-project:
-      - proj_98JsR0JYQV1Ovk2AT0cljXCL
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        logprobs: null
-        message:
-          annotations: []
-          content: The current weather in London is also cloudy, with the temperature at 15°C.
-          refusal: null
-          role: assistant
-      created: 1765482667
-      id: chatcmpl-Clgyp3hMfcZ2BZuVJMtlsiWwPZa7A
-      model: gpt-4o-2024-08-06
-      object: chat.completion
-      service_tier: default
-      system_fingerprint: fp_83554c687e
-      usage:
-        completion_tokens: 18
-        completion_tokens_details:
-          accepted_prediction_tokens: 0
-          audio_tokens: 0
-          reasoning_tokens: 0
-          rejected_prediction_tokens: 0
-        prompt_tokens: 156
-        prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 0
-        total_tokens: 174
+        total_tokens: 85
     status:
       code: 200
       message: OK

@@ -2793,8 +2793,6 @@ async def _num_tokens_from_messages(  # noqa: C901
                             num_tokens += len(encoding.encode(content_part['text']))
                         # Note: Images, audio, files are not tokenized as text
                         # They have their own token costs handled by the API
-            else:
-                print(f'Unexpected message key or value type: {key}: {value}')
 
     num_tokens += final_primer
     return num_tokens

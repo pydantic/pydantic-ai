@@ -416,7 +416,7 @@ def _assert_token_count_within_tolerance(
     Args:
         our_count: Our calculated token count
         api_count: The token count from the OpenAI API
-        tolerance: The allowed tolerance as a fraction (default 5% = 0.05)
+        tolerance: The allowed tolerance as a fraction (default 10% = 0.10)
         test_name: Optional test name for error messages
     """
     if api_count == 0:
@@ -677,7 +677,7 @@ async def test_count_tokens_complex_conversation(
         messages=openai_messages,
         max_completion_tokens=1,
     )
-    print(response.usage)
+
     api_prompt_tokens = response.usage.prompt_tokens if response.usage else 0
     _assert_token_count_within_tolerance(our_count.input_tokens, api_prompt_tokens, test_name='complex_conversation')
 
@@ -785,7 +785,7 @@ async def test_openai_model_usage_limit_not_exceeded(
         usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
     )
     assert result.output == snapshot(
-        'The sentence you provided is commonly used as a pangram, which is a phrase that uses every letter of the alphabet at least once. This sentence is often used for typing practice due to its use of every letter.'
+        'This is an English phrase known as a pangram, meaning it contains all the letters of the alphabet. The phrase is often used to test typography or handwriting because it uses every letter at least once.'
     )
 
 
