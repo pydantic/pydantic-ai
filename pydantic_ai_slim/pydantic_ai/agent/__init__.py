@@ -118,8 +118,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
-    - `'early'`: Tools are executed in order until a valid final result is found, then remaining tool calls are skipped
-    - `'exhaustive'`: All tools are executed with the first valid result becoming the final output
+    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function tool calls are skipped
+    - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
     """
 
     model_settings: ModelSettings | None

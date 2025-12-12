@@ -310,8 +310,8 @@ _(This example is complete, it can be run "as is")_
 
 When the model calls other tools in parallel with an output tool, you can control how tool calls are executed with the `end_strategy`:
 
-- `'early'` (default): Tools are executed in order until a valid final result is found, then remaining tool calls are skipped
-- `'exhaustive'`: All tools are executed with the first valid result becoming the final output
+- `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function tool calls are skipped
+- `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
 
 The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
