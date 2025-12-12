@@ -892,7 +892,7 @@ async def process_tool_calls(  # noqa: C901
                     yield _messages.FunctionToolCallEvent(call)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
-                        content='Output tool not used - a final result was already processed.',
+                        content='Output tool not used - output failed validation.',
                         tool_call_id=call.tool_call_id,
                     )
                     output_parts.append(part)

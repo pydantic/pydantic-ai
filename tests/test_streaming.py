@@ -1708,7 +1708,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Output tool not used - a final result was already processed.',
+                            content='Output tool not used - output failed validation.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
