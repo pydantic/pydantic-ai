@@ -353,6 +353,23 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
+To control the image resolution with Gemini 3 Pro Image models, use the `resolution` parameter:
+
+```py {title="image_generation_google_resolution.py"}
+from pydantic_ai import Agent, BinaryImage, ImageGenerationTool
+
+agent = Agent(
+    'google-gla:gemini-3-pro-image-preview',
+    builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', resolution='4K')],
+    output_type=BinaryImage,
+)
+
+result = agent.run_sync('Generate a high-resolution wide landscape illustration of an axolotl.')
+assert isinstance(result.output, BinaryImage)
+```
+
+_(This example is complete, it can be run "as is")_
+
 For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageGenerationTool].
 
 #### Provider Support
@@ -368,6 +385,7 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `quality` | ✅ | ❌ |
 | `size` | ✅ | ❌ |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ |
+| `resolution` | ❌ | ✅ (1K, 2K, 4K) |
 
 ## Web Fetch Tool
 

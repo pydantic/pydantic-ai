@@ -3652,6 +3652,26 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     assert image_config == {'aspect_ratio': '16:9'}
 
 
+async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:
+    """Test that resolution parameter from ImageGenerationTool is added to image_config."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(resolution='2K')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'image_size': '2K'}
+
+
+async def test_google_image_generation_resolution_with_aspect_ratio(google_provider: GoogleProvider) -> None:
+    """Test that resolution and aspect_ratio from ImageGenerationTool work together."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', resolution='4K')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
+
+
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 

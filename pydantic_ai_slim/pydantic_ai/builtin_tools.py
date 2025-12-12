@@ -328,6 +328,14 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
+    resolution: str | None = None
+    """The resolution/size tier for generated images.
+
+    Supported by:
+
+    * Google: '1K', '2K', '4K' for Gemini 3 Pro Image and compatible models
+    """
+
     kind: str = 'image_generation'
     """The kind of tool."""
 
