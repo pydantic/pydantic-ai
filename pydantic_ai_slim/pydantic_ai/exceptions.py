@@ -188,7 +188,7 @@ class ToolRetryError(Exception):
 
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
-        super().__init__()
+        super().__init__(tool_retry.model_response())
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):
