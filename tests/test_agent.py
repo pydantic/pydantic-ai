@@ -236,7 +236,7 @@ def test_result_pydantic_model_retry():
 
 
 def test_prompt_templates_callable():
-    """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
+    """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
     def my_function_tool() -> str:  # pragma: no cover
         return 'function executed'
@@ -261,7 +261,7 @@ def test_prompt_templates_callable():
         FunctionModel(return_model),
         output_type=Foo,
         prompt_templates=PromptTemplates(
-            retry_prompt=lambda part, ctx: f'Custom retry message {part.content}',
+            validation_errors_retry=lambda part, ctx: f'Custom retry message {part.content}',
             final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
             output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
             function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
@@ -277,7 +277,23 @@ def test_prompt_templates_callable():
     assert isinstance(retry_request, ModelRequest)
     retry_part = retry_request.parts[0]
     assert isinstance(retry_part, RetryPromptPart)
-    retry_part.model_response()
+    # model_response() returns validation errors + retry_message appended
+    assert retry_part.model_response() == snapshot("""\
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "a"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer",
+    "input": "wrong"
+  }
+]
+```
+
+Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]""")
 
     assert result.all_messages() == snapshot(
         [
@@ -317,7 +333,7 @@ def test_prompt_templates_callable():
                     ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=75, output_tokens=23),
+                usage=RequestUsage(input_tokens=106, output_tokens=23),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -353,7 +369,7 @@ def test_prompt_templates_callable():
 
 
 def test_prompt_templates_string_and_override_prompt_templates():
-    """Test all prompt templates: retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
+    """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
     def my_function_tool() -> str:  # pragma: no cover
         return 'function executed'
@@ -378,7 +394,7 @@ def test_prompt_templates_string_and_override_prompt_templates():
         FunctionModel(return_model),
         output_type=Foo,
         prompt_templates=PromptTemplates(
-            retry_prompt='Custom retry message',
+            validation_errors_retry='Custom retry message',
             final_result_processed='Custom final result',
             output_tool_not_executed='Custom output not executed:',
             function_tool_not_executed='Custom function not executed',
@@ -394,7 +410,23 @@ def test_prompt_templates_string_and_override_prompt_templates():
     assert isinstance(retry_request, ModelRequest)
     retry_part = retry_request.parts[0]
     assert isinstance(retry_part, RetryPromptPart)
-    retry_part.model_response()
+    # model_response() returns validation errors + retry_message appended
+    assert retry_part.model_response() == snapshot("""\
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "a"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer",
+    "input": "wrong"
+  }
+]
+```
+
+Custom retry message""")
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -433,7 +465,7 @@ def test_prompt_templates_string_and_override_prompt_templates():
                     ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=54, output_tokens=23),
+                usage=RequestUsage(input_tokens=85, output_tokens=23),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -468,14 +500,30 @@ def test_prompt_templates_string_and_override_prompt_templates():
     )
 
     # Verify prompt_templates can be overridden
-    with agent.override(prompt_templates=PromptTemplates(retry_prompt='Custom retry message override')):
+    with agent.override(prompt_templates=PromptTemplates(validation_errors_retry='Custom retry message override')):
         result = agent.run_sync('Hello')
         assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
         retry_request = result.all_messages()[2]
         assert isinstance(retry_request, ModelRequest)
         retry_part = retry_request.parts[0]
         assert isinstance(retry_part, RetryPromptPart)
-        assert retry_part.model_response() == 'Custom retry message override'
+        # model_response() returns validation errors + retry_message appended
+        assert retry_part.model_response() == snapshot("""\
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "a"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer",
+    "input": "wrong"
+  }
+]
+```
+
+Custom retry message override""")
 
 
 def test_result_pydantic_model_validation_error():
