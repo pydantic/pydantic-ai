@@ -25,7 +25,16 @@ from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, prompt_templates as _prompt_templates, result, usage as _usage
+from . import (
+    _output,
+    _system_prompt,
+    exceptions,
+    messages as _messages,
+    models,
+    prompt_templates as _prompt_templates,
+    result,
+    usage as _usage,
+)
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -1144,7 +1153,7 @@ async def _call_tool(
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
-                content=tool_call_result.message,
+                content=_prompt_templates.PromptTemplates.tool_call_denied,
                 tool_call_id=tool_call.tool_call_id,
                 return_kind='tool-denied',
             ), None

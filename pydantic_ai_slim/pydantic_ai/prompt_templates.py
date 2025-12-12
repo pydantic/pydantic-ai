@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._run_context import RunContext as _RunContext
 
 from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
+
 
 @dataclass
 class PromptTemplates:
@@ -21,23 +23,27 @@ class PromptTemplates:
     Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
     """
 
-    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = "Final result processed."
+    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'Final result processed.'
     """Confirmation message sent when a final result is successfully processed.
 
-    Default: "Final result processed."
     """
 
-    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = "Output tool not used - a final result was already processed."
+    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = (
+        'Output tool not used - a final result was already processed.'
+    )
     """Message sent when an output tool call is skipped because a result was already found.
 
-    Default: "Output tool not used - a final result was already processed."
     """
 
-    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = "Tool not executed - a final result was already processed."
+    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = (
+        'Tool not executed - a final result was already processed.'
+    )
     """Message sent when a function tool call is skipped because a result was already found.
 
-    Default: "Tool not executed - a final result was already processed."
     """
+
+    tool_call_denied: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'Tool call was denied.'
+    """Message sent when a tool call is denied."""
 
     def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
@@ -47,6 +53,8 @@ class PromptTemplates:
                 return self._apply_tool_template(message_part, ctx, self.output_tool_not_executed)
             elif message_part.return_kind == 'function-tool-not-executed':
                 return self._apply_tool_template(message_part, ctx, self.function_tool_not_executed)
+            elif message_part.return_kind == 'tool-denied':
+                return self._apply_tool_template(message_part, ctx, self.tool_call_denied)
         elif isinstance(message_part, RetryPromptPart) and self.retry_prompt:
             if isinstance(self.retry_prompt, str):
                 return replace(message_part, retry_message=self.retry_prompt)
