@@ -23,7 +23,6 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from ._run_context import RunContext as _RunContext
     from .models.instrumented import InstrumentationSettings
 
 
@@ -1991,5 +1990,3 @@ HandleResponseEvent = Annotated[
 
 AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""
-
-
