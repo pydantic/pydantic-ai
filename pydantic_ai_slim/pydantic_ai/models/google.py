@@ -790,8 +790,8 @@ class GeminiStreamedResponse(StreamedResponse):
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
-            # Grounding metadata is attached to the final text chunk, so 
-            # we emit the `BuiltinToolReturnPart` after the text delta so 
+            # Grounding metadata is attached to the final text chunk, so
+            # we emit the `BuiltinToolReturnPart` after the text delta so
             # that the delta is properly added to the same `TextPart` as earlier chunks
             async for event in self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata):
                 yield event
@@ -831,19 +831,32 @@ class GeminiStreamedResponse(StreamedResponse):
             isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.builtin_tools
         )
 
-        if code and has_file_search_tool and (file_search_query := _extract_file_search_query(code)):
-            if self._file_search_tool_call_id is None:
-                self._file_search_tool_call_id = _utils.generate_tool_call_id()
-                return BuiltinToolCallPart(
-                    provider_name=self.provider_name,
-                    tool_name=FileSearchTool.kind,
-                    tool_call_id=self._file_search_tool_call_id,
-                    args={'query': file_search_query},
-                )
-            return None  # pragma: no cover
+        if code and has_file_search_tool and (file_search_query := self._extract_file_search_query(code)):
+            self._file_search_tool_call_id = _utils.generate_tool_call_id()
+            return BuiltinToolCallPart(
+                provider_name=self.provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=self._file_search_tool_call_id,
+                args={'query': file_search_query},
+            )
 
         self._code_execution_tool_call_id = _utils.generate_tool_call_id()
         return _map_executable_code(executable_code, self.provider_name, self._code_execution_tool_call_id)
+
+    def _extract_file_search_query(self, code: str) -> str | None:
+        """Extract the query from file_search.query() executable code.
+
+        Handles escaped quotes in the query string.
+
+        Example: 'print(file_search.query(query="what is the capital of France?"))'
+        Returns: 'what is the capital of France?'
+        """
+        match = _FILE_SEARCH_QUERY_PATTERN.search(code)
+        if match:
+            query = match.group(2)
+            query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
+            return query
+        return None  # pragma: no cover
 
     @property
     def model_name(self) -> GoogleModelName:
@@ -1171,22 +1184,6 @@ def _map_file_search_grounding_metadata(
             content=retrieved_contexts,
         ),
     )
-
-
-def _extract_file_search_query(code: str) -> str | None:
-    """Extract the query from file_search.query() executable code.
-
-    Handles escaped quotes in the query string.
-
-    Example: 'print(file_search.query(query="what is the capital of France?"))'
-    Returns: 'what is the capital of France?'
-    """
-    match = _FILE_SEARCH_QUERY_PATTERN.search(code)
-    if match:
-        query = match.group(2)
-        query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
-        return query
-    return None  # pragma: no cover
 
 
 def _map_url_context_metadata(
