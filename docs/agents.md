@@ -413,10 +413,14 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
-Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
-You can inspect [`agent_run.metadata`][pydantic_ai.agent.AgentRun] or [`agent_run.result.metadata`][pydantic_ai.agent.AgentRunResult] after the run completes to read any metadata configured on the [`Agent`][pydantic_ai.agent.Agent].
+Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output.
 
-```python {title="result_usage_and_metadata.py"}
+#### Run metadata
+
+Metadata configured on an [`Agent`][pydantic_ai.agent.Agent] or passed to a run is available after completion via [`AgentRun.metadata`][pydantic_ai.agent.AgentRun], [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], or [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult].
+Agent-level metadata and per-run metadata are merged, with per-run values taking precedence.
+
+```python {title="run_metadata.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
@@ -430,19 +434,18 @@ class Deps:
 agent = Agent[Deps](
     'openai:gpt-5',
     deps_type=Deps,
-    metadata=lambda ctx: {'tenant': ctx.deps.tenant},
+    metadata=lambda ctx: {'tenant': ctx.deps.tenant},  # agent-level metadata
 )
 
 result = agent.run_sync(
     'What is the capital of France?',
     deps=Deps(tenant='tenant-123'),
+    metadata=lambda ctx: {'num_requests': ctx.usage.requests},  # per-run metadata
 )
 print(result.output)
 #> The capital of France is Paris.
 print(result.metadata)
-#> {'tenant': 'tenant-123'}
-print(result.usage())
-#> RunUsage(input_tokens=56, output_tokens=7, requests=1)
+#> {'tenant': 'tenant-123', 'num_requests': 1}
 ```
 
 #### Streaming All Events and Output
