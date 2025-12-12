@@ -888,15 +888,15 @@ async def process_tool_calls(  # noqa: C901
                 # If we already have a valid final result, don't fail the entire run
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
                 if final_result:
-                    # Just add a retry prompt part for the failed output tool
+                    # If output tool fails when we already have a final result, skip it without retrying
                     yield _messages.FunctionToolCallEvent(call)
-                    retry_part = _messages.RetryPromptPart(
-                        content=str(e.__cause__ or e),
+                    part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
+                        content='Output tool not used - a final result was already processed.',
                         tool_call_id=call.tool_call_id,
                     )
-                    output_parts.append(retry_part)
-                    yield _messages.FunctionToolResultEvent(retry_part)
+                    output_parts.append(part)
+                    yield _messages.FunctionToolResultEvent(part)
                 else:
                     # No valid result yet, so this is a real failure
                     ctx.state.increment_retries(
