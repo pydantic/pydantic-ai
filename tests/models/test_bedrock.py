@@ -748,7 +748,7 @@ async def test_s3_image_url_input(bedrock_provider: BedrockProvider):
         ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
     ]
 
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -773,13 +773,11 @@ async def test_s3_video_url_input(bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     video_url = VideoUrl(url='s3://my-bucket/videos/test-video.mp4', media_type='video/mp4')
 
-    # Create a ModelRequest with the S3 video URL
     req = [
         ModelRequest(parts=[UserPromptPart(content=['Describe this video', video_url])]),
     ]
 
-    # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -804,13 +802,11 @@ async def test_s3_document_url_input(bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
     document_url = DocumentUrl(url='s3://my-bucket/documents/test-doc.pdf', media_type='application/pdf')
 
-    # Create a ModelRequest with the S3 document URL
     req = [
         ModelRequest(parts=[UserPromptPart(content=['What is the main content on this document?', document_url])]),
     ]
 
-    # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -823,6 +819,40 @@ async def test_s3_document_url_input(bedrock_provider: BedrockProvider):
                             'format': 'pdf',
                             'name': 'Document 1',
                             'source': {'s3Location': {'uri': 's3://my-bucket/documents/test-doc.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_s3_url_with_bucket_owner(bedrock_provider: BedrockProvider):
+    """Test that s3:// URLs with bucketOwner parameter are parsed correctly."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    image_url = ImageUrl(url='s3://my-bucket/images/test-image.jpg?bucketOwner=123456789012', media_type='image/jpeg')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'jpeg',
+                            'source': {
+                                's3Location': {
+                                    'uri': 's3://my-bucket/images/test-image.jpg',
+                                    'bucketOwner': '123456789012',
+                                }
+                            },
                         }
                     },
                 ],

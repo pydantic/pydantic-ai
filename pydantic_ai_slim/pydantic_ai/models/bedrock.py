@@ -736,7 +736,10 @@ class BedrockConverseModel(Model):
                 elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
                     source: dict[str, Any]
                     if item.url.startswith('s3://'):
-                        source = {'s3Location': {'uri': item.url}}
+                        s3_location: dict[str, str] = {'uri': item.url.split('?')[0]}
+                        if '?bucketOwner=' in item.url:
+                            s3_location['bucketOwner'] = item.url.split('?bucketOwner=')[1]
+                        source = {'s3Location': s3_location}
                     else:
                         downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
                         source = {'bytes': downloaded_item['data']}
