@@ -38,17 +38,17 @@ class PromptTemplates:
     """
 
     validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'Fix these validation errors and try again.'
+        'Fix these errors and try again'
     )
     """Message appended to validation errors when asking the model to retry."""
 
     model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'The previous response was invalid. Please try again.'
+        'Fix these errors and try again.'
     )
     """Message sent when a `ModelRetry` exception is raised from a tool."""
 
     model_retry_string_no_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'The previous response was invalid. Please try again without using any tools.'
+        'Fix these errors and try again.'
     )
     """Message sent when a `ModelRetry` exception is raised outside of a tool context."""
 
