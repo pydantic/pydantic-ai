@@ -4726,7 +4726,7 @@ def test_agent_run_result_serialization() -> None:
 def test_agent_repr() -> None:
     agent = Agent()
     assert repr(agent) == snapshot(
-        "Agent(model=None, name=None, end_strategy='early', model_settings=None, prompt_templates=None,output_type=<class 'str'>, instrument=None)"
+        "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
     )
 
 

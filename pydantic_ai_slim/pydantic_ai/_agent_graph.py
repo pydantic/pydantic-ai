@@ -138,7 +138,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
-    prompt_templates: _prompt_templates.PromptTemplates | None
+    prompt_templates: _prompt_templates.PromptTemplates
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -881,7 +881,7 @@ async def process_tool_calls(  # noqa: C901
             if final_result.tool_call_id == call.tool_call_id:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Final result processed.',
+                    content=_prompt_templates.PromptTemplates.final_result_processed,
                     tool_call_id=call.tool_call_id,
                     return_kind='final-result-processed',
                 )
@@ -889,7 +889,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call)
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Output tool not used - a final result was already processed.',
+                    content=_prompt_templates.PromptTemplates.output_tool_not_executed,
                     tool_call_id=call.tool_call_id,
                     return_kind='output-tool-not-executed',
                 )
@@ -914,7 +914,7 @@ async def process_tool_calls(  # noqa: C901
             else:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Final result processed.',
+                    content=_prompt_templates.PromptTemplates.final_result_processed,
                     tool_call_id=call.tool_call_id,
                     return_kind='final-result-processed',
                 )
@@ -928,7 +928,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Tool not executed - a final result was already processed.',
+                    content=_prompt_templates.PromptTemplates.function_tool_not_executed,
                     tool_call_id=call.tool_call_id,
                     return_kind='function-tool-not-executed',
                 )
@@ -987,7 +987,7 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content='Tool not executed - a final result was already processed.',
+                            content=_prompt_templates.PromptTemplates.function_tool_not_executed,
                             tool_call_id=call.tool_call_id,
                             return_kind='function-tool-not-executed',
                         )
