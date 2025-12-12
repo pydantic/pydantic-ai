@@ -17,11 +17,6 @@ class PromptTemplates:
     Each template can be a static string or a callable that receives context and returns a string.
     """
 
-    retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again.'
-    """Default message sent to the model after validation failures or invalid responses.
-
-    """
-
     final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'Final result processed.'
     """Confirmation message sent when a final result is successfully processed.
 
@@ -69,7 +64,7 @@ class PromptTemplates:
                 if self.tool_call_denied != DEFAULT_PROMPT_TEMPLATES.tool_call_denied:
                     return self._apply_tool_template(message_part, ctx, self.tool_call_denied)
                 return message_part
-        elif isinstance(message_part, RetryPromptPart) and self.retry_prompt:
+        elif isinstance(message_part, RetryPromptPart):
             template = self._get_template_for_retry(message_part)
             return self._apply_retry_tempelate(message_part, ctx, template)
         return message_part  # Returns the original message if no template is applied

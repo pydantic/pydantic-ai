@@ -957,7 +957,7 @@ class RetryPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     retry_message: str | None = None
-    """The retry message rendered using the user's prompt template. Used instead of the default retry message when present."""
+    """The retry message rendered using the user's prompt template. It is populated after checking the conditions for the retry so that the correct template is used."""
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
