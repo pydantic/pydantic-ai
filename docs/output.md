@@ -308,14 +308,12 @@ _(This example is complete, it can be run "as is")_
 
 ##### Parallel Output Tool Calls
 
-When the model calls other tools in parallel with an output tool, you can control how tool calls are executed with the `end_strategy`:
+When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
 
-- `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function tool calls are skipped
+- `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
 - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
 
 The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
-
-See [`Agent.end_strategy`][pydantic_ai.agent.Agent.end_strategy] for more details.
 
 #### Native Output
 

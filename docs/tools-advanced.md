@@ -381,12 +381,12 @@ Async functions are run on the event loop, while sync functions are offloaded to
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
-### Output Tool Calls
+#### Output Tool Calls
 
-When a model calls an output tool along with other tools in a single response, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
+When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
 The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-For a detailed explanation of how `end_strategy` works with both function tools and output tools, see [Handling Multiple Tool Calls](output.md#handling-multiple-tool-calls).
+For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
 ## See Also
 
