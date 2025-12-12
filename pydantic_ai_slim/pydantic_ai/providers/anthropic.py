@@ -67,8 +67,11 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             api_key: The API key to use for authentication, if not provided, the `ANTHROPIC_API_KEY` environment variable
                 will be used if available.
             base_url: The base URL to use for the Anthropic API.
-            anthropic_client: An existing [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python)
-                client to use. If provided, the `api_key` and `http_client` arguments will be ignored.
+            anthropic_client: An existing Anthropic client to use. Accepts
+                [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python),
+                [`AsyncAnthropicBedrock`](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock), or
+                [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai).
+                If provided, the `api_key` and `http_client` arguments will be ignored.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if anthropic_client is not None:

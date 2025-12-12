@@ -78,6 +78,106 @@ agent = Agent(model)
 ...
 ```
 
+## Cloud Platform Integrations
+
+You can use Anthropic models through cloud platforms by passing a custom client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider].
+
+### AWS Bedrock
+
+To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/):
+
+=== "With Pydantic AI Gateway"
+
+    ```python {title="<a href='/gateway/' style='float: right;'>Learn about Gateway</a>" test="skip"}
+    from pydantic_ai import Agent
+
+    agent = Agent('gateway/bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0')
+    ...
+    ```
+
+=== "Directly to Provider API"
+
+    Use the [`AsyncAnthropicBedrock`](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock) client from the `anthropic` package:
+
+    ```python {test="skip"}
+    from anthropic import AsyncAnthropicBedrock
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    bedrock_client = AsyncAnthropicBedrock()  # Uses AWS credentials from environment
+    provider = AnthropicProvider(anthropic_client=bedrock_client)
+    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+    agent = Agent(model)
+    ...
+    ```
+
+    !!! note "Bedrock vs BedrockConverseModel"
+        This approach uses Anthropic's SDK with AWS Bedrock credentials. For an alternative using AWS SDK (boto3) directly, see [`BedrockConverseModel`](bedrock.md).
+
+### Google Vertex AI
+
+To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude):
+
+=== "With Pydantic AI Gateway"
+
+    ```python {title="<a href='/gateway/' style='float: right;'>Learn about Gateway</a>" test="skip"}
+    from pydantic_ai import Agent
+
+    agent = Agent('gateway/google-vertex:claude-sonnet-4-5@20250514')
+    ...
+    ```
+
+=== "Directly to Provider API"
+
+    Use the [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai) client from the `anthropic` package:
+
+    ```python {test="skip"}
+    from anthropic import AsyncAnthropicVertex
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    vertex_client = AsyncAnthropicVertex(region='us-east5', project_id='your-project-id')
+    provider = AnthropicProvider(anthropic_client=vertex_client)
+    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+    agent = Agent(model)
+    ...
+    ```
+
+### Microsoft Azure
+
+Azure offers Claude models through their "Models as a Service" using an OpenAI-compatible API. Use [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] with an Azure-configured client:
+
+```python {test="skip"}
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AsyncAzureOpenAI
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+token_provider = get_bearer_token_provider(
+    DefaultAzureCredential(),
+    'https://cognitiveservices.azure.com/.default',
+)
+
+azure_client = AsyncAzureOpenAI(
+    azure_ad_token_provider=token_provider,
+    azure_endpoint='https://your-resource.services.ai.azure.com/api/projects/your-project',
+    api_version='2025-01-01-preview',
+)
+
+provider = OpenAIProvider(openai_client=azure_client)
+model = OpenAIModel('claude-sonnet-4-5', provider=provider)
+agent = Agent(model)
+...
+```
+
+See [Azure's Claude documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/how-to/use-foundry-models-claude) for setup instructions.
+
 ## Prompt Caching
 
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides four ways to use prompt caching:
