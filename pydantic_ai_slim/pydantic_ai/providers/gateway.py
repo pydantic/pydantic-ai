@@ -93,13 +93,17 @@ def gateway_provider(
 ) -> Provider[Any]: ...
 
 
-UpstreamProvider = Literal[
+ModelProvider = Literal[
     'openai',
     'groq',
     'anthropic',
     'bedrock',
     'google-vertex',
-    # Those are only API formats, but we still support them for convenience.
+]
+
+
+# These are only API flavors, we support them for convenience.
+APIFlavor = Literal[
     'openai-chat',
     'openai-responses',
     'chat',
@@ -107,6 +111,8 @@ UpstreamProvider = Literal[
     'converse',
     'gemini',
 ]
+
+UpstreamProvider = ModelProvider | APIFlavor
 
 
 def gateway_provider(

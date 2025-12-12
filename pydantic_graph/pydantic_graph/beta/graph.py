@@ -13,7 +13,7 @@ from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asyncc
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast, get_args, get_origin, overload
 
-from anyio import CancelScope, create_memory_object_stream, create_task_group
+from anyio import BrokenResourceError, CancelScope, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import TypeVar, assert_never
@@ -748,12 +748,15 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         with CancelScope() as scope:
             self.cancel_scopes[t_.task_id] = scope
             result = await self._run_task(t_)
-            if isinstance(result, _GraphTaskAsyncIterable):
-                async for new_tasks in result.iterable:
-                    await self.iter_stream_sender.send(_GraphTaskResult(t_, new_tasks, False))
-                await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
-            else:
-                await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
+            try:
+                if isinstance(result, _GraphTaskAsyncIterable):
+                    async for new_tasks in result.iterable:
+                        await self.iter_stream_sender.send(_GraphTaskResult(t_, new_tasks, False))
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
+                else:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
+            except BrokenResourceError:
+                pass  # pragma: no cover # This can happen in difficult-to-reproduce circumstances when cancelling an asyncio task
 
     async def _run_task(
         self,

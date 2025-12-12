@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '381'
+      - '366'
       content-type:
       - application/json
       host:
@@ -32,7 +32,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-          strict: false
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -44,24 +43,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '394'
+      - '378'
       content-type:
       - application/json
-      ratelimitbysize-limit:
-      - '5000000'
-      ratelimitbysize-query-cost:
-      - '32000'
-      ratelimitbysize-remaining:
-      - '4968000'
-      ratelimitbysize-reset:
-      - '12'
+      mistral-correlation-id:
+      - 019ac842-9519-74fd-8f4f-7fbc4a234278
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       choices:
       - finish_reason: tool_calls
         index: 0
-        logprobs: null
         message:
           content: ''
           role: assistant
@@ -69,10 +63,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_image
-            id: utZJMAZN4
+            id: GJYBCIkcS
             index: 0
-      created: 1745958108
-      id: fce6d16a4e5940edb24ae16dd0369947
+      created: 1764296398
+      id: 412174432ea945889703eac58b44ae35
       model: pixtral-12b-latest
       object: chat.completion
       usage:
@@ -91,12 +85,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780308'
+      - '2780293'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=3WmtMDDbVoD5a1xLGm8HF0OjhXhDx1lEuKEqxaS1u8g-1745958108-1.0.1.1-m7Ve2HoqiAB9RmyGw0yyGxi1s64Ij2HoX2kRQDbtZsY5R5l7wcPk.x2Z57rAp9sUjB_ErAYM6k9t.CSP6VPLPqvqTeS8GIKozA3aQWRllow;
-        _cfuvid=v0kdRXioGuqqRUowF17sySiegLOq9b7mAOQpsO4Xlrg-1745958108368-0.0.1.1-604800000
+      - __cf_bm=1UlAAXD0SyPFUXPKDVjpG941nWKknyKxBO5wNJBryvY-1764296398-1.0.1.1-eNIbtGW3UmBMgAIPnmRycErc076o_OZBVpE26PDFxQicyBF3TsLOcrhe4mx0Id0OG7GLEPtWyYPQAfTjEA01cyfs6DNz5XXloP6ugZtnVpI;
+        _cfuvid=v1Nl.HtsDN5eK78u9sclXIhQ5ugl5pK.eXxTfV2bHdY-1764296398445-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
@@ -113,12 +107,12 @@ interactions:
         - function:
             arguments: '{}'
             name: get_image
-          id: utZJMAZN4
+          id: GJYBCIkcS
           index: 0
           type: function
       - content: See file 1c8566
         role: tool
-        tool_call_id: utZJMAZN4
+        tool_call_id: GJYBCIkcS
       - content:
         - text: OK
           type: text
@@ -143,7 +137,6 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-          strict: false
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -155,38 +148,33 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '591'
+      - '572'
       content-type:
       - application/json
-      ratelimitbysize-limit:
-      - '5000000'
-      ratelimitbysize-query-cost:
-      - '32004'
-      ratelimitbysize-remaining:
-      - '4967996'
-      ratelimitbysize-reset:
-      - '12'
+      mistral-correlation-id:
+      - 019ac842-9ff6-708a-8713-bca74f14d8bd
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       choices:
       - finish_reason: stop
         index: 0
-        logprobs: null
         message:
-          content: The image you're referring to, labeled as "file 1c8566," shows a kiwi. Kiwis are small, brown, oval-shaped
-            fruits with a bright green flesh inside that is dotted with tiny black seeds. They have a sweet and tangy flavor
-            and are known for being rich in vitamin C and fiber.
+          content: The image you're referring to, labeled as "file 1c8566," shows a kiwi fruit that has been cut in half.
+            The kiwi is known for its bright green flesh with tiny black seeds and a central white core. It is a popular fruit
+            known for its sweet taste and nutritional benefits.
           role: assistant
           tool_calls: null
-      created: 1745958109
-      id: 26e7de193646460e8904f8e604a60dc1
+      created: 1764296405
+      id: 049b5c7704554d3396e727a95cb6d947
       model: pixtral-12b-latest
       object: chat.completion
       usage:
-        completion_tokens: 70
+        completion_tokens: 66
         prompt_tokens: 2931
-        total_tokens: 3001
+        total_tokens: 2997
     status:
       code: 200
       message: OK

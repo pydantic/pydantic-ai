@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -8,7 +9,7 @@ from pydantic.errors import PydanticUserError
 from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
 from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
-from temporalio.worker import WorkflowRunner
+from temporalio.worker import WorkerConfig, WorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...exceptions import UserError
@@ -16,6 +17,7 @@ from ._agent import TemporalAgent
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
+from ._workflow import PydanticAIWorkflow
 
 __all__ = [
     'TemporalAgent',
@@ -24,6 +26,7 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'PydanticAIWorkflow',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
@@ -90,6 +93,31 @@ class PydanticAIPlugin(SimplePlugin):
             workflow_runner=_workflow_runner,
             workflow_failure_exception_types=[UserError, PydanticUserError],
         )
+
+    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
+        config = super().configure_worker(config)
+
+        workflows = list(config.get('workflows', []))  # type: ignore[reportUnknownMemberType]
+        activities = list(config.get('activities', []))  # type: ignore[reportUnknownMemberType]
+
+        for workflow_class in workflows:  # type: ignore[reportUnknownMemberType]
+            agents = getattr(workflow_class, '__pydantic_ai_agents__', None)  # type: ignore[reportUnknownMemberType]
+            if agents is None:
+                continue
+            if not isinstance(agents, Sequence):
+                raise TypeError(  # pragma: no cover
+                    f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
+                )
+            for agent in agents:  # type: ignore[reportUnknownVariableType]
+                if not isinstance(agent, TemporalAgent):
+                    raise TypeError(  # pragma: no cover
+                        f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
+                    )
+                activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
+
+        config['activities'] = activities
+
+        return config
 
 
 class AgentPlugin(SimplePlugin):

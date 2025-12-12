@@ -292,26 +292,26 @@ class FunctionStreamedResponse(StreamedResponse):
     def __post_init__(self):
         self._usage += _estimate_usage([])
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for item in self._iter:
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
                 self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=item):
+                    yield event
             elif isinstance(item, dict) and item:
                 for dtc_index, delta in item.items():
                     if isinstance(delta, DeltaThinkingPart):
                         if delta.content:  # pragma: no branch
                             response_tokens = _estimate_string_tokens(delta.content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_thinking_delta(
+                        for event in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=dtc_index,
                             content=delta.content,
                             signature=delta.signature,
                             provider_name='function' if delta.signature else None,
-                        )
+                        ):
+                            yield event
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
@@ -345,6 +345,11 @@ class FunctionStreamedResponse(StreamedResponse):
     @property
     def provider_name(self) -> None:
         """Get the provider name."""
+        return None
+
+    @property
+    def provider_url(self) -> None:
+        """Get the provider base URL."""
         return None
 
     @property

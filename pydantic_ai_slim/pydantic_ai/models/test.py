@@ -297,6 +297,7 @@ class TestStreamedResponse(StreamedResponse):
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
     _provider_name: str
+    _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -313,14 +314,12 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=''):
+                    yield event
                 for word in words:
                     self._usage += _get_string_usage(word)
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
+                        yield event
             elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
@@ -346,6 +345,11 @@ class TestStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
