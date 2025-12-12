@@ -1153,7 +1153,7 @@ async def _call_tool(
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
-                content=_prompt_templates.PromptTemplates.tool_call_denied,
+                content=tool_call_result.message,
                 tool_call_id=tool_call.tool_call_id,
                 return_kind='tool-denied',
             ), None

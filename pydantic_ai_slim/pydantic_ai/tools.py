@@ -14,6 +14,7 @@ from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .prompt_templates import PromptTemplates
 
 __all__ = (
     'AgentDepsT',
@@ -175,6 +176,9 @@ class ToolApproved:
 @dataclass
 class ToolDenied:
     """Indicates that a tool call has been denied and that a denial message should be returned to the model."""
+
+    message: str = cast(str, PromptTemplates.tool_call_denied)
+    """The message to return to the model."""
 
     _: KW_ONLY
 
