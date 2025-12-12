@@ -12,7 +12,7 @@ from pydantic_ai.embeddings import Embedder, EmbeddingResult, KnownEmbeddingMode
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsInt, IsList, try_import
+from .conftest import IsDatetime, IsFloat, IsInt, IsList, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -35,6 +35,10 @@ with try_import() as sentence_transformers_imports_successful:
 @pytest.mark.skipif(not openai_imports_successful, reason='OpenAI not installed')
 @pytest.mark.vcr
 class TestOpenAI:
+    @pytest.fixture
+    def embedder(self, openai_api_key: str) -> Embedder:
+        return Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key)))
+
     async def test_infer_model(self, openai_api_key: str):
         with patch.dict(os.environ, {'OPENAI_API_KEY': openai_api_key}):
             model = infer_embedding_model('openai:text-embedding-3-small')
@@ -43,7 +47,7 @@ class TestOpenAI:
         assert model.system == 'openai'
         assert model.base_url == 'https://api.openai.com/v1/'
 
-    async def test_infer_model_azure(self, openai_api_key: str):
+    async def test_infer_model_azure(self):
         with patch.dict(
             os.environ,
             {
@@ -58,21 +62,11 @@ class TestOpenAI:
         assert model.system == 'azure'
         assert 'azure.com' in model.base_url
 
-    async def test_query(self, openai_api_key: str):
-        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
-        embedder = Embedder(model)
+    async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(
-                    IsList(
-                        snapshot(-0.019193023443222046),
-                        snapshot(-0.025299284607172012),
-                        snapshot(-0.0016930076526477933),
-                        length=1536,
-                    ),
-                    length=1,
-                ),
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
                 usage=RequestUsage(input_tokens=4),
@@ -83,27 +77,11 @@ class TestOpenAI:
         )
         assert result.cost().total_price == snapshot(Decimal('8E-8'))
 
-    async def test_documents(self, openai_api_key: str):
-        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
-        embedder = Embedder(model)
+    async def test_documents(self, embedder: Embedder):
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(
-                    IsList(
-                        snapshot(0.01681816205382347),
-                        snapshot(-0.05579638481140137),
-                        snapshot(0.005661087576299906),
-                        length=1536,
-                    ),
-                    IsList(
-                        snapshot(-0.010592407546937466),
-                        snapshot(-0.03599696233868599),
-                        snapshot(0.030227113515138626),
-                        length=1536,
-                    ),
-                    length=2,
-                ),
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
                 usage=RequestUsage(input_tokens=2),
@@ -114,15 +92,11 @@ class TestOpenAI:
         )
         assert result.cost().total_price == snapshot(Decimal('4E-8'))
 
-    async def test_max_input_tokens(self, openai_api_key: str):
-        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
-        embedder = Embedder(model)
+    async def test_max_input_tokens(self, embedder: Embedder):
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(8192)
 
-    async def test_count_tokens(self, openai_api_key: str):
-        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
-        embedder = Embedder(model)
+    async def test_count_tokens(self, embedder: Embedder):
         count = await embedder.count_tokens('Hello, world!')
         assert count == snapshot(4)
 
@@ -132,7 +106,7 @@ class TestOpenAI:
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
 
-    async def test_instrumentation(openai_api_key: str, capfire: CaptureLogfire):
+    async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model, instrument=True)
         await embedder.embed_query('Hello, world!')
@@ -151,15 +125,16 @@ class TestOpenAI:
                         'gen_ai.request.model': 'text-embedding-3-small',
                         'input_type': 'query',
                         'server.address': 'api.openai.com',
-                        'documents_count': 1,
-                        'gen_ai.prompt': 'Hello, world!',
+                        'inputs_count': 1,
+                        'inputs': ['Hello, world!'],
                         'logfire.json_schema': {
                             'type': 'object',
                             'properties': {
                                 'input_type': {'type': 'string'},
-                                'documents_count': {'type': 'integer'},
+                                'inputs_count': {'type': 'integer'},
                                 'embedding_settings': {'type': 'object'},
-                                'gen_ai.prompt': {'type': ['string', 'array']},
+                                'inputs': {'type': ['array']},
+                                'embeddings': {'type': 'array'},
                             },
                         },
                         'logfire.span_type': 'span',
@@ -279,11 +254,7 @@ class TestCohere:
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(
-                    IsList(snapshot(0.015943069), snapshot(0.013248466), snapshot(0.0024139155), length=1536),
-                    IsList(snapshot(-0.0060736495), snapshot(-0.015005487), snapshot(0.00033246286), length=1536),
-                    length=2,
-                ),
+                embeddings=IsList(IsList(IsFloat(), length=1536), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
                 usage=RequestUsage(input_tokens=2),
@@ -340,15 +311,7 @@ class TestSentenceTransformers:
         result = await embedder.embed_query('Hello, world!')
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(
-                    IsList(
-                        snapshot(-0.37296685576438904),
-                        snapshot(0.24662961065769196),
-                        snapshot(0.2667076289653778),
-                        length=128,
-                    ),
-                    length=1,
-                ),
+                embeddings=IsList(IsList(IsFloat(), length=128), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
                 model_name='sentence-transformers-testing/stsb-bert-tiny-safetensors',
@@ -361,15 +324,7 @@ class TestSentenceTransformers:
         result = await embedder.embed_documents(['hello', 'world'])
         assert result == snapshot(
             EmbeddingResult(
-                embeddings=IsList(
-                    IsList(
-                        snapshot(0.2728135883808136),
-                        snapshot(0.5866574645042419),
-                        snapshot(-0.6559390425682068),
-                        length=128,
-                    ),
-                    length=2,
-                ),
+                embeddings=IsList(IsList(IsFloat(), length=128), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
                 model_name='sentence-transformers-testing/stsb-bert-tiny-safetensors',

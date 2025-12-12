@@ -29,9 +29,9 @@ class WrapperEmbeddingModel(EmbeddingModel):
         self.wrapped = infer_embedding_model(wrapped) if isinstance(wrapped, str) else wrapped
 
     async def embed(
-        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        return await self.wrapped.embed(documents, input_type=input_type, settings=settings)
+        return await self.wrapped.embed(inputs, input_type=input_type, settings=settings)
 
     @property
     def model_name(self) -> str:

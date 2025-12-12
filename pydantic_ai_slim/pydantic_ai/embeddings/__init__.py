@@ -181,11 +181,11 @@ class Embedder:
         return await self.embed(documents, input_type='document', settings=settings)
 
     async def embed(
-        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         model = self._get_model()
         settings = merge_embedding_settings(self._settings, settings)
-        return await model.embed(documents, input_type=input_type, settings=settings)
+        return await model.embed(inputs, input_type=input_type, settings=settings)
 
     def embed_query_sync(
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
@@ -198,11 +198,9 @@ class Embedder:
         return _utils.get_event_loop().run_until_complete(self.embed_documents(documents, settings=settings))
 
     def embed_sync(
-        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        return _utils.get_event_loop().run_until_complete(
-            self.embed(documents, input_type=input_type, settings=settings)
-        )
+        return _utils.get_event_loop().run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))
 
     async def max_input_tokens(self) -> int | None:
         model = self._get_model()

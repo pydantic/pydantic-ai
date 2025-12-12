@@ -117,9 +117,9 @@ class CohereEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     async def embed(
-        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        documents, settings = self.prepare_embed(documents, settings)
+        inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 
         request_options = RequestOptions()
@@ -135,7 +135,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         try:
             response = await self._client.embed(
                 model=self.model_name,
-                texts=documents,
+                texts=inputs,
                 output_dimension=settings.get('dimensions'),
                 input_type=cohere_input_type,
                 max_tokens=settings.get('cohere_max_tokens'),
@@ -156,7 +156,7 @@ class CohereEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=documents,
+            inputs=inputs,
             input_type=input_type,
             usage=_map_usage(response),
             model_name=self.model_name,

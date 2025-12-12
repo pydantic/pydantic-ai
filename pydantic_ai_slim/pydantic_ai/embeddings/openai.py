@@ -83,14 +83,14 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         return self._provider.name
 
     async def embed(
-        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        documents, settings = self.prepare_embed(documents, settings)
+        inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(OpenAIEmbeddingSettings, settings)
 
         try:
             response = await self._client.embeddings.create(
-                input=documents,
+                input=inputs,
                 model=self.model_name,
                 dimensions=settings.get('dimensions') or OMIT,
                 extra_headers=settings.get('extra_headers'),
@@ -107,7 +107,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
 
         return EmbeddingResult(
             embeddings=embeddings,
-            inputs=documents,
+            inputs=inputs,
             input_type=input_type,
             usage=_map_usage(response.usage, self.system, self.base_url, response.model),
             model_name=response.model,

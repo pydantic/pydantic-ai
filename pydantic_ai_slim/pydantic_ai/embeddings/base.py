@@ -19,7 +19,6 @@ class EmbeddingModel(ABC):
 
         Args:
             settings: Model-specific settings that will be used as defaults for this model.
-            profile: The model profile to use.
         """
         self._settings = settings
 
@@ -47,19 +46,19 @@ class EmbeddingModel(ABC):
 
     @abstractmethod
     async def embed(
-        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         raise NotImplementedError
 
     def prepare_embed(
-        self, documents: str | Sequence[str], settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], settings: EmbeddingSettings | None = None
     ) -> tuple[list[str], EmbeddingSettings]:
-        """Prepare the documents and settings for the embedding."""
-        documents = [documents] if isinstance(documents, str) else list(documents)
+        """Prepare the inputs and settings for the embedding."""
+        inputs = [inputs] if isinstance(inputs, str) else list(inputs)
 
         settings = merge_embedding_settings(self._settings, settings) or {}
 
-        return documents, settings
+        return inputs, settings
 
     async def max_input_tokens(self) -> int | None:
         """Get the maximum number of tokens that can be input to the model.

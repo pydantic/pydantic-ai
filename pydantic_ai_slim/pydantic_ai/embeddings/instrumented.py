@@ -57,46 +57,51 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         self.instrumentation_settings = options or InstrumentationSettings()
 
     async def embed(
-        self, documents: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
-        with self._instrument(documents, input_type, settings) as finish:
-            result = await self.wrapped.embed(documents, input_type=input_type, settings=settings)
+        inputs, settings = self.prepare_embed(inputs, settings)
+        with self._instrument(inputs, input_type, settings) as finish:
+            result = await self.wrapped.embed(inputs, input_type=input_type, settings=settings)
             finish(result)
             return result
 
     @contextmanager
     def _instrument(
         self,
-        documents: str | Sequence[str],
+        inputs: list[str],
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None,
     ) -> Iterator[Callable[[EmbeddingResult], None]]:
         operation = 'embeddings'
         span_name = f'{operation} {self.model_name}'
 
-        documents_count = 1 if isinstance(documents, str) else len(documents)
+        inputs_count = len(inputs)
 
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
             'input_type': input_type,
-            'documents_count': documents_count,
+            'inputs_count': inputs_count,
         }
 
         if settings:
             attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
 
         if self.instrumentation_settings.include_content:
-            attributes['gen_ai.prompt'] = documents if isinstance(documents, str) else json.dumps(list(documents))
+            attributes['inputs'] = json.dumps(inputs)
 
         attributes['logfire.json_schema'] = json.dumps(
             {
                 'type': 'object',
                 'properties': {
                     'input_type': {'type': 'string'},
-                    'documents_count': {'type': 'integer'},
+                    'inputs_count': {'type': 'integer'},
                     'embedding_settings': {'type': 'object'},
-                    'gen_ai.prompt': {'type': ['string', 'array']},
+                    **(
+                        {'inputs': {'type': ['array']}, 'embeddings': {'type': 'array'}}
+                        if self.instrumentation_settings.include_content
+                        else {}
+                    ),
                 },
             }
         )
@@ -156,6 +161,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     embeddings = result.embeddings
                     if embeddings:
                         attributes_to_set['gen_ai.embeddings.dimension.count'] = len(embeddings[0])
+                        if self.instrumentation_settings.include_content:
+                            attributes['embeddings'] = json.dumps(embeddings)
 
                     if result.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = result.provider_response_id
