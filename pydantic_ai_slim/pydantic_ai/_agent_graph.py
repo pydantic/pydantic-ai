@@ -147,7 +147,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
-    prompt_templates: _prompt_templates.PromptTemplates | None
+    prompt_templates: _prompt_templates.PromptTemplates = _prompt_templates.DEFAULT_PROMPT_TEMPLATES
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -521,8 +521,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         prompt_templates = ctx.deps.prompt_templates
 
-        if prompt_templates:
-            message_history = _apply_prompt_templates(message_history, prompt_templates, run_context)
+        message_history = _apply_prompt_templates(message_history, prompt_templates, run_context)
 
         ctx.state.message_history[:] = message_history
 
@@ -800,7 +799,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
-        if tool_responses and ctx.deps.prompt_templates:
+        if tool_responses:
             run_ctx = build_run_context(ctx)
             tool_responses = [ctx.deps.prompt_templates.apply_template(part, run_ctx) for part in tool_responses]
 
@@ -890,7 +889,7 @@ async def process_tool_calls(  # noqa: C901
             if final_result.tool_call_id == call.tool_call_id:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.PromptTemplates.final_result_processed,
+                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.final_result_processed,
                     tool_call_id=call.tool_call_id,
                     return_kind='final-result-processed',
                 )
@@ -898,7 +897,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call)
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.PromptTemplates.output_tool_not_executed,
+                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.output_tool_not_executed,
                     tool_call_id=call.tool_call_id,
                     return_kind='output-tool-not-executed',
                 )
@@ -923,7 +922,7 @@ async def process_tool_calls(  # noqa: C901
             else:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.PromptTemplates.final_result_processed,
+                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.final_result_processed,
                     tool_call_id=call.tool_call_id,
                     return_kind='final-result-processed',
                 )
@@ -937,7 +936,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.PromptTemplates.function_tool_not_executed,
+                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.function_tool_not_executed,
                     tool_call_id=call.tool_call_id,
                     return_kind='function-tool-not-executed',
                 )
@@ -996,7 +995,7 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content=_prompt_templates.PromptTemplates.function_tool_not_executed,
+                            content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.function_tool_not_executed,
                             tool_call_id=call.tool_call_id,
                             return_kind='function-tool-not-executed',
                         )

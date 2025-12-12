@@ -76,3 +76,6 @@ class PromptTemplates:
         else:
             message_part = replace(message_part, content=template(message, ctx))
         return message_part
+
+
+DEFAULT_PROMPT_TEMPLATES = PromptTemplates()
