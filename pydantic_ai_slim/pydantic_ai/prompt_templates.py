@@ -6,7 +6,9 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ._output import OutputSchema
     from ._run_context import RunContext as _RunContext
+
 
 from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
 
@@ -116,6 +118,16 @@ class PromptTemplates:
         else:
             message_part = replace(message_part, content=template(message, ctx))
         return message_part
+
+    def get_prompted_output_template(self, output_schema: OutputSchema[Any]) -> str | None:
+        """Get the prompted output template for the given output schema."""
+        from ._output import PromptedOutputSchema
+
+        if not isinstance(output_schema, PromptedOutputSchema):
+            print('Output schema is not a PromptedOutputSchema')
+            return None
+
+        return self.prompted_output_template
 
 
 DEFAULT_PROMPT_TEMPLATES = PromptTemplates()

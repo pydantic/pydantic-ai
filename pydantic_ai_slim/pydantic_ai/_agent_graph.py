@@ -396,9 +396,8 @@ async def _prepare_request_parameters(
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
 
-    prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
-    )
+    prompt_templates = ctx.deps.prompt_templates
+    prompted_output_template = prompt_templates.get_prompted_output_template(output_schema)
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
