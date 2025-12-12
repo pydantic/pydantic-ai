@@ -2024,20 +2024,20 @@ class PromptTemplates:
     Default: "Tool not executed - a final result was already processed."
     """
 
-    def apply_template(self, message: ModelRequestPart | ModelResponsePart, ctx: _RunContext[Any]):
-        if isinstance(message, ToolReturnPart):
-            if message.return_kind == 'final-result-processed' and self.final_result_processed:
-                self._apply_tool_template(message, ctx, self.final_result_processed)
-            elif message.return_kind == 'output-tool-not-executed' and self.output_tool_not_executed:
-                self._apply_tool_template(message, ctx, self.output_tool_not_executed)
-            elif message.return_kind == 'function-tool-not-executed' and self.function_tool_not_executed:
-                self._apply_tool_template(message, ctx, self.function_tool_not_executed)
-
-        elif isinstance(message, RetryPromptPart) and self.retry_prompt:
+    def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
+        if isinstance(message_part, ToolReturnPart):
+            if message_part.return_kind == 'final-result-processed' and self.final_result_processed:
+                return self._apply_tool_template(message_part, ctx, self.final_result_processed)
+            elif message_part.return_kind == 'output-tool-not-executed' and self.output_tool_not_executed:
+                return self._apply_tool_template(message_part, ctx, self.output_tool_not_executed)
+            elif message_part.return_kind == 'function-tool-not-executed' and self.function_tool_not_executed:
+                return self._apply_tool_template(message_part, ctx, self.function_tool_not_executed)
+        elif isinstance(message_part, RetryPromptPart) and self.retry_prompt:
             if isinstance(self.retry_prompt, str):
-                message.retry_message = self.retry_prompt
+                return replace(message_part, retry_message=self.retry_prompt)
             else:
-                message.retry_message = self.retry_prompt(message, ctx)
+                return replace(message_part, retry_message=self.retry_prompt(message_part, ctx))
+        return message_part  # Returns the original message if no template is applied
 
     def _apply_tool_template(
         self,
@@ -2045,7 +2045,11 @@ class PromptTemplates:
         ctx: _RunContext[Any],
         template: str | Callable[[ToolReturnPart, _RunContext[Any]], str],
     ):
+        message_part: ToolReturnPart = message
+
         if isinstance(template, str):
-            message.content = template
+            message_part = replace(message_part, content=template)
+
         else:
-            message.content = template(message, ctx)
+            message_part = replace(message_part, content=template(message, ctx))
+        return message_part

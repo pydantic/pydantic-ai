@@ -511,8 +511,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
 
         prompt_templates = ctx.deps.prompt_templates
+
         if prompt_templates:
-            _apply_prompt_templates(message_history, prompt_templates, run_context)
+            message_history = _apply_prompt_templates(message_history, prompt_templates, run_context)
+
+        ctx.state.message_history[:] = message_history
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -790,8 +793,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         if tool_responses and ctx.deps.prompt_templates:
             run_ctx = build_run_context(ctx)
-            for part in tool_responses:
-                ctx.deps.prompt_templates.apply_template(part, run_ctx)
+            tool_responses = [ctx.deps.prompt_templates.apply_template(part, run_ctx) for part in tool_responses]
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
@@ -1382,7 +1384,14 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
 
 def _apply_prompt_templates(
     messages: list[_messages.ModelMessage], prompt_templates: _messages.PromptTemplates, ctx: RunContext[Any]
-):
+) -> list[_messages.ModelMessage]:
+    messages_template_applied: list[_messages.ModelMessage] = []
+
     for msg in messages:
-        for msg_part in msg.parts:
-            prompt_templates.apply_template(msg_part, ctx)
+        if isinstance(msg, _messages.ModelRequest):
+            parts_template_applied = [prompt_templates.apply_template(part, ctx) for part in msg.parts]
+            messages_template_applied.append(replace(msg, parts=parts_template_applied))
+        else:
+            messages_template_applied.append(msg)
+
+    return messages_template_applied
