@@ -83,42 +83,43 @@ class PromptTemplates:
         return message_part  # Returns the original message if no template is applied
 
     def _get_template_for_retry(
-        self, message: RetryPromptPart
+        self, message_part: RetryPromptPart
     ) -> str | Callable[[RetryPromptPart, _RunContext[Any]], str]:
-        if isinstance(message.content, str):
-            if message.tool_name is None:
-                return self.model_retry_string_no_tool
+        template: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = self.default_model_retry
+        if isinstance(message_part.content, str):
+            if message_part.tool_name is None:
+                template = self.model_retry_string_no_tool
             else:
-                return self.model_retry_string_tool
+                template = self.model_retry_string_tool
         else:
-            return self.validation_errors_retry
-
+            template = self.validation_errors_retry
+        
+        return template
     def _apply_retry_tempelate(
         self,
-        message: RetryPromptPart,
+        message_part: RetryPromptPart,
         ctx: _RunContext[Any],
         template: str | Callable[[RetryPromptPart, _RunContext[Any]], str],
     ) -> RetryPromptPart:
         if isinstance(template, str):
-            return replace(message, retry_message=template)
+            message_part = replace(message_part, retry_message=template)
         else:
-            return replace(message, retry_message=template(message, ctx))
+            message_part = replace(message_part, retry_message=template(message_part, ctx))
+        
+        return message_part
 
     def _apply_tool_template(
         self,
-        message: ToolReturnPart,
+        message_part: ToolReturnPart,
         ctx: _RunContext[Any],
         template: str | Callable[[ToolReturnPart, _RunContext[Any]], str],
     ) -> ToolReturnPart:
-        message_part: ToolReturnPart = message
-
         if isinstance(template, str):
             message_part = replace(message_part, content=template)
 
         else:
-            message_part = replace(message_part, content=template(message, ctx))
+            message_part = replace(message_part, content=template(message_part, ctx))
         return message_part
-
     def get_prompted_output_template(self, output_schema: OutputSchema[Any]) -> str | None:
         """Get the prompted output template for the given output schema."""
         from ._output import PromptedOutputSchema

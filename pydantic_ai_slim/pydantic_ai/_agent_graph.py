@@ -522,7 +522,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         prompt_templates = ctx.deps.prompt_templates
 
-        message_history = _apply_prompt_templates(message_history, prompt_templates, run_context)
+        message_history = _apply_prompt_templates_to_message_history(message_history, prompt_templates, run_context)
 
         ctx.state.message_history[:] = message_history
 
@@ -1391,16 +1391,16 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
     return clean_messages
 
 
-def _apply_prompt_templates(
+def _apply_prompt_templates_to_message_history(
     messages: list[_messages.ModelMessage], prompt_templates: _prompt_templates.PromptTemplates, ctx: RunContext[Any]
 ) -> list[_messages.ModelMessage]:
-    messages_template_applied: list[_messages.ModelMessage] = []
+    messages_with_templates_applied: list[_messages.ModelMessage] = []
 
     for msg in messages:
         if isinstance(msg, _messages.ModelRequest):
             parts_template_applied = [prompt_templates.apply_template(part, ctx) for part in msg.parts]
-            messages_template_applied.append(replace(msg, parts=parts_template_applied))
+            messages_with_templates_applied.append(replace(msg, parts=parts_template_applied))
         else:
-            messages_template_applied.append(msg)
+            messages_with_templates_applied.append(msg)
 
-    return messages_template_applied
+    return messages_with_templates_applied
