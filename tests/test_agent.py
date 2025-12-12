@@ -207,14 +207,13 @@ def test_result_pydantic_model_retry():
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Fix these errors and try again',
                     )
                 ],
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=88, output_tokens=14),
+                usage=RequestUsage(input_tokens=89, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -582,7 +581,7 @@ def test_result_pydantic_model_validation_error():
 ]
 ```
 
-Fix these errors and try again\
+Fix the errors and try again.\
 """)
 
 
@@ -628,7 +627,6 @@ def test_output_validator():
                         tool_name='final_result',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Fix these errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -773,7 +771,6 @@ def test_plain_response_then_tuple():
                         content='Please include your response in a tool call.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
-                        retry_message='Fix these errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -1375,7 +1372,6 @@ def test_output_type_function_with_retry():
                         tool_name='final_result',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        retry_message='Fix these errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -1454,10 +1450,7 @@ def test_output_type_text_output_function_with_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='City not found, I only know Mexico City',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        retry_message='Fix these errors and try again.',
+                        content='City not found, I only know Mexico City', tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
                 ],
                 run_id=IsStr(),
@@ -2265,14 +2258,13 @@ def test_native_output():
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        retry_message='Fix these errors and try again',
                     )
                 ],
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=86, output_tokens=12),
+                usage=RequestUsage(input_tokens=87, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2337,10 +2329,7 @@ def test_prompted_output_function_with_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='City not found, I only know Mexico City',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        retry_message='Fix these errors and try again.',
+                        content='City not found, I only know Mexico City', tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
                 ],
                 run_id=IsStr(),
@@ -3038,7 +3027,6 @@ def test_unknown_tool():
                         content="Unknown tool name: 'foobar'. No tools available.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Fix these errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -3085,7 +3073,6 @@ def test_unknown_tool_fix():
                         content="Unknown tool name: 'foobar'. No tools available.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Fix these errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -3506,7 +3493,6 @@ class TestMultipleToolCalls:
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
-                            retry_message='Fix these errors and try again.',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3619,7 +3605,6 @@ class TestMultipleToolCalls:
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
-                            retry_message='Fix these errors and try again.',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3679,7 +3664,6 @@ class TestMultipleToolCalls:
                     tool_name='final_result',
                     tool_call_id='first',
                     timestamp=IsDatetime(),
-                    retry_message='Fix these errors and try again',
                 ),
                 ToolReturnPart(
                     tool_name='final_result',
@@ -4828,7 +4812,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_call_id': IsStr(),
                     'timestamp': IsStr(),
                     'part_kind': 'retry-prompt',
-                    'retry_message': 'Fix these errors and try again',
+                    'retry_message': 'Fix the errors and try again.',
                 }
             ],
             'instructions': None,
@@ -5718,10 +5702,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        retry_message='Fix these errors and try again.',
+                        content='Please return text or call a tool.', tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
                 ],
                 run_id=IsStr(),

@@ -124,7 +124,6 @@ class PromptTemplates:
         from ._output import PromptedOutputSchema
 
         if not isinstance(output_schema, PromptedOutputSchema):
-            print('Output schema is not a PromptedOutputSchema')
             return None
 
         return self.prompted_output_template
