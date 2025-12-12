@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Sequence
+from typing import Any
 
 from pydantic.errors import PydanticUserError
 from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
@@ -101,6 +102,8 @@ class PydanticAIPlugin(SimplePlugin):
 
         for workflow_class in workflows:  # type: ignore[reportUnknownMemberType]
             agents = getattr(workflow_class, '__pydantic_ai_agents__', None)  # type: ignore[reportUnknownMemberType]
+            if agents is None:
+                continue
             if not isinstance(agents, Sequence):
                 raise TypeError(  # pragma: no cover
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
@@ -108,7 +111,7 @@ class PydanticAIPlugin(SimplePlugin):
             for agent in agents:  # type: ignore[reportUnknownVariableType]
                 if not isinstance(agent, TemporalAgent):
                     raise TypeError(  # pragma: no cover
-                        f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent, got {type(agent)}' # type: ignore[reportUnknownVariableType]
+                        f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
                     )
                 activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
 
