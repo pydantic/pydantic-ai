@@ -14,7 +14,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
 class TemporalRunContext(RunContext[AgentDepsT]):
     """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
 
-    By default, only the `deps`, `run_id`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
+    By default, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` attributes will be available.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
     """
 
@@ -43,6 +43,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         """Serialize the run context to a `dict[str, Any]`."""
         return {
             'run_id': ctx.run_id,
+            'metadata': ctx.metadata,
             'retries': ctx.retries,
             'tool_call_id': ctx.tool_call_id,
             'tool_name': ctx.tool_name,

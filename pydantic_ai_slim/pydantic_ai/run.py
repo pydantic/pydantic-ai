@@ -284,6 +284,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._graph_run.state.usage
 
     @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._graph_run.state.metadata
+
+    @property
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._graph_run.state.run_id
@@ -421,6 +426,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._state.metadata
 
     @property
     def run_id(self) -> str:
