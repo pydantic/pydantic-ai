@@ -1,0 +1,250 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '191'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Solve this problem: 2 + 2'
+        role: user
+      instructions: Solve math problems step by step.
+      model: o3-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2224'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-hmtx7ob9xfpodrsdmshpnklm
+      openai-processing-ms:
+      - '5197'
+      openai-project:
+      - proj_98JsR0JYQV1Ovk2AT0cljXCL
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765482650
+      error: null
+      id: resp_0733be64626706b100693b209aaa088196827561037f1df13a
+      incomplete_details: null
+      instructions: Solve math problems step by step.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: o3-mini-2025-01-31
+      object: response
+      output:
+      - encrypted_content: gAAAAABpOyCfco9tdXXAuk6NYMDs7fBSwWP0zrnOhGSKKBSIrRavpbFj6Xg8cy0Z_lU4F1ajqYk5vBYYGmGN1L5t5xZqwYzuwtd9ZpqxPmO-jUXPp4vPpzXUyhRZa3jHDn3LUche6YQkEPJPpkC6fS0wGqA7CXkL56Lj8UjnKtnoUvzZuw4wKvwdwpOpuT6If2aMsMHkPzmQko0EmXnriP66DLlvKKtz8W-FhtQRCL3UE0ujRvED7F0pbuj9xMTO7DLL4qpyntlBHuAx8n2u4zf7OrGMF2Sf0I5ssW3i9Ivu_sJHFaZDSfrd2Fcypsz94nTzy4O0_c5dejsmja-Sc1eNskOTh2iLAhxX1GusXIkM6PlwnNBvJZuKX0dIpeSYjW2rYPpnrOX-2oXRJ5kr8iBUBQUZdiHaW3XwegpNsvDbISanVmS6Vpc=
+        id: rs_0733be64626706b100693b209da7ec8196a6da4cc951e9246b
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            Step 1: Identify the operation. Here, we need to add 2 and 2.
+
+            Step 2: Perform the addition. When you add 2 + 2, it equals 4.
+
+            Final Answer: 4.
+          type: output_text
+        id: msg_0733be64626706b100693b209e2a5881968177d48f75a9e0fb
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 26
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 113
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 139
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1125'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=3paClrNts95hFSGdEHgcuMB8PaO4RicFIXu4Lg9ADF4-1765482655-1.0.1.1-GkFglamsmO45mG4CE_.lCgrVIDAlHC2lgAoMxqacLI.NmKgwiXKqfrOBq3YNk3edlGCocz5OgYi4pvEqQcSkxwXbutVeqCAabEMYT6D61mk;
+        _cfuvid=wi7d37SWFZVH0wl6wvA5QCGGCglO369lX9m.JAp8jGs-1765482655884-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Solve this problem: 2 + 2'
+        role: user
+      - encrypted_content: gAAAAABpOyCfco9tdXXAuk6NYMDs7fBSwWP0zrnOhGSKKBSIrRavpbFj6Xg8cy0Z_lU4F1ajqYk5vBYYGmGN1L5t5xZqwYzuwtd9ZpqxPmO-jUXPp4vPpzXUyhRZa3jHDn3LUche6YQkEPJPpkC6fS0wGqA7CXkL56Lj8UjnKtnoUvzZuw4wKvwdwpOpuT6If2aMsMHkPzmQko0EmXnriP66DLlvKKtz8W-FhtQRCL3UE0ujRvED7F0pbuj9xMTO7DLL4qpyntlBHuAx8n2u4zf7OrGMF2Sf0I5ssW3i9Ivu_sJHFaZDSfrd2Fcypsz94nTzy4O0_c5dejsmja-Sc1eNskOTh2iLAhxX1GusXIkM6PlwnNBvJZuKX0dIpeSYjW2rYPpnrOX-2oXRJ5kr8iBUBQUZdiHaW3XwegpNsvDbISanVmS6Vpc=
+        id: rs_0733be64626706b100693b209da7ec8196a6da4cc951e9246b
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: |-
+            Step 1: Identify the operation. Here, we need to add 2 and 2.
+
+            Step 2: Perform the addition. When you add 2 + 2, it equals 4.
+
+            Final Answer: 4.
+          type: output_text
+        id: msg_0733be64626706b100693b209e2a5881968177d48f75a9e0fb
+        role: assistant
+        status: completed
+        type: message
+      - content: What about 3 + 3?
+        role: user
+      instructions: Solve math problems step by step.
+      model: o3-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2212'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-hmtx7ob9xfpodrsdmshpnklm
+      openai-processing-ms:
+      - '7690'
+      openai-project:
+      - proj_98JsR0JYQV1Ovk2AT0cljXCL
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765482656
+      error: null
+      id: resp_0733be64626706b100693b20a089608196b98a1ca95d410a3c
+      incomplete_details: null
+      instructions: Solve math problems step by step.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: o3-mini-2025-01-31
+      object: response
+      output:
+      - encrypted_content: gAAAAABpOyColE2NxB7iBVskqpY1uV0YLska0HdvPVWl8jbRAUeCWLqmYyDYSPNRJAGImlWzXRO8WdU9BqS1KxwttYHtTHHie8spRmz1HjMN-K37adtO1SMHdZ_4U3vGRUKX17z4ziij5KicGgRXM5oBrEmhgcL0r5W8agvaiZRqxT38cVsGxrwDu3xmyw_gNeFmuB8lD7-x4P7TxBTyiS_wFZSnix80c8ha5hBCHcrZQKSecDA09cVyD391qUnTEzC-xYDRGh5CZb0UnGHsKPo3ZQ4lR9DcUqorcPMJpWalULwI8QpFtQZPVqCdb4gDOhJuWQTu8fPU1i07x7pqBR8qRMV3ieK4dq_0uh7hz8iyZ3qRFN58KRw39i-6YHnOWGTEBo5CpWjClUbg0d_9fNSYTeujKj4El8OqtJi0MfgKeEZUg0DpJns=
+        id: rs_0733be64626706b100693b20a21000819692b4a829d775b154
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            Step 1: Identify the operation. Here, we need to add 3 and 3.
+
+            Step 2: Perform the addition. Adding 3 + 3 yields 6.
+
+            Final Answer: 6.
+          type: output_text
+        id: msg_0733be64626706b100693b20a269f481969e54369438a4b184
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 90
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 45
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 135
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
