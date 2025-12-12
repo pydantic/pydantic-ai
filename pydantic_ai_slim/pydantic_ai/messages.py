@@ -2,6 +2,8 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import mimetypes
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -27,10 +29,15 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 _mime_types = MimeTypes()
+# Replicate what is being done in `mimetypes.init()`
+_mime_types.read_windows_registry()
+for file in mimetypes.knownfiles:
+    if os.path.isfile(file):
+        _mime_types.read(file)
+
 # Document types
 _mime_types.add_type('application/msword', '.doc')
 _mime_types.add_type('application/pdf', '.pdf')
-_mime_types.add_type('application/xml', '.xml')
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.ms-excel', '.xls')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
