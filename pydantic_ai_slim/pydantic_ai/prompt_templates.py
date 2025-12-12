@@ -98,7 +98,7 @@ class PromptTemplates:
         message: RetryPromptPart,
         ctx: _RunContext[Any],
         template: str | Callable[[RetryPromptPart, _RunContext[Any]], str],
-    ):
+    ) -> RetryPromptPart:
         if isinstance(template, str):
             return replace(message, retry_message=template)
         else:
@@ -109,7 +109,7 @@ class PromptTemplates:
         message: ToolReturnPart,
         ctx: _RunContext[Any],
         template: str | Callable[[ToolReturnPart, _RunContext[Any]], str],
-    ):
+    ) -> ToolReturnPart:
         message_part: ToolReturnPart = message
 
         if isinstance(template, str):

@@ -5741,7 +5741,12 @@ async def test_hitl_tool_approval():
 
     model = FunctionModel(model_function)
 
-    agent = Agent(model, output_type=[str, DeferredToolRequests])
+    # Using prompt_templates without setting tool_call_denied to cover line 78 in prompt_templates.py
+    agent = Agent(
+        model,
+        output_type=[str, DeferredToolRequests],
+        prompt_templates=PromptTemplates(tool_call_denied='Tool call denied custom message.'),
+    )
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
@@ -5865,7 +5870,7 @@ async def test_hitl_tool_approval():
                     ),
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content='File cannot be deleted',
+                        content='Tool call denied custom message.',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                         return_kind='tool-denied',
@@ -5875,7 +5880,7 @@ async def test_hitl_tool_approval():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=78, output_tokens=24),
+                usage=RequestUsage(input_tokens=80, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -5897,7 +5902,7 @@ async def test_hitl_tool_approval():
                     ),
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content='File cannot be deleted',
+                        content='Tool call denied custom message.',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                         return_kind='tool-denied',
@@ -5907,7 +5912,7 @@ async def test_hitl_tool_approval():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=78, output_tokens=24),
+                usage=RequestUsage(input_tokens=80, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
