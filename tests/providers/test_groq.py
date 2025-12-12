@@ -119,7 +119,7 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
 
     mistral_profile = provider.model_profile('mistral-saba-24b')
     mistral_model_profile_mock.assert_called_with('mistral-saba-24b')
-    assert mistral_profile is None
+    assert mistral_profile is not None
 
     qwen_profile = provider.model_profile('qwen-qwq-32b')
     qwen_model_profile_mock.assert_called_with('qwen-qwq-32b')
