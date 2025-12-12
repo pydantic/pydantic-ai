@@ -4121,6 +4121,7 @@ def test_binary_content_serializable():
                 'provider_name': None,
                 'provider_details': None,
                 'provider_response_id': None,
+                'provider_url': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'finish_reason': None,
@@ -4183,6 +4184,7 @@ def test_image_url_serializable_missing_media_type():
                 'timestamp': IsStr(),
                 'provider_name': None,
                 'provider_details': None,
+                'provider_url': None,
                 'provider_response_id': None,
                 'kind': 'response',
                 'finish_reason': None,
@@ -4252,6 +4254,7 @@ def test_image_url_serializable():
                 'timestamp': IsStr(),
                 'provider_name': None,
                 'provider_details': None,
+                'provider_url': None,
                 'provider_response_id': None,
                 'kind': 'response',
                 'finish_reason': None,
@@ -5571,6 +5574,15 @@ async def test_wrapper_agent():
     assert wrapper_agent.name == 'wrapped'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+    assert wrapper_agent.output_json_schema() == snapshot(
+        {
+            'type': 'object',
+            'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'string'}},
+            'title': 'Foo',
+            'required': ['a', 'b'],
+        }
+    )
+    assert wrapper_agent.output_json_schema(output_type=str) == snapshot({'type': 'string'})
 
     bar_toolset = FunctionToolset()
 

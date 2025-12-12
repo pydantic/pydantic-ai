@@ -63,9 +63,19 @@ def test_init():
 
 
 @dataclass
+class MockClientWrapper:
+    def get_base_url(self) -> str:
+        return 'https://api.cohere.com'
+
+
+@dataclass
 class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
+    _client_wrapper: MockClientWrapper = None  # type: ignore
+
+    def __post_init__(self):
+        self._client_wrapper = MockClientWrapper()
 
     @classmethod
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
@@ -125,6 +135,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -138,6 +149,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -213,6 +225,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -306,6 +319,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -333,6 +347,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -354,6 +369,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -453,6 +469,7 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -499,6 +516,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
                 finish_reason='stop',
@@ -534,6 +552,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='command-a-reasoning-08-2025',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),

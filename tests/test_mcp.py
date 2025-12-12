@@ -54,6 +54,7 @@ with try_import() as imports_successful:
         ElicitRequestParams,
         ElicitResult,
         ImageContent,
+        Implementation,
         TextContent,
     )
 
@@ -95,7 +96,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(19)
+        assert len(tools) == snapshot(20)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -156,7 +157,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(19)
+        assert len(tools) == snapshot(20)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -248,6 +249,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
@@ -280,6 +282,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
@@ -418,6 +421,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
@@ -454,6 +458,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
@@ -499,6 +504,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
@@ -531,6 +537,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
@@ -576,6 +583,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
@@ -608,6 +616,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
@@ -655,6 +664,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
@@ -692,6 +702,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
@@ -741,6 +752,7 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
@@ -778,6 +790,7 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
@@ -808,6 +821,7 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -837,6 +851,7 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -879,6 +894,7 @@ async def test_tool_returning_audio_resource_link(
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
@@ -914,6 +930,7 @@ async def test_tool_returning_audio_resource_link(
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
@@ -959,6 +976,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
                     finish_reason='tool_call',
@@ -998,6 +1016,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
                     finish_reason='stop',
@@ -1037,6 +1056,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
@@ -1069,6 +1089,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
@@ -1112,6 +1133,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
                     finish_reason='tool_call',
@@ -1144,6 +1166,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
                     finish_reason='stop',
@@ -1191,6 +1214,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
@@ -1228,6 +1252,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
@@ -1264,6 +1289,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
@@ -1303,6 +1329,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
@@ -1335,6 +1362,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
@@ -1382,6 +1410,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
                     finish_reason='tool_call',
@@ -1430,6 +1459,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
                     finish_reason='stop',
@@ -2036,6 +2066,38 @@ async def test_instructions(mcp_server: MCPServerStdio) -> None:
         mcp_server.instructions
     async with mcp_server:
         assert mcp_server.instructions == 'Be a helpful assistant.'
+
+
+async def test_client_info_passed_to_session() -> None:
+    """Test that provided client_info is passed unchanged to ClientSession."""
+    implementation = Implementation(
+        name='MyCustomClient',
+        version='2.5.3',
+        title='Custom MCP client',
+        websiteUrl='https://example.com/client',
+    )
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], client_info=implementation)
+
+    async with server:
+        result = await server.direct_call_tool('get_client_info', {})
+        assert result == {
+            'name': 'MyCustomClient',
+            'version': '2.5.3',
+            'title': 'Custom MCP client',
+            'websiteUrl': 'https://example.com/client',
+        }
+
+
+async def test_client_info_not_set() -> None:
+    """Test that when client_info is not set, the default MCP client info is used."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    async with server:
+        result = await server.direct_call_tool('get_client_info', {})
+        # When client_info is not set, the MCP library provides default client info
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result['name'] == 'mcp'
 
 
 async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):
