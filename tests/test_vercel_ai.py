@@ -385,13 +385,13 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":null,"type":"search"}',
+                'inputTextDelta': '{"type":"search"}',
             },
             {
                 'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
+                'toolCallId': IsStr(),
                 'toolName': 'web_search',
-                'input': {'query': None, 'type': 'search'},
+                'input': {'type': 'search'},
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
@@ -407,13 +407,13 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":null,"type":"search"}',
+                'inputTextDelta': '{"type":"search"}',
             },
             {
                 'type': 'tool-input-available',
                 'toolCallId': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
                 'toolName': 'web_search',
-                'input': {'query': None, 'type': 'search'},
+                'input': {'type': 'search'},
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },

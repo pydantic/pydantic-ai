@@ -125,10 +125,11 @@ It also takes an optional `event_stream_handler` argument that you can use to ga
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
 !!! note
-    As the `run_stream()` method will consider the first output matching the [output type](output.md#structured-output) to be the final output,
-    it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+    The `run_stream()` method will consider the first output that matches the [output type](output.md#structured-output) to be the final output of the agent run, even when the model generates tool calls after this "final" output.
 
-    If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
+	These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed.
+
+    If you want to always keep running the agent when it performs tool calls, and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
 
 ```python {title="run_stream_event_stream_handler.py"}
