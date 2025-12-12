@@ -261,7 +261,7 @@ def test_prompt_templates_callable():
         FunctionModel(return_model),
         output_type=Foo,
         prompt_templates=PromptTemplates(
-            validation_errors_retry=lambda part, ctx: f'Custom retry message {part.content}',
+            validation_errors_retry=lambda part, ctx: f'Please fix these validation errors and try again.',
             final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
             output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
             function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
@@ -293,7 +293,8 @@ def test_prompt_templates_callable():
 ]
 ```
 
-Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]""")
+Please fix these validation errors and try again.\
+""")
 
     assert result.all_messages() == snapshot(
         [
@@ -322,7 +323,7 @@ Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input shoul
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message="Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'wrong'}]",
+                        retry_message='Please fix these validation errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -333,7 +334,7 @@ Custom retry message [{'type': 'int_parsing', 'loc': ('a',), 'msg': 'Input shoul
                     ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=106, output_tokens=23),
+                usage=RequestUsage(input_tokens=91, output_tokens=23),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
