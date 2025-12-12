@@ -1,0 +1,104 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: The quick brown fox jumps over the lazydog.
+        role: user
+      model: gpt-4
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1639'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-hmtx7ob9xfpodrsdmshpnklm
+      openai-processing-ms:
+      - '3045'
+      openai-project:
+      - proj_98JsR0JYQV1Ovk2AT0cljXCL
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765478667
+      error: null
+      id: resp_0f168c710c188db000693b110bd69481908cc0725420db62a2
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4-0613
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The sentence you provided is commonly used as a pangram, which is a phrase that uses every letter of the alphabet
+            at least once. This sentence is often used for typing practice due to its use of every letter.
+          type: output_text
+        id: msg_0f168c710c188db000693b110ddd608190a9ba699797a03584
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 16
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 45
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 61
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

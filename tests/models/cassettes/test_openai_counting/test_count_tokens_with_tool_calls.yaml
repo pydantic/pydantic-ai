@@ -1,0 +1,90 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '339'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      max_completion_tokens: 1
+      messages:
+      - content: What is the weather in Tokyo?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Tokyo"}'
+            name: get_weather
+          id: call_123
+          type: function
+      - content: Sunny, 25°C
+        role: tool
+        tool_call_id: call_123
+      model: gpt-4o
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '806'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-hmtx7ob9xfpodrsdmshpnklm
+      openai-processing-ms:
+      - '151'
+      openai-project:
+      - proj_98JsR0JYQV1Ovk2AT0cljXCL
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: length
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The
+          refusal: null
+          role: assistant
+      created: 1765493696
+      id: chatcmpl-CljqigJt1MZRYRCYypViQdmPRMT66
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_83554c687e
+      usage:
+        completion_tokens: 1
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 41
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 42
+    status:
+      code: 200
+      message: OK
+version: 1
