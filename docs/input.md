@@ -112,7 +112,7 @@ Some model APIs do not support file URLs at all or for specific file types. In t
 - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]: All URLs
 - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: `DocumentUrl` with media type `text/plain`
 - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] using GLA (Gemini Developer API): All URLs except YouTube video URLs and files uploaded to the [Files API](https://ai.google.dev/gemini-api/docs/files).
-- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]: All URLs except the ones uploaded to S3, specifically starting with `s3://`.
+- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]: All URLs except S3 URLs, specifically starting with `s3://`.
 
 If the model API supports file URLs but may not be able to download a file because of crawling or access restrictions, you can instruct Pydantic AI to download the file content and send that instead of the URL by enabling the `force_download` flag on the URL object. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request.
 
