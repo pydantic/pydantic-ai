@@ -348,6 +348,11 @@ class FunctionStreamedResponse(StreamedResponse):
         return None
 
     @property
+    def provider_url(self) -> None:
+        """Get the provider base URL."""
+        return None
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp

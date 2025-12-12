@@ -95,7 +95,16 @@ def test_known_model_names():  # pragma: lax no cover
     generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
     known_model_names = sorted(get_args(KnownModelName.__value__))
-    assert generated_names == known_model_names
+
+    if generated_names != known_model_names:
+        errors: list[str] = []
+        missing_names = set(generated_names) - set(known_model_names)
+        if missing_names:
+            errors.append(f'Missing names: {missing_names}')
+        extra_names = set(known_model_names) - set(generated_names)
+        if extra_names:
+            errors.append(f'Extra names: {extra_names}')
+        raise AssertionError('\n'.join(errors))
 
 
 class HerokuModel(TypedDict):

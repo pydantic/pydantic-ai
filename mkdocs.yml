@@ -30,6 +30,7 @@ nav:
           - models/anthropic.md
           - models/google.md
           - models/bedrock.md
+          - models/cerebras.md
           - models/cohere.md
           - models/groq.md
           - models/huggingface.md
@@ -146,6 +147,7 @@ nav:
           - api/models/anthropic.md
           - api/models/base.md
           - api/models/bedrock.md
+          - api/models/cerebras.md
           - api/models/cohere.md
           - api/models/fallback.md
           - api/models/function.md
