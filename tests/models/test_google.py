@@ -4566,6 +4566,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4618,6 +4619,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     content='Mexico',
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='The')),
