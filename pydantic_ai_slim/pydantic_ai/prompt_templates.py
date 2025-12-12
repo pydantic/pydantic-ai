@@ -42,7 +42,7 @@ class PromptTemplates:
 
     """
 
-    tool_call_denied: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'Tool call was denied.'
+    tool_call_denied: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'The tool call was denied.'
     """Message sent when a tool call is denied."""
 
     def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
@@ -54,8 +54,7 @@ class PromptTemplates:
             elif message_part.return_kind == 'function-tool-not-executed':
                 return self._apply_tool_template(message_part, ctx, self.function_tool_not_executed)
             elif message_part.return_kind == 'tool-denied':
-                # For tool-denied, only apply template if user configured a custom one
-                # The content may already have a custom message from ToolDenied
+                # The content may already have a custom message from ToolDenied in which case we should not override it
                 if self.tool_call_denied != DEFAULT_PROMPT_TEMPLATES.tool_call_denied:
                     return self._apply_tool_template(message_part, ctx, self.tool_call_denied)
                 return message_part
