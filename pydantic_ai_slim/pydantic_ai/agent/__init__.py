@@ -24,6 +24,7 @@ from .. import (
     exceptions,
     messages as _messages,
     models,
+    prompt_templates as _prompt_templates,
     usage as _usage,
 )
 from .._agent_graph import (
@@ -125,7 +126,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    prompt_templates: _messages.PromptTemplates | None
+    prompt_templates: _prompt_templates.PromptTemplates | None
     """Optional prompt templates used to customize the system-injected messages for this agent."""
 
     _output_type: OutputSpec[OutputDataT]
@@ -170,7 +171,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -223,7 +224,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -365,7 +366,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
-        self._override_prompt_templates: ContextVar[_utils.Option[_messages.PromptTemplates]] = ContextVar(
+        self._override_prompt_templates: ContextVar[_utils.Option[_prompt_templates.PromptTemplates]] = ContextVar(
             '_override_prompt_templates', default=None
         )
 
@@ -435,7 +436,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -455,7 +456,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -475,7 +476,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -767,7 +768,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
-        prompt_templates: _messages.PromptTemplates | _utils.Unset = _utils.UNSET,
+        prompt_templates: _prompt_templates.PromptTemplates | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -1351,8 +1352,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return deps
 
     def _get_prompt_templates(
-        self, prompt_templates: _messages.PromptTemplates | None
-    ) -> _messages.PromptTemplates | None:
+        self, prompt_templates: _prompt_templates.PromptTemplates | None
+    ) -> _prompt_templates.PromptTemplates | None:
         """Get prompt_templates for a run.
 
         If we've overridden prompt_templates via `_override_prompt_templates`, use that,

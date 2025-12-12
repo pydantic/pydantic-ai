@@ -25,7 +25,7 @@ from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import _output, _system_prompt, exceptions, messages as _messages, models, prompt_templates as _prompt_templates, result, usage as _usage
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -138,7 +138,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
-    prompt_templates: _messages.PromptTemplates | None
+    prompt_templates: _prompt_templates.PromptTemplates | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -1383,7 +1383,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
 
 
 def _apply_prompt_templates(
-    messages: list[_messages.ModelMessage], prompt_templates: _messages.PromptTemplates, ctx: RunContext[Any]
+    messages: list[_messages.ModelMessage], prompt_templates: _prompt_templates.PromptTemplates, ctx: RunContext[Any]
 ) -> list[_messages.ModelMessage]:
     messages_template_applied: list[_messages.ModelMessage] = []
 

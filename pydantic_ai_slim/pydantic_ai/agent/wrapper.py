@@ -8,6 +8,7 @@ from .. import (
     _utils,
     messages as _messages,
     models,
+    prompt_templates as _prompt_templates,
     usage as _usage,
 )
 from .._json_schema import JsonSchema
@@ -84,7 +85,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -104,7 +105,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -124,7 +125,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
-        prompt_templates: _messages.PromptTemplates | None = None,
+        prompt_templates: _prompt_templates.PromptTemplates | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
@@ -239,7 +240,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
-        prompt_templates: _messages.PromptTemplates | _utils.Unset = _utils.UNSET,
+        prompt_templates: _prompt_templates.PromptTemplates | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 

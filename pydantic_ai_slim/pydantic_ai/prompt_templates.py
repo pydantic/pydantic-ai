@@ -1,0 +1,70 @@
+from __future__ import annotations as _annotations
+
+from dataclasses import dataclass, replace
+from typing import Any, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._run_context import RunContext as _RunContext
+
+from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
+
+@dataclass
+class PromptTemplates:
+    """Templates for customizing messages that Pydantic AI sends to models.
+
+    Each template can be a static string or a callable that receives context and returns a string.
+    """
+
+    retry_prompt: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    """Message sent to the model after validation failures or invalid responses.
+
+    Default: "Validation feedback: {errors}\\n\\nFix the errors and try again."
+    """
+
+    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Confirmation message sent when a final result is successfully processed.
+
+    Default: "Final result processed."
+    """
+
+    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when an output tool call is skipped because a result was already found.
+
+    Default: "Output tool not used - a final result was already processed."
+    """
+
+    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when a function tool call is skipped because a result was already found.
+
+    Default: "Tool not executed - a final result was already processed."
+    """
+
+    def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
+        if isinstance(message_part, ToolReturnPart):
+            if message_part.return_kind == 'final-result-processed' and self.final_result_processed:
+                return self._apply_tool_template(message_part, ctx, self.final_result_processed)
+            elif message_part.return_kind == 'output-tool-not-executed' and self.output_tool_not_executed:
+                return self._apply_tool_template(message_part, ctx, self.output_tool_not_executed)
+            elif message_part.return_kind == 'function-tool-not-executed' and self.function_tool_not_executed:
+                return self._apply_tool_template(message_part, ctx, self.function_tool_not_executed)
+        elif isinstance(message_part, RetryPromptPart) and self.retry_prompt:
+            if isinstance(self.retry_prompt, str):
+                return replace(message_part, retry_message=self.retry_prompt)
+            else:
+                return replace(message_part, retry_message=self.retry_prompt(message_part, ctx))
+        return message_part  # Returns the original message if no template is applied
+
+    def _apply_tool_template(
+        self,
+        message: ToolReturnPart,
+        ctx: _RunContext[Any],
+        template: str | Callable[[ToolReturnPart, _RunContext[Any]], str],
+    ):
+        message_part: ToolReturnPart = message
+
+        if isinstance(template, str):
+            message_part = replace(message_part, content=template)
+
+        else:
+            message_part = replace(message_part, content=template(message, ctx))
+        return message_part
