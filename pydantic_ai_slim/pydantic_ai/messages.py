@@ -918,7 +918,9 @@ error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config
 
 def _get_default_model_retry_message() -> str:
     from .prompt_templates import DEFAULT_PROMPT_TEMPLATES
+
     return cast(str, DEFAULT_PROMPT_TEMPLATES.default_model_retry)
+
 
 @dataclass(repr=False)
 class RetryPromptPart:

@@ -2,8 +2,8 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
 from textwrap import dedent
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._run_context import RunContext as _RunContext
@@ -44,9 +44,7 @@ class PromptTemplates:
     validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again.'
     """Message appended to validation errors when asking the model to retry."""
 
-    model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'Fix the errors and try again.'
-    )
+    model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again.'
     """Message sent when a `ModelRetry` exception is raised from a tool."""
 
     model_retry_string_no_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
@@ -63,7 +61,6 @@ class PromptTemplates:
         Don't include any text or Markdown fencing before or after.
         """
     )
-
 
     def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
