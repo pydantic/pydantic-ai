@@ -13,10 +13,12 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
+    ToolRetryError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.messages import RetryPromptPart
 
 
 @pytest.mark.parametrize(
@@ -32,6 +34,7 @@ from pydantic_ai.exceptions import (
         lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
         lambda: IncompleteToolCall('test'),
+        lambda: ToolRetryError(RetryPromptPart(content='test', tool_name='test')),
     ],
     ids=[
         'ModelRetry',
@@ -44,6 +47,7 @@ from pydantic_ai.exceptions import (
         'ModelAPIError',
         'ModelHTTPError',
         'IncompleteToolCall',
+        'ToolRetryError',
     ],
 )
 def test_exceptions_hashable(exc_factory: Callable[[], Any]):
@@ -59,3 +63,11 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
 
     assert exc in s
     assert d[exc] == 'value'
+
+
+def test_tool_retry_error_str():
+    """Test that ToolRetryError has a meaningful string representation."""
+
+    part = RetryPromptPart(content='Invalid query syntax', tool_name='sql_query')
+    error = ToolRetryError(part)
+    assert 'Invalid query syntax' in str(error)
