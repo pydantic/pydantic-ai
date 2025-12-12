@@ -36,6 +36,7 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
                 toolset=self,
                 tool_def=replace(tool_def, kind='external'),
                 max_retries=0,
+                max_uses=None,
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
             for tool_def in self.tool_defs

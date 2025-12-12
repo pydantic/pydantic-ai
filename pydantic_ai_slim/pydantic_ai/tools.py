@@ -264,6 +264,7 @@ class Tool(Generic[ToolAgentDepsT]):
     function: ToolFuncEither[ToolAgentDepsT]
     takes_ctx: bool
     max_retries: int | None
+    max_uses: int | None
     name: str
     description: str | None
     prepare: ToolPrepareFunc[ToolAgentDepsT] | None
@@ -286,6 +287,7 @@ class Tool(Generic[ToolAgentDepsT]):
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
+        max_uses: int | None = None,
         name: str | None = None,
         description: str | None = None,
         prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
@@ -337,6 +339,7 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] first argument,
                 this is inferred if unset.
             max_retries: Maximum number of retries allowed for this tool, set to the agent default if `None`.
+            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             name: Name of the tool, inferred from the function if `None`.
             description: Description of the tool, inferred from the function if `None`.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -364,6 +367,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
+        self.max_uses = max_uses
         self.name = name or function.__name__
         self.description = description or self.function_schema.description
         self.prepare = prepare

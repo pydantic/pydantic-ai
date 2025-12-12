@@ -170,6 +170,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             tool_def=tool_def,
             toolset=self,
             max_retries=self.max_retries,
+            max_uses=None,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

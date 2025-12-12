@@ -1024,6 +1024,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1042,6 +1043,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1086,6 +1088,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
+            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -1111,6 +1114,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 name=name,
                 description=description,
                 retries=retries,
+                max_uses=max_uses,
                 prepare=prepare,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -1135,6 +1139,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1153,6 +1158,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
+        max_uses: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -1197,6 +1203,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
+            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -1220,6 +1227,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 name=name,
                 description=description,
                 retries=retries,
+                max_uses=max_uses,
                 prepare=prepare,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,

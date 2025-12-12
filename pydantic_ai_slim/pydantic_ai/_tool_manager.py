@@ -66,11 +66,22 @@ class ToolManager(Generic[AgentDepsT]):
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
-        """The tool definitions for the tools in this tool manager."""
-        if self.tools is None:
+        """The tool definitions for the tools in this tool manager.
+
+        Tools that have reached their `max_uses` limit are filtered out.
+        """
+        if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        return [tool.tool_def for tool in self.tools.values()]
+        result: list[ToolDefinition] = []
+        for tool in self.tools.values():
+            # Filter out tools that have reached their max_uses limit
+            if tool.max_uses is not None:
+                current_uses = self.ctx.tool_usage.get(tool.tool_def.name, 0)
+                if current_uses >= tool.max_uses:
+                    continue
+            result.append(tool.tool_def)
+        return result
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
         """Whether to require sequential tool calls for a list of tool calls."""
@@ -160,6 +171,8 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_call_approved=approved,
                 partial_output=allow_partial,
             )
+
+            self.ctx.tool_usage[name] = self.ctx.tool_usage.get(name, 0) + 1
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
@@ -274,3 +287,21 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
         return tool_result
+
+    def get_max_use_of_tool(self, tool_name: str) -> int | None:
+        """Get the maximum number of uses allowed for a given tool, or `None` if unlimited."""
+        if self.tools is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        tool = self.tools.get(tool_name, None)
+        if tool is None:
+            return None
+
+        return tool.max_uses
+
+    def get_current_use_of_tool(self, tool_name: str) -> int:
+        """Get the current number of uses of a given tool."""
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        return self.ctx.tool_usage.get(tool_name, 0)
