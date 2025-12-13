@@ -1275,12 +1275,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
             id: An optional unique ID for the dynamic toolset. Required for use with durable execution
                 environments like Temporal, where the ID identifies the toolset's activities within the workflow.
-                If not provided, defaults to the function name.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
-            toolset_id = id if id is not None else func_.__name__
-            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step, id=toolset_id))
+            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step, id=id))
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
