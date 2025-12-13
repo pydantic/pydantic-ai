@@ -877,7 +877,7 @@ class OpenAIChatModel(Model):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
@@ -989,7 +989,7 @@ class OpenAIChatModel(Model):
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        audio = InputAudio(data=base64.b64encode(item.data).decode('utf-8'), format=item.format)
+                        audio = InputAudio(data=item.base64, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
                         content.append(
@@ -1881,24 +1881,23 @@ class OpenAIResponsesModel(Model):
                             detail=detail,
                         )
                     )
-                elif isinstance(item, AudioUrl):  # pragma: no cover
-                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_data=downloaded_item['data'],
-                            filename=f'filename.{downloaded_item["data_type"]}',
+                elif isinstance(item, AudioUrl | DocumentUrl):
+                    if item.force_download:
+                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                        content.append(
+                            responses.ResponseInputFileParam(
+                                type='input_file',
+                                file_data=downloaded_item['data'],
+                                filename=f'filename.{downloaded_item["data_type"]}',
+                            )
                         )
-                    )
-                elif isinstance(item, DocumentUrl):
-                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_data=downloaded_item['data'],
-                            filename=f'filename.{downloaded_item["data_type"]}',
+                    else:
+                        content.append(
+                            responses.ResponseInputFileParam(
+                                type='input_file',
+                                file_url=item.url,
+                            )
                         )
-                    )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 elif isinstance(item, CachePoint):
