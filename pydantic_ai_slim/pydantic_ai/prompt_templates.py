@@ -86,6 +86,8 @@ class PromptTemplates:
         self, message_part: RetryPromptPart
     ) -> str | Callable[[RetryPromptPart, _RunContext[Any]], str]:
         template: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = self.default_model_retry
+        # This is based no RetryPromptPart.model_response() implementation
+        # We follow the same structure here to populate the correct template
         if isinstance(message_part.content, str):
             if message_part.tool_name is None:
                 template = self.model_retry_string_no_tool
