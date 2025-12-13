@@ -66,7 +66,7 @@ from pydantic_ai.builtin_tools import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
-from pydantic_ai.prompt_templates import PromptTemplates
+from pydantic_ai.prompt_config import PromptConfig, PromptTemplates
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
@@ -235,7 +235,7 @@ def test_result_pydantic_model_retry():
     assert result.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
 
 
-def test_prompt_templates_callable():
+def test_prompt_config_callable():
     """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
     def my_function_tool() -> str:  # pragma: no cover
@@ -260,12 +260,12 @@ def test_prompt_templates_callable():
     agent = Agent(
         FunctionModel(return_model),
         output_type=Foo,
-        prompt_templates=PromptTemplates(
+        prompt_config=PromptConfig(templates=PromptTemplates(
             validation_errors_retry=lambda part, ctx: 'Please fix these validation errors and try again.',
             final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
             output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
             function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
-        ),
+        )),
     )
 
     agent.tool_plain(my_function_tool)
@@ -369,7 +369,7 @@ Please fix these validation errors and try again.\
     )
 
 
-def test_prompt_templates_string_and_override_prompt_templates():
+def test_prompt_config_string_and_override_prompt_config():
     """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
     def my_function_tool() -> str:  # pragma: no cover
@@ -394,12 +394,12 @@ def test_prompt_templates_string_and_override_prompt_templates():
     agent = Agent(
         FunctionModel(return_model),
         output_type=Foo,
-        prompt_templates=PromptTemplates(
+        prompt_config=PromptConfig(templates=PromptTemplates(
             validation_errors_retry='Custom retry message',
             final_result_processed='Custom final result',
             output_tool_not_executed='Custom output not executed:',
             function_tool_not_executed='Custom function not executed',
-        ),
+        )),
     )
 
     agent.tool_plain(my_function_tool)
@@ -500,8 +500,8 @@ Custom retry message""")
         ]
     )
 
-    # Verify prompt_templates can be overridden
-    with agent.override(prompt_templates=PromptTemplates(validation_errors_retry='Custom retry message override')):
+    # Verify prompt_config can be overridden
+    with agent.override(prompt_config=PromptConfig(templates=PromptTemplates(validation_errors_retry='Custom retry message override'))):
         result = agent.run_sync('Hello')
         assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
         retry_request = result.all_messages()[2]
@@ -5741,11 +5741,11 @@ async def test_hitl_tool_approval():
 
     model = FunctionModel(model_function)
 
-    # Using prompt_templates without setting tool_call_denied to cover line 78 in prompt_templates.py
+    # Using prompt_config without setting tool_call_denied to cover line 78 in prompt_config.py
     agent = Agent(
         model,
         output_type=[str, DeferredToolRequests],
-        prompt_templates=PromptTemplates(tool_call_denied='Tool call denied custom message.'),
+        prompt_config=PromptConfig(templates=PromptTemplates(tool_call_denied='Tool call denied custom message.')),
     )
 
     @agent.tool_plain(requires_approval=True)

@@ -31,7 +31,7 @@ from . import (
     exceptions,
     messages as _messages,
     models,
-    prompt_templates as _prompt_templates,
+    prompt_config as _prompt_config,
     result,
     usage as _usage,
 )
@@ -147,8 +147,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
-    prompt_templates: _prompt_templates.PromptTemplates = dataclasses.field(
-        default_factory=lambda: _prompt_templates.DEFAULT_PROMPT_TEMPLATES
+    prompt_config: _prompt_config.PromptConfig = dataclasses.field(
+        default_factory=lambda: _prompt_config.DEFAULT_PROMPT_CONFIG
     )
     usage_limits: _usage.UsageLimits
     max_result_retries: int
@@ -396,8 +396,8 @@ async def _prepare_request_parameters(
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
 
-    prompt_templates = ctx.deps.prompt_templates
-    prompted_output_template = prompt_templates.get_prompted_output_template(output_schema)
+    prompt_config = ctx.deps.prompt_config
+    prompted_output_template = prompt_config.templates.get_prompted_output_template(output_schema)
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -520,9 +520,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
 
-        prompt_templates = ctx.deps.prompt_templates
+        prompt_config = ctx.deps.prompt_config
 
-        message_history = _apply_prompt_templates_to_message_history(message_history, prompt_templates, run_context)
+        message_history = _apply_prompt_templates_to_message_history(message_history, prompt_config.templates, run_context)
 
         ctx.state.message_history[:] = message_history
 
@@ -802,7 +802,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         if tool_responses:
             run_ctx = build_run_context(ctx)
-            tool_responses = [ctx.deps.prompt_templates.apply_template(part, run_ctx) for part in tool_responses]
+            tool_responses = [ctx.deps.prompt_config.templates.apply_template(part, run_ctx) for part in tool_responses]
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
@@ -890,7 +890,7 @@ async def process_tool_calls(  # noqa: C901
             if final_result.tool_call_id == call.tool_call_id:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.final_result_processed,
+                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.final_result_processed,
                     tool_call_id=call.tool_call_id,
                     return_kind='final-result-processed',
                 )
@@ -898,7 +898,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call)
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.output_tool_not_executed,
+                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.output_tool_not_executed,
                     tool_call_id=call.tool_call_id,
                     return_kind='output-tool-not-executed',
                 )
@@ -923,7 +923,7 @@ async def process_tool_calls(  # noqa: C901
             else:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.final_result_processed,
+                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.final_result_processed,
                     tool_call_id=call.tool_call_id,
                     return_kind='final-result-processed',
                 )
@@ -937,7 +937,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.function_tool_not_executed,
+                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.function_tool_not_executed,
                     tool_call_id=call.tool_call_id,
                     return_kind='function-tool-not-executed',
                 )
@@ -996,7 +996,7 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content=_prompt_templates.DEFAULT_PROMPT_TEMPLATES.function_tool_not_executed,
+                            content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.function_tool_not_executed,
                             tool_call_id=call.tool_call_id,
                             return_kind='function-tool-not-executed',
                         )
@@ -1392,7 +1392,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
 
 
 def _apply_prompt_templates_to_message_history(
-    messages: list[_messages.ModelMessage], prompt_templates: _prompt_templates.PromptTemplates, ctx: RunContext[Any]
+    messages: list[_messages.ModelMessage], prompt_templates: _prompt_config.PromptTemplates, ctx: RunContext[Any]
 ) -> list[_messages.ModelMessage]:
     messages_with_templates_applied: list[_messages.ModelMessage] = []
 

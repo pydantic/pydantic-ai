@@ -94,7 +94,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .prompt_templates import PromptTemplates
+from .prompt_config import PromptConfig, PromptTemplates
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
@@ -230,7 +230,8 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
-    # prompt_templates
+    # prompt_config
+    'PromptConfig',
     'PromptTemplates',
     # format_prompt
     'format_as_xml',
