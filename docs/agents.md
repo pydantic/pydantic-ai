@@ -782,8 +782,10 @@ You can also use callable functions for dynamic messages that have access to the
 and the [`RunContext`][pydantic_ai.RunContext]:
 
 ```python {title="prompt_templates_dynamic.py"}
-from pydantic_ai import Agent, PromptConfig, PromptTemplates, RunContext
+from pydantic_ai import Agent, PromptConfig, PromptTemplates
 from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai.tools import RunContext
+
 
 def custom_retry_message(part: RetryPromptPart, ctx: RunContext) -> str:
     return f'Attempt #{ctx.retries + 1}: Please fix the errors and try again.'
