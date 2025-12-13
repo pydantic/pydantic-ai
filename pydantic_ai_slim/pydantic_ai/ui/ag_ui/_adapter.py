@@ -128,6 +128,54 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return cast('dict[str, Any]', state)
 
     @classmethod
+    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
+        """Transform AG-UI messages into Pydantic AI messages."""
+        builder = MessagesBuilder()
+        tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+
+        for msg in messages:
+            match msg:
+                case UserMessage(content=content):
+                    if isinstance(content, str):
+                        builder.add(UserPromptPart(content=content))
+                    else:
+                        user_prompt_content: list[Any] = []
+                        for part in content:
+                            match part:
+                                case TextInputContent(text=text):
+                                    user_prompt_content.append(text)
+                                case BinaryInputContent():
+                                    user_prompt_content.append(cls._load_binary_part(part))
+                                case _:
+                                    raise ValueError(f'Unsupported user message part type: {type(part)}')
+
+                        if user_prompt_content:
+                            content_to_add = (
+                                user_prompt_content[0]
+                                if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
+                                else user_prompt_content
+                            )
+                            builder.add(UserPromptPart(content=content_to_add))
+
+                case SystemMessage(content=content) | DeveloperMessage(content=content):
+                    builder.add(SystemPromptPart(content=content))
+
+                case AssistantMessage(content=content, tool_calls=tool_calls_list):
+                    if content:
+                        builder.add(TextPart(content=content))
+                    if tool_calls_list:
+                        cls._add_assistant_tool_parts(builder, tool_calls_list, tool_calls)
+
+                case ToolMessage() as tool_msg:
+                    cls._add_tool_return_part(builder, tool_msg, tool_calls)
+
+                case ActivityMessage(content=content):
+                    # No matching on the Pydantic AI side.
+                    pass
+
+        return builder.messages
+
+    @classmethod
     def _load_binary_part(
         cls, part: BinaryInputContent
     ) -> BinaryContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl:
@@ -147,7 +195,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     url=part.url,
                     media_type=part.mime_type,
                     identifier=part.id,
-                    vendor_metadata={'filename': part.filename},
                 )
         if part.data:
             return BinaryContent(data=b64decode(part.data), kind='binary', media_type=part.mime_type)
@@ -217,51 +264,3 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     tool_call_id=tool_call_id,
                 )
             )
-
-    @classmethod
-    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
-        """Transform AG-UI messages into Pydantic AI messages."""
-        builder = MessagesBuilder()
-        tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
-
-        for msg in messages:
-            match msg:
-                case UserMessage(content=content):
-                    if isinstance(content, str):
-                        builder.add(UserPromptPart(content=content))
-                    else:
-                        user_prompt_content: list[Any] = []
-                        for part in content:
-                            match part:
-                                case TextInputContent(text=text):
-                                    user_prompt_content.append(text)
-                                case BinaryInputContent():
-                                    user_prompt_content.append(cls._load_binary_part(part))
-                                case _:
-                                    raise ValueError(f'Unsupported user message part type: {type(part)}')
-
-                        if user_prompt_content:
-                            content_to_add = (
-                                user_prompt_content[0]
-                                if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
-                                else user_prompt_content
-                            )
-                            builder.add(UserPromptPart(content=content_to_add))
-
-                case SystemMessage(content=content) | DeveloperMessage(content=content):
-                    builder.add(SystemPromptPart(content=content))
-
-                case AssistantMessage(content=content, tool_calls=tool_calls_list):
-                    if content:
-                        builder.add(TextPart(content=content))
-                    if tool_calls_list:
-                        cls._add_assistant_tool_parts(builder, tool_calls_list, tool_calls)
-
-                case ToolMessage() as tool_msg:
-                    cls._add_tool_return_part(builder, tool_msg, tool_calls)
-
-                case ActivityMessage(content=content):
-                    # No matching on the Pydantic AI side.
-                    pass
-
-        return builder.messages
