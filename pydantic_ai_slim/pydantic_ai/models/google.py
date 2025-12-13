@@ -495,12 +495,16 @@ class GoogleModel(Model):
         candidate = response.candidates[0]
 
         vendor_id = response.response_id
-        vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
+        vendor_details: dict[str, Any] = {}
+
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': raw_finish_reason.value}
+            vendor_details['finish_reason'] = raw_finish_reason.value
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        if response.create_time is not None:  # pragma: no branch
+            vendor_details['timestamp'] = response.create_time
 
         if candidate.content is None or candidate.content.parts is None:
             if finish_reason == 'content_filter' and raw_finish_reason:
@@ -520,7 +524,7 @@ class GoogleModel(Model):
             self._provider.base_url,
             usage,
             vendor_id=vendor_id,
-            vendor_details=vendor_details,
+            vendor_details=vendor_details or None,
             finish_reason=finish_reason,
             url_context_metadata=candidate.url_context_metadata,
         )
@@ -538,9 +542,9 @@ class GoogleModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
-            _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.create_time,
         )
 
     async def _map_messages(
@@ -662,9 +666,10 @@ class GeminiStreamedResponse(StreamedResponse):
 
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         code_execution_tool_call_id: str | None = None
@@ -680,9 +685,15 @@ class GeminiStreamedResponse(StreamedResponse):
                 self.provider_response_id = chunk.response_id
 
             raw_finish_reason = candidate.finish_reason
+            provider_details_dict: dict[str, Any] = {}
             if raw_finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+                provider_details_dict['finish_reason'] = raw_finish_reason.value
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+            if self._provider_timestamp is not None:
+                # _provider_timestamp is always None in Google streaming cassettes
+                provider_details_dict['timestamp'] = self._provider_timestamp  # pragma: no cover
+            if provider_details_dict:
+                self.provider_details = provider_details_dict
 
             # Google streams the grounding metadata (including the web search queries and results)
             # _after_ the text that was generated using it, so it would show up out of order in the stream,

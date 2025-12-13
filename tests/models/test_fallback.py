@@ -77,6 +77,7 @@ def test_first_successful() -> None:
                 parts=[
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -104,6 +105,7 @@ def test_first_failed() -> None:
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -132,6 +134,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -816,6 +819,7 @@ Don't include any text or Markdown fencing before or after.
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be kind',
                 run_id=IsStr(),
             ),

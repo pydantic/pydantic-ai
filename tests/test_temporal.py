@@ -1833,6 +1833,9 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             timestamp=IsDatetime(),
                         )
                     ],
+                    # NOTE in other tests we check timestamp=IsNow(tz=timezone.utc)
+                    # but temporal tests fail when we use IsNow
+                    timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
                     run_id=IsStr(),
                 ),
@@ -1863,7 +1866,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T22:11:03Z'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1883,6 +1886,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                             timestamp=IsDatetime(),
                         ),
                     ],
+                    timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
                     run_id=IsStr(),
                 ),
@@ -1906,7 +1910,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={'finish_reason': 'stop', 'timestamp': '2025-08-28T22:11:06Z'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1960,6 +1964,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1984,7 +1989,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T23:19:50Z'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1998,6 +2003,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -2022,7 +2028,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2025-08-28T23:19:51Z'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2036,6 +2042,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -2054,7 +2061,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={'finish_reason': 'stop', 'timestamp': '2025-08-28T23:19:52Z'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),

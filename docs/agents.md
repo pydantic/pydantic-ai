@@ -322,6 +322,7 @@ async def main():
                         timestamp=datetime.datetime(...),
                     )
                 ],
+                timestamp=datetime.datetime(...),
                 run_id='...',
             )
         ),
@@ -386,6 +387,7 @@ async def main():
                             timestamp=datetime.datetime(...),
                         )
                     ],
+                    timestamp=datetime.datetime(...),
                     run_id='...',
                 )
             ),
@@ -1050,6 +1052,7 @@ with capture_run_messages() as messages:  # (2)!
                         timestamp=datetime.datetime(...),
                     )
                 ],
+                timestamp=datetime.datetime(...),
                 run_id='...',
             ),
             ModelResponse(
@@ -1074,6 +1077,7 @@ with capture_run_messages() as messages:  # (2)!
                         timestamp=datetime.datetime(...),
                     )
                 ],
+                timestamp=datetime.datetime(...),
                 run_id='...',
             ),
             ModelResponse(

@@ -5,6 +5,7 @@ import datetime
 import os
 import re
 from collections.abc import AsyncIterator
+from datetime import timezone
 from typing import Any
 
 import pytest
@@ -64,7 +65,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
+from ..conftest import IsBytes, IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -137,6 +138,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -203,6 +205,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -231,6 +234,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         tool_name='temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -264,6 +268,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -331,6 +336,7 @@ async def test_google_model_builtin_code_execution_stream(
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -572,6 +578,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime()),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -604,6 +611,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -636,6 +644,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -942,6 +951,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -972,9 +982,14 @@ async def test_google_model_multiple_documents_in_history(
     result = await agent.run(
         'What is in the documents?',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='foo bar')]),
-            ModelRequest(parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])],
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='foo bar 2')]),
         ],
     )
@@ -1016,6 +1031,7 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1096,6 +1112,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1191,6 +1208,7 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1337,6 +1355,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1443,6 +1462,7 @@ async def test_google_model_web_fetch_tool(
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1523,6 +1543,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1649,6 +1670,7 @@ async def test_google_model_code_execution_tool(allow_model_requests: None, goog
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1718,6 +1740,7 @@ print(f"Today in Utrecht is {formatted_date}.")
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1908,7 +1931,7 @@ async def test_google_model_empty_assistant_response(allow_model_requests: None,
     result = await agent.run(
         'Was your previous response empty?',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content='Hi')]),
+            ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
             ModelResponse(parts=[TextPart(content='')]),
         ],
     )
@@ -1947,6 +1970,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1985,6 +2009,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2037,6 +2062,7 @@ async def test_google_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2047,22 +2073,10 @@ async def test_google_model_thinking_part_from_other_model(
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
-                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
+                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
+                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
+                    ThinkingPart(content=IsStr(), id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689'),
                     TextPart(content=IsStr(), id='msg_68c1fb814fdc8196aec1a46164ddf7680c14a8a9087e8689'),
                 ],
                 usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
@@ -2070,7 +2084,10 @@ async def test_google_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=datetime.timezone.utc),
+                },
                 provider_response_id='resp_68c1fb6b6a248196a6216e80fc2ace380c14a8a9087e8689',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2096,6 +2113,7 @@ async def test_google_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2153,6 +2171,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2350,9 +2369,10 @@ async def test_google_url_input(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(url)],
-                        timestamp=IsDatetime(),
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2362,7 +2382,7 @@ async def test_google_url_input(
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
                 provider_url='https://aiplatform.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2393,9 +2413,10 @@ async def test_google_url_input_force_download(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(video_url)],
-                        timestamp=IsDatetime(),
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2405,7 +2426,7 @@ async def test_google_url_input_force_download(
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
                 provider_url='https://aiplatform.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2447,6 +2468,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2472,6 +2494,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2503,6 +2526,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -2545,6 +2569,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2570,6 +2595,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2601,6 +2627,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -2633,6 +2660,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2658,6 +2686,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2723,6 +2752,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2777,6 +2807,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2832,6 +2863,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2879,6 +2911,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2904,6 +2937,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2949,6 +2983,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3155,6 +3190,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3196,6 +3232,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3272,6 +3309,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3345,6 +3383,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3462,6 +3501,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3497,6 +3537,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -3572,6 +3613,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4147,6 +4189,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4169,7 +4212,10 @@ async def test_thinking_with_tool_calls_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=datetime.timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4183,6 +4229,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4203,7 +4250,10 @@ async def test_thinking_with_tool_calls_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed'},
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=datetime.timezone.utc),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4247,6 +4297,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
         ]
@@ -4313,7 +4364,7 @@ async def test_google_api_non_http_error(
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
     message_history = [
-        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
         ModelResponse(parts=[]),
     ]
 
@@ -4325,7 +4376,11 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
     assert result.output == snapshot('Hello! How can I help you today?')
     assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[], run_id=IsStr()),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     TextPart(
@@ -4514,6 +4569,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4546,6 +4602,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
