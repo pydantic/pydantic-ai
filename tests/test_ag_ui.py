@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from base64 import b64decode
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -17,10 +18,14 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
+    AudioUrl,
+    BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -35,6 +40,7 @@ from pydantic_ai import (
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
@@ -51,6 +57,8 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.ui import MessagesBuilder
+from pydantic_ai.ui.ag_ui._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX
 
 from .conftest import IsDatetime, IsSameStr, try_import
 
@@ -58,6 +66,7 @@ with try_import() as imports_successful:
     from ag_ui.core import (
         AssistantMessage,
         BaseEvent,
+        BinaryInputContent,
         CustomEvent,
         DeveloperMessage,
         EventType,
@@ -66,6 +75,7 @@ with try_import() as imports_successful:
         RunAgentInput,
         StateSnapshotEvent,
         SystemMessage,
+        TextInputContent,
         Tool,
         ToolCall,
         ToolMessage,
@@ -264,6 +274,24 @@ async def test_basic_user_message() -> None:
     assert events == simple_result()
 
 
+async def test_complex_user_message() -> None:
+    """Test basic user message with text response. But using TextInputContent instead of str"""
+    agent = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[TextInputContent(text='Hello, how are you?')],
+        )
+    )
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
 async def test_empty_messages() -> None:
     """Test handling of empty messages."""
 
@@ -343,6 +371,80 @@ async def test_messages_with_history() -> None:
         ),
     )
 
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_img_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[BinaryInputContent(url='https://example.com/img.png', mime_type='image/png', filename='img.png')],
+        )
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_video_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(id='msg_1', content=[BinaryInputContent(url='https://example.com/vid.mp4', mime_type='video/mp4')])
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_audio_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1', content=[BinaryInputContent(url='https://example.com/audio.oga', mime_type='audio/ogg')]
+        )
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_document_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[BinaryInputContent(url='https://example.com/document.pdf', mime_type='application/pdf')],
+        )
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_binary_file_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(id='msg_1', content=[BinaryInputContent(data='VGVzdCBEb2M=', mime_type='text/plain')])
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == simple_result()
+
+
+async def test_test_and_binary_file_message() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content=[
+                TextInputContent(text='Write a summary of this file:', type='text'),
+                BinaryInputContent(data='VGVzdCBEb2M=', mime_type='text/plain'),
+            ],
+        )
+    )
     events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
@@ -1574,6 +1676,179 @@ async def test_messages() -> None:
             ),
         ]
     )
+
+    def test_load_binary_part() -> None:
+        """Test the _load_binary_part method of the AGUIAdapter."""
+
+    # Test data URI
+    data_uri_part = BinaryInputContent(
+        url='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        mime_type='image/png',
+    )
+    result = AGUIAdapter.load_binary_part(data_uri_part)
+    assert isinstance(result, BinaryContent)
+    assert result.data == b64decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+    )
+
+    # Test ImageUrl
+    image_url_part = BinaryInputContent(url='http://example.com/image.png', mime_type='image/png', id='img1')
+    result = AGUIAdapter.load_binary_part(image_url_part)
+    assert isinstance(result, ImageUrl)
+    assert result.url == 'http://example.com/image.png'
+    assert result.media_type == 'image/png'
+    assert result.identifier == 'img1'
+
+    # Test VideoUrl
+    video_url_part = BinaryInputContent(url='http://example.com/video.mp4', mime_type='video/mp4', id='vid1')
+    result = AGUIAdapter.load_binary_part(video_url_part)
+    assert isinstance(result, VideoUrl)
+    assert result.url == 'http://example.com/video.mp4'
+    assert result.media_type == 'video/mp4'
+    assert result.identifier == 'vid1'
+
+    # Test AudioUrl
+    audio_url_part = BinaryInputContent(url='http://example.com/audio.mp3', mime_type='audio/mpeg', id='aud1')
+    result = AGUIAdapter.load_binary_part(audio_url_part)
+    assert isinstance(result, AudioUrl)
+    assert result.url == 'http://example.com/audio.mp3'
+    assert result.media_type == 'audio/mpeg'
+    assert result.identifier == 'aud1'
+
+    # Test DocumentUrl
+    doc_url_part = BinaryInputContent(url='http://example.com/doc.pdf', mime_type='application/pdf', id='doc1')
+    result = AGUIAdapter.load_binary_part(doc_url_part)
+    assert isinstance(result, DocumentUrl)
+    assert result.url == 'http://example.com/doc.pdf'
+    assert result.media_type == 'application/pdf'
+    assert result.identifier == 'doc1'
+
+    # Test data field
+    data_part = BinaryInputContent(data='SGVsbG8gd29ybGQ=', mime_type='text/plain')
+    result = AGUIAdapter.load_binary_part(data_part)
+    assert isinstance(result, BinaryContent)
+    assert result.data == b'Hello world'
+    assert result.media_type == 'text/plain'
+
+    # Test ValueError
+    with pytest.raises(ValueError, match='BinaryInputContent must have either a `url` or `data` field.'):
+        AGUIAdapter.load_binary_part(BinaryInputContent(id='some_id', mime_type='text/plain'))
+
+
+def test_add_assistant_tool_parts() -> None:
+    """Test the _add_assistant_tool_parts method of the AGUIAdapter."""
+    # Case 1: Regular tool call
+    builder = MessagesBuilder()
+    tool_calls_map: dict[str, str] = {}
+    regular_tool_call = ToolCall(
+        id='regular_call_1',
+        type='function',
+        function=FunctionCall(name='my_tool', arguments='{"arg": "value"}'),
+    )
+    tool_calls_list = [regular_tool_call]
+
+    AGUIAdapter.add_assistant_tool_parts(builder, tool_calls_list, tool_calls_map)
+
+    assert len(builder.messages) == 1
+    assert len(builder.messages[0].parts) == 1
+    part = builder.messages[0].parts[0]
+    assert isinstance(part, ToolCallPart)
+    assert part.tool_name == 'my_tool'
+    assert part.tool_call_id == 'regular_call_1'
+    assert part.args == '{"arg": "value"}'
+    assert tool_calls_map == {'regular_call_1': 'my_tool'}
+
+    # Case 2: Built-in tool call
+    builder = MessagesBuilder()
+    tool_calls_map = {}
+    builtin_id = f'{BUILTIN_TOOL_CALL_ID_PREFIX}|function|search_1'
+    builtin_tool_call = ToolCall(
+        id=builtin_id,
+        type='function',
+        function=FunctionCall(name='web_search', arguments='{"query": "test"}'),
+    )
+    tool_calls_list = [builtin_tool_call]
+
+    AGUIAdapter.add_assistant_tool_parts(builder, tool_calls_list, tool_calls_map)
+
+    assert len(builder.messages) == 1
+    assert len(builder.messages[0].parts) == 1
+    part = builder.messages[0].parts[0]
+    assert isinstance(part, BuiltinToolCallPart)
+    assert part.tool_name == 'web_search'
+    assert part.tool_call_id == 'search_1'
+    assert part.provider_name == 'function'
+    assert part.args == '{"query": "test"}'
+    assert tool_calls_map == {builtin_id: 'web_search'}
+
+    # Case 3: Mixed tool calls
+    builder = MessagesBuilder()
+    tool_calls_map = {}
+    tool_calls_list = [regular_tool_call, builtin_tool_call]
+
+    AGUIAdapter.add_assistant_tool_parts(builder, tool_calls_list, tool_calls_map)
+
+    assert len(builder.messages) == 1
+    assert len(builder.messages[0].parts) == 2
+    regular_part, builtin_part = builder.messages[0].parts
+
+    assert isinstance(regular_part, ToolCallPart)
+    assert regular_part.tool_call_id == 'regular_call_1'
+
+    assert isinstance(builtin_part, BuiltinToolCallPart)
+    assert builtin_part.tool_call_id == 'search_1'
+
+    assert tool_calls_map == {'regular_call_1': 'my_tool', builtin_id: 'web_search'}
+
+    # Case 4: Empty list
+    builder = MessagesBuilder()
+    tool_calls_map = {}
+    AGUIAdapter.add_assistant_tool_parts(builder, [], tool_calls_map)
+
+    assert not builder.messages
+    assert not tool_calls_map
+
+
+def test_add_tool_return_part() -> None:
+    """Test the _add_tool_return_part method of the AGUIAdapter."""
+    # Case 1: Regular tool return
+    builder = MessagesBuilder()
+    tool_calls_map = {'call_1': 'my_tool'}
+    msg = ToolMessage(id='msg_1', tool_call_id='call_1', content='result content')
+
+    AGUIAdapter.add_tool_return_part(builder, msg, tool_calls_map)
+
+    assert len(builder.messages) == 1
+    assert len(builder.messages[0].parts) == 1
+    part = builder.messages[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.tool_name == 'my_tool'
+    assert part.content == 'result content'
+    assert part.tool_call_id == 'call_1'
+
+    # Case 2: Built-in tool return
+    builder = MessagesBuilder()
+    builtin_id = f'{BUILTIN_TOOL_CALL_ID_PREFIX}|function|search_1'
+    tool_calls_map = {builtin_id: 'web_search'}
+    msg = ToolMessage(id='msg_2', tool_call_id=builtin_id, content='search results')
+
+    AGUIAdapter.add_tool_return_part(builder, msg, tool_calls_map)
+
+    assert len(builder.messages) == 1
+    assert len(builder.messages[0].parts) == 1
+    part = builder.messages[0].parts[0]
+    assert isinstance(part, BuiltinToolReturnPart)
+    assert part.tool_name == 'web_search'
+    assert part.content == 'search results'
+    assert part.tool_call_id == 'search_1'
+    assert part.provider_name == 'function'
+
+    # Case 3: ValueError for missing tool call ID
+    builder = MessagesBuilder()
+    tool_calls_map: dict[str, str] = {}
+    msg = ToolMessage(id='msg_3', tool_call_id='non_existent_call', content='some content')
+    with pytest.raises(ValueError, match='Tool call with ID non_existent_call not found in the history.'):
+        AGUIAdapter.add_tool_return_part(builder, msg, tool_calls_map)
 
 
 async def test_builtin_tool_call() -> None:
