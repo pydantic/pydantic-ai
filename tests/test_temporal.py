@@ -199,19 +199,6 @@ simple_agent = Agent(model, name='simple_agent')
 simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVITY_CONFIG)
 
 
-def drop_first_message_sync(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Sync history processor for testing blocking execution mode."""
-    return messages[1:] if len(messages) > 1 else messages
-
-
-agent_with_sync_history_processor = Agent(
-    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message_sync]
-)
-temporal_agent_with_sync_history_processor = TemporalAgent(
-    agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
-)
-
-
 @workflow.defn
 class SimpleAgentWorkflow:
     @workflow.run
@@ -1260,6 +1247,18 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
                 id=SimpleAgentWorkflowWithRunSync.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
+    return msgs[1:] if len(msgs) > 1 else msgs
+
+
+agent_with_sync_history_processor = Agent(
+    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message]
+)
+temporal_agent_with_sync_history_processor = TemporalAgent(
+    agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
+)
 
 
 @workflow.defn

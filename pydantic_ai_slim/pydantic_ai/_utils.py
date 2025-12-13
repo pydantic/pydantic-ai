@@ -7,7 +7,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
@@ -53,6 +53,26 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 _prefer_blocking_execution: ContextVar[bool] = ContextVar('_prefer_blocking_execution', default=False)
+
+
+@contextmanager
+def blocking_execution() -> Iterator[None]:
+    """Context manager to enable blocking execution mode.
+
+    Inside this context, sync functions will execute inline rather than
+    being sent to a thread pool via [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
+
+    This is useful in environments where threading is restricted, such as
+    Temporal workflows which use a sandboxed event loop.
+
+    Yields:
+        None
+    """
+    token = _prefer_blocking_execution.set(True)
+    try:
+        yield
+    finally:
+        _prefer_blocking_execution.reset(token)
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:

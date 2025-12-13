@@ -243,12 +243,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _temporal_overrides(self) -> Iterator[None]:
-        from pydantic_ai._utils import _prefer_blocking_execution  # pyright: ignore[reportPrivateUsage]
+        from pydantic_ai._utils import blocking_execution
 
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
+        with (
+            super().override(model=self._model, toolsets=self._toolsets, tools=[]),
+            blocking_execution(),
+        ):
             temporal_active_token = self._temporal_overrides_active.set(True)
-            blocking_token = _prefer_blocking_execution.set(True)
             try:
                 yield
             except PydanticSerializationError as e:
@@ -257,7 +259,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 ) from e
             finally:
                 self._temporal_overrides_active.reset(temporal_active_token)
-                _prefer_blocking_execution.reset(blocking_token)
 
     @overload
     async def run(

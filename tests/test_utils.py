@@ -167,7 +167,7 @@ async def test_run_in_executor_with_contextvars() -> None:
 
 
 async def test_run_in_executor_with_blocking_execution_enabled() -> None:
-    from pydantic_ai._utils import _prefer_blocking_execution  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai._utils import blocking_execution
 
     calls: list[str] = []
 
@@ -182,13 +182,10 @@ async def test_run_in_executor_with_blocking_execution_enabled() -> None:
 
     # With blocking mode enabled, should execute directly
     calls.clear()
-    token = _prefer_blocking_execution.set(True)
-    try:
+    with blocking_execution():
         result = await run_in_executor(sync_func)
         assert result == 'result'
         assert calls == ['called']
-    finally:
-        _prefer_blocking_execution.reset(token)
 
 
 def test_is_async_callable():
