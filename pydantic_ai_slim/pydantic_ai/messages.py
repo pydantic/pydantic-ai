@@ -474,9 +474,8 @@ class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
     data: bytes
-    """Arbitrary binary data.
+    """The binary file data.
 
-    Store actual bytes here, not base64.
     Use `.base64` to get the base64-encoded string.
     """
 

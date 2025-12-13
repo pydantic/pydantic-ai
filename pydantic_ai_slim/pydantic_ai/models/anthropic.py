@@ -1035,7 +1035,7 @@ class AnthropicModel(Model):
         last_param['cache_control'] = self._build_cache_control(ttl)
 
     @staticmethod
-    def _map_binary_to_block(data: bytes, media_type: str) -> BetaContentBlockParam:
+    def _map_binary_data(data: bytes, media_type: str) -> BetaContentBlockParam:
         # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
@@ -1060,10 +1060,6 @@ class AnthropicModel(Model):
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
-    def _map_binary_content(item: BinaryContent) -> BetaContentBlockParam:
-        return AnthropicModel._map_binary_to_block(item.data, item.media_type)
-
-    @staticmethod
     async def _map_user_prompt(
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
@@ -1078,18 +1074,18 @@ class AnthropicModel(Model):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, BinaryContent):
-                    yield AnthropicModel._map_binary_content(item)
+                    yield AnthropicModel._map_binary_data(item.data, item.media_type)
                 elif isinstance(item, ImageUrl):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='bytes')
-                        yield AnthropicModel._map_binary_to_block(downloaded['data'], item.media_type)
+                        yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
                     else:
                         yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
                         if item.force_download:
                             downloaded = await download_item(item, data_format='bytes')
-                            yield AnthropicModel._map_binary_to_block(downloaded['data'], item.media_type)
+                            yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
                         else:
                             yield BetaRequestDocumentBlockParam(
                                 source={'url': item.url, 'type': 'url'}, type='document'
