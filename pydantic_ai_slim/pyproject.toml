@@ -65,7 +65,7 @@ dependencies = [
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
-logfire = ["logfire[httpx]>=3.14.1"]
+logfire = ["logfire[httpx]>=4.16.0"]
 # Models
 openai = ["openai>=2.11.0"]
 cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
