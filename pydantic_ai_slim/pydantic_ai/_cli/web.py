@@ -55,7 +55,7 @@ def run_web_command(  # noqa: C901
 
     # build models dict: agent's model as 'default', plus any CLI models
     models_dict: dict[str, Model | str] | None = None
-    if agent.model is not None or models:
+    if agent.model is not None or models:  # pragma: no branch
         models_dict = {}
         if agent.model is not None:
             # Use 'default' key - create_web_app will use agent.model for the actual model
