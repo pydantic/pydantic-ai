@@ -139,4 +139,4 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-For `BedrockConverseModel`, you can upload a file to S3 and pass the URL to the API directly. Pyadantic AI will pass it to `bedrock` as is. It expects the URL with the format: `s3://<bucket-name>/<object-key>`. An optional `bucketOwner` query parameter can be added to the URL to specify the owner of the bucket. For example: `s3://my-bucket/my-file.png?bucketOwner=123456789012`.
+`BedrockConverseModel` supports `s3://<bucket-name>/<object-key>` URIs, provided that the assumed role has the `s3:GetObject` permission. An optional `bucketOwner` query parameter must be specified if the bucket is not owned by the account making the request. For example: `s3://my-bucket/my-file.png?bucketOwner=123456789012`.
