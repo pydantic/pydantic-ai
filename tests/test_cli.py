@@ -23,6 +23,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
@@ -34,7 +35,7 @@ def test_cli_version(capfd: CaptureFixture[str]):
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
-    assert cli(['--model', 'potato']) == 1
+    assert cli(['chat', '--model', 'potato']) == 1
     assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])
 
 
@@ -72,7 +73,7 @@ def test_agent_flag(
     mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
 
     # Test CLI with custom agent
-    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+    assert cli(['chat', '--agent', 'test_module:custom_agent', 'hello']) == 0
 
     # Verify the output contains the custom agent message
     assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
@@ -89,7 +90,7 @@ def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., Non
 
     msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
     with pytest.raises(OpenAIError, match=msg):
-        cli(['--agent', 'test_module:custom_agent', 'hello'])
+        cli(['chat', '--agent', 'test_module:custom_agent', 'hello'])
 
 
 def test_agent_flag_set_model(
@@ -106,7 +107,7 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
+    assert cli(['chat', '--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
@@ -119,13 +120,22 @@ def test_agent_flag_non_agent(
     test_agent = 'Not an Agent object'
     create_test_module(custom_agent=test_agent)
 
-    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
-    assert 'is not an Agent' in capfd.readouterr().out
+    assert cli(['chat', '--agent', 'test_module:custom_agent', 'hello']) == 1
+    assert 'Could not load agent from test_module:custom_agent' in capfd.readouterr().out
 
 
 def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
-    assert cli(['--agent', 'bad_path', 'hello']) == 1
-    assert 'Agent must be specified in "module:variable" format' in capfd.readouterr().out
+    assert cli(['chat', '--agent', 'bad_path', 'hello']) == 1
+    assert 'Could not load agent from bad_path' in capfd.readouterr().out
+
+
+def test_no_command_defaults_to_chat(mocker: MockerFixture):
+    """Test that running clai with no command defaults to chat mode."""
+    # Mock _run_chat_command to avoid actual execution
+    mock_run_chat = mocker.patch('pydantic_ai._cli._run_chat_command', return_value=0)
+    result = cli([])
+    assert result == 0
+    mock_run_chat.assert_called_once()
 
 
 def test_list_models(capfd: CaptureFixture[str]):
@@ -159,9 +169,9 @@ def test_list_models(capfd: CaptureFixture[str]):
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
-        assert cli(['hello']) == 0
+        assert cli(['chat', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
-        assert cli(['--no-stream', 'hello']) == 0
+        assert cli(['chat', '--no-stream', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
@@ -184,7 +194,7 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
         m.return_value = session
         m = TestModel(custom_output_text='goodbye')
         with cli_agent.override(model=m):
-            assert cli([]) == 0
+            assert cli(['chat']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot(
             [
                 IsStr(),
@@ -233,20 +243,19 @@ def test_handle_slash_command_copy(mocker: MockerFixture):
     mocker.patch('pyperclip.copy', append_to_clipboard)
     assert handle_slash_command('/cp', [], False, Console(file=io), 'default') == (None, False)
     assert io.getvalue() == snapshot('No output available to copy.\n')
-    assert len(mock_clipboard) == 0
+    assert mock_clipboard == snapshot([])
 
     messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(''), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot('No text content to copy.\n')
-    assert len(mock_clipboard) == 0
+    assert mock_clipboard == snapshot([])
 
     messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('hello'), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot('Copied last output to clipboard.\n')
-    assert len(mock_clipboard) == 1
-    assert mock_clipboard[0] == snapshot('hello')
+    assert mock_clipboard == snapshot(['hello'])
 
 
 def test_handle_slash_command_exit():
@@ -264,21 +273,21 @@ def test_handle_slash_command_other():
 def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli([])
+    cli(['chat'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['--code-theme=light'])
+    cli(['chat', '--code-theme=light'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'pai')
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['--code-theme=dark'])
+    cli(['chat', '--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 
@@ -349,4 +358,353 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+    )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gpt-5', 'GPT 5'),
+        ('gpt-4.1', 'GPT 4.1'),
+        ('o1', 'O1'),
+        ('o3', 'O3'),
+        ('claude-sonnet-4-5', 'Claude Sonnet 4.5'),
+        ('claude-haiku-4-5', 'Claude Haiku 4.5'),
+        ('gemini-2.5-pro', 'Gemini 2.5 Pro'),
+        ('gemini-2.5-flash', 'Gemini 2.5 Flash'),
+        ('sonnet-4-5', 'Sonnet 4.5'),
+        ('custom-model', 'Custom Model'),
+    ],
+)
+def test_model_label(model_name: str, expected: str):
+    """Test Model.label formatting for UI."""
+    from pydantic_ai.models.test import TestModel
+
+    model = TestModel(model_name=model_name)
+    assert model.label == expected
+
+
+def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
+    """Test web command without agent creates generic agent."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    assert cli(['web', '-m', 'openai:gpt-5', '-t', 'web_search'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=['web_search'],
+        instructions=None,
+    )
+
+
+def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert cli(['web', '--agent', 'test_module:custom_agent'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='127.0.0.1',
+        port=7932,
+        models=None,
+        tools=None,
+        instructions=None,
+    )
+
+
+def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with multiple -m flags."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(
+            [
+                'web',
+                '--agent',
+                'test_module:custom_agent',
+                '-m',
+                'openai:gpt-5',
+                '-m',
+                'anthropic:claude-sonnet-4-5',
+            ],
+            prog_name='clai',
+        )
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
+        tools=None,
+        instructions=None,
+    )
+
+
+def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with multiple -t flags."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(
+            ['web', '--agent', 'test_module:custom_agent', '-t', 'web_search', '-t', 'code_execution'], prog_name='clai'
+        )
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='127.0.0.1',
+        port=7932,
+        models=None,
+        tools=['web_search', 'code_execution'],
+        instructions=None,
+    )
+
+
+def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv):
+    """Test generic agent with custom instructions."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    assert cli(['web', '-m', 'openai:gpt-5', '-i', 'You are a helpful coding assistant'], prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=None,
+        instructions='You are a helpful coding assistant',
+    )
+
+
+def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Callable[..., None], env: TestEnv):
+    """Test web command with custom host/port."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    assert (
+        cli(['web', '--agent', 'test_module:custom_agent', '--host', '0.0.0.0', '--port', '7932'], prog_name='clai')
+        == 0
+    )
+
+    mock_run_web.assert_called_once_with(
+        agent_path='test_module:custom_agent',
+        host='0.0.0.0',
+        port=7932,
+        models=None,
+        tools=None,
+        instructions=None,
+    )
+
+
+def test_run_web_command_agent_with_model(
+    mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
+):
+    """Test run_web_command uses agent's model when no -m flag provided."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    result = run_web_command(agent_path='test_module:custom_agent')
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+
+def test_run_web_command_generic_agent_no_model(capfd: CaptureFixture[str]):
+    """Test run_web_command returns error when no agent and no model provided."""
+
+    result = run_web_command()
+
+    assert result == 1
+    output = capfd.readouterr().out
+    assert 'At least one model (-m) is required' in output
+
+
+def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test run_web_command passes instructions to create_web_app for generic agent."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    result = run_web_command(models=['test'], instructions='You are a helpful assistant')
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    # Verify instructions were passed to create_web_app (not to Agent constructor)
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs['instructions'] == 'You are a helpful assistant'
+
+
+def test_run_web_command_agent_with_instructions(
+    mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
+):
+    """Test run_web_command passes instructions to create_web_app when agent is provided."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    result = run_web_command(agent_path='test_module:custom_agent', instructions='Always respond in Spanish')
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    # Verify instructions were passed to create_web_app
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs['instructions'] == 'Always respond in Spanish'
+
+
+def test_run_web_command_agent_load_failure(capfd: CaptureFixture[str]):
+    """Test run_web_command returns error when agent path is invalid."""
+
+    result = run_web_command(agent_path='nonexistent_module:agent')
+
+    assert result == 1
+    output = capfd.readouterr().out
+    assert 'Could not load agent' in output
+
+
+def test_run_web_command_unknown_tool(mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test run_web_command warns about unknown tool IDs."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    result = run_web_command(models=['test'], tools=['unknown_tool_xyz'])
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+    output = capfd.readouterr().out
+    assert 'Unknown tool "unknown_tool_xyz"' in output
+
+
+def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test run_web_command warns about memory tool requiring agent configuration."""
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    result = run_web_command(models=['test'], tools=['memory'])
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+    output = capfd.readouterr().out
+    assert '"memory" requires configuration and cannot be enabled via CLI' in output
+
+
+def test_run_web_command_agent_builtin_tools_not_duplicated(
+    mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
+):
+    """Test run_web_command only passes CLI-provided tools, not agent's builtin tools."""
+    from pydantic_ai.builtin_tools import WebSearchTool
+
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    # Create agent with web_search tool already configured
+    test_agent = Agent(TestModel(custom_output_text='test'), builtin_tools=[WebSearchTool()])
+    create_test_module(custom_agent=test_agent)
+
+    # Add code_execution via CLI
+    result = run_web_command(agent_path='test_module:custom_agent', tools=['code_execution'])
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    # Verify only CLI-provided tools are passed (agent's tools are handled by create_web_app)
+    call_kwargs = mock_create_app.call_args.kwargs
+    builtin_tools = call_kwargs.get('builtin_tools', [])
+    tool_kinds = {t.kind for t in builtin_tools}
+    # web_search is on the agent, so it's NOT passed here (it's handled internally)
+    assert 'web_search' not in tool_kinds
+    # code_execution was provided via CLI, so it IS passed
+    assert 'code_execution' in tool_kinds
+
+
+def test_run_web_command_agent_model_merged_with_cli_models(
+    mocker: MockerFixture, create_test_module: Callable[..., None]
+):
+    """Test that agent's model is included as 'default', followed by CLI models."""
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    result = run_web_command(
+        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+    )
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    call_kwargs = mock_create_app.call_args.kwargs
+    # Agent's model stored under 'default' key, CLI models use their names as keys
+    assert call_kwargs.get('models') == snapshot(
+        {
+            'default': IsInstance(TestModel),
+            'openai:gpt-5': 'openai:gpt-5',
+            'anthropic:claude-sonnet-4-5': 'anthropic:claude-sonnet-4-5',
+        }
+    )
+
+
+def test_run_web_command_cli_models_deduplicated(mocker: MockerFixture, create_test_module: Callable[..., None]):
+    """Test that duplicate CLI models are removed."""
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    test_agent = Agent(TestModel(custom_output_text='test'))
+    create_test_module(custom_agent=test_agent)
+
+    # Pass duplicate CLI models
+    result = run_web_command(
+        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+    )
+
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+
+    call_kwargs = mock_create_app.call_args.kwargs
+    # Agent's model stored under 'default', CLI models deduplicated
+    assert call_kwargs.get('models') == snapshot(
+        {
+            'default': IsInstance(TestModel),
+            'openai:gpt-5': 'openai:gpt-5',
+            'anthropic:claude-sonnet-4-5': 'anthropic:claude-sonnet-4-5',
+        }
     )

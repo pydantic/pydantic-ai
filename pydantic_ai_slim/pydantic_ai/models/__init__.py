@@ -694,6 +694,17 @@ class Model(ABC):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
+        # Check if builtin tools are supported
+        if params.builtin_tools:
+            supported_types = self.profile.supported_builtin_tools
+            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
+            if unsupported:
+                unsupported_names = [type(tool).__name__ for tool in unsupported]
+                supported_names = [t.__name__ for t in supported_types]
+                raise UserError(
+                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+                )
+
         return model_settings, params
 
     @property
@@ -702,15 +713,68 @@ class Model(ABC):
         """The model name."""
         raise NotImplementedError()
 
+    @property
+    def label(self) -> str:
+        """Human-friendly display label for the model.
+
+        Handles common patterns:
+        - gpt-5 -> GPT 5
+        - claude-sonnet-4-5 -> Claude Sonnet 4.5
+        - gemini-2.5-pro -> Gemini 2.5 Pro
+        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
+        """
+        label = self.model_name
+        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
+        if '/' in label:
+            label = label.split('/')[-1]
+
+        parts = label.split('-')
+        result: list[str] = []
+
+        for i, part in enumerate(parts):
+            if i == 0 and part.lower() == 'gpt':
+                result.append(part.upper())
+            elif part.replace('.', '').isdigit():
+                if result and result[-1].replace('.', '').isdigit():
+                    result[-1] = f'{result[-1]}.{part}'
+                else:
+                    result.append(part)
+            else:
+                result.append(part.capitalize())
+
+        return ' '.join(result)
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model class can handle.
+
+        Subclasses should override this to reflect their actual capabilities.
+        Default is empty set - subclasses must explicitly declare support.
+        """
+        return frozenset()
+
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile."""
+        """The model profile.
+
+        We use this to compute the intersection of the profile's supported_builtin_tools
+        and the model's implemented tools, ensuring model.profile.supported_builtin_tools
+        is the single source of truth for what builtin tools are actually usable.
+        """
         _profile = self._profile
         if callable(_profile):
             _profile = _profile(self.model_name)
 
         if _profile is None:
-            return DEFAULT_PROFILE
+            _profile = DEFAULT_PROFILE
+
+        # Compute intersection: profile's allowed tools & model's implemented tools
+        model_supported = self.__class__.supported_builtin_tools()
+        profile_supported = _profile.supported_builtin_tools
+        effective_tools = profile_supported & model_supported
+
+        if effective_tools != profile_supported:
+            _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
         return _profile
 

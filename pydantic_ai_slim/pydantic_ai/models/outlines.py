@@ -298,12 +298,9 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[Chat, JsonSchema | None, dict[str, Any]]:
         """Build the generation arguments for the model."""
-        if (
-            model_request_parameters.function_tools
-            or model_request_parameters.builtin_tools
-            or model_request_parameters.output_tools
-        ):
-            raise UserError('Outlines does not support function tools and builtin tools yet.')
+        # the builtin_tool check now happens in `Model.prepare_request()`
+        if model_request_parameters.function_tools or model_request_parameters.output_tools:
+            raise UserError('Outlines does not support function tools yet.')
 
         if model_request_parameters.output_object:
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)

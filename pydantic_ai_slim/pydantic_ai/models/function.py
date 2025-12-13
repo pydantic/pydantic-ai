@@ -14,6 +14,7 @@ from typing_extensions import assert_never, overload
 from .. import _utils, usage
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
+from ..builtin_tools import AbstractBuiltinTool
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -199,6 +200,13 @@ class FunctionModel(Model):
     def system(self) -> str:
         """The system / model provider."""
         return self._system
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """FunctionModel supports all builtin tools for testing flexibility."""
+        from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+
+        return SUPPORTED_BUILTIN_TOOLS
 
 
 @dataclass(frozen=True, kw_only=True)

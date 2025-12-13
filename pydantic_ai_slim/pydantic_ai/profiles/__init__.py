@@ -1,12 +1,13 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
 
 from typing_extensions import Self
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..output import StructuredOutputMode
 
 __all__ = [
@@ -63,6 +64,15 @@ class ModelProfile:
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    """
+
+    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(
+        default_factory=lambda: SUPPORTED_BUILTIN_TOOLS
+    )
+    """The set of builtin tool types that this model/profile supports.
+
+    Defaults to ALL builtin tools. Profile functions should explicitly
+    restrict this based on model capabilities.
     """
 
     @classmethod
