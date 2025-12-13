@@ -36,7 +36,7 @@ from pydantic_ai import Agent, RunContext
 agent = Agent(
     'google-gla:gemini-2.5-flash',  # (1)!
     deps_type=str,  # (2)!
-    system_prompt=(
+    instructions=(
         "You're a dice game, you should roll the die and see if the number "
         "you get back matches the user's guess. If so, tell them they're a winner. "
         "Use the player's name in the response."
@@ -79,15 +79,12 @@ print(dice_result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
     ),
     ModelResponse(
@@ -96,7 +93,7 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=90, output_tokens=2),
+        usage=RequestUsage(input_tokens=54, output_tokens=2),
         model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -110,6 +107,7 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
     ),
     ModelResponse(
@@ -118,7 +116,7 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=91, output_tokens=4),
+        usage=RequestUsage(input_tokens=55, output_tokens=4),
         model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -132,6 +130,7 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
     ),
     ModelResponse(
@@ -140,7 +139,7 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(input_tokens=92, output_tokens=12),
+        usage=RequestUsage(input_tokens=56, output_tokens=12),
         model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -194,7 +193,7 @@ import random
 
 from pydantic_ai import Agent, RunContext, Tool
 
-system_prompt = """\
+instructions = """\
 You're a dice game, you should roll the die and see if the number
 you get back matches the user's guess. If so, tell them they're a winner.
 Use the player's name in the response.
@@ -215,7 +214,7 @@ agent_a = Agent(
     'google-gla:gemini-2.5-flash',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
-    system_prompt=system_prompt,
+    instructions=instructions,
 )
 agent_b = Agent(
     'google-gla:gemini-2.5-flash',
@@ -224,7 +223,7 @@ agent_b = Agent(
         Tool(roll_dice, takes_ctx=False),
         Tool(get_player_name, takes_ctx=True),
     ],
-    system_prompt=system_prompt,
+    instructions=instructions,
 )
 
 dice_result = {}

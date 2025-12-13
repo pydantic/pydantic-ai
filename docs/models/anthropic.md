@@ -100,7 +100,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    system_prompt='You are a helpful assistant.',
+    instructions='You are a helpful assistant.',
     model_settings=AnthropicModelSettings(
         anthropic_cache_messages=True,  # Automatically caches the last message
     ),
@@ -125,7 +125,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    system_prompt='Detailed instructions...',
+    instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # Cache system instructions
         anthropic_cache_tool_definitions='1h',  # Cache tool definitions with 1h TTL
@@ -152,7 +152,7 @@ from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    system_prompt='Instructions...',
+    instructions='Instructions...',
 )
 
 # Manually control cache points for specific content blocks
@@ -174,7 +174,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    system_prompt='Instructions...',
+    instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True  # Default 5m TTL
     ),
@@ -210,7 +210,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    system_prompt='Detailed instructions...',
+    instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point
         anthropic_cache_tool_definitions=True,  # 1 cache point
@@ -247,7 +247,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    system_prompt='Instructions...',
+    instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point
         anthropic_cache_tool_definitions=True,  # 1 cache point

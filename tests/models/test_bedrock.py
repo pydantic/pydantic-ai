@@ -272,7 +272,7 @@ def test_remove_inference_geo_prefix(model_name: str, expected: str):
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
 
     class Response(TypedDict):
         temperature: str
@@ -299,15 +299,12 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -339,6 +336,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -378,7 +376,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
 async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot(
@@ -388,7 +386,7 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
 
     @agent.tool_plain
     async def get_current_temperature(city: str) -> str:
@@ -412,7 +410,7 @@ async def test_bedrock_model_anthropic_model_without_tools(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
     model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('Paris is the capital of France.')
 
@@ -420,7 +418,7 @@ async def test_bedrock_model_anthropic_model_without_tools(
 async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(
-        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
     )
 
     @agent.tool_plain
@@ -437,15 +435,12 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What is the capital of France?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -477,6 +472,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -504,14 +500,14 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 
 async def test_bedrock_model_max_tokens(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'max_tokens': 5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is')
 
 
 async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
@@ -521,7 +517,7 @@ async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider:
 async def test_bedrock_model_performance_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
@@ -533,7 +529,7 @@ async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedroc
     model_settings = BedrockModelSettings(
         bedrock_guardrail_config={'guardrailIdentifier': 'guardrailv1', 'guardrailVersion': 'v1', 'trace': 'enabled'}
     )
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
@@ -548,7 +544,7 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None, bedroc
         bedrock_request_metadata={'test': 'test'},
         bedrock_additional_model_response_fields_paths=['test'],
     )
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
@@ -557,7 +553,7 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None, bedroc
 
 async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
 
     @agent.tool_plain
     async def get_capital(country: str) -> str:
@@ -656,7 +652,7 @@ async def test_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, bedrock_provider: BedrockProvider
 ):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['What fruit is in the image?', image_content])
     assert result.output == snapshot(
@@ -669,7 +665,7 @@ async def test_video_as_binary_content_input(
     allow_model_requests: None, video_content: BinaryContent, bedrock_provider: BedrockProvider
 ):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot(
@@ -680,7 +676,7 @@ async def test_video_as_binary_content_input(
 @pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -696,7 +692,7 @@ async def test_image_url_input(allow_model_requests: None, bedrock_provider: Bed
 @pytest.mark.vcr()
 async def test_video_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -712,7 +708,7 @@ async def test_video_url_input(allow_model_requests: None, bedrock_provider: Bed
 @pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
@@ -725,7 +721,7 @@ async def test_document_url_input(allow_model_requests: None, bedrock_provider: 
 @pytest.mark.vcr()
 async def test_text_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
@@ -742,7 +738,7 @@ An example text describing the use of "John Doe" as a placeholder name in legal 
 @pytest.mark.vcr()
 async def test_text_as_binary_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_content = BinaryContent(data=b'This is a test document.', media_type='text/plain')
 
@@ -1200,22 +1196,19 @@ async def test_bedrock_model_thinking_part_from_other_model(
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
-    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful assistant.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
                 ],
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1277,6 +1270,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
