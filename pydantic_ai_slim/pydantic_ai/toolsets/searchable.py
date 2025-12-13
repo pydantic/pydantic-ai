@@ -69,17 +69,21 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         logging.debug("SearchableToolset.get_tools")
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        all_tools[_SEARCH_TOOL_NAME] = _SearchTool(
-            toolset=self,
-            max_retries=1,
-        )
+
+        # If the model does not support tool search natively, add a Pydantic tool search tool.
+        if not ctx.model.profile.supports_tool_search:
+            all_tools[_SEARCH_TOOL_NAME] = _SearchTool(
+                toolset=self,
+                max_retries=1,
+            )
 
         toolset_tools = await self.toolset.get_tools(ctx)
         for tool_name, tool in toolset_tools.items():
             # TODO proper error handling
             assert tool_name != _SEARCH_TOOL_NAME
 
-            if tool_name in self._active_tool_names:
+            # Expose the tool unless it defers loading and is not yet active.
+            if not tool.tool_def.defer_loading or tool_name in self._active_tool_names:
                 all_tools[tool_name] = tool
 
         logging.debug(f"SearchableToolset.get_tools ==> {[t for t in all_tools]}")

@@ -514,6 +514,14 @@ class ToolDefinition:
     For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
     """
 
+    defer_loading: bool = False
+    """Whether to defer loading this tool until it is discovered via tool search.
+
+    When `True`, this tool will not be loaded into the model's context initially.
+
+    Instead, the model will discover it on-demand when needed, reducing token usage.
+    """
+
     @property
     def defer(self) -> bool:
         """Whether calls to this tool will be deferred.
