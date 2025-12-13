@@ -605,7 +605,7 @@ class OpenAIChatModel(Model):
                         chat.chat_completion.Choice(
                             finish_reason='content_filter',
                             index=0,
-                            message=chat.ChatCompletionMessage(content='', role='assistant'),
+                            message=chat.ChatCompletionMessage(content=None, role='assistant'),
                         )
                     ],
                     created=0,

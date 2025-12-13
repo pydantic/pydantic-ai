@@ -3357,3 +3357,35 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
 
     with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
         agent.run_sync('bad prompt')
+
+
+async def test_openai_response_filter_error_sync(allow_model_requests: None):
+    """Test that ContentFilterError is raised when response is empty and finish_reason is content_filter."""
+    c = completion_message(
+        ChatCompletionMessage(content=None, role='assistant'),
+    )
+    c.choices[0].finish_reason = 'content_filter'
+    c.model = 'gpt-5-mini'
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
+        await agent.run('hello')
+
+
+async def test_openai_response_filter_with_partial_content(allow_model_requests: None):
+    """Test that NO exception is raised if content is returned, even if finish_reason is content_filter."""
+    c = completion_message(
+        ChatCompletionMessage(content='Partial content', role='assistant'),
+    )
+    c.choices[0].finish_reason = 'content_filter'
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # Should NOT raise ContentFilterError
+    result = await agent.run('hello')
+    assert result.output == 'Partial content'

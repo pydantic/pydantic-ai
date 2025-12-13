@@ -534,9 +534,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
-        if response.finish_reason == 'content_filter':
-            raise exceptions.ContentFilterError(f'Content filter triggered for model {response.model_name}')
-
         response.run_id = response.run_id or ctx.state.run_id
         # Update usage
         ctx.state.usage.incr(response.usage)
@@ -609,6 +606,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         max_tokens = model_settings.get('max_tokens') if model_settings else None
                         raise exceptions.UnexpectedModelBehavior(
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                        )
+
+                    # Check for content filter on empty response
+                    if self.model_response.finish_reason == 'content_filter':
+                        raise exceptions.ContentFilterError(
+                            f'Content filter triggered for model {self.model_response.model_name}'
                         )
 
                     # we got an empty response.
