@@ -163,6 +163,7 @@ nav:
           - api/models/test.md
           - api/models/wrapper.md
           - api/profiles.md
+          - api/prompt_config.md
           - api/providers.md
           - api/retries.md
           - api/run.md

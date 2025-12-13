@@ -94,7 +94,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .prompt_config import PromptConfig, PromptTemplates
+from .prompt_config import PromptConfig, PromptTemplates, ToolConfig
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
@@ -233,6 +233,7 @@ __all__ = (
     # prompt_config
     'PromptConfig',
     'PromptTemplates',
+    'ToolConfig',
     # format_prompt
     'format_as_xml',
     # settings
