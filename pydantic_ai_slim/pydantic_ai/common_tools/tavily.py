@@ -50,7 +50,7 @@ class TavilySearchTool:
         search_deep: Literal['basic', 'advanced'] = 'basic',
         topic: Literal['general', 'news'] = 'general',
         time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = None,
-    ):
+    ) -> list[TavilySearchResult]:
         """Searches Tavily for the given query and returns the results.
 
         Args:
@@ -60,7 +60,7 @@ class TavilySearchTool:
             time_range: The time range back from the current date to filter results.
 
         Returns:
-            The search results.
+            A list of search results from Tavily.
         """
         results = await self.client.search(query, search_depth=search_deep, topic=topic, time_range=time_range)  # type: ignore[reportUnknownMemberType]
         return tavily_search_ta.validate_python(results['results'])

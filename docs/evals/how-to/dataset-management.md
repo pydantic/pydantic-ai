@@ -306,7 +306,7 @@ async def main():
 1. Define the schema for the inputs to the task.
 2. Define the schema for the expected outputs of the task.
 3. Define the schema for the metadata of the test cases.
-4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.Dataset] with 2 cases confirming to the schema.
+4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.dataset.Dataset] with 2 cases confirming to the schema.
 5. Save the dataset to a YAML file, this will also write `questions_cases_schema.json` with the schema JSON schema for `questions_cases.yaml` to make editing easier. The magic `yaml-language-server` comment is supported by at least vscode, jetbrains/pycharm (more details [here](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema)).
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
@@ -381,7 +381,7 @@ async def main():
     """
 ```
 
-1. Generate the [`Dataset`][pydantic_evals.Dataset] exactly as above.
+1. Generate the [`Dataset`][pydantic_evals.dataset.Dataset] exactly as above.
 2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with th JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_

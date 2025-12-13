@@ -420,7 +420,7 @@ class QualityEvaluator(Evaluator):
 
 ## Experiment-Level Metadata
 
-In addition to case-level metadata, you can also pass experiment-level metadata when calling [`evaluate()`][pydantic_evals.Dataset.evaluate]:
+In addition to case-level metadata, you can also pass experiment-level metadata when calling [`evaluate()`][pydantic_evals.dataset.Dataset.evaluate]:
 
 ```python
 from pydantic_evals import Case, Dataset
