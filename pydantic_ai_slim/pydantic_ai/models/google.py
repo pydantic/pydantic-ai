@@ -503,7 +503,7 @@ class GoogleModel(Model):
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         if candidate.content is None or candidate.content.parts is None:
-            parts = []  # pragma: no cover
+            parts = []
         else:
             parts = candidate.content.parts or []
 
