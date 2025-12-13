@@ -602,7 +602,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets, prompt_config=prompt_config)
+        toolset = self._get_toolset(
+            output_toolset=output_toolset, additional_toolsets=toolsets, prompt_config=prompt_config
+        )
         tool_manager = ToolManager[AgentDepsT](toolset)
 
         # Build the graph
