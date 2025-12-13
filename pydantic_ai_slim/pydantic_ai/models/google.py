@@ -503,11 +503,7 @@ class GoogleModel(Model):
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         if candidate.content is None or candidate.content.parts is None:
-            if finish_reason == 'content_filter' and raw_finish_reason:
-                raise UnexpectedModelBehavior(
-                    f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
-                )
-            parts = []  # pragma: no cover
+            parts = []
         else:
             parts = candidate.content.parts or []
 
@@ -707,12 +703,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
             if candidate.content is None or candidate.content.parts is None:
-                if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
-                    raise UnexpectedModelBehavior(
-                        f'Content filter {raw_finish_reason.value!r} triggered', chunk.model_dump_json()
-                    )
-                else:  # pragma: no cover
-                    continue
+                continue
 
             parts = candidate.content.parts
             if not parts:

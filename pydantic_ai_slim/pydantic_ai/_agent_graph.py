@@ -603,6 +603,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                         )
 
+                    # Check for content filter on empty response
+                    if self.model_response.finish_reason == 'content_filter':
+                        raise exceptions.ContentFilterError(
+                            f'Content filter triggered for model {self.model_response.model_name}'
+                        )
+
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls

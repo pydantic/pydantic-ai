@@ -38,6 +38,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -3325,3 +3326,104 @@ response\
 """,
         }
     )
+
+
+def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
+        )
+    )
+
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
+        agent.run_sync('bad prompt')
+
+
+def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None:
+    mock_client = MockOpenAIResponses.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
+        )
+    )
+    m = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
+        agent.run_sync('bad prompt')
+
+
+async def test_openai_response_filter_error_sync(allow_model_requests: None):
+    """Test that ContentFilterError is raised when response is empty and finish_reason is content_filter."""
+    c = completion_message(
+        ChatCompletionMessage(content=None, role='assistant'),
+    )
+    c.choices[0].finish_reason = 'content_filter'
+    c.model = 'gpt-5-mini'
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
+        await agent.run('hello')
+
+
+async def test_openai_response_filter_with_partial_content(allow_model_requests: None):
+    """Test that NO exception is raised if content is returned, even if finish_reason is content_filter."""
+    c = completion_message(
+        ChatCompletionMessage(content='Partial content', role='assistant'),
+    )
+    c.choices[0].finish_reason = 'content_filter'
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # Should NOT raise ContentFilterError
+    result = await agent.run('hello')
+    assert result.output == 'Partial content'
+
+
+def test_openai_400_non_content_filter(allow_model_requests: None) -> None:
+    """Test a 400 error that is NOT a content filter (different code)."""
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'Bad Request',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://api.openai.com/v1')),
+            body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
+        )
+    )
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    # Should be ModelHTTPError, NOT ContentFilterError
+    assert not isinstance(exc_info.value, ContentFilterError)
+    assert exc_info.value.status_code == 400
+
+
+def test_openai_400_non_dict_body(allow_model_requests: None) -> None:
+    """Test a 400 error where the body is not a dictionary."""
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'Bad Request',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://api.openai.com/v1')),
+            body='Raw string body',
+        )
+    )
+    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert exc_info.value.status_code == 400
