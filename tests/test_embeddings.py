@@ -32,7 +32,7 @@ with try_import() as sentence_transformers_imports_successful:
     from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
 
 
-@pytest.mark.skipif(not openai_imports_successful, reason='OpenAI not installed')
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.vcr
 class TestOpenAI:
     @pytest.fixture
@@ -216,7 +216,7 @@ class TestOpenAI:
         )
 
 
-@pytest.mark.skipif(not cohere_imports_successful, reason='Cohere not installed')
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
 @pytest.mark.vcr
 class TestCohere:
     async def test_infer_model(self, co_api_key: str):
@@ -284,16 +284,16 @@ class TestCohere:
             await embedder.embed_query('Hello, world!')
 
 
-@pytest.mark.skipif(not sentence_transformers_imports_successful, reason='SentenceTransformers not installed')
+@pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self):
+    def stsb_bert_tiny_model(self) -> SentenceTransformer:
         model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
 
     @pytest.fixture
-    def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
+    def embedder(self, stsb_bert_tiny_model: SentenceTransformer) -> Embedder:
         return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
 
     async def test_infer_model(self):
