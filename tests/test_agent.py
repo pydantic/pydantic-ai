@@ -553,7 +553,7 @@ def test_prompt_config_tool_config_descriptions():
     )
 
     @agent.tool_plain
-    def my_tool(x: int) -> int:
+    def my_tool(x: int) -> int:  # pragma: no cover
         """Original description that should be overridden"""
         return x * 2
 
@@ -575,12 +575,17 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
     agent = Agent(
         FunctionModel(return_model),
         prompt_config=PromptConfig(
-            tool_config=ToolConfig(tool_descriptions={'basic_tool': 'Agent-level tool description'})
+            tool_config=ToolConfig(
+                tool_descriptions={
+                    'basic_tool': 'Agent-level tool description',
+                    'not_present_basic_tool': 'Should not be used',
+                }
+            )
         ),
     )
 
     @agent.tool_plain
-    def basic_tool(x: int) -> int:
+    def basic_tool(x: int) -> int:  # pragma: no cover
         """Original description that should be overridden"""
         return x * 2
 

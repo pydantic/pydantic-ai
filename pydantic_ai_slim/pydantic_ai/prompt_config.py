@@ -164,6 +164,10 @@ class ToolConfig:
     tool_descriptions: dict[str, str] = field(default_factory=lambda: {})
     """Custom descriptions for tools used by the agent."""
 
+    def has_tool_descriptions(self) -> bool:
+        """Check if any tool descriptions are set(not an empty dict)."""
+        return bool(len(self.tool_descriptions) > 0)
+
 
 @dataclass
 class PromptConfig:
