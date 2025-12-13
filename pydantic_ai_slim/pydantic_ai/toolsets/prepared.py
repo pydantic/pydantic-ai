@@ -24,11 +24,12 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
 
-        tools_after_prepare_func = await self.get_tools_from_prepare_func(original_tools, ctx)
+        tools_after_tool_config = await self._get_tools_from_tool_config(original_tools)
+        # If tool config is not present we will get original tools back which we can then pass onto prepare function
+        tools_after_prepare_func = await self.get_tools_from_prepare_func(tools_after_tool_config, ctx)
+        # If prepare function is not present we will get tools_after_tool_config(which could be original tools if tool config was also not present) back which we can then return
 
-        tools_after_tool_config = await self._get_tools_from_tool_config(tools_after_prepare_func)
-
-        return tools_after_tool_config
+        return tools_after_prepare_func
 
     async def _get_tools_from_tool_config(
         self, original_tools: dict[str, ToolsetTool[AgentDepsT]]
