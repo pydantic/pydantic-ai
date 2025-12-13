@@ -142,6 +142,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_name=tool_name,
                             content=msg.content,
                             tool_call_id=tool_call_id,
+                            return_kind='tool-executed',
                         )
                     )
 

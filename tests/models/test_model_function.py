@@ -187,6 +187,7 @@ def test_weather():
                         content='{"lat": 51, "lng": 0}',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -205,6 +206,7 @@ def test_weather():
                         content='Raining',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -257,6 +259,7 @@ def test_var_args():
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
             'part_kind': 'tool-return',
+            'return_kind': 'tool-executed',
         }
     )
 
@@ -389,19 +392,39 @@ def test_call_all():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='foo',
+                        content='1',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
-                        tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='bar',
+                        content='2',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
-                        tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='baz',
+                        content='3',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
-                        tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='qux',
+                        content='4',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
-                        tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='quz',
+                        content='a',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     ),
                 ],
                 run_id=IsStr(),

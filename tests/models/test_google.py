@@ -228,7 +228,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
+                        tool_name='temperature',
+                        content='30°C',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -262,6 +266,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -602,6 +607,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -634,6 +640,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         content='Paris',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -759,7 +766,11 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
-                    tool_name='get_capital', content='Paris', tool_call_id=IsStr(), timestamp=IsDatetime()
+                    tool_name='get_capital',
+                    content='Paris',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(
@@ -777,7 +788,11 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
-                    tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
+                    tool_name='get_temperature',
+                    content='30°C',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
@@ -2470,6 +2485,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         content='hello',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2501,6 +2517,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2568,6 +2585,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2599,6 +2617,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2656,6 +2675,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2902,6 +2922,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -3495,6 +3516,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                         content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -4181,6 +4203,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4245,6 +4268,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4544,6 +4568,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -4596,6 +4621,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     content='Mexico',
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='The')),

@@ -25,7 +25,16 @@ from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _output,
+    _system_prompt,
+    exceptions,
+    messages as _messages,
+    models,
+    prompt_config as _prompt_config,
+    result,
+    usage as _usage,
+)
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -133,6 +142,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
+    prompt_config: _prompt_config.PromptConfig = dataclasses.field(
+        default_factory=lambda: _prompt_config.DEFAULT_PROMPT_CONFIG
+    )
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -379,9 +391,8 @@ async def _prepare_request_parameters(
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
 
-    prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
-    )
+    prompt_config = ctx.deps.prompt_config
+    prompted_output_template = prompt_config.templates.get_prompted_output_template(output_schema)
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -503,6 +514,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
+
+        prompt_config = ctx.deps.prompt_config
+
+        message_history = _apply_prompt_templates_to_message_history(
+            message_history, prompt_config.templates, run_context
+        )
+
+        ctx.state.message_history[:] = message_history
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -780,6 +799,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
+            run_ctx = build_run_context(ctx)
+            tool_responses = [ctx.deps.prompt_config.templates.apply_template(part, run_ctx) for part in tool_responses]
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
         return End(final_result)
@@ -865,8 +886,9 @@ async def process_tool_calls(  # noqa: C901
         if final_result and final_result.tool_call_id == call.tool_call_id:
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content='Final result processed.',
+                content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.final_result_processed,
                 tool_call_id=call.tool_call_id,
+                return_kind='final-result-processed',
             )
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
@@ -874,8 +896,9 @@ async def process_tool_calls(  # noqa: C901
             yield _messages.FunctionToolCallEvent(call)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content='Output tool not used - a final result was already processed.',
+                content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.output_tool_not_executed,
                 tool_call_id=call.tool_call_id,
+                return_kind='output-tool-not-executed',
             )
             yield _messages.FunctionToolResultEvent(part)
             output_parts.append(part)
@@ -916,8 +939,9 @@ async def process_tool_calls(  # noqa: C901
             else:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Final result processed.',
+                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.final_result_processed,
                     tool_call_id=call.tool_call_id,
+                    return_kind='final-result-processed',
                 )
                 output_parts.append(part)
 
@@ -932,8 +956,9 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Tool not executed - a final result was already processed.',
+                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.function_tool_not_executed,
                     tool_call_id=call.tool_call_id,
+                    return_kind='function-tool-not-executed',
                 )
             )
     else:
@@ -990,8 +1015,9 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content='Tool not executed - a final result was already processed.',
+                            content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.function_tool_not_executed,
                             tool_call_id=call.tool_call_id,
+                            return_kind='function-tool-not-executed',
                         )
                     )
         elif calls:
@@ -1148,6 +1174,7 @@ async def _call_tool(
                 tool_name=tool_call.tool_name,
                 content=tool_call_result.message,
                 tool_call_id=tool_call.tool_call_id,
+                return_kind='tool-denied',
             ), None
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
@@ -1210,6 +1237,7 @@ async def _call_tool(
         tool_call_id=tool_call.tool_call_id,
         content=tool_return.return_value,  # type: ignore
         metadata=tool_return.metadata,
+        return_kind='tool-executed',
     )
 
     return return_part, tool_return.content or None
@@ -1380,3 +1408,18 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+def _apply_prompt_templates_to_message_history(
+    messages: list[_messages.ModelMessage], prompt_templates: _prompt_config.PromptTemplates, ctx: RunContext[Any]
+) -> list[_messages.ModelMessage]:
+    messages_with_templates_applied: list[_messages.ModelMessage] = []
+
+    for msg in messages:
+        if isinstance(msg, _messages.ModelRequest):
+            parts_template_applied = [prompt_templates.apply_template(part, ctx) for part in msg.parts]
+            messages_with_templates_applied.append(replace(msg, parts=parts_template_applied))
+        else:
+            messages_with_templates_applied.append(msg)
+
+    return messages_with_templates_applied

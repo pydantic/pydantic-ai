@@ -266,6 +266,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -367,6 +368,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -400,6 +402,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -929,6 +932,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                         content='See file bd38f5',
                         tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content=[
@@ -1018,6 +1022,7 @@ async def test_image_as_binary_content_tool_response(
                         content='See file 1c8566',
                         tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content=[
@@ -2133,7 +2138,11 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_temperature', content=20.0, tool_call_id=IsStr(), timestamp=IsDatetime()
+                        tool_name='get_temperature',
+                        content=20.0,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 instructions='You are a helpful assistant.',
@@ -2556,6 +2565,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         content='Mexico',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2594,6 +2604,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2658,6 +2669,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                         content='Mexico',
                         tool_call_id='call_J1YabdC7G7kzEZNbbZopwenH',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2746,6 +2758,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                         content='Mexico',
                         tool_call_id='call_PkRGedQNRFUzJp2R7dO7avWR',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2836,6 +2849,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         content='Mexico',
                         tool_call_id='call_SIttSeiOistt33Htj4oiHOOX',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -2926,6 +2940,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                         content='Mexico',
                         tool_call_id='call_s7oT9jaLAsEqTgvxZTmFh0wB',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -3016,6 +3031,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                         content='Mexico',
                         tool_call_id='call_wJD14IyJ4KKVtjCrGyNCHO09',
                         timestamp=IsDatetime(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),

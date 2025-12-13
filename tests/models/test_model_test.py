@@ -100,6 +100,7 @@ def test_custom_output_args():
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -147,6 +148,7 @@ def test_custom_output_args_model():
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -190,6 +192,7 @@ def test_output_type():
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 run_id=IsStr(),
@@ -234,6 +237,7 @@ def test_tool_retry():
                         tool_name='my_ret',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
+                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
@@ -248,7 +252,11 @@ def test_tool_retry():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        tool_name='my_ret',
+                        content='1',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),

@@ -87,7 +87,11 @@ async def test_streamed_text_response():
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                            tool_name='ret_a',
+                            content='a-apple',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -123,7 +127,11 @@ async def test_streamed_text_response():
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                            tool_name='ret_a',
+                            content='a-apple',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -179,7 +187,11 @@ def test_streamed_text_sync_response():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='ret_a',
+                        content='a-apple',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -225,7 +237,11 @@ def test_streamed_text_sync_response():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        tool_name='ret_a',
+                        content='a-apple',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                        return_kind='tool-executed',
                     )
                 ],
                 run_id=IsStr(),
@@ -606,6 +622,7 @@ async def test_call_tool():
                             content='hello world',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -633,6 +650,7 @@ async def test_call_tool():
                             content='hello world',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -657,6 +675,7 @@ async def test_call_tool():
                             content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='final-result-processed',
                         )
                     ],
                     run_id=IsStr(),
@@ -826,24 +845,28 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='function-tool-not-executed',
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='function-tool-not-executed',
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
                             content='Tool not executed - a final result was already processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='function-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -918,12 +941,14 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='output-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -970,12 +995,14 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='output-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -1076,18 +1103,21 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
@@ -1100,6 +1130,7 @@ class TestMultipleToolCalls:
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -1199,12 +1230,14 @@ class TestMultipleToolCalls:
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='output-tool-not-executed',
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -1279,6 +1312,7 @@ class TestMultipleToolCalls:
                             content=1,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -1338,6 +1372,7 @@ class TestMultipleToolCalls:
                             content=0,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -1363,6 +1398,7 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='final-result-processed',
                         )
                     ],
                     run_id=IsStr(),
@@ -1443,21 +1479,28 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='tool-executed',
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                            return_kind='tool-executed',
                         ),
                         RetryPromptPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
@@ -1470,6 +1513,7 @@ class TestMultipleToolCalls:
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='function-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -1544,12 +1588,14 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -1705,6 +1751,7 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
@@ -1789,6 +1836,7 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         RetryPromptPart(
                             content='Second output validation failed',
@@ -2100,6 +2148,7 @@ async def test_unknown_tool_call_events():
                     content=10,
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 ),
             ),
         ]
@@ -2346,6 +2395,7 @@ async def test_tool_raises_approval_required():
                             content=84,
                             tool_call_id='my_tool',
                             timestamp=IsDatetime(),
+                            return_kind='tool-executed',
                         )
                     ],
                     run_id=IsStr(),
@@ -2529,6 +2579,7 @@ async def test_run_event_stream_handler():
                     content='a-apple',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -2575,6 +2626,7 @@ def test_run_sync_event_stream_handler():
                     content='a-apple',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -2624,6 +2676,7 @@ async def test_run_stream_event_stream_handler():
                     content='a-apple',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -2667,6 +2720,7 @@ async def test_stream_tool_returning_user_content():
                     content='See file bd38f5',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 ),
                 content=[
                     'This is file bd38f5:',
@@ -2716,6 +2770,7 @@ async def test_run_stream_events():
                     content='a-apple',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                    return_kind='tool-executed',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),

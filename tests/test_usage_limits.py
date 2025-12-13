@@ -123,6 +123,7 @@ async def test_streamed_text_limits() -> None:
                                 content='a-apple',
                                 timestamp=IsNow(tz=timezone.utc),
                                 tool_call_id=IsStr(),
+                                return_kind='tool-executed',
                             )
                         ],
                         run_id=IsStr(),

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from pydantic_ai.prompt_config import ToolConfig
+
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import ToolsPrepareFunc
@@ -16,10 +18,41 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
     """
 
-    prepare_func: ToolsPrepareFunc[AgentDepsT]
+    prepare_func: ToolsPrepareFunc[AgentDepsT] | None
+    tool_config: ToolConfig | None = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
+
+        tools_after_tool_config = await self._get_tools_from_tool_config(original_tools)
+        # If tool config is not present we will get original tools back which we can then pass onto prepare function
+        tools_after_prepare_func = await self.get_tools_from_prepare_func(tools_after_tool_config, ctx)
+        # If prepare function is not present we will get tools_after_tool_config(which could be original tools if tool config was also not present) back which we can then return
+
+        return tools_after_prepare_func
+
+    async def _get_tools_from_tool_config(
+        self, original_tools: dict[str, ToolsetTool[AgentDepsT]]
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        if self.tool_config is None:
+            return original_tools
+
+        tool_descriptions = self.tool_config.tool_descriptions
+
+        for tool_name, description in tool_descriptions.items():
+            if tool_name in original_tools:
+                original_tool = original_tools[tool_name]
+                updated_tool_def = replace(original_tool.tool_def, description=description)
+                original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
+
+        return original_tools
+
+    async def get_tools_from_prepare_func(
+        self, original_tools: dict[str, ToolsetTool[AgentDepsT]], ctx: RunContext[AgentDepsT]
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        if self.prepare_func is None:
+            return original_tools
+
         original_tool_defs = [tool.tool_def for tool in original_tools.values()]
         prepared_tool_defs_by_name = {
             tool_def.name: tool_def for tool_def in (await self.prepare_func(ctx, original_tool_defs) or [])

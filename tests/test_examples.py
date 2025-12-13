@@ -324,6 +324,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    'Hello': 'Hello! How can I help you today?',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',

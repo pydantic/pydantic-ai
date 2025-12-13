@@ -874,6 +874,26 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    return_kind: (
+        Literal[
+            'final-result-processed',
+            'output-tool-not-executed',
+            'function-tool-not-executed',
+            'tool-executed',
+            'tool-denied',
+        ]
+        | None
+    ) = None
+    """How the tool call was resolved, used for disambiguating return parts.
+
+    * `tool-executed`: the tool ran successfully and produced a return value
+    * `final-result-processed`: an output tool produced the run's final result
+    * `output-tool-not-executed`: an output tool was skipped because a final result already existed
+    * `function-tool-not-executed`: a function tool was skipped due to early termination after a final result
+    * `tool-denied`: the tool call was rejected by an approval handler
+
+    """
+
 
 @dataclass(repr=False)
 class BuiltinToolReturnPart(BaseToolReturnPart):
@@ -894,6 +914,12 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
+
+
+def _get_default_model_retry_message() -> str:
+    from .prompt_config import DEFAULT_PROMPT_CONFIG
+
+    return cast(str, DEFAULT_PROMPT_CONFIG.templates.default_model_retry)
 
 
 @dataclass(repr=False)
@@ -936,6 +962,9 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    retry_message: str | None = field(default_factory=_get_default_model_retry_message)
+    """The retry message rendered using the user's prompt template. It is populated after checking the conditions for the retry so that the correct template is used."""
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
@@ -949,7 +978,8 @@ class RetryPromptPart:
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
-        return f'{description}\n\nFix the errors and try again.'
+
+        return f'{description}\n\n{self.retry_message}'
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:

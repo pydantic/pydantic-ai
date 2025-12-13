@@ -305,7 +305,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                        regex=r'\{"result":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return","return_kind":"tool-executed"\},"content":null,"event_kind":"function_tool_result"\}'
                                                     )
                                                 ),
                                             ],
@@ -389,7 +389,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                        regex=r'\{"result":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return","return_kind":"tool-executed"\},"content":null,"event_kind":"function_tool_result"\}'
                                                     )
                                                 ),
                                             ],
@@ -406,7 +406,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                        regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return","return_kind":"tool-executed"\},"content":null,"event_kind":"function_tool_result"\}'
                                                     )
                                                 ),
                                             ],
