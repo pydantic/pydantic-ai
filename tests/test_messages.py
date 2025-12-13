@@ -309,6 +309,13 @@ def test_binary_content_is_methods():
     assert document_content.format == 'pdf'
 
 
+def test_binary_content_base64():
+    bc = BinaryContent(data=b'Hello, world!', media_type='image/png')
+    assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
+    assert not bc.base64.startswith('data:')
+    assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',

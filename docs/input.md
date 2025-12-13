@@ -104,21 +104,34 @@ print(result.output)
 
 ## User-side download vs. direct file URL
 
-When you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will typically send the URL directly to the model API so that the download happens on their side.
+When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will default to sending the URL to the model, so the file is downloaded on their side.
 
-Some model APIs do not support file URLs at all or for specific file types. In the following cases, Pydantic AI will download the file content and send it as part of the API request instead:
+Support for file URLs varies depending on type and provider. Pydantic AI handles this as follows:
 
-- [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]: `AudioUrl` and `DocumentUrl`
-- [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]: All URLs
-- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: `DocumentUrl` with media type `text/plain`
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] using GLA (Gemini Developer API): All URLs except YouTube video URLs and files uploaded to the [Files API](https://ai.google.dev/gemini-api/docs/files).
-- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]: All URLs
+| Model | Supported URL types | Sends URL directly |
+|-------|---------------------|-------------------|
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | `ImageUrl` only |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | Yes |
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` | Yes, except `DocumentUrl` (`text/plain`) |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | Yes |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | All URL types | [YouTube](models/google.md#document-image-audio-and-video-input) and [Files API](https://ai.google.dev/gemini-api/docs/files) URLs only |
+| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | Yes |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | No, defaults to `force_download` |
 
-If the model API supports file URLs but may not be able to download a file because of crawling or access restrictions, you can instruct Pydantic AI to download the file content and send that instead of the URL by enabling the `force_download` flag on the URL object. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request.
+A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
+
+```py {title="force_download.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl, AudioUrl, VideoUrl, DocumentUrl
+
+ImageUrl(url='https://example.com/image.png', force_download=True)
+AudioUrl(url='https://example.com/audio.mp3', force_download=True)
+VideoUrl(url='https://example.com/video.mp4', force_download=True)
+DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
+```
 
 ## Uploaded Files
 
-Some model providers like Google's Gemini API support [uploading files](https://ai.google.dev/gemini-api/docs/files). You can upload a file to the model API using the client you can get from the provider and use the resulting URL as input:
+Some model providers like Google's Gemini API support [uploading files](https://ai.google.dev/gemini-api/docs/files). You can upload a file using the provider's client and passing the resulting URL as input:
 
 ```py {title="file_upload.py" test="skip"}
 from pydantic_ai import Agent, DocumentUrl

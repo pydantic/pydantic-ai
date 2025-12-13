@@ -1,4 +1,3 @@
-import base64
 from dataclasses import dataclass
 from datetime import timezone
 from typing import Any
@@ -121,9 +120,7 @@ def test_assistant_text_history_complex():
         ModelRequest(
             parts=[
                 UserPromptPart(content='1'),
-                UserPromptPart(
-                    content=['a string', BinaryContent(data=base64.b64encode(b'data'), media_type='image/jpeg')]
-                ),
+                UserPromptPart(content=['a string', BinaryContent(data=b'data', media_type='image/jpeg')]),
                 SystemPromptPart(content='system content'),
             ]
         ),

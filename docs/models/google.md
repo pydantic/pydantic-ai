@@ -199,7 +199,25 @@ agent = Agent(model)
 
 ## Document, Image, Audio, and Video Input
 
-`GoogleModel` supports multi-modal input, including documents, images, audio, and video. See the [input documentation](../input.md) for details and examples.
+`GoogleModel` supports multi-modal input, including documents, images, audio, and video.
+
+YouTube video URLs can be passed directly to Google models:
+
+```py {title="youtube_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, VideoUrl
+from pydantic_ai.models.google import GoogleModel
+
+agent = Agent(GoogleModel('gemini-2.5-flash'))
+result = agent.run_sync(
+    [
+        'What is this video about?',
+        VideoUrl(url='https://www.youtube.com/watch?v=dQw4w9WgXcQ'),
+    ]
+)
+print(result.output)
+```
+
+See the [input documentation](../input.md) for more details and examples.
 
 ## Model settings
 
