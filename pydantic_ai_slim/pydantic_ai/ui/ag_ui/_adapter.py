@@ -145,7 +145,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 case TextInputContent(text=text):
                                     user_prompt_content.append(text)
                                 case BinaryInputContent():
-                                    user_prompt_content.append(cls._load_binary_part(part))
+                                    user_prompt_content.append(cls.load_binary_part(part))
                                 case _:
                                     raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -164,10 +164,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if content:
                         builder.add(TextPart(content=content))
                     if tool_calls_list:
-                        cls._add_assistant_tool_parts(builder, tool_calls_list, tool_calls)
+                        cls.add_assistant_tool_parts(builder, tool_calls_list, tool_calls)
 
                 case ToolMessage() as tool_msg:
-                    cls._add_tool_return_part(builder, tool_msg, tool_calls)
+                    cls.add_tool_return_part(builder, tool_msg, tool_calls)
 
                 case ActivityMessage(content=content):
                     # No matching on the Pydantic AI side.
@@ -176,9 +176,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return builder.messages
 
     @classmethod
-    def _load_binary_part(
-        cls, part: BinaryInputContent
-    ) -> BinaryContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl:
+    def load_binary_part(cls, part: BinaryInputContent) -> BinaryContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl:
         """Transforms an AG-UI BinaryInputContent part into a Pydantic AI content part."""
         if part.url:
             try:
@@ -202,7 +200,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
 
     @classmethod
-    def _add_assistant_tool_parts(
+    def add_assistant_tool_parts(
         cls,
         builder: MessagesBuilder,
         tool_calls_list: list[ToolCall],
@@ -234,7 +232,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 )
 
     @classmethod
-    def _add_tool_return_part(
+    def add_tool_return_part(
         cls,
         builder: MessagesBuilder,
         msg: ToolMessage,
