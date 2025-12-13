@@ -120,12 +120,15 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         wrapped_model = wrapped.model
-        if not isinstance(wrapped_model, Model):
+        has_additional_models = additional_models is not None and len(additional_models) > 0
+        if not isinstance(wrapped_model, Model) and not has_additional_models:
             raise UserError(
-                'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
+                'An agent needs to have a `model` or `additional_models` in order to be used with Temporal, it cannot be set at agent run time.'
             )
 
-        self._registered_model_instances: dict[str, Model] = {'default': wrapped_model}
+        self._registered_model_ids: dict[str, Model] = {}
+        if isinstance(wrapped_model, Model):
+            self._registered_model_ids['default'] = wrapped_model
 
         # start_to_close_timeout is required
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
@@ -169,18 +172,20 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         activities.append(self.event_stream_handler_activity)
 
         if additional_models:
-            for key, value in additional_models.items():
-                key = self._normalize_model_name(key)
-                self._registered_model_instances[key] = value
+            for model_id, model_instance in additional_models.items():
+                model_id = self._validate_model_id(model_id)
+                self._registered_model_ids[model_id] = model_instance
 
+        # Use wrapped_model if available, otherwise first registered model
+        primary_model = wrapped_model if isinstance(wrapped_model, Model) else next(iter(self._registered_model_ids.values()))
         temporal_model = TemporalModel(
-            wrapped_model,
+            primary_model,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config | model_activity_config,
             deps_type=self.deps_type,
             run_context_type=self.run_context_type,
             event_stream_handler=self.event_stream_handler,
-            model_instances=self._registered_model_instances,
+            model_instances=self._registered_model_ids,
             provider_factory=provider_factory,
         )
         activities.extend(temporal_model.temporal_activities)
@@ -212,20 +217,28 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
 
-    def _normalize_model_name(self, name: str) -> str:
-        normalized = name.strip()
-        if not normalized:
-            raise UserError('Model names must be non-empty strings.')
-        if normalized == 'default':
-            raise UserError("Model name 'default' is reserved for the agent's primary model.")
-        if normalized in self._registered_model_instances:
-            raise UserError(f'Duplicate model name {normalized!r} provided to `additional_models`.')
-        return normalized
+    def _validate_model_id(self, model_id: str) -> str:
+        """Validate a model ID for registration.
 
-    def _select_model(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
-        """Select the appropriate model based on the runtime parameter.
+        Args:
+            model_id: The model ID to validate.
 
-        Returns a string that will be checked against registered model instances,
+        Returns:
+            The validated model ID.
+
+        Raises:
+            UserError: If the model ID is invalid or already registered.
+        """
+        if model_id == 'default':
+            raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+        if model_id in self._registered_model_ids:  # pragma: no cover
+            raise UserError(f'Duplicate model ID {model_id!r} provided to `additional_models`.')
+        return model_id
+
+    def _get_model_id(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
+        """Get the model ID for the given model parameter.
+
+        Returns a string that will be checked against registered model IDs,
         or passed to infer_model if not found. Returns None to use the default model.
         """
         if model is None or model == 'default':
@@ -233,14 +246,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         if isinstance(model, Model):
             # Check if this model instance is already registered
-            for key, registered_model in self._registered_model_instances.items():
+            for model_id, registered_model in self._registered_model_ids.items():
                 if registered_model is model:
-                    if key == 'default':
+                    if model_id == 'default':
                         return None
-                    return key
+                    return model_id
             raise UserError(
                 'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. '
-                'Register the model via `additional_models` or reference a registered model by name.'
+                'Register the model via `additional_models` or reference a registered model by ID.'
             )
 
         return model
@@ -296,10 +309,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(self, *, model_id: str | None = None) -> Iterator[None]:
+    def _temporal_overrides(self, *, model_id: str | None = None, override_model: bool = True) -> Iterator[None]:
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
+        # When outside a workflow and a model is explicitly passed, we don't override the model
+        # to allow the passed model to be used directly.
+        model_override = self._temporal_model if override_model else _utils.UNSET
         with (
-            super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
+            super().override(model=model_override, toolsets=self._toolsets, tools=[]),
             self._temporal_model.using_model(model_id),
         ):
             token = self._temporal_overrides_active.set(True)
@@ -415,17 +431,28 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         model_id: str | None = None
-        if workflow.in_workflow() and model is not None:
-            model_id = self._select_model(model)
-            model = None
+        resolved_model: models.Model | models.KnownModelName | str | None = model
+        override_model = True  # Default: use TemporalModel wrapper
 
-        with self._temporal_overrides(model_id=model_id if workflow.in_workflow() else None):
+        if model is not None:
+            if workflow.in_workflow():
+                # In workflow: convert to model_id for the temporal model to use
+                model_id = self._get_model_id(model)
+                resolved_model = None
+            else:
+                # Outside workflow: resolve registered model IDs to actual model instances
+                # and don't override the model so the resolved model is used directly
+                if isinstance(model, str) and model in self._registered_model_ids:
+                    resolved_model = self._registered_model_ids[model]
+                override_model = False
+
+        with self._temporal_overrides(model_id=model_id, override_model=override_model):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
-                model=model,
+                model=resolved_model,
                 instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
@@ -949,6 +976,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 raise UserError(
                     '`agent.iter()` cannot be used inside a Temporal workflow. '
                     'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                )
+
+            if model is not None:  # pragma: no cover
+                raise UserError(
+                    'Model cannot be set at agent iter time inside a Temporal workflow, it must be set at agent run time or agent creation time.'
                 )
 
             if toolsets is not None:

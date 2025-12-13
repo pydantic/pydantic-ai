@@ -166,18 +166,40 @@ Other than that, any agent and toolset will just work!
 By default, a `TemporalAgent` uses the model that was set on the wrapped agent. However, you can register additional models and select between them at runtime inside workflows using the `additional_models` parameter:
 
 ```python {title="multi_model_temporal.py" test="skip"}
+from typing import Any
+
 from temporalio import workflow
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import TemporalAgent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers import Provider
+from pydantic_ai.tools import RunContext
 
-# Create models
-default_model = OpenAIModel('gpt-4o')
-fast_model = OpenAIModel('gpt-4o-mini')
-reasoning_model = OpenAIModel('o1')
+# Create models from different providers
+default_model = OpenAIChatModel('gpt-4o')
+fast_model = AnthropicModel('claude-3-5-haiku-latest')
+reasoning_model = GoogleModel('gemini-2.0-flash-thinking-exp')
 
 agent = Agent(default_model, name='multi_model_agent')
+
+
+# Optional: provider factory for dynamic model configuration
+def my_provider_factory(run_context: RunContext[dict[str, str]], provider_name: str) -> Provider[Any]:
+    """Create providers with custom configuration based on run context."""
+    api_key = run_context.deps.get(f'{provider_name}_api_key')
+    if provider_name == 'openai':
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        return OpenAIProvider(api_key=api_key)
+    elif provider_name == 'anthropic':
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+
+        return AnthropicProvider(api_key=api_key)
+    # ... handle other providers
+
 
 temporal_agent = TemporalAgent(
     agent,
@@ -185,6 +207,7 @@ temporal_agent = TemporalAgent(
         'fast': fast_model,
         'reasoning': reasoning_model,
     },
+    provider_factory=my_provider_factory,  # Optional: for dynamic model configuration
 )
 
 
@@ -195,17 +218,21 @@ class MultiModelWorkflow:
         if use_reasoning:
             # Select by registered name
             result = await temporal_agent.run(prompt, model='reasoning')
+        elif some_condition:
+            # Or pass a model string with provider factory for dynamic configuration
+            result = await temporal_agent.run(prompt, model='openai:gpt-4o-mini')
         else:
             # Or pass the registered instance directly
             result = await temporal_agent.run(prompt, model=fast_model)
         return result.output
 ```
 
-Inside workflows, you can reference models in three ways:
+Inside workflows, you can reference models in four ways:
 
 1. **By registered name**: Pass the string key used in `additional_models` (e.g., `model='fast'`)
 2. **By registered instance**: Pass a model instance that was registered via `additional_models` or as the agent's default model
 3. **By provider string**: Pass a model string like `'openai:gpt-4o'` which will be instantiated at runtime
+4. **By provider string with factory**: When a `provider_factory` is configured, provider strings are instantiated using your custom factory, allowing you to inject API keys or other configuration from deps
 
 Unregistered model instances cannot be used inside workflows because they cannot be serialized for Temporal's replay mechanism. If you need to use a specific model configuration, register it via `additional_models` first.
 

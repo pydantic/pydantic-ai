@@ -3,16 +3,14 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 from pydantic import BaseModel
-from pytest import MonkeyPatch
 
 from pydantic_ai import (
     Agent,
@@ -45,10 +43,9 @@ from pydantic_ai import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
+from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -75,10 +72,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
-    from pydantic_ai.durable_exec.temporal._model import (
-        TemporalModel,
-        _RequestParams,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -133,11 +127,6 @@ pytestmark = [
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
 http_client = cached_async_http_client(provider='temporal')
-
-
-def _temporal_activity_name(activity: Callable[..., Any]) -> str | None:
-    definition = getattr(activity, '__temporal_activity_definition', None)
-    return getattr(definition, 'name', None)
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -1106,7 +1095,7 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match='An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.',
+        match='An agent needs to have a `model` or `additional_models` in order to be used with Temporal, it cannot be set at agent run time.',
     ):
         TemporalAgent(Agent(name='test_agent'))
 
@@ -1419,7 +1408,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by name.'
+                'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by ID.'
             ),
         ):
             await client.execute_workflow(
@@ -2452,10 +2441,6 @@ test_model_error_1 = TestModel()
 test_model_error_2 = TestModel()
 test_model_error_unregistered = TestModel()
 
-# Module-level test models for string selection test
-test_model_string_1 = TestModel(custom_output_text='Default response')
-test_model_string_2 = TestModel(custom_output_text='Second model response')
-
 # Module-level temporal agents
 agent_selection = Agent(test_model_selection_1, name='multi_model_workflow_test')
 multi_model_selection_test_agent = TemporalAgent(
@@ -2476,36 +2461,12 @@ multi_model_error_test_agent = TemporalAgent(
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 
-agent_string = Agent(test_model_string_1, name='string_selection_test')
-multi_model_string_test_agent = TemporalAgent(
-    agent_string,
-    name='string_selection_test',
-    additional_models={'second_model': test_model_string_2},
-    activity_config=BASE_ACTIVITY_CONFIG,
-)
-
 
 @workflow.defn
-class MultiModelWorkflowDefault:
+class MultiModelWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await multi_model_selection_test_agent.run(prompt)
-        return result.output
-
-
-@workflow.defn
-class MultiModelWorkflowSelectModel2:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await multi_model_selection_test_agent.run(prompt, model='model_2')
-        return result.output
-
-
-@workflow.defn
-class MultiModelWorkflowSelectModel3:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await multi_model_selection_test_agent.run(prompt, model='model_3')
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await multi_model_selection_test_agent.run(prompt, model=model_id)
         return result.output
 
 
@@ -2518,73 +2479,17 @@ class MultiModelWorkflowUnregistered:
         return result.output  # pragma: no cover
 
 
-@workflow.defn
-class MultiModelWorkflowSelectModel2String:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await multi_model_string_test_agent.run(prompt, model='second_model')
-        return result.output
-
-
-async def test_temporal_agent_multi_model_registration():
-    """Test that TemporalAgent correctly registers multiple models with unique activity names."""
-    test_model1 = TestModel(custom_output_text='Model 1 response')
-    test_model2 = TestModel(custom_output_text='Model 2 response')
-    test_model3 = TestModel(custom_output_text='Model 3 response')
-
-    agent = Agent(test_model1, name='multi_model_test')
-    temporal_agent = TemporalAgent(
-        agent,
-        name='multi_model_test',
-        additional_models={'model_2': test_model2, 'model_3': test_model3},
-    )
-
-    assert set(temporal_agent._registered_model_instances.keys()) == {  # pyright: ignore[reportPrivateUsage]
-        'default',
-        'model_2',
-        'model_3',
-    }
-
-    activity_names = {
-        name
-        for activity in temporal_agent.temporal_activities
-        if (name := _temporal_activity_name(activity)) is not None
-    }
-    assert 'agent__multi_model_test__model_request' in activity_names
-    assert 'agent__multi_model_test__model_request_stream' in activity_names
-    assert 'agent__multi_model_test__event_stream_handler' in activity_names
-    # There should only be a single pair of model activities regardless of registered models.
-    assert len([name for name in activity_names if name.endswith('__model_request')]) == 1
-    assert len([name for name in activity_names if name.endswith('__model_request_stream')]) == 1
-
-
-async def test_temporal_agent_multi_model_reserved_name():
-    """Test that reserved model names raise helpful errors."""
+async def test_temporal_agent_multi_model_reserved_id():
+    """Test that reserved model IDs raise helpful errors."""
     test_model1 = TestModel()
     test_model2 = TestModel()
 
-    agent = Agent(test_model1, name='reserved_name_test')
-    with pytest.raises(UserError, match="Model name 'default' is reserved"):
+    agent = Agent(test_model1, name='reserved_id_test')
+    with pytest.raises(UserError, match="Model ID 'default' is reserved"):
         TemporalAgent(
             agent,
-            name='reserved_name_test',
+            name='reserved_id_test',
             additional_models={'default': test_model2},
-        )
-
-
-async def test_temporal_agent_multi_model_duplicate_name():
-    """Test that duplicate model names (after normalization) raise helpful errors."""
-    test_model1 = TestModel()
-    test_model2 = TestModel()
-    test_model3 = TestModel()
-
-    agent = Agent(test_model1, name='duplicate_name_test')
-    # Keys that normalize to the same value should raise an error
-    with pytest.raises(UserError, match="Duplicate model name 'model2' provided to `additional_models`"):
-        TemporalAgent(
-            agent,
-            name='duplicate_name_test',
-            additional_models={'model2': test_model2, ' model2 ': test_model3},
         )
 
 
@@ -2593,32 +2498,32 @@ async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requ
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[MultiModelWorkflowDefault, MultiModelWorkflowSelectModel2, MultiModelWorkflowSelectModel3],
+        workflows=[MultiModelWorkflow],
         plugins=[AgentPlugin(multi_model_selection_test_agent)],
     ):
-        # Test using default model
+        # Test using default model (model_id=None)
         output = await client.execute_workflow(
-            MultiModelWorkflowDefault.run,
-            args=['Hello'],
-            id='MultiModelWorkflowDefault',
+            MultiModelWorkflow.run,
+            args=['Hello', None],
+            id='MultiModelWorkflow_default',
             task_queue=TASK_QUEUE,
         )
         assert output == 'Response from model 1'
 
-        # Test selecting second model
+        # Test selecting second model by ID
         output = await client.execute_workflow(
-            MultiModelWorkflowSelectModel2.run,
-            args=['Hello'],
-            id='MultiModelWorkflowSelectModel2',
+            MultiModelWorkflow.run,
+            args=['Hello', 'model_2'],
+            id='MultiModelWorkflow_model2',
             task_queue=TASK_QUEUE,
         )
         assert output == 'Response from model 2'
 
-        # Test selecting third model
+        # Test selecting third model by ID
         output = await client.execute_workflow(
-            MultiModelWorkflowSelectModel3.run,
-            args=['Hello'],
-            id='MultiModelWorkflowSelectModel3',
+            MultiModelWorkflow.run,
+            args=['Hello', 'model_3'],
+            id='MultiModelWorkflow_model3',
             task_queue=TASK_QUEUE,
         )
         assert output == 'Response from model 3'
@@ -2634,7 +2539,7 @@ async def test_temporal_agent_multi_model_unregistered_error(allow_model_request
     ):
         with workflow_raises(
             UserError,
-            'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by name.',
+            'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by ID.',
         ):
             await client.execute_workflow(
                 MultiModelWorkflowUnregistered.run,
@@ -2644,52 +2549,12 @@ async def test_temporal_agent_multi_model_unregistered_error(allow_model_request
             )
 
 
-async def test_temporal_agent_multi_model_string_selection_in_workflow(allow_model_requests: None, client: Client):
-    """Test that model selection works by passing different model instances."""
-    # Note: We can't test with model strings like 'test:gpt-4' because they're invalid.
-    # This test verifies that the model selection mechanism works correctly.
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[MultiModelWorkflowSelectModel2String],
-        plugins=[AgentPlugin(multi_model_string_test_agent)],
-    ):
-        # Test selecting the second model
-        output = await client.execute_workflow(
-            MultiModelWorkflowSelectModel2String.run,
-            args=['Hello'],
-            id='MultiModelWorkflowSelectByInstance',
-            task_queue=TASK_QUEUE,
-        )
-        assert output == 'Second model response'
-
-
-async def test_temporal_agent_multi_model_backward_compatibility():
-    """Test that single-model agents work as before (backward compatibility)."""
-    test_model = TestModel()
-
-    agent = Agent(test_model, name='backward_compat_test')
-    temporal_agent = TemporalAgent(agent, name='backward_compat_test')
-
-    # Should only have default model registered
-    assert list(temporal_agent._registered_model_instances.keys()) == ['default']  # pyright: ignore[reportPrivateUsage]
-
-    # Should work without additional_models parameter
-    assert isinstance(temporal_agent.model, TemporalModel)
-    assert temporal_agent.model.wrapped == test_model
-
-    # Activity names should only include the default request/stream pair
-    activity_names = {
-        name
-        for activity in temporal_agent.temporal_activities
-        if (name := _temporal_activity_name(activity)) is not None
-    }
-    assert 'agent__backward_compat_test__model_request' in activity_names
-    assert 'agent__backward_compat_test__model_request_stream' in activity_names
-
-
 async def test_temporal_agent_multi_model_outside_workflow():
-    """Test that multi-model agents work outside workflows (using wrapped agent behavior)."""
+    """Test that multi-model agents work outside workflows (using wrapped agent behavior).
+
+    Outside a workflow, a TemporalAgent should behave like a regular Agent.
+    This includes supporting model selection by registered ID or instance.
+    """
     test_model1 = TestModel(custom_output_text='Model 1 response')
     test_model2 = TestModel(custom_output_text='Model 2 response')
 
@@ -2700,492 +2565,123 @@ async def test_temporal_agent_multi_model_outside_workflow():
         additional_models={'secondary': test_model2},
     )
 
-    # Outside workflow, should use default model from wrapped agent
+    # Outside workflow, should use default model
     result = await temporal_agent.run('Hello')
     assert result.output == 'Model 1 response'
 
-    # Outside workflow, the temporal agent still uses the wrapped model
-    # Model selection via additional_models only works inside workflows
-    # This test verifies that the agent works correctly outside workflows
-    # even when additional models are registered
-    result = await temporal_agent.run('Hello')
+    # Outside workflow, passing a registered model ID should also work
+    result = await temporal_agent.run('Hello', model='secondary')
+    assert result.output == 'Model 2 response'
+
+    # Passing a registered model instance should also work
+    result = await temporal_agent.run('Hello', model=test_model2)
+    assert result.output == 'Model 2 response'
+
+
+async def test_temporal_agent_without_default_model():
+    """Test that a TemporalAgent can be created without a default model if additional_models is provided."""
+    test_model1 = TestModel(custom_output_text='Model 1 response')
+    test_model2 = TestModel(custom_output_text='Model 2 response')
+
+    # Agent without a model
+    agent = Agent(name='no_default_model_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='no_default_model_test',
+        additional_models={
+            'primary': test_model1,
+            'secondary': test_model2,
+        },
+    )
+
+    # Outside workflow, can use registered models
+    result = await temporal_agent.run('Hello', model='primary')
     assert result.output == 'Model 1 response'
 
-
-async def test_temporal_agent_select_model_string_passthrough():
-    """Test that unregistered model strings pass through to infer_model."""
-    test_model1 = TestModel()
-
-    agent = Agent(test_model1, name='string_passthrough_test')
-    temporal_agent = TemporalAgent(
-        agent,
-        name='string_passthrough_test',
-    )
-
-    # Unregistered model string should pass through directly
-    selected = temporal_agent._select_model('openai:gpt-4o')  # pyright: ignore[reportPrivateUsage]
-    assert selected == 'openai:gpt-4o'
+    result = await temporal_agent.run('Hello', model='secondary')
+    assert result.output == 'Model 2 response'
 
 
-async def test_temporal_agent_unregistered_string_model():
-    """Test that using an unregistered string model defers to provider inference."""
-    test_model1 = TestModel()
-
-    agent = Agent(test_model1, name='unregistered_string_test')
-    temporal_agent = TemporalAgent(agent, name='unregistered_string_test')
-
-    selection = temporal_agent._select_model('unregistered:model')  # pyright: ignore[reportPrivateUsage]
-    assert selection == 'unregistered:model'
 
 
-async def test_temporal_agent_disallows_unregistered_model_instances_in_selection():
-    """Unregistered model instances must be referenced by name inside workflows."""
-    test_model1 = TestModel()
-    temporal_agent = TemporalAgent(Agent(test_model1, name='disallow_instances'), name='disallow_instances')
-
-    with pytest.raises(UserError, match='Unregistered model instances cannot be selected'):
-        temporal_agent._select_model(TestModel())  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_temporal_agent_select_model_registered_instance_returns_key():
-    """Passing a registered model instance should return its registered key."""
-    test_model1 = TestModel()
-    test_model2 = TestModel()
-    agent = Agent(test_model1, name='registered_instance_test')
-    temporal_agent = TemporalAgent(
-        agent,
-        name='registered_instance_test',
-        additional_models={'my_model': test_model2},
-    )
-
-    # Passing the registered instance should return its key
-    selection = temporal_agent._select_model(test_model2)  # pyright: ignore[reportPrivateUsage]
-    assert selection == 'my_model'
+# Workflow for testing passing 'default' explicitly
+@workflow.defn
+class MultiModelWorkflowDefault:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # Explicitly pass 'default' to use the default model
+        result = await multi_model_selection_test_agent.run(prompt, model='default')
+        return result.output
 
 
-async def test_temporal_agent_select_model_default_instance_returns_none():
-    """Passing the default model instance should return None."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='default_instance_test')
-    temporal_agent = TemporalAgent(agent, name='default_instance_test')
-
-    # Passing the default model instance should return None
-    selection = temporal_agent._select_model(test_model)  # pyright: ignore[reportPrivateUsage]
-    assert selection is None
-
-
-def test_temporal_agent_provider_factory_uses_run_context(monkeypatch: MonkeyPatch) -> None:
-    """Ensure provider_factory receives both run context data and deps."""
-    base_model = TestModel()
-    agent = Agent(base_model, name='provider_factory_test')
-    provider_calls: list[tuple[RunContext[dict[str, str]] | None, str]] = []
-
-    class DummyProvider(Provider[None]):
-        def __init__(self) -> None:
-            self._client = None
-
-        @property
-        def name(self) -> str:  # pragma: no cover
-            return 'dummy'
-
-        @property
-        def base_url(self) -> str:  # pragma: no cover
-            return 'https://example.com'
-
-        @property
-        def client(self) -> None:  # pragma: no cover
-            return None
-
-    def provider_factory(
-        run_context: RunContext[dict[str, str]] | None,
-        provider_name: str,
-    ) -> Provider[Any]:
-        provider_calls.append((run_context, provider_name))
-        return DummyProvider()
-
-    temporal_agent = TemporalAgent(
-        agent,
-        name='provider_factory_test',
-        provider_factory=provider_factory,
-    )
-
-    run_ctx = RunContext(
-        deps={'api_key': 'secret'},
-        model=base_model,
-        usage=RunUsage(),
-        run_id='run-123',
-    )
-    serialized_ctx = TemporalRunContext.serialize_run_context(run_ctx)
-    params: Any = SimpleNamespace(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=serialized_ctx,
-        model_id='openai:gpt-4o',
-    )
-
-    captured: dict[str, str] = {}
-
-    def fake_infer_model(model_spec: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:
-        captured['model_spec'] = model_spec
-        provider_instance = provider_factory('openai')
-        assert isinstance(provider_instance, Provider)
-        return TestModel()
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', fake_infer_model)
-
-    temporal_agent._temporal_model._infer_model('openai:gpt-4o', params, run_ctx.deps)  # pyright: ignore[reportPrivateUsage]
-
-    assert captured['model_spec'] == 'openai:gpt-4o'
-    assert provider_calls[0][1] == 'openai'
-    provider_run_ctx = provider_calls[0][0]
-    assert provider_run_ctx is not None
-    assert provider_run_ctx.run_id == 'run-123'
-    assert provider_run_ctx.deps == {'api_key': 'secret'}
-
-
-async def test_temporal_agent_empty_model_name_validation():
-    """Test that empty or whitespace-only model names raise UserError."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='empty_name_test')
-
-    with pytest.raises(UserError, match='Model names must be non-empty strings'):
-        TemporalAgent(
-            agent,
-            name='empty_name_test',
-            additional_models={'   ': TestModel()},
+async def test_temporal_agent_model_default_explicit(allow_model_requests: None, client: Client):
+    """Test that passing 'default' explicitly selects the default model."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowDefault],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiModelWorkflowDefault.run,
+            args=['Hello'],
+            id='MultiModelWorkflowDefault',
+            task_queue=TASK_QUEUE,
         )
-
-
-async def test_temporal_agent_select_model_none():
-    """Test that _select_model(None) returns None (use default)."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='select_none_test')
-    temporal_agent = TemporalAgent(agent, name='select_none_test')
-
-    selection = temporal_agent._select_model(None)  # pyright: ignore[reportPrivateUsage]
-    assert selection is None
-
-
-async def test_temporal_agent_select_model_default_string():
-    """Test that _select_model('default') returns None (use default)."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='select_default_test')
-    temporal_agent = TemporalAgent(agent, name='select_default_test')
-
-    selection = temporal_agent._select_model('default')  # pyright: ignore[reportPrivateUsage]
-    assert selection is None
-
-
-def test_temporal_model_current_selection_default():
-    """Test _current_selection returns None by default."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='current_selection_default')
-    temporal_agent = TemporalAgent(agent, name='current_selection_default')
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    # By default, no selection is set
-    selection = temporal_model._current_model_id()  # pyright: ignore[reportPrivateUsage]
-    assert selection is None
-
-
-def test_temporal_model_using_model_context_manager():
-    """Test using_model context manager sets and resets selection."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='using_model_test')
-    temporal_agent = TemporalAgent(agent, name='using_model_test')
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    # Default is None
-    assert temporal_model._current_model_id() is None  # pyright: ignore[reportPrivateUsage]
-
-    # Inside using_model, selection is set
-    with temporal_model.using_model('openai:gpt-4o'):
-        assert temporal_model._current_model_id() == 'openai:gpt-4o'  # pyright: ignore[reportPrivateUsage]
-
-    # After exiting, selection is reset to None
-    assert temporal_model._current_model_id() is None  # pyright: ignore[reportPrivateUsage]
-
-
-def test_temporal_model_using_model_resets_on_exception():
-    """Test using_model context manager resets selection even when exception is raised."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='using_model_exception_test')
-    temporal_agent = TemporalAgent(agent, name='using_model_exception_test')
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    # Default is None
-    assert temporal_model._current_model_id() is None  # pyright: ignore[reportPrivateUsage]
-
-    # Exception inside using_model should still reset selection
-    with pytest.raises(ValueError, match='test error'):
-        with temporal_model.using_model('openai:gpt-4o'):
-            assert temporal_model._current_model_id() == 'openai:gpt-4o'  # pyright: ignore[reportPrivateUsage]
-            raise ValueError('test error')
-
-    # After exception, selection should still be reset to None
-    assert temporal_model._current_model_id() is None  # pyright: ignore[reportPrivateUsage]
-
-
-def test_temporal_model_resolve_model_uses_model_instances(monkeypatch: MonkeyPatch):
-    """Test _resolve_model uses model_instances when key matches."""
-    test_model = TestModel()
-    alt_model = TestModel(custom_output_text='alt model')
-    agent = Agent(test_model, name='resolve_instances')
-    temporal_agent = TemporalAgent(
-        agent,
-        name='resolve_instances',
-        additional_models={'alt': alt_model},
-    )
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    params = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=None,
-        model_id='alt',
-    )
-
-    result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
-    assert result is alt_model
-
-
-def test_temporal_model_infer_model_no_provider_factory(monkeypatch: MonkeyPatch):
-    """Test _infer_model falls back to models.infer_model when no provider_factory."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='infer_no_factory')
-    temporal_agent = TemporalAgent(agent, name='infer_no_factory')
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    # Mock infer_model to return a test model
-    infer_calls: list[str] = []
-
-    def mock_infer_model(model_name: str, **kwargs: Any) -> TestModel:
-        infer_calls.append(model_name)
-        # Should not have provider_factory kwarg
-        assert 'provider_factory' not in kwargs
-        return TestModel()
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
-
-    params = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=None,
-        model_id=None,
-    )
-
-    temporal_model._infer_model('test:model', params, None)  # pyright: ignore[reportPrivateUsage]
-    assert infer_calls == ['test:model']
-
-
-def test_temporal_model_infer_model_no_serialized_context(monkeypatch: MonkeyPatch):
-    """Test _infer_model when serialized_run_context is None."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='infer_no_context')
-
-    provider_calls: list[tuple[RunContext[Any] | None, str]] = []
-
-    def mock_provider_factory(
-        run_context: RunContext[Any] | None,
-        provider_name: str,
-    ) -> Provider[Any]:
-        provider_calls.append((run_context, provider_name))
-        # Return a mock provider
-
-        class MockProvider(Provider[None]):
-            def __init__(self) -> None:
-                self._client = None
-
-            @property
-            def name(self) -> str:  # pragma: no cover
-                return 'mock'
-
-            @property
-            def base_url(self) -> str:  # pragma: no cover
-                return 'https://example.com'
-
-            @property
-            def client(self) -> None:  # pragma: no cover
-                return None
-
-        return MockProvider()
-
-    temporal_agent = TemporalAgent(
-        agent,
-        name='infer_no_context',
-        provider_factory=mock_provider_factory,
-    )
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    def mock_infer_model(model_name: str, provider_factory: Callable[[str], Provider[Any]]) -> TestModel:
-        # Call the provider factory to exercise the branch
-        provider_factory('test_provider')
-        return TestModel()
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
-
-    params = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=None,  # No serialized context
-        model_id=None,
-    )
-
-    temporal_model._infer_model('test:model', params, {'key': 'value'})  # pyright: ignore[reportPrivateUsage]
-
-    # The provider factory should have been called with None for run_context
-    # because serialized_run_context was None
-    assert len(provider_calls) == 1
-    assert provider_calls[0][1] == 'test_provider'
-    assert provider_calls[0][0] is None  # run_context should be None
-
-
-def test_temporal_model_resolve_model_by_model_selection(monkeypatch: MonkeyPatch):
-    """Test _resolve_model when model_selection is a string not in model_instances."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='resolve_by_selection')
-    temporal_agent = TemporalAgent(agent, name='resolve_by_selection')
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    infer_calls: list[str] = []
-
-    def mock_infer_model(model_name: str, **kwargs: Any) -> TestModel:
-        infer_calls.append(model_name)
-        return TestModel()
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
-
-    # model_selection is set to a string not in model_instances - should call _infer_model
-    params = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=None,
-        model_id='openai:gpt-4o',
-    )
-
-    result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(result, TestModel)
-    assert infer_calls == ['openai:gpt-4o']
-
-
-def test_temporal_model_resolve_model_fallback_to_wrapped():
-    """Test _resolve_model returns wrapped model when model_selection is None."""
-    test_model = TestModel(custom_output_text='wrapped model response')
-    agent = Agent(test_model, name='resolve_fallback')
-    temporal_agent = TemporalAgent(agent, name='resolve_fallback')
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    # model_selection is None - should return wrapped model
-    params = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=None,
-        model_id=None,
-    )
-
-    result = temporal_model._resolve_model(params, None)  # pyright: ignore[reportPrivateUsage]
-    # Should return the wrapped model (the original test_model)
-    assert result is test_model
-
-
-def test_temporal_model_resolve_model_returns_wrapped_when_model_id_none(monkeypatch: MonkeyPatch):
-    """Test _resolve_model returns wrapped model when model_id is None, even with provider_factory."""
-    test_model = TestModel()
-    agent = Agent(test_model, name='resolve_reinfer_default')
-
-    provider_factory_called = False
-
-    def mock_provider_factory(
-        run_context: RunContext[Any] | None,
-        provider_name: str,
-    ) -> Provider[Any]:  # pragma: no cover
-        nonlocal provider_factory_called
-        provider_factory_called = True
-        raise AssertionError('provider_factory should not be called when model_id is None')
-
-    temporal_agent = TemporalAgent(
-        agent,
-        name='resolve_reinfer_default',
-        provider_factory=mock_provider_factory,
-    )
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    infer_model_called = False
-
-    def mock_infer_model(
-        model_name: str, provider_factory: Callable[[str], Provider[Any]]
-    ) -> TestModel:  # pragma: no cover
-        nonlocal infer_model_called
-        infer_model_called = True
-        raise AssertionError('infer_model should not be called when model_id is None')
-
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.models.infer_model', mock_infer_model)
-
-    # model_id is None - should return the wrapped model
-    params = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(),
-        serialized_run_context=None,
-        model_id=None,
-    )
-
-    result = temporal_model._resolve_model(params, {'key': 'value'})  # pyright: ignore[reportPrivateUsage]
-    # When model_id is None, returns the wrapped model directly
-    assert result is test_model
-    # Verify neither was called
-    assert not provider_factory_called
-    assert not infer_model_called
-
-
-def test_temporal_model_request_without_run_context(monkeypatch: MonkeyPatch):
-    """Test request() when run_context is None (covers branch 161->165)."""
-    test_model = TestModel()
-    agent = Agent[None, str](test_model, name='request_no_context')
-    temporal_agent = TemporalAgent[None, str](agent, name='request_no_context')
-
-    temporal_model = temporal_agent._temporal_model  # pyright: ignore[reportPrivateUsage]
-
-    # Track what gets passed to execute_activity
-    activity_calls: list[tuple[Any, ...]] = []
-
-    async def mock_execute_activity(activity: Any, args: list[Any], **kwargs: Any) -> ModelResponse:
-        activity_calls.append((activity, args, kwargs))
-        return ModelResponse(parts=[TextPart(content='test response')])
-
-    # Mock workflow.in_workflow() to return True, but don't set CURRENT_RUN_CONTEXT
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', lambda: True)
-    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._model.workflow.execute_activity', mock_execute_activity)
-
-    asyncio.get_event_loop().run_until_complete(
-        temporal_model.request(
-            messages=[],
-            model_settings=None,
-            model_request_parameters=ModelRequestParameters(),
+        assert output == 'Response from model 1'
+
+
+# Workflow for testing passing the default model instance
+@workflow.defn
+class MultiModelWorkflowDefaultInstance:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # Pass the default model instance explicitly
+        result = await multi_model_selection_test_agent.run(prompt, model=test_model_selection_1)
+        return result.output
+
+
+async def test_temporal_agent_model_default_instance(allow_model_requests: None, client: Client):
+    """Test that passing the default model instance works."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowDefaultInstance],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiModelWorkflowDefaultInstance.run,
+            args=['Hello'],
+            id='MultiModelWorkflowDefaultInstance',
+            task_queue=TASK_QUEUE,
         )
-    )
+        assert output == 'Response from model 1'
 
-    # Verify execute_activity was called
-    assert len(activity_calls) == 1
-    _, args, _ = activity_calls[0]
-    params = args[0]
-    deps = args[1]
 
-    assert params.serialized_run_context is None
-    # deps should also be None
-    assert deps is None
+# Workflow for testing passing a non-default registered model instance
+@workflow.defn
+class MultiModelWorkflowRegisteredInstance:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # Pass a registered (non-default) model instance directly
+        result = await multi_model_selection_test_agent.run(prompt, model=test_model_selection_2)
+        return result.output
+
+
+async def test_temporal_agent_model_registered_instance(allow_model_requests: None, client: Client):
+    """Test that passing a registered (non-default) model instance works."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowRegisteredInstance],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiModelWorkflowRegisteredInstance.run,
+            args=['Hello'],
+            id='MultiModelWorkflowRegisteredInstance',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 2'
+
+

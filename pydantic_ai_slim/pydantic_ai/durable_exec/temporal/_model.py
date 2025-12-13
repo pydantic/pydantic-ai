@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import functools
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Union, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
@@ -36,7 +37,7 @@ class _RequestParams:
     model_id: str | None = None
 
 
-TemporalProviderFactory = Callable[[RunContext[Any] | None, str], Provider[Any]]
+TemporalProviderFactory = Callable[[RunContext[Any], str], Provider[Any]]
 
 
 class TemporalStreamedResponse(StreamedResponse):
@@ -94,7 +95,7 @@ class TemporalModel(WrapperModel):
         self._provider_factory = provider_factory
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
-        async def request_activity(params: _RequestParams, deps: Any) -> ModelResponse:
+        async def request_activity(params: _RequestParams, deps: Any = None) -> ModelResponse:
             model_for_request = self._resolve_model(params, deps)
             return await model_for_request.request(
                 params.messages,
@@ -103,9 +104,10 @@ class TemporalModel(WrapperModel):
             )
 
         self.request_activity = request_activity
-        self.request_activity.__annotations__['deps'] = deps_type
+        # Union with None for backward compatibility with activity payloads created before deps was added
+        self.request_activity.__annotations__['deps'] = deps_type | None
 
-        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
+        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT = None) -> ModelResponse:  # type: ignore[assignment]
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
@@ -123,7 +125,8 @@ class TemporalModel(WrapperModel):
             return streamed_response.get()
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
-        request_stream_activity.__annotations__['deps'] = deps_type
+        # Union with None for backward compatibility with activity payloads created before deps was added
+        request_stream_activity.__annotations__['deps'] = deps_type | None
 
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
             request_stream_activity
@@ -148,7 +151,7 @@ class TemporalModel(WrapperModel):
         run_context = get_current_run_context()
         serialized_run_context = None
         deps: Any | None = None
-        if run_context is not None:
+        if run_context is not None:  # pragma: no branch
             serialized_run_context = self.run_context_type.serialize_run_context(run_context)
             deps = run_context.deps
 
@@ -235,18 +238,12 @@ class TemporalModel(WrapperModel):
         if model_id in self._model_instances:
             return self._model_instances[model_id]
 
-        return self._infer_model(model_id, params, deps)
+        return self._infer_model(model_id, params, deps)  # pragma: lax no cover
 
-    def _infer_model(self, model_name: str, params: _RequestParams, deps: Any | None) -> Model:
-        run_context: RunContext[Any] | None = None
-        if params.serialized_run_context is not None:
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-
+    def _infer_model(self, model_name: str, params: _RequestParams, deps: Any | None) -> Model:  # pragma: lax no cover
         provider_factory = self._provider_factory
         if provider_factory is None:
             return models.infer_model(model_name)
 
-        def _factory(provider_name: str) -> Provider[Any]:
-            return provider_factory(run_context, provider_name)
-
-        return models.infer_model(model_name, provider_factory=_factory)
+        run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+        return models.infer_model(model_name, provider_factory=functools.partial(provider_factory, run_context))

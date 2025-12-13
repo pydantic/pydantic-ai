@@ -79,14 +79,14 @@ _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
     'pydantic_ai.current_run_context',
     default=None,
 )
-"""Context variable storing the current [`RunContext`][pydantic_ai._run_context.RunContext]."""
+"""Context variable storing the current [`RunContext`][pydantic_ai.tools.RunContext]."""
 
 
 def get_current_run_context() -> RunContext[Any] | None:
     """Get the current run context, if one is set.
 
     Returns:
-        The current [`RunContext`][pydantic_ai._run_context.RunContext], or `None` if not in an agent run.
+        The current [`RunContext`][pydantic_ai.tools.RunContext], or `None` if not in an agent run.
     """
     return _CURRENT_RUN_CONTEXT.get()
 
