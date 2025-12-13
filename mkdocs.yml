@@ -128,22 +128,18 @@ nav:
 
   - API Reference:
       - pydantic_ai:
+          - api/ag_ui.md
           - api/agent.md
-          - api/tools.md
-          - api/toolsets.md
           - api/builtin_tools.md
           - api/common_tools.md
-          - api/durable_exec.md
-          - api/output.md
-          - api/result.md
-          - api/messages.md
-          - api/exceptions.md
-          - api/settings.md
-          - api/usage.md
-          - api/mcp.md
-          - api/format_prompt.md
           - api/direct.md
+          - api/durable_exec.md
+          - api/embeddings.md
+          - api/exceptions.md
           - api/ext.md
+          - api/format_prompt.md
+          - api/mcp.md
+          - api/messages.md
           - api/models/anthropic.md
           - api/models/base.md
           - api/models/bedrock.md
@@ -162,14 +158,19 @@ nav:
           - api/models/outlines.md
           - api/models/test.md
           - api/models/wrapper.md
+          - api/output.md
           - api/profiles.md
           - api/providers.md
+          - api/result.md
           - api/retries.md
           - api/run.md
-          - api/ag_ui.md
-          - api/ui/base.md
+          - api/settings.md
+          - api/tools.md
+          - api/toolsets.md
           - api/ui/ag_ui.md
+          - api/ui/base.md
           - api/ui/vercel_ai.md
+          - api/usage.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
