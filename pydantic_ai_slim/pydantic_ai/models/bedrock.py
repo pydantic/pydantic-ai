@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
         ConverseStreamResponseTypeDef,
         CountTokensRequestTypeDef,
         DocumentBlockTypeDef,
+        DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
+        S3LocationTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -733,12 +736,21 @@ class BedrockConverseModel(Model):
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                    format = downloaded_item['data_type']
+                    source: DocumentSourceTypeDef
+                    if item.url.startswith('s3://'):
+                        parsed = urlparse(item.url)
+                        s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+                        if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                            s3_location['bucketOwner'] = bucket_owner
+                        source = {'s3Location': s3_location}
+                    else:
+                        downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
+                        source = {'bytes': downloaded_item['data']}
+
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
+                        image: ImageBlockTypeDef = {'format': format, 'source': source}
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
@@ -746,7 +758,7 @@ class BedrockConverseModel(Model):
                         document: DocumentBlockTypeDef = {
                             'name': name,
                             'format': item.format,
-                            'source': {'bytes': downloaded_item['data']},
+                            'source': source,
                         }
                         content.append({'document': document})
 
@@ -763,7 +775,7 @@ class BedrockConverseModel(Model):
                             'wmv',
                             'three_gp',
                         ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
+                        video: VideoBlockTypeDef = {'format': format, 'source': source}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
