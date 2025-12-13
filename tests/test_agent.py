@@ -260,12 +260,14 @@ def test_prompt_config_callable():
     agent = Agent(
         FunctionModel(return_model),
         output_type=Foo,
-        prompt_config=PromptConfig(templates=PromptTemplates(
-            validation_errors_retry=lambda part, ctx: 'Please fix these validation errors and try again.',
-            final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
-            output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
-            function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
-        )),
+        prompt_config=PromptConfig(
+            templates=PromptTemplates(
+                validation_errors_retry=lambda part, ctx: 'Please fix these validation errors and try again.',
+                final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
+                output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
+                function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
+            )
+        ),
     )
 
     agent.tool_plain(my_function_tool)
@@ -394,12 +396,14 @@ def test_prompt_config_string_and_override_prompt_config():
     agent = Agent(
         FunctionModel(return_model),
         output_type=Foo,
-        prompt_config=PromptConfig(templates=PromptTemplates(
-            validation_errors_retry='Custom retry message',
-            final_result_processed='Custom final result',
-            output_tool_not_executed='Custom output not executed:',
-            function_tool_not_executed='Custom function not executed',
-        )),
+        prompt_config=PromptConfig(
+            templates=PromptTemplates(
+                validation_errors_retry='Custom retry message',
+                final_result_processed='Custom final result',
+                output_tool_not_executed='Custom output not executed:',
+                function_tool_not_executed='Custom function not executed',
+            )
+        ),
     )
 
     agent.tool_plain(my_function_tool)
@@ -501,7 +505,9 @@ Custom retry message""")
     )
 
     # Verify prompt_config can be overridden
-    with agent.override(prompt_config=PromptConfig(templates=PromptTemplates(validation_errors_retry='Custom retry message override'))):
+    with agent.override(
+        prompt_config=PromptConfig(templates=PromptTemplates(validation_errors_retry='Custom retry message override'))
+    ):
         result = agent.run_sync('Hello')
         assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
         retry_request = result.all_messages()[2]

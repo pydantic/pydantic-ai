@@ -522,7 +522,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         prompt_config = ctx.deps.prompt_config
 
-        message_history = _apply_prompt_templates_to_message_history(message_history, prompt_config.templates, run_context)
+        message_history = _apply_prompt_templates_to_message_history(
+            message_history, prompt_config.templates, run_context
+        )
 
         ctx.state.message_history[:] = message_history
 

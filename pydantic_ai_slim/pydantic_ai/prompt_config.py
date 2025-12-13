@@ -164,6 +164,7 @@ class ToolConfig:
     tool_descriptions: dict[str, str] = field(default_factory=lambda: {})
     """Custom descriptions for tools used by the agent."""
 
+
 @dataclass
 class PromptConfig:
     """Configuration for customizing all strings and prompts sent to the model by Pydantic AI.

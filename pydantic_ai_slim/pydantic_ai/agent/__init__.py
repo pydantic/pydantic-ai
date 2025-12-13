@@ -1351,9 +1351,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _get_prompt_config(
-        self, prompt_config: _prompt_config.PromptConfig | None
-    ) -> _prompt_config.PromptConfig:
+    def _get_prompt_config(self, prompt_config: _prompt_config.PromptConfig | None) -> _prompt_config.PromptConfig:
         """Get prompt_config for a run.
 
         If we've overridden prompt_config via `_override_prompt_config`, use that,
@@ -1425,17 +1423,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 return toolset
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
-        prompt_config = self._get_prompt_config(None)
+        tool_config = self._get_prompt_config(None).tool_config
 
         # Check if the prompt_config has any tool descriptions to prepare tools
 
-        if self._prepare_tools:
-            toolset = PreparedToolset(toolset, self._prepare_tools)
+        toolset = PreparedToolset(toolset, self._prepare_tools, tool_config=tool_config)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
-            if self._prepare_output_tools:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools, tool_config=tool_config)
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
