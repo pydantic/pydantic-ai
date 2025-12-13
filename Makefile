@@ -89,14 +89,6 @@ docs: ## Build the documentation
 docs-serve: ## Build and serve the documentation
 	uv run mkdocs serve --no-strict
 
-# Note: insiders packages are no longer needed - all features are now public
-# These targets are kept for backwards compatibility with CI
-.PHONY: docs-insiders
-docs-insiders: docs ## Build docs (insiders packages no longer needed)
-
-.PHONY: docs-serve-insiders
-docs-serve-insiders: docs-serve ## Serve docs (insiders packages no longer needed)
-
 .PHONY: cf-pages-build
 cf-pages-build: ## Install uv, install dependencies and build the docs, used on CloudFlare Pages
 	curl -LsSf https://astral.sh/uv/install.sh | sh
