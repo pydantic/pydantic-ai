@@ -890,7 +890,7 @@ async def process_tool_calls(  # noqa: C901
                 tool_name=call.tool_name,
                 content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.final_result_processed,
                 tool_call_id=call.tool_call_id,
-                    return_kind='final-result-processed',
+                return_kind='final-result-processed',
             )
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
@@ -900,7 +900,7 @@ async def process_tool_calls(  # noqa: C901
                 tool_name=call.tool_name,
                 content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.output_tool_not_executed,
                 tool_call_id=call.tool_call_id,
-                    return_kind='output-tool-not-executed',
+                return_kind='output-tool-not-executed',
             )
             yield _messages.FunctionToolResultEvent(part)
             output_parts.append(part)

@@ -318,304 +318,6 @@ Please fix these validation errors and try again.\
                     RetryPromptPart(
                         tool_name='final_result',
                         content=[
-                            ErrorDetails(
-                                type='int_parsing',
-                                loc=('a',),
-                                msg='Input should be a valid integer, unable to parse string as an integer',
-                                input='wrong',
-                            )
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Please fix these validation errors and try again.',
-                    )
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
-                ],
-                usage=RequestUsage(input_tokens=91, output_tokens=23),
-                model_name='function:return_model:',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='final_result',
-                        content='Custom final result Final result processed.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        return_kind='final-result-processed',
-                    ),
-                    ToolReturnPart(
-                        tool_name='final_result',
-                        content='Custom output not executed: final_result',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        return_kind='output-tool-not-executed',
-                    ),
-                    ToolReturnPart(
-                        tool_name='my_function_tool',
-                        content='Custom function not executed: my_function_tool',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        return_kind='function-tool-not-executed',
-                    ),
-                ],
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-def test_prompt_config_string_and_override_prompt_config():
-    """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
-
-    def my_function_tool() -> str:  # pragma: no cover
-        return 'function executed'
-
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools is not None
-
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": "wrong", "b": "foo"}')])
-
-        else:
-            assert info.function_tools is not None
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(info.output_tools[0].name, '{"a": 42, "b": "foo"}'),  # Succeeds
-                    ToolCallPart(info.output_tools[0].name, '{"a": 99, "b": "bar"}'),  # Not executed
-                    ToolCallPart(info.function_tools[0].name, '{}'),  # Not executed
-                ]
-            )
-
-    agent = Agent(
-        FunctionModel(return_model),
-        output_type=Foo,
-        prompt_config=PromptConfig(
-            templates=PromptTemplates(
-                validation_errors_retry='Custom retry message',
-                final_result_processed='Custom final result',
-                output_tool_not_executed='Custom output not executed:',
-                function_tool_not_executed='Custom function not executed',
-            )
-        ),
-    )
-
-    agent.tool_plain(my_function_tool)
-
-    result = agent.run_sync('Hello')
-    assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
-
-    retry_request = result.all_messages()[2]
-    assert isinstance(retry_request, ModelRequest)
-    retry_part = retry_request.parts[0]
-    assert isinstance(retry_part, RetryPromptPart)
-    # model_response() returns validation errors + retry_message appended
-    assert retry_part.model_response() == snapshot("""\
-1 validation error:
-```json
-[
-  {
-    "type": "int_parsing",
-    "loc": [
-      "a"
-    ],
-    "msg": "Input should be a valid integer, unable to parse string as an integer",
-    "input": "wrong"
-  }
-]
-```
-
-Custom retry message""")
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=51, output_tokens=7),
-                model_name='function:return_model:',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        tool_name='final_result',
-                        content=[
-                            {
-                                'type': 'int_parsing',
-                                'loc': ('a',),
-                                'msg': 'Input should be a valid integer, unable to parse string as an integer',
-                                'input': 'wrong',
-                            }
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Custom retry message',
-                    )
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='final_result', args='{"a": 99, "b": "bar"}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='my_function_tool', args='{}', tool_call_id=IsStr()),
-                ],
-                usage=RequestUsage(input_tokens=85, output_tokens=23),
-                model_name='function:return_model:',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='final_result',
-                        content='Custom final result',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        return_kind='final-result-processed',
-                    ),
-                    ToolReturnPart(
-                        tool_name='final_result',
-                        content='Custom output not executed:',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        return_kind='output-tool-not-executed',
-                    ),
-                    ToolReturnPart(
-                        tool_name='my_function_tool',
-                        content='Custom function not executed',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                        return_kind='function-tool-not-executed',
-                    ),
-                ],
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-    # Verify prompt_config can be overridden
-    with agent.override(
-        prompt_config=PromptConfig(templates=PromptTemplates(validation_errors_retry='Custom retry message override'))
-    ):
-        result = agent.run_sync('Hello')
-        assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
-        retry_request = result.all_messages()[2]
-        assert isinstance(retry_request, ModelRequest)
-        retry_part = retry_request.parts[0]
-        assert isinstance(retry_part, RetryPromptPart)
-        # model_response() returns validation errors + retry_message appended
-        assert retry_part.model_response() == snapshot("""\
-1 validation error:
-```json
-[
-  {
-    "type": "int_parsing",
-    "loc": [
-      "a"
-    ],
-    "msg": "Input should be a valid integer, unable to parse string as an integer",
-    "input": "wrong"
-  }
-]
-```
-
-Custom retry message override""")
-
-
-def test_prompt_config_callable():
-    """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
-
-    def my_function_tool() -> str:  # pragma: no cover
-        return 'function executed'
-
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools is not None
-
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": "wrong", "b": "foo"}')])
-
-        else:
-            assert info.function_tools is not None
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(info.output_tools[0].name, '{"a": 42, "b": "foo"}'),  # Succeeds
-                    ToolCallPart(info.output_tools[0].name, '{"a": 99, "b": "bar"}'),  # Not executed
-                    ToolCallPart(info.function_tools[0].name, '{}'),  # Not executed
-                ]
-            )
-
-    agent = Agent(
-        FunctionModel(return_model),
-        output_type=Foo,
-        prompt_config=PromptConfig(
-            templates=PromptTemplates(
-                validation_errors_retry=lambda part, ctx: 'Please fix these validation errors and try again.',
-                final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
-                output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
-                function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
-            )
-        ),
-    )
-
-    agent.tool_plain(my_function_tool)
-
-    result = agent.run_sync('Hello')
-    assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
-
-    retry_request = result.all_messages()[2]
-    assert isinstance(retry_request, ModelRequest)
-    retry_part = retry_request.parts[0]
-    assert isinstance(retry_part, RetryPromptPart)
-    # model_response() returns validation errors + retry_message appended
-    assert retry_part.model_response() == snapshot("""\
-1 validation error:
-```json
-[
-  {
-    "type": "int_parsing",
-    "loc": [
-      "a"
-    ],
-    "msg": "Input should be a valid integer, unable to parse string as an integer",
-    "input": "wrong"
-  }
-]
-```
-
-Please fix these validation errors and try again.\
-""")
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=51, output_tokens=7),
-                model_name='function:return_model:',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        tool_name='final_result',
-                        content=[
                             {
                                 'type': 'int_parsing',
                                 'loc': ('a',),
@@ -3653,21 +3355,21 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                             return_kind='final-result-processed',
-                ),
+                        ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                             return_kind='function-tool-not-executed',
-                ),
+                        ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                             return_kind='function-tool-not-executed',
-                ),
+                        ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
                             content='Tool not executed - a final result was already processed.',
@@ -3803,7 +3505,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                             return_kind='final-result-processed',
-                ),
+                        ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
@@ -4596,28 +4298,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                            timestamp=IsDatetime(),
-                            return_kind='function-tool-not-executed',
-                        ),
                         ToolReturnPart(
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
-                            return_kind='function-tool-not-executed',
+                            return_kind='final-result-processed',
                         ),
                         RetryPromptPart(
                             content='Second output validation failed',
                             tool_name='second_output',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
-                        ),
-                        ToolReturnPart(
-                            tool_name='deferred_tool',
-                            content='Tool not executed - a final result was already processed.',
-                            tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
-                            return_kind='function-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
@@ -4710,7 +4402,6 @@ class TestMultipleToolCalls:
                         ),
                     ],
                     run_id=IsStr(),
-                    return_kind='final-result-processed',
                 ),
             ]
         )
