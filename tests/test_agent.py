@@ -561,6 +561,45 @@ def test_prompt_config_tool_config_descriptions():
     assert result.output == 'Done'
 
 
+def test_prompt_config_tool_config_descriptions_at_runtime():
+    """Test that ToolConfig.tool_descriptions passed to run_sync() overrides agent-level prompt_config."""
+    observed_descriptions: list[str | None] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools is not None
+        basic_tool = next(tool for tool in info.function_tools if tool.name == 'basic_tool')
+        observed_descriptions.append(basic_tool.description)
+        return ModelResponse(parts=[TextPart('Done')])
+
+    # Agent with agent-level prompt_config
+    agent = Agent(
+        FunctionModel(return_model),
+        prompt_config=PromptConfig(
+            tool_config=ToolConfig(tool_descriptions={'basic_tool': 'Agent-level tool description'})
+        ),
+    )
+
+    @agent.tool_plain
+    def basic_tool(x: int) -> int:
+        """Original description that should be overridden"""
+        return x * 2
+
+    # First run: no runtime prompt_config, should use agent-level description
+    result = agent.run_sync('Hello')
+    assert result.output == 'Done'
+    assert observed_descriptions[-1] == 'Agent-level tool description'
+
+    # Second run: pass runtime prompt_config, should override agent-level description
+    result = agent.run_sync(
+        'Hello',
+        prompt_config=PromptConfig(
+            tool_config=ToolConfig(tool_descriptions={'basic_tool': 'Runtime custom tool description'})
+        ),
+    )
+    assert result.output == 'Done'
+    assert observed_descriptions[-1] == 'Runtime custom tool description'
+
+
 def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
