@@ -311,12 +311,13 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    size: Literal['1024x1024', '1024x1536', '1536x1024', 'auto'] = 'auto'
+    size: Literal['1024x1024', '1024x1536', '1536x1024', '1K', '2K', '4K', 'auto'] = 'auto'
     """The size of the generated image.
 
     Supported by:
 
-    * OpenAI Responses
+    * OpenAI Responses: '1024x1024', '1024x1536', '1536x1024', 'auto'
+    * Google (Gemini 3 Pro Image and later): '1K', '2K', '4K'
     """
 
     aspect_ratio: ImageAspectRatio | None = None

@@ -362,8 +362,12 @@ class GoogleModel(Model):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
-                    if tool.aspect_ratio:
-                        image_config = ImageConfigDict(aspect_ratio=tool.aspect_ratio)
+
+                    image_config = ImageConfigDict()
+                    if tool.aspect_ratio is not None:
+                        image_config['aspect_ratio'] = tool.aspect_ratio
+                    if tool.size in ('1K', '2K', '4K'):
+                        image_config['image_size'] = tool.size
                 else:  # pragma: no cover
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
