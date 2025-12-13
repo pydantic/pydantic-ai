@@ -1722,6 +1722,8 @@ class OpenAIResponsesModel(Model):
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
                             ):
+                                # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
+                                args = {k: v for k, v in args.items() if v is not None}
                                 web_search_item = responses.ResponseFunctionWebSearchParam(
                                     id=item.tool_call_id,
                                     action=cast(responses.response_function_web_search_param.Action, args),
@@ -2605,7 +2607,8 @@ def _map_web_search_tool_call(
     }
 
     if action := item.action:
-        args = action.model_dump(mode='json')
+        # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
+        args = action.model_dump(mode='json', exclude_none=True)
 
         # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
         if sources := args.pop('sources', None):
