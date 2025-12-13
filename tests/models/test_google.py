@@ -3655,7 +3655,7 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
 async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:
     """Test that resolution parameter from ImageGenerationTool is added to image_config."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(resolution='2K')])
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
@@ -3665,7 +3665,7 @@ async def test_google_image_generation_resolution(google_provider: GoogleProvide
 async def test_google_image_generation_resolution_with_aspect_ratio(google_provider: GoogleProvider) -> None:
     """Test that resolution and aspect_ratio from ImageGenerationTool work together."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', resolution='4K')])
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None

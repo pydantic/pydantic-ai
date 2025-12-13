@@ -362,14 +362,12 @@ class GoogleModel(Model):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
-                    # Build image_config from tool parameters, only including non-None values
-                    image_config_kwargs: dict[str, Any] = {}
+
+                    image_config = ImageConfigDict()
                     if tool.aspect_ratio is not None:
-                        image_config_kwargs['aspect_ratio'] = tool.aspect_ratio
-                    if tool.resolution is not None:
-                        image_config_kwargs['image_size'] = tool.resolution
-                    if image_config_kwargs:
-                        image_config = ImageConfigDict(**image_config_kwargs)
+                        image_config['aspect_ratio'] = tool.aspect_ratio
+                    if tool.size in ('1K', '2K', '4K'):
+                        image_config['image_size'] = tool.size
                 else:  # pragma: no cover
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'

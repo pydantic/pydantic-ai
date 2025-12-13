@@ -99,7 +99,6 @@ def test_model_request_parameters_are_serializable():
                     'quality': 'auto',
                     'size': '1024x1024',
                     'aspect_ratio': None,
-                    'resolution': None,
                 },
                 {'kind': 'memory'},
                 {

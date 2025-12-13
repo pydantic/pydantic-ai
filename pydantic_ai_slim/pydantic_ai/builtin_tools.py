@@ -311,12 +311,13 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    size: Literal['1024x1024', '1024x1536', '1536x1024', 'auto'] = 'auto'
+    size: Literal['1024x1024', '1024x1536', '1536x1024', '1K', '2K', '4K', 'auto'] = 'auto'
     """The size of the generated image.
 
     Supported by:
 
-    * OpenAI Responses
+    * OpenAI Responses: '1024x1024', '1024x1536', '1536x1024', 'auto'
+    * Google (Gemini 3 Pro Image and later): '1K', '2K', '4K'
     """
 
     aspect_ratio: ImageAspectRatio | None = None
@@ -326,14 +327,6 @@ class ImageGenerationTool(AbstractBuiltinTool):
 
     * Google image-generation models (Gemini)
     * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
-    """
-
-    resolution: str | None = None
-    """The resolution/size tier for generated images.
-
-    Supported by:
-
-    * Google: '1K', '2K', '4K' for Gemini 3 Pro Image and compatible models
     """
 
     kind: str = 'image_generation'
