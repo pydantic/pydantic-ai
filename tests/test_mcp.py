@@ -22,6 +22,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    messages,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
@@ -104,6 +105,21 @@ async def test_stdio_server(run_context: RunContext[int]):
         # Test calling the temperature conversion tool
         result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
         assert result == snapshot(32.0)
+
+
+async def test_tool_response_single_text_part_metadata(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
+        assert len(tools) == snapshot(19)
+        assert tools[2].name == 'get_collatz_conjecture'
+        assert isinstance(tools[2].description, str)
+        assert tools[2].description.startswith('Generate the Collatz conjecture sequence for a given number.')
+
+        result = await server.direct_call_tool('get_collatz_conjecture', {'n': 7})
+        assert isinstance(result, messages.TextContent)
+        assert result.content == snapshot('[7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1]')
+        assert result.metadata == snapshot({'pydantic_ai': {'tool': 'collatz_conjecture', 'n': 7, 'length': 17}})
 
 
 async def test_reentrant_context_manager():
