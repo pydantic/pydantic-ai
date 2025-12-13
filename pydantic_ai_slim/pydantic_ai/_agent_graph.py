@@ -797,12 +797,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
+        # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             run_ctx = build_run_context(ctx)
             tool_responses = [ctx.deps.prompt_config.templates.apply_template(part, run_ctx) for part in tool_responses]
-
-        # For backwards compatibility, append a new ModelRequest using the tool returns and retries
-        if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
         return End(final_result)

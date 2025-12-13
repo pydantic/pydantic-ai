@@ -594,6 +594,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # may change the result type from the restricted type to something else. Therefore, we consider the following
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = self._output_validators
+        prompt_config = self._get_prompt_config(prompt_config)
 
         output_toolset = self._output_toolset
         if output_schema != self._output_schema or output_validators:
@@ -601,7 +602,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets, prompt_config=prompt_config)
         tool_manager = ToolManager[AgentDepsT](toolset)
 
         # Build the graph
@@ -620,7 +621,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         merged_settings = merge_model_settings(model_used.settings, self.model_settings)
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
-        prompt_config = self._get_prompt_config(prompt_config)
 
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
@@ -1426,12 +1426,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        prompt_config: _prompt_config.PromptConfig | None = None,
     ) -> AbstractToolset[AgentDepsT]:
         """Get the complete toolset.
 
         Args:
             output_toolset: The output toolset to use instead of the one built at agent construction time.
             additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
+            prompt_config: The prompt config to use for tool descriptions. If None, uses agent-level or default.
         """
         toolsets = self.toolsets
         # Don't add additional toolsets if the toolsets have been overridden
@@ -1448,7 +1450,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 return toolset
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
-        tool_config = self._get_prompt_config(None).tool_config
+        tool_config = self._get_prompt_config(prompt_config).tool_config
 
         # Check if the prompt_config has any tool descriptions to prepare tools
 
