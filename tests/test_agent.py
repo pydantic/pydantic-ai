@@ -68,7 +68,7 @@ from pydantic_ai.builtin_tools import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
-from pydantic_ai.prompt_config import PromptConfig, PromptTemplates
+from pydantic_ai.prompt_config import PromptConfig, PromptTemplates, ToolConfig
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
@@ -533,6 +533,32 @@ Custom retry message""")
 ```
 
 Custom retry message override""")
+
+
+def test_prompt_config_tool_config_descriptions():
+    """Test that ToolConfig.tool_descriptions updates tool descriptions at the agent level."""
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Verify the tool description was updated
+        assert info.function_tools is not None
+        my_tool = next(t for t in info.function_tools if t.name == 'my_tool')
+        assert my_tool.description == 'Custom tool description from ToolConfig'
+        return ModelResponse(parts=[TextPart('Done')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        prompt_config=PromptConfig(
+            tool_config=ToolConfig(tool_descriptions={'my_tool': 'Custom tool description from ToolConfig'})
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        """Original description that should be overridden"""
+        return x * 2
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Done'
 
 
 def test_result_pydantic_model_validation_error():
@@ -3447,16 +3473,17 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='output-tool-not-executed',
                         ),
                     ],
                     run_id=IsStr(),
-                    return_kind='function-tool-not-executed',
                 ),
             ]
         )
@@ -3873,10 +3900,10 @@ class TestMultipleToolCalls:
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='final-result-processed',
                         )
                     ],
                     run_id=IsStr(),
-                    return_kind='output-tool-not-executed',
                 ),
             ]
         )

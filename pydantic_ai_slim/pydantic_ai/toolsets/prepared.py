@@ -19,7 +19,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     """
 
     prepare_func: ToolsPrepareFunc[AgentDepsT] | None
-    tool_config: ToolConfig
+    tool_config: ToolConfig | None = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
@@ -33,6 +33,9 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     async def _get_tools_from_tool_config(
         self, original_tools: dict[str, ToolsetTool[AgentDepsT]]
     ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        if self.tool_config is None:
+            return original_tools
+
         tool_descriptions = self.tool_config.tool_descriptions
 
         for tool_name, description in tool_descriptions.items():

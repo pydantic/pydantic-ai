@@ -1452,11 +1452,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Check if the prompt_config has any tool descriptions to prepare tools
 
-        toolset = PreparedToolset(toolset, self._prepare_tools, tool_config=tool_config)
+        if self._prepare_tools or tool_config:
+            toolset = PreparedToolset(toolset, self._prepare_tools, tool_config=tool_config)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
-            output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools, tool_config=tool_config)
+            if self._prepare_output_tools or tool_config:
+                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools, tool_config=tool_config)
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
