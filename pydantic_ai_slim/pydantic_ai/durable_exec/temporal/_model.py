@@ -95,7 +95,7 @@ class TemporalModel(WrapperModel):
         self._provider_factory = provider_factory
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
-        async def request_activity(params: _RequestParams, deps: Any = None) -> ModelResponse:
+        async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             model_for_request = self._resolve_model(params, deps)
             return await model_for_request.request(
                 params.messages,
@@ -107,7 +107,7 @@ class TemporalModel(WrapperModel):
         # Union with None for backward compatibility with activity payloads created before deps was added
         self.request_activity.__annotations__['deps'] = deps_type | None
 
-        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT = None) -> ModelResponse:  # type: ignore[assignment]
+        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
