@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import itertools
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -627,11 +628,20 @@ class OpenRouterModel(OpenAIChatModel):
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list)
+        file_inputs: list[dict[str, dict[str, str]]] = field(default_factory=list)
 
         def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
             message_param = super()._into_message_param()
             if self.reasoning_details:
                 message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
+            if self.file_inputs:
+                content = message_param.get('content')
+                if isinstance(content, str):
+                    message_param['content'] = [{'type': 'text', 'text': content}] + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
+                elif isinstance(content, list):
+                    message_param['content'] = content + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
+                else:
+                    message_param['content'] = self.file_inputs  # type: ignore[reportGeneralTypeIssues]
             return message_param
 
         @override
@@ -642,6 +652,12 @@ class OpenRouterModel(OpenAIChatModel):
                     self.reasoning_details.append(reasoning_detail.model_dump())
             else:  # pragma: lax no cover
                 super()._map_response_thinking_part(item)
+
+        @override
+        def _map_response_file_part(self, item: FilePart) -> None:
+            if item.content.media_type in ('image/png', 'image/jpeg', 'image/webp', 'image/gif'):
+                encoding = base64.b64encode(item.content.data).decode('utf-8')
+                self.file_inputs.append({'image_url': {'url': encoding}})
 
     @property
     @override
