@@ -729,6 +729,31 @@ An example text describing the use of "John Doe" as a placeholder name in legal 
 """)
 
 
+async def test_url_force_download_false_raises_error(bedrock_provider: BedrockProvider) -> None:
+    """Test that force_download=False raises RuntimeError since Bedrock doesn't support URL passthrough."""
+    m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Test document',
+                        DocumentUrl(
+                            url='file://local/path/to/doc.pdf',
+                            media_type='application/pdf',
+                            force_download=False,
+                        ),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    with pytest.raises(RuntimeError, match='Bedrock does not support URL passthrough'):
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+
 @pytest.mark.vcr()
 async def test_text_as_binary_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)

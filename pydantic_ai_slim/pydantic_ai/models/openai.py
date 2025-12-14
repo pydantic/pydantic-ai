@@ -981,7 +981,7 @@ class OpenAIChatModel(Model):
                     image_url: ImageURL = {'url': item.url}
                     if metadata := item.vendor_metadata:
                         image_url['detail'] = metadata.get('detail', 'auto')
-                    if item.force_download:
+                    if item.force_download is True:
                         image_content = await download_item(item, data_format='base64_uri', type_format='extension')
                         image_url['url'] = image_content['data']
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
@@ -1880,7 +1880,7 @@ class OpenAIResponsesModel(Model):
                     image_url = item.url
                     if metadata := item.vendor_metadata:
                         detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
-                    if item.force_download:
+                    if item.force_download is True:
                         downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         image_url = downloaded_item['data']
 
@@ -1892,7 +1892,7 @@ class OpenAIResponsesModel(Model):
                         )
                     )
                 elif isinstance(item, AudioUrl | DocumentUrl):
-                    if item.force_download:
+                    if item.force_download is True:
                         downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         content.append(
                             responses.ResponseInputFileParam(

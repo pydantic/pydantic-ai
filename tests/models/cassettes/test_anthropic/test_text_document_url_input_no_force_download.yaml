@@ -1,0 +1,52 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '289'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the main content on this document?
+          type: text
+        - source:
+            type: url
+            url: https://example-files.online-convert.com/document/txt/example.txt
+          type: document
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      error:
+        message: 'messages.0.content.1.image.source.base64.data: The file format is invalid or unsupported'
+        type: invalid_request_error
+      request_id: req_011CW6iSW9a42ghQfXsaHqWi
+      type: error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

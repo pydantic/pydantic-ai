@@ -637,6 +637,11 @@ class BedrockConverseModel(Model):
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
+                    if item.force_download is False:
+                        raise RuntimeError(
+                            'Bedrock does not support URL passthrough. '
+                            'Remove force_download=False or use BinaryContent instead.'
+                        )
                     downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
                     format = downloaded_item['data_type']
                     if item.kind == 'image-url':

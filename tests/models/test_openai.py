@@ -1063,6 +1063,40 @@ async def test_audio_url_force_download_responses() -> None:
         assert mock_download.call_args[0][0].url == 'https://example.com/audio.mp3'
 
 
+async def test_document_url_passthrough_non_http_url() -> None:
+    """Test that force_download=False allows non-http URLs to passthrough without validation.
+
+    This enables proxy use cases where middleware intercepts and transforms URLs.
+    See: https://github.com/pydantic/pydantic-ai/issues/3724
+    """
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test document',
+                            DocumentUrl(
+                                url='file://local/path/to/doc.pdf',
+                                media_type='application/pdf',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        # Verify download was NOT called - the non-http URL passed through without validation
+        mock_download.assert_not_called()
+
+
 @pytest.mark.vcr()
 async def test_image_url_tool_response(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
