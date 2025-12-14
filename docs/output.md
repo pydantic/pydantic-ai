@@ -258,6 +258,87 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+#### Handling partial output in output functions
+
+!!! warning "Output functions are called multiple times during streaming"
+    When using streaming mode (`run_stream()`), output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+    For output functions with **side effects** (e.g., sending notifications, logging, database updates), you should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag to avoid executing side effects on partial data.
+
+**How `partial_output` works:**
+
+- **In sync mode** (`run_sync()`): 
+    - `partial_output=False` always (function called once)
+- **In streaming mode** (`run_stream()`):
+    - `partial_output=True` for each partial call
+    - `partial_output=False` for the final complete call
+
+**Example with side effects:**
+
+```python {title="output_function_with_side_effects.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel
+
+
+class DatabaseRecord(BaseModel):
+    name: str
+    value: int
+
+
+def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
+    """Output function with side effect - only save final output to database."""
+    if ctx.partial_output:
+        # Skip side effects for partial outputs
+        return record
+
+    # Only execute side effect for the final output
+    print(f'Saving to database: {record.name} = {record.value}')
+    return record
+
+
+agent = Agent('openai:gpt-5', output_type=save_to_database)
+
+result = agent.run_sync('Create a record with name "test" and value 42')
+print(result.output)
+#> name='test' value=42
+```
+
+_(This example is complete, it can be run "as is")_
+
+**Example without side effects (transformation only):**
+
+```python {title="output_function_transformation.py"}
+from pydantic_ai import Agent
+from pydantic import BaseModel
+
+
+class UserData(BaseModel):
+    username: str
+    email: str
+
+
+def normalize_user_data(user: UserData) -> UserData:
+    """Output function without side effects - safe to call multiple times."""
+    # Pure transformation is safe for multiple calls
+    user.username = user.username.lower()
+    user.email = user.email.lower()
+    return user
+
+
+agent = Agent('openai:gpt-5', output_type=normalize_user_data)
+
+result = agent.run_sync('Create user with username "JohnDoe" and email "JOHN@EXAMPLE.COM"')
+print(result.output)
+#> username='johndoe' email='john@example.com'
+```
+
+_(This example is complete, it can be run "as is")_
+
+**Best practices:**
+
+- If your output function **has** side effects (database writes, API calls, notifications) → use `ctx.partial_output` to guard them
+- If your output function only **transforms** data (formatting, validation, normalization) → no need to check the flag
+
 ### Output modes
 
 Pydantic AI implements three different methods to get a model to output structured data:
