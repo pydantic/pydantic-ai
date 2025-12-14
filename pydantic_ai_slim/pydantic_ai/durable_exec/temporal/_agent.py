@@ -231,7 +231,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         if model_id == 'default':
             raise UserError("Model ID 'default' is reserved for the agent's primary model.")
-        if model_id in self._registered_model_ids:  # pragma: no cover
+        if model_id in self._registered_model_ids:
             raise UserError(f'Duplicate model ID {model_id!r} provided to `additional_models`.')
         return model_id
 
