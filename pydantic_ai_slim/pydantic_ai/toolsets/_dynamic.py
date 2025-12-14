@@ -117,24 +117,26 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return await run_state['toolset'].call_tool(name, tool_args, ctx, tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        if not self._toolset_runstep:
+        wrapped_toolsets = [rs['toolset'] for rs in self._toolset_runstep.values() if rs['toolset'] is not None]
+        if not wrapped_toolsets:
             super().apply(visitor)
         else:
-            for run_state in self._toolset_runstep.values():
-                if run_state['toolset'] is not None:
-                    run_state['toolset'].apply(visitor)
+            for toolset in wrapped_toolsets:
+                toolset.apply(visitor)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
-        if not self._toolset_runstep:
+        wrapped_items = [(run_id, rs) for run_id, rs in self._toolset_runstep.items() if rs['toolset'] is not None]
+        if not wrapped_items:
             return super().visit_and_replace(visitor)
         else:
             new_copy = self.copy()
-            for run_id, run_state in self._toolset_runstep.items():
-                if run_state['toolset'] is not None:
-                    new_copy._toolset_runstep[run_id] = {
-                        'toolset': run_state['toolset'].visit_and_replace(visitor),
-                        'run_step': run_state['run_step'],
-                    }
+            for run_id, run_state in wrapped_items:
+                toolset = run_state['toolset']
+                assert toolset is not None
+                new_copy._toolset_runstep[run_id] = {
+                    'toolset': toolset.visit_and_replace(visitor),
+                    'run_step': run_state['run_step'],
+                }
             return new_copy
