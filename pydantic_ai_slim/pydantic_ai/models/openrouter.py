@@ -238,12 +238,6 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     The reasoning config object consolidates settings for controlling reasoning strength across different models. [See more](https://openrouter.ai/docs/use-cases/reasoning-tokens)
     """
 
-    openrouter_modalities: list[Literal['text', 'image']]
-    """To control the modalities of the model.
-
-    The modalities config object consolidates settings for controlling the output modalities of the model. [See more](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)
-    """
-
     openrouter_usage: OpenRouterUsageConfig
     """To control the usage of the model.
 
@@ -536,8 +530,6 @@ def _openrouter_settings_to_openai_settings(
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
-    if modalities := model_settings.pop('openrouter_modalities', None):
-        extra_body['modalities'] = modalities
 
     for builtin_tool in model_request_parameters.builtin_tools:
         if isinstance(builtin_tool, ImageGenerationTool):
@@ -652,12 +644,6 @@ class OpenRouterModel(OpenAIChatModel):
                     self.reasoning_details.append(reasoning_detail.model_dump())
             else:  # pragma: lax no cover
                 super()._map_response_thinking_part(item)
-
-        def _map_response_builtin_part(self, item: BuiltinToolCallPart | BuiltinToolReturnPart) -> None:
-            if isinstance(item, ImageGenerationTool):
-                pass
-
-            pass
 
     @property
     @override

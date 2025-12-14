@@ -631,10 +631,9 @@ class OpenAIChatModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
-        items = list(self._process_parts(choice.message))
 
         return ModelResponse(
-            parts=items,
+            parts=list(self._process_parts(choice.message)),
             usage=self._map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
@@ -652,13 +651,23 @@ class OpenAIChatModel(Model):
         """
         profile = OpenAIModelProfile.from_profile(self.profile)
         custom_field = profile.openai_chat_thinking_field
-        
+
+        # Prefer the configured custom reasoning field, if present in profile.
+        # Fall back to built-in fields if no custom field result was found.
+
+        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+
+        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
             reasoning: str | None = getattr(message, field_name, None)
             if reasoning:  # pragma: no branch
                 yield ThinkingPart(id=field_name, content=reasoning, provider_name=self.system)
+                break
 
     def _process_content(self, message: chat.ChatCompletionMessage) -> Iterable[TextPart | ThinkingPart]:
         """Hook that maps the message content to thinking or text parts.
