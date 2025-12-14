@@ -12,8 +12,6 @@ from ..builtin_tools import ImageGenerationTool
 from ..exceptions import ModelHTTPError
 from ..messages import (
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FilePart,
     FinishReason,
     ModelResponsePart,
