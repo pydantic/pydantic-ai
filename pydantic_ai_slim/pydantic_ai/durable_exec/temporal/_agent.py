@@ -177,7 +177,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self._registered_model_ids[model_id] = model_instance
 
         # Use wrapped_model if available, otherwise first registered model
-        primary_model = wrapped_model if isinstance(wrapped_model, Model) else next(iter(self._registered_model_ids.values()))
+        primary_model = (
+            wrapped_model if isinstance(wrapped_model, Model) else next(iter(self._registered_model_ids.values()))
+        )
         temporal_model = TemporalModel(
             primary_model,
             activity_name_prefix=activity_name_prefix,
