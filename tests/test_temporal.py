@@ -2502,7 +2502,8 @@ async def test_temporal_agent_multi_model_duplicate_id():
     test_model3 = TestModel(custom_output_text='Model 3')
 
     # Custom Mapping that yields duplicate keys during iteration
-    class DuplicateKeyMapping(MappingABC):
+    # This seems contrived but maps silently discard duplicates normally
+    class DuplicateKeyMapping(MappingABC[str, Model]):
         def __init__(self, items: list[tuple[str, Model]]):
             self._items = items
 
@@ -2513,7 +2514,7 @@ async def test_temporal_agent_multi_model_duplicate_id():
             raise KeyError(key)
 
         def __iter__(self):
-            return iter(k for k, v in self._items)
+            return iter(k for k, _ in self._items)
 
         def __len__(self):
             return len(self._items)
@@ -2639,8 +2640,6 @@ async def test_temporal_agent_without_default_model():
     assert result.output == 'Model 2 response'
 
 
-
-
 # Workflow for testing passing 'default' explicitly
 @workflow.defn
 class MultiModelWorkflowDefault:
@@ -2720,5 +2719,3 @@ async def test_temporal_agent_model_registered_instance(allow_model_requests: No
             task_queue=TASK_QUEUE,
         )
         assert output == 'Response from model 2'
-
-
