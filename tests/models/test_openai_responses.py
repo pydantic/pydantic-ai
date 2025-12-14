@@ -1,10 +1,10 @@
 import json
 import re
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 import pytest
-from datetime import datetime, timezone
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -8461,6 +8461,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
             timestamp=IsDatetime(),
             provider_name='openai',
             provider_url='https://api.openai.com/v1',
+            provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
             provider_response_id='123',
             run_id=IsStr(),
         )

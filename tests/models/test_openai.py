@@ -227,6 +227,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
                 model_name='gpt-4o-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1',
                 provider_details={
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },

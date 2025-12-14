@@ -1635,8 +1635,7 @@ def test_map_from_mcp_params_model_request():
                         content=[BinaryContent(data=b'img', media_type='image/png', identifier='978ea7')],
                         timestamp=IsNow(tz=timezone.utc),
                     ),
-                ],
-                timestamp=IsNow(tz=timezone.utc),
+                ]
             )
         ]
     )

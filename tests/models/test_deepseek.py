@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
+from datetime import datetime, timezone
 
 import pytest
-from datetime import datetime, timezone
 from inline_snapshot import snapshot
 
 from pydantic_ai import (
