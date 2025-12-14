@@ -4573,7 +4573,7 @@ def test_image_url_serializable_missing_media_type():
                             'Hello',
                             {
                                 'url': 'https://example.com/chart.jpeg',
-                                'force_download': False,
+                                'force_download': None,
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
                                 'media_type': 'image/jpeg',
@@ -4643,7 +4643,7 @@ def test_image_url_serializable():
                             'Hello',
                             {
                                 'url': 'https://example.com/chart',
-                                'force_download': False,
+                                'force_download': None,
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
                                 'media_type': 'image/jpeg',

@@ -609,7 +609,7 @@ def test_image_url_validation_with_optional_identifier():
     assert image_url_ta.dump_python(image) == snapshot(
         {
             'url': 'https://example.com/image.jpg',
-            'force_download': False,
+            'force_download': None,
             'vendor_metadata': None,
             'kind': 'image-url',
             'media_type': 'image/jpeg',
@@ -626,7 +626,7 @@ def test_image_url_validation_with_optional_identifier():
     assert image_url_ta.dump_python(image) == snapshot(
         {
             'url': 'https://example.com/image.jpg',
-            'force_download': False,
+            'force_download': None,
             'vendor_metadata': None,
             'kind': 'image-url',
             'media_type': 'image/png',
