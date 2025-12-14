@@ -198,7 +198,8 @@ def my_provider_factory(run_context: RunContext[dict[str, str]], provider_name: 
         from pydantic_ai.providers.anthropic import AnthropicProvider
 
         return AnthropicProvider(api_key=api_key)
-    # ... handle other providers
+    else:
+        raise ValueError(f'Unknown provider: {provider_name}')
 
 
 temporal_agent = TemporalAgent(
@@ -214,16 +215,16 @@ temporal_agent = TemporalAgent(
 @workflow.defn
 class MultiModelWorkflow:
     @workflow.run
-    async def run(self, prompt: str, use_reasoning: bool) -> str:
+    async def run(self, prompt: str, use_reasoning: bool, use_fast: bool) -> str:
         if use_reasoning:
             # Select by registered name
             result = await temporal_agent.run(prompt, model='reasoning')
-        elif some_condition:
-            # Or pass a model string with provider factory for dynamic configuration
-            result = await temporal_agent.run(prompt, model='openai:gpt-4o-mini')
-        else:
+        elif use_fast:
             # Or pass the registered instance directly
             result = await temporal_agent.run(prompt, model=fast_model)
+        else:
+            # Or pass a model string with provider factory for dynamic configuration
+            result = await temporal_agent.run(prompt, model='openai:gpt-4o-mini')
         return result.output
 ```
 
