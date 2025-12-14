@@ -164,10 +164,6 @@ class ToolConfig:
     tool_descriptions: dict[str, str] = field(default_factory=lambda: {})
     """Custom descriptions for tools used by the agent."""
 
-    def has_tool_descriptions(self) -> bool:
-        """Check if any tool descriptions are set(not an empty dict)."""
-        return bool(len(self.tool_descriptions) > 0)
-
 
 @dataclass
 class PromptConfig:
@@ -210,10 +206,22 @@ class PromptConfig:
     See [`PromptTemplates`][pydantic_ai.PromptTemplates] for available template options.
     """
 
-    tool_config: ToolConfig = field(default_factory=ToolConfig)
+    tool_config: ToolConfig | None = None
     """Configuration for customizing tool descriptions and metadata.
     See [`ToolConfig`][pydantic_ai.ToolConfig] for available configuration options.
     """
+
+
+# @dataclass
+# class InstructionsConfig:
+#     """
+#       Configuration options to override instructions sent to the model.
+#     """
+
+    # instructions: 
+    # It seems like runtime instuctions being passed to one of the run methods almost do the same thing.
+    # Why do we need this then?
+
 
 
 DEFAULT_PROMPT_CONFIG = PromptConfig()

@@ -1453,14 +1453,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
         tool_config = self._get_prompt_config(prompt_config).tool_config
-        has_tool_desccriptions = tool_config.has_tool_descriptions()
 
-        if self._prepare_tools or has_tool_desccriptions:
+        if self._prepare_tools or tool_config:
             toolset = PreparedToolset(toolset, self._prepare_tools, tool_config=tool_config)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
-            if self._prepare_output_tools or has_tool_desccriptions:
+            if self._prepare_output_tools or tool_config:
                 output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools, tool_config=tool_config)
             toolset = CombinedToolset([output_toolset, toolset])
 
