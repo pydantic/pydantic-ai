@@ -883,3 +883,20 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+
+def test_dynamic_toolset_equality():
+    """Test DynamicToolset.__eq__ with different object types."""
+    toolset1 = DynamicToolset(toolset_func=lambda ctx: FunctionToolset())
+    toolset2 = DynamicToolset(toolset_func=lambda ctx: FunctionToolset())
+
+    # Same instance
+    assert toolset1 == toolset1
+
+    # Different instances with different functions
+    assert toolset1 != toolset2
+
+    # Compare with non-DynamicToolset
+    assert toolset1 != FunctionToolset()
+    assert toolset1 != 'not a toolset'
+    assert toolset1 is not None
