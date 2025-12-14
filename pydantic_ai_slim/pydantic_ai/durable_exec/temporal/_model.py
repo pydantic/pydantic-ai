@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Union, cast
+from typing import Any, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
