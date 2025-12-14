@@ -2640,82 +2640,68 @@ async def test_temporal_agent_without_default_model():
     assert result.output == 'Model 2 response'
 
 
-# Workflow for testing passing 'default' explicitly
+# Workflow for testing passing model instances (can't be workflow args, so map by key)
+_model_instance_map = {
+    'default_instance': test_model_selection_1,
+    'model_2_instance': test_model_selection_2,
+}
+
+
 @workflow.defn
-class MultiModelWorkflowDefault:
+class MultiModelWorkflowInstance:
     @workflow.run
-    async def run(self, prompt: str) -> str:
-        # Explicitly pass 'default' to use the default model
-        result = await multi_model_selection_test_agent.run(prompt, model='default')
+    async def run(self, prompt: str, instance_key: str) -> str:
+        model_instance = _model_instance_map[instance_key]
+        result = await multi_model_selection_test_agent.run(prompt, model=model_instance)
         return result.output
 
 
-async def test_temporal_agent_model_default_explicit(allow_model_requests: None, client: Client):
-    """Test that passing 'default' explicitly selects the default model."""
+@pytest.mark.parametrize(
+    ('model_id', 'expected_output'),
+    [
+        pytest.param('default', 'Response from model 1', id='default_explicit'),
+    ],
+)
+async def test_temporal_agent_model_selection_by_id(
+    allow_model_requests: None, client: Client, model_id: str, expected_output: str
+):
+    """Test model selection by passing model ID strings."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[MultiModelWorkflowDefault],
+        workflows=[MultiModelWorkflow],
         plugins=[AgentPlugin(multi_model_selection_test_agent)],
     ):
         output = await client.execute_workflow(
-            MultiModelWorkflowDefault.run,
-            args=['Hello'],
-            id='MultiModelWorkflowDefault',
+            MultiModelWorkflow.run,
+            args=['Hello', model_id],
+            id=f'MultiModelWorkflow_{model_id}',
             task_queue=TASK_QUEUE,
         )
-        assert output == 'Response from model 1'
+        assert output == expected_output
 
 
-# Workflow for testing passing the default model instance
-@workflow.defn
-class MultiModelWorkflowDefaultInstance:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        # Pass the default model instance explicitly
-        result = await multi_model_selection_test_agent.run(prompt, model=test_model_selection_1)
-        return result.output
-
-
-async def test_temporal_agent_model_default_instance(allow_model_requests: None, client: Client):
-    """Test that passing the default model instance works."""
+@pytest.mark.parametrize(
+    ('instance_key', 'expected_output'),
+    [
+        pytest.param('default_instance', 'Response from model 1', id='default_instance'),
+        pytest.param('model_2_instance', 'Response from model 2', id='registered_instance'),
+    ],
+)
+async def test_temporal_agent_model_selection_by_instance(
+    allow_model_requests: None, client: Client, instance_key: str, expected_output: str
+):
+    """Test model selection by passing model instances."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[MultiModelWorkflowDefaultInstance],
+        workflows=[MultiModelWorkflowInstance],
         plugins=[AgentPlugin(multi_model_selection_test_agent)],
     ):
         output = await client.execute_workflow(
-            MultiModelWorkflowDefaultInstance.run,
-            args=['Hello'],
-            id='MultiModelWorkflowDefaultInstance',
+            MultiModelWorkflowInstance.run,
+            args=['Hello', instance_key],
+            id=f'MultiModelWorkflowInstance_{instance_key}',
             task_queue=TASK_QUEUE,
         )
-        assert output == 'Response from model 1'
-
-
-# Workflow for testing passing a non-default registered model instance
-@workflow.defn
-class MultiModelWorkflowRegisteredInstance:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        # Pass a registered (non-default) model instance directly
-        result = await multi_model_selection_test_agent.run(prompt, model=test_model_selection_2)
-        return result.output
-
-
-async def test_temporal_agent_model_registered_instance(allow_model_requests: None, client: Client):
-    """Test that passing a registered (non-default) model instance works."""
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[MultiModelWorkflowRegisteredInstance],
-        plugins=[AgentPlugin(multi_model_selection_test_agent)],
-    ):
-        output = await client.execute_workflow(
-            MultiModelWorkflowRegisteredInstance.run,
-            args=['Hello'],
-            id='MultiModelWorkflowRegisteredInstance',
-            task_queue=TASK_QUEUE,
-        )
-        assert output == 'Response from model 2'
+        assert output == expected_output

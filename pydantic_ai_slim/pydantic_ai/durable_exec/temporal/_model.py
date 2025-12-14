@@ -149,11 +149,12 @@ class TemporalModel(WrapperModel):
 
         model_id = self._current_model_id()
         run_context = get_current_run_context()
-        serialized_run_context = None
-        deps: Any | None = None
-        if run_context is not None:  # pragma: no branch
-            serialized_run_context = self.run_context_type.serialize_run_context(run_context)
-            deps = run_context.deps
+        if run_context is None:
+            raise UserError(
+                'A Temporal model cannot be used with `pydantic_ai.direct.model_request()` as it requires a `run_context`. Use `agent.run()` instead.'
+            )
+        serialized_run_context = self.run_context_type.serialize_run_context(run_context)
+        deps = run_context.deps
 
         return await workflow.execute_activity(
             activity=self.request_activity,
