@@ -775,9 +775,7 @@ class TestPartialOutput:
             return output
 
         async with agent.run_stream('test') as result:
-            text_parts = []
-            async for chunk in result.stream_text(debounce_by=None):
-                text_parts.append(chunk)
+            text_parts = [text_part async for text_part in result.stream_text(debounce_by=None)]
 
         assert text_parts[-1] == 'Hello world!'
         assert call_log == snapshot(

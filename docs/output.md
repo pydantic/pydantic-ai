@@ -267,7 +267,7 @@ _(This example is complete, it can be run "as is")_
 
 **How `partial_output` works:**
 
-- **In sync mode** (`run_sync()`): 
+- **In sync mode** (`run_sync()`):
     - `partial_output=False` always (function called once)
 - **In streaming mode** (`run_stream()`):
     - `partial_output=True` for each partial call
@@ -276,8 +276,9 @@ _(This example is complete, it can be run "as is")_
 **Example with side effects:**
 
 ```python {title="output_function_with_side_effects.py"}
-from pydantic_ai import Agent, RunContext
 from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
 
 
 class DatabaseRecord(BaseModel):
@@ -308,8 +309,9 @@ _(This example is complete, it can be run "as is")_
 **Example without side effects (transformation only):**
 
 ```python {title="output_function_transformation.py"}
-from pydantic_ai import Agent
 from pydantic import BaseModel
+
+from pydantic_ai import Agent
 
 
 class UserData(BaseModel):
