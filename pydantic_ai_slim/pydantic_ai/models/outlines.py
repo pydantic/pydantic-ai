@@ -546,6 +546,7 @@ class OutlinesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[str]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for content in self._response:
@@ -566,6 +567,11 @@ class OutlinesStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

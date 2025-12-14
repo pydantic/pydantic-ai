@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Se
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from pydantic_core import to_json
@@ -55,7 +55,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -90,27 +90,13 @@ try:
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+
+    OMIT = omit
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-if TYPE_CHECKING:
-    from openai import Omit, omit
-
-    OMIT = omit
-else:
-    # Backward compatibility with openai<2
-    try:
-        from openai import Omit, omit
-
-        OMIT = omit
-    except ImportError:  # pragma: lax no cover
-        from openai import NOT_GIVEN, NotGiven
-
-        OMIT = NOT_GIVEN
-        Omit = NotGiven
 
 
 __all__ = (
@@ -676,6 +662,7 @@ class OpenAIChatModel(Model):
             provider_details=self._process_provider_details(response),
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
@@ -1297,6 +1284,7 @@ class OpenAIResponsesModel(Model):
             provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -1692,6 +1680,8 @@ class OpenAIResponsesModel(Model):
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
                             ):
+                                # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
+                                args = {k: v for k, v in args.items() if v is not None}
                                 web_search_item = responses.ResponseFunctionWebSearchParam(
                                     id=item.tool_call_id,
                                     action=cast(responses.response_function_web_search_param.Action, args),
@@ -2069,6 +2059,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -2400,6 +2395,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -2563,7 +2563,8 @@ def _map_web_search_tool_call(
     }
 
     if action := item.action:
-        args = action.model_dump(mode='json')
+        # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
+        args = action.model_dump(mode='json', exclude_none=True)
 
         # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
         if sources := args.pop('sources', None):

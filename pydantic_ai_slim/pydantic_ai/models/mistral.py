@@ -381,6 +381,7 @@ class MistralModel(Model):
             timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -409,6 +410,7 @@ class MistralModel(Model):
             _model_name=first_chunk.data.model,
             _timestamp=timestamp,
             _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
         )
 
     @staticmethod
@@ -628,6 +630,7 @@ class MistralStreamedResponse(StreamedResponse):
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     _delta_content: str = field(default='', init=False)
 
@@ -688,6 +691,11 @@ class MistralStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
