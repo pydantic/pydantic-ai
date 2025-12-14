@@ -761,7 +761,7 @@ async def test_url_force_download_false_raises_error(bedrock_provider: BedrockPr
     ]
 
     with pytest.raises(RuntimeError, match='Bedrock does not support URL passthrough'):
-        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+        await m._map_messages(messages, ModelRequestParameters(), None)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.vcr()
