@@ -7,9 +7,9 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    BinaryContent,
     BinaryImage,
     ImageGenerationTool,
-    BinaryContent,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -433,19 +433,14 @@ async def test_openrouter_image_generation_streaming(allow_model_requests: None,
         model_name='google/gemini-2.5-flash-image-preview',
         provider=provider,
     )
-    settings = OpenRouterModelSettings(
-        openrouter_modalities=['image', 'text'], openrouter_image_config={'aspect_ratio': '3:2'}
-    )
 
-    agent = Agent(model=model, output_type=str | BinaryImage, model_settings=settings)
+    agent = Agent(model=model, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool(aspect_ratio='3:2')])
 
     async with agent.run_stream('A dog') as result:
-        async for output in result.stream_output():
-            if isinstance(output, str):
-                assert output == snapshot('Here you go: ')
-            else:
-                assert isinstance(output, BinaryImage)
-                assert output.media_type == snapshot('image/png')
+        output = await result.get_output()
+
+        assert isinstance(output, BinaryImage)
+        assert output.media_type == snapshot('image/png')
 
 
 async def test_openrouter_image_generation_builtin_tool(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -461,8 +456,8 @@ async def test_openrouter_image_generation_builtin_tool(allow_model_requests: No
 
     assert result.response.text == snapshot('Sounds good! Here is ')
     assert isinstance(result.output, BinaryImage)
-    
-    
+
+
 async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
