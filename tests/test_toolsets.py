@@ -722,30 +722,25 @@ async def test_visit_and_replace():
     )
     visited_toolset = toolset.visit_and_replace(lambda toolset: WrapperToolset(toolset))
 
-    # Check the structure of the visited toolset
-    assert isinstance(visited_toolset, CombinedToolset)
-    assert len(visited_toolset.toolsets) == 3
-
-    # First toolset is doubly wrapped
-    assert isinstance(visited_toolset.toolsets[0], WrapperToolset)
-    assert isinstance(visited_toolset.toolsets[0].wrapped, WrapperToolset)
-    assert visited_toolset.toolsets[0].wrapped.wrapped is toolset1
-
-    # Second toolset is a DynamicToolset with wrapped inner toolset
-    visited_dynamic = visited_toolset.toolsets[1]
-    assert isinstance(visited_dynamic, DynamicToolset)
-    assert visited_dynamic.toolset_func is active_dynamic_toolset.toolset_func
-    assert visited_dynamic.per_run_step == active_dynamic_toolset.per_run_step
-    assert isinstance(visited_dynamic._toolset_runstep['__default__']['toolset'], WrapperToolset)  # pyright: ignore[reportPrivateUsage]
-    assert visited_dynamic._toolset_runstep['__default__']['toolset'].wrapped is toolset2  # pyright: ignore[reportPrivateUsage]
-    assert (
-        visited_dynamic._toolset_runstep['__default__']['run_step']  # pyright: ignore[reportPrivateUsage]
-        == active_dynamic_toolset._toolset_runstep['__default__']['run_step']  # pyright: ignore[reportPrivateUsage]
+    expected_dynamic = DynamicToolset(
+        toolset_func=active_dynamic_toolset.toolset_func,
+        per_run_step=active_dynamic_toolset.per_run_step,
+        id=active_dynamic_toolset._id,  # pyright: ignore[reportPrivateUsage]
     )
+    expected_dynamic._toolset_runstep = {  # pyright: ignore[reportPrivateUsage]
+        '__default__': {
+            'toolset': WrapperToolset(toolset2),
+            'run_step': active_dynamic_toolset._toolset_runstep['__default__']['run_step'],  # pyright: ignore[reportPrivateUsage]
+        }
+    }
 
-    # Third toolset is the inactive dynamic toolset wrapped
-    assert isinstance(visited_toolset.toolsets[2], WrapperToolset)
-    assert visited_toolset.toolsets[2].wrapped is inactive_dynamic_toolset
+    assert visited_toolset == CombinedToolset(
+        [
+            WrapperToolset(WrapperToolset(toolset1)),
+            expected_dynamic,
+            WrapperToolset(inactive_dynamic_toolset),
+        ]
+    )
 
 
 async def test_dynamic_toolset():

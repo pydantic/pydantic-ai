@@ -81,6 +81,16 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             self._toolset_runstep.clear()
         return result
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, DynamicToolset):
+            return False
+        return (
+            self.toolset_func is other.toolset_func  # pyright: ignore[reportUnknownMemberType]
+            and self.per_run_step == other.per_run_step
+            and self._id == other._id
+            and self._toolset_runstep == other._toolset_runstep  # pyright: ignore[reportUnknownMemberType]
+        )
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         run_id = ctx.run_id or '__default__'
 
