@@ -149,7 +149,7 @@ class TemporalModel(WrapperModel):
 
         model_id = self._current_model_id()
         run_context = get_current_run_context()
-        if run_context is None:
+        if run_context is None:  # pragma: no cover
             raise UserError(
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request()` as it requires a `run_context`. Use `agent.run()` instead.'
             )

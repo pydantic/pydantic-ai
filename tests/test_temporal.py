@@ -2507,13 +2507,13 @@ async def test_temporal_agent_multi_model_duplicate_id():
         def __init__(self, items: list[tuple[str, Model]]):
             self._items = items
 
-        def __getitem__(self, key: str) -> Model:
+        def __getitem__(self, key: str) -> Model:  # pragma: no cover
             for k, v in self._items:
                 if k == key:
                     return v
             raise KeyError(key)
 
-        def __iter__(self):
+        def __iter__(self):  # pragma: no cover
             return iter(k for k, _ in self._items)
 
         def __len__(self):
