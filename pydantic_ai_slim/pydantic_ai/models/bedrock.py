@@ -43,7 +43,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BedrockModelProfile
+from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -155,13 +155,6 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'tool_use': 'tool_call',
 }
 
-_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.', 'global.')
-"""Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
-
-Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
-which does not accept profile IDs. Extend if new geos appear (e.g., 'global.', 'us-gov.').
-"""
-
 
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
@@ -206,6 +199,33 @@ class BedrockModelSettings(ModelSettings, total=False):
     """Additional model-specific parameters to include in requests.
 
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
+    """
+
+    bedrock_cache_tool_definitions: bool
+    """Whether to add a cache point after the last tool definition.
+
+    When enabled, the last tool in the `tools` array will include a `cachePoint`, allowing Bedrock to cache tool
+    definitions and reduce costs for compatible models.
+    See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
+    bedrock_cache_instructions: bool
+    """Whether to add a cache point after the system prompt blocks.
+
+    When enabled, an extra `cachePoint` is appended to the system prompt so Bedrock can cache system instructions.
+    See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
+    bedrock_cache_messages: bool
+    """Convenience setting to enable caching for the last user message.
+
+    When enabled, this automatically adds a cache point to the last content block
+    in the final user message, which is useful for caching conversation history
+    or context in multi-turn conversations.
+
+    Note: Uses 1 of Bedrock's 4 available cache points per request. Any additional CachePoint
+    markers in messages will be automatically limited to respect the 4-cache-point maximum.
+    See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
 
@@ -299,7 +319,8 @@ class BedrockConverseModel(Model):
         Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
         """
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
-        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters)
+        settings = cast(BedrockModelSettings, model_settings or {})
+        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         params: CountTokensRequestTypeDef = {
             'modelId': self._remove_inference_geo_prefix(self.model_name),
             'input': {
@@ -337,6 +358,7 @@ class BedrockConverseModel(Model):
             _model_name=self.model_name,
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
@@ -376,6 +398,8 @@ class BedrockConverseModel(Model):
         u = usage.RequestUsage(
             input_tokens=response['usage']['inputTokens'],
             output_tokens=response['usage']['outputTokens'],
+            cache_read_tokens=response['usage'].get('cacheReadInputTokens', 0),
+            cache_write_tokens=response['usage'].get('cacheWriteInputTokens', 0),
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
@@ -388,6 +412,7 @@ class BedrockConverseModel(Model):
             model_name=self.model_name,
             provider_response_id=response_id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -419,8 +444,9 @@ class BedrockConverseModel(Model):
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters)
-        inference_config = self._map_inference_config(model_settings)
+        settings = model_settings or BedrockModelSettings()
+        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
+        inference_config = self._map_inference_config(settings)
 
         params: ConverseRequestTypeDef = {
             'modelId': self.model_name,
@@ -429,9 +455,12 @@ class BedrockConverseModel(Model):
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters)
+        tool_config = self._map_tool_config(model_request_parameters, settings)
         if tool_config:
             params['toolConfig'] = tool_config
+
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
         if model_request_parameters.builtin_tools:
             raise UserError('Bedrock does not support built-in tools')
@@ -485,10 +514,22 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
+    def _map_tool_config(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: BedrockModelSettings | None,
+    ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
         if not tools:
             return None
+
+        profile = BedrockModelProfile.from_profile(self.profile)
+        if (
+            model_settings
+            and model_settings.get('bedrock_cache_tool_definitions')
+            and profile.bedrock_supports_tool_caching
+        ):
+            tools.append({'cachePoint': {'type': 'default'}})
 
         tool_choice: ToolChoiceTypeDef
         if not model_request_parameters.allow_text_output:
@@ -503,12 +544,16 @@ class BedrockConverseModel(Model):
         return tool_config
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: BedrockModelSettings | None,
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
 
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
+        settings = model_settings or BedrockModelSettings()
         profile = BedrockModelProfile.from_profile(self.profile)
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
@@ -519,7 +564,9 @@ class BedrockConverseModel(Model):
                     if isinstance(part, SystemPromptPart) and part.content:
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(await self._map_user_prompt(part, document_count))
+                        bedrock_messages.extend(
+                            await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
+                        )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -591,7 +638,8 @@ class BedrockConverseModel(Model):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
-                bedrock_messages.append({'role': 'assistant', 'content': content})
+                if content:
+                    bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(message)
 
@@ -617,10 +665,52 @@ class BedrockConverseModel(Model):
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt.insert(0, {'text': instructions})
 
+        if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
+            system_prompt.append({'cachePoint': {'type': 'default'}})
+
+        if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
+            last_user_content = self._get_last_user_message_content(processed_messages)
+            if last_user_content is not None:
+                # AWS currently rejects cache points that directly follow non-text content.
+                # Insert a newline text block as a workaround.
+                if 'text' not in last_user_content[-1]:
+                    last_user_content.append({'text': '\n'})
+                last_user_content.append({'cachePoint': {'type': 'default'}})
+
         return system_prompt, processed_messages
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:
+    def _get_last_user_message_content(messages: list[MessageUnionTypeDef]) -> list[Any] | None:
+        """Get the content list from the last user message that can receive a cache point.
+
+        Returns the content list if:
+        - A user message exists
+        - It has a non-empty content list
+        - The last content block doesn't already have a cache point
+
+        Returns None otherwise.
+        """
+        user_messages = [msg for msg in messages if msg.get('role') == 'user']
+        if not user_messages:
+            return None
+
+        content = user_messages[-1].get('content')  # Last user message
+        if not content or not isinstance(content, list) or len(content) == 0:
+            return None
+
+        last_block = content[-1]
+        if not isinstance(last_block, dict):
+            return None
+        if 'cachePoint' in last_block:  # Skip if already has a cache point
+            return None
+        return content
+
+    @staticmethod
+    async def _map_user_prompt(  # noqa: C901
+        part: UserPromptPart,
+        document_count: Iterator[int],
+        supports_prompt_caching: bool,
+    ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
             content.append({'text': part.content})
@@ -678,8 +768,20 @@ class BedrockConverseModel(Model):
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 elif isinstance(item, CachePoint):
-                    # Bedrock support has not been implemented yet: https://github.com/pydantic/pydantic-ai/issues/3418
-                    pass
+                    if not supports_prompt_caching:
+                        # Silently skip CachePoint for models that don't support prompt caching
+                        continue
+                    if not content or 'cachePoint' in content[-1]:
+                        raise UserError(
+                            'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
+                            'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+                        )
+                    if 'text' not in content[-1]:
+                        # AWS currently rejects cache points that directly follow non-text content.
+                        # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
+                        # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
+                        content.append({'text': '\n'})
+                    content.append({'cachePoint': {'type': 'default'}})
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -691,11 +793,77 @@ class BedrockConverseModel(Model):
         }
 
     @staticmethod
+    def _limit_cache_points(
+        system_prompt: list[SystemContentBlockTypeDef],
+        bedrock_messages: list[MessageUnionTypeDef],
+        tools: list[ToolTypeDef],
+    ) -> None:
+        """Limit the number of cache points in the request to Bedrock's maximum.
+
+        Bedrock enforces a maximum of 4 cache points per request. This method ensures
+        compliance by counting existing cache points and removing excess ones from messages.
+
+        Strategy:
+        1. Count cache points in system_prompt
+        2. Count cache points in tools
+        3. Raise UserError if system + tools already exceed MAX_CACHE_POINTS
+        4. Calculate remaining budget for message cache points
+        5. Traverse messages from newest to oldest, keeping the most recent cache points
+           within the remaining budget
+        6. Remove excess cache points from older messages to stay within limit
+
+        Cache point priority (always preserved):
+        - System prompt cache points
+        - Tool definition cache points
+        - Message cache points (newest first, oldest removed if needed)
+
+        Raises:
+            UserError: If system_prompt and tools combined already exceed MAX_CACHE_POINTS (4).
+                      This indicates a configuration error that cannot be auto-fixed.
+        """
+        MAX_CACHE_POINTS = 4
+
+        # Count existing cache points in system prompt
+        used_cache_points = sum(1 for block in system_prompt if 'cachePoint' in block)
+
+        # Count existing cache points in tools
+        for tool in tools:
+            if 'cachePoint' in tool:
+                used_cache_points += 1
+
+        # Calculate remaining cache points budget for messages
+        remaining_budget = MAX_CACHE_POINTS - used_cache_points
+        if remaining_budget < 0:  # pragma: no cover
+            raise UserError(
+                f'Too many cache points for Bedrock request. '
+                f'System prompt and tool definitions already use {used_cache_points} cache points, '
+                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
+            )
+
+        # Remove excess cache points from messages (newest to oldest)
+        for message in reversed(bedrock_messages):
+            content = message.get('content')
+            if not content or not isinstance(content, list):  # pragma: no cover
+                continue
+
+            # Build a new content list, keeping only cache points within budget
+            new_content: list[Any] = []
+            for block in reversed(content):  # Process newest first
+                is_cache_point = isinstance(block, dict) and 'cachePoint' in block
+                if is_cache_point:
+                    if remaining_budget > 0:
+                        remaining_budget -= 1
+                        new_content.append(block)
+                else:
+                    new_content.append(block)
+            message['content'] = list(reversed(new_content))  # Restore original order
+
+    @staticmethod
     def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
         """Remove inference geographic prefix from model ID if present."""
-        for prefix in _AWS_BEDROCK_INFERENCE_GEO_PREFIXES:
-            if model_name.startswith(prefix):
-                return model_name.removeprefix(prefix)
+        for prefix in BEDROCK_GEO_PREFIXES:
+            if model_name.startswith(f'{prefix}.'):
+                return model_name.removeprefix(f'{prefix}.')
         return model_name
 
 
@@ -706,6 +874,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
@@ -794,6 +963,11 @@ class BedrockStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         return self._timestamp
 
@@ -801,6 +975,8 @@ class BedrockStreamedResponse(StreamedResponse):
         return usage.RequestUsage(
             input_tokens=metadata['usage']['inputTokens'],
             output_tokens=metadata['usage']['outputTokens'],
+            cache_read_tokens=metadata['usage'].get('cacheReadInputTokens', 0),
+            cache_write_tokens=metadata['usage'].get('cacheWriteInputTokens', 0),
         )
 
 

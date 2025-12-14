@@ -9,6 +9,7 @@ from pydantic_ai import (
     Agent,
     BinaryImage,
     ImageGenerationTool,
+    BinaryContent,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -462,6 +463,30 @@ async def test_openrouter_image_generation_builtin_tool(allow_model_requests: No
     assert isinstance(result.output, BinaryImage)
     
     
+async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    agent = Agent(
+        model=model,
+        model_settings=OpenRouterModelSettings(openrouter_reasoning={'enabled': True}),
+    )
+
+    async with agent.run_stream('What is 2+2?') as stream:
+        _ = await stream.get_output()
+
+        assert stream.response.parts == snapshot(
+            [
+                ThinkingPart(
+                    content='This is a simple arithmetic question. 2+2 equals 4.',
+                    signature='Et0BCkgIChACGAIqQA2s7h7tA7IG35fbwVkou9PM2hANVJNUwcEM4q12fTRDK6y3v6YoEvJ+7bko8wnW/GLsQFXadaJPAEMCpLkhI9ISDLjFkeR1aVUIvdCtyBoMrUTovh0jwk+wpnZWIjANV3e6VVdgbGSsEyyTHO6KMmVtqqs79f9blnVdJmmMIwMyTi6bEtG59+jTU7v1zlsqQ2IKGZILOlr6adh0Aam7zYttvisys+wjyZZXU1y/Srz0nmp1cFgVOJe1BLKQI3SSRrjsqQC0uAEUZy0GX0Rq1AXjvIcYAQ==',
+                    provider_name='openrouter',
+                    provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
+                ),
+                TextPart(content='2 + 2 = 4'),
+            ]
+        )
+
+
 async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
     """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
 
@@ -524,3 +549,85 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     assert result.output.level_type == LevelType.ground
     assert result.output.space_count == 3
+
+
+async def test_openrouter_file_annotation(
+    allow_model_requests: None, openrouter_api_key: str, document_content: BinaryContent
+) -> None:
+    """Test that file annotations from OpenRouter are handled correctly.
+
+    When sending files (e.g., PDFs) to OpenRouter, the response can include
+    annotations with type="file". This test ensures those annotations are
+    parsed without validation errors.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-5.1-codex-mini', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(
+        user_prompt=[
+            'What does this PDF contain? Answer in one short sentence.',
+            document_content,
+        ]
+    )
+
+    # The response should contain text (model may or may not include file annotations)
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0
+
+
+async def test_openrouter_file_annotation_validation(openrouter_api_key: str) -> None:
+    """Test that file annotations from OpenRouter are correctly validated.
+
+    This unit test verifies that responses containing type="file" annotations
+    are parsed without validation errors, which was failing before the fix.
+    """
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    message = ChatCompletionMessage.model_construct(
+        role='assistant',
+        content='Here is the summary of your file.',
+        annotations=[
+            {'type': 'file', 'file': {'filename': 'test.pdf', 'file_id': 'file-123'}},
+        ],
+    )
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
+    )
+
+    # This should not raise a validation error
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+    assert text_part.content == 'Here is the summary of your file.'
+
+
+async def test_openrouter_url_citation_annotation_validation(openrouter_api_key: str) -> None:
+    """Test that url_citation annotations from OpenRouter are correctly validated."""
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    message = ChatCompletionMessage.model_construct(
+        role='assistant',
+        content='According to the source, this is the answer.',
+        annotations=[
+            {
+                'type': 'url_citation',
+                'url_citation': {'url': 'https://example.com', 'title': 'Example', 'start_index': 0, 'end_index': 10},
+            },
+        ],
+    )
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
+    )
+
+    # This should not raise a validation error
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+    assert text_part.content == 'According to the source, this is the answer.'

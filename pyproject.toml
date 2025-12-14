@@ -147,7 +147,6 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
-    "typings/**/*.pyi",
 ]
 
 [tool.ruff.lint]
@@ -195,10 +194,8 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-"typings/**/*.pyi" = ["F401", "PYI044", "PYI035", "ANN401"]
 
 [tool.pyright]
-stubPath = "typings"
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
@@ -228,7 +225,6 @@ exclude = [
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
-mypy_path = "typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]
@@ -311,6 +307,8 @@ exclude_lines = [
     'except ImportError as _import_error:',
     '$\s*pass$',
     'assert False',
+    '@pytest\.mark\.skip',
+    '@pytest\.mark\.xfail',
 ]
 
 [tool.logfire]
