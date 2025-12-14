@@ -395,6 +395,33 @@ class MCPServerTool(AbstractBuiltinTool):
         return ':'.join([self.kind, self.id])
 
 
+@dataclass(kw_only=True)
+class ToolSearchTool(AbstractBuiltinTool):
+    """A builtin tool that searches for tools during dynamic tool discovery.
+
+    To defer loading a tool's definition until the model finds it, mark it as `defer_loading=True`.
+
+    Note that only models with `ModelProfile.supports_tool_search` use this builtin tool. These models receive all tool
+    definitions and natively implement search and loading. All other models rely on `SearchableToolset` instead.
+
+    Supported by:
+
+    * Anthropic
+
+    """
+
+    search_type: Literal['regex', 'bm25'] | None = None
+    """Custom search type to use for tool discovery. Currently only supported by Anthropic models.
+
+    See https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-search-tool for more info.
+
+    - `'regex'`: Constructs Python `re.search()` patterns. Max 200 characters per query. Case-sensitive by default.
+    - `'bm25'`: Uses natural language queries with semantic matching across tool metadata.
+    """
+
+    kind: str = 'tool_search'
+
+
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
     if isinstance(tool_data, dict):
         return tool_data.get('kind', AbstractBuiltinTool.kind)

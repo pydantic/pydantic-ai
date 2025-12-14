@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import logging
 import io
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
@@ -13,7 +14,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -114,6 +115,9 @@ try:
         BetaToolParam,
         BetaToolResultBlockParam,
         BetaToolUnionParam,
+        BetaToolSearchToolBm25_20251119Param,
+        BetaToolSearchToolRegex20251119Param,
+        BetaToolSearchToolResultBlock,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
         BetaWebFetchTool20250910Param,
@@ -125,6 +129,7 @@ try:
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
     )
+    from anthropic.types.beta.beta_tool_search_tool_result_block import BetaToolSearchToolResultBlock
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
         Content as WebFetchToolResultBlockParamContent,
     )
@@ -511,6 +516,9 @@ class AnthropicModel(Model):
             elif isinstance(item, BetaMCPToolResultBlock):
                 call_part = builtin_tool_calls.get(item.tool_use_id)
                 items.append(_map_mcp_server_result_block(item, call_part, self.system))
+            elif isinstance(item, BetaToolSearchToolResultBlock):
+                call_part = builtin_tool_calls.get(item.tool_use_id)
+                items.append(_map_mcp_server_result_block(item, call_part, self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -577,6 +585,8 @@ class AnthropicModel(Model):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+        tool_search_type: Literal['regex', 'bm25'] | None = None
+
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
@@ -629,10 +639,32 @@ class AnthropicModel(Model):
                     mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
                 mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.add('mcp-client-2025-04-04')
+            elif isinstance(tool, ToolSearchTool):
+                tool_search_type = tool.search_type
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
+
+        needs_tool_search = any(tool.get('defer_loading') for tool in tools)
+
+        if needs_tool_search:
+            beta_features.add('advanced-tool-use-2025-11-20')
+            if tool_search_type == 'bm25':
+                tools.append(
+                    BetaToolSearchToolBm25_20251119Param(
+                        name='tool_search_tool_bm25',
+                        type='tool_search_tool_bm25_20251119',
+                    )
+                )
+            else:
+                tools.append(
+                    BetaToolSearchToolRegex20251119Param(
+                        name='tool_search_tool_regex',
+                        type='tool_search_tool_regex_20251119',
+                    )
+                )
+
         return tools, mcp_servers, beta_features
 
     def _infer_tool_choice(
@@ -1062,6 +1094,8 @@ class AnthropicModel(Model):
             'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
+        if f.defer_loading:
+            tool_param['defer_loading'] = True
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
         return tool_param
@@ -1297,8 +1331,12 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
-        # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=ToolSearchTool.kind,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
     else:
         assert_never(item.name)
 

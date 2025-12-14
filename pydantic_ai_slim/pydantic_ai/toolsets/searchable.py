@@ -67,15 +67,20 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         return f'{self.__class__.__name__}({self.toolset.label})'  # pragma: no cover
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        logging.debug("SearchableToolset.get_tools")
+        # Models that support built-in tool search are exposed to all the tools as-is.
+        if ctx.model.profile.supports_tool_search:
+            logging.debug("SearchableToolset.get_tools ==> built-in")
+            return await self.toolset.get_tools(ctx)
+
+        # Otherwise add a Pydantic tool search tool and selectively expose activated tools.
+        logging.debug("SearchableToolset.get_tools ==> pydantic")
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         # If the model does not support tool search natively, add a Pydantic tool search tool.
-        if not ctx.model.profile.supports_tool_search:
-            all_tools[_SEARCH_TOOL_NAME] = _SearchTool(
-                toolset=self,
-                max_retries=1,
-            )
+        all_tools[_SEARCH_TOOL_NAME] = _SearchTool(
+            toolset=self,
+            max_retries=1,
+        )
 
         toolset_tools = await self.toolset.get_tools(ctx)
         for tool_name, tool in toolset_tools.items():

@@ -31,7 +31,7 @@ from pydantic_ai.toolsets.searchable import SearchableToolset
 toolset = FunctionToolset()
 
 
-@toolset.tool
+@toolset.tool(defer_loading=True)
 def get_weather(city: str) -> str:
     """Get the current weather for a given city.
 
@@ -41,7 +41,7 @@ def get_weather(city: str) -> str:
     return f"The weather in {city} is sunny and 72°F"
 
 
-@toolset.tool
+@toolset.tool(defer_loading=True)
 def calculate_sum(a: float, b: float) -> float:
     """Add two numbers together.
 
@@ -52,7 +52,7 @@ def calculate_sum(a: float, b: float) -> float:
     return a + b
 
 
-@toolset.tool
+@toolset.tool(defer_loading=True)
 def calculate_product(a: float, b: float) -> float:
     """Multiply two numbers together.
 
@@ -63,7 +63,7 @@ def calculate_product(a: float, b: float) -> float:
     return a * b
 
 
-@toolset.tool
+@toolset.tool(defer_loading=True)
 def fetch_user_data(user_id: int) -> dict:
     """Fetch user data from the database.
 
@@ -73,7 +73,7 @@ def fetch_user_data(user_id: int) -> dict:
     return {"id": user_id, "name": "John Doe", "email": "john@example.com"}
 
 
-@toolset.tool
+@toolset.tool(defer_loading=True)
 def send_email(recipient: str, subject: str, body: str) -> str:
     """Send an email to a recipient.
 
@@ -85,7 +85,7 @@ def send_email(recipient: str, subject: str, body: str) -> str:
     return f"Email sent to {recipient} with subject '{subject}'"
 
 
-@toolset.tool
+@toolset.tool(defer_loading=True)
 def list_database_tables() -> list[str]:
     """List all tables in the database."""
     return ["users", "orders", "products", "reviews"]
@@ -127,7 +127,7 @@ async def main():
     # Test 3: Ask something that requires weather tool
     print("\nTest 3: Weather task")
     print("-" * 60)
-    result = await agent.run("What's the weather like in San Francisco?")
+    result = await agent.run("What's the weather like in San Francisco? Search for a weather tool")
     print(f"Result: {result.output}")
     print()
 

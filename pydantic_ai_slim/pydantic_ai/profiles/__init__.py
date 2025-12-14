@@ -66,7 +66,7 @@ class ModelProfile:
     """
 
     supports_tool_search: bool = False
-    """Whether the model has native support for tool search and defer loading tools."""
+    """Whether the model has native support for tool search (builtin ToolSearchTool) and defer loading tools."""
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:

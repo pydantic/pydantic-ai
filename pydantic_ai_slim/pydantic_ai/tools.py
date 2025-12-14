@@ -274,6 +274,7 @@ class Tool(Generic[ToolAgentDepsT]):
     requires_approval: bool
     metadata: dict[str, Any] | None
     function_schema: _function_schema.FunctionSchema
+    defer_loading: bool
     """
     The base JSON schema for the tool's parameters.
 
@@ -297,6 +298,7 @@ class Tool(Generic[ToolAgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
+        defer_loading: bool = False,
     ):
         """Create a new tool instance.
 
@@ -353,6 +355,7 @@ class Tool(Generic[ToolAgentDepsT]):
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
+            defer_loading: If True, hide the tool by default and only activate it when the model searches for tools.
         """
         self.function = function
         self.function_schema = function_schema or _function_schema.function_schema(
@@ -373,6 +376,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.defer_loading = defer_loading
 
     @classmethod
     def from_schema(
@@ -429,6 +433,7 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=self.sequential,
             metadata=self.metadata,
             kind='unapproved' if self.requires_approval else 'function',
+            defer_loading=self.defer_loading,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
