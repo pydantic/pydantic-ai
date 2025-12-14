@@ -151,8 +151,6 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
     '3:2': '1536x1024',
 }
 
-_OPENAI_SUPPORTED_SIZES = ('auto', '1024x1024', '1024x1536', '1536x1024')
-
 
 def _resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
@@ -160,13 +158,11 @@ def _resolve_openai_image_generation_size(
     """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
     aspect_ratio = tool.aspect_ratio
     if aspect_ratio is None:
-        if tool.size not in _OPENAI_SUPPORTED_SIZES:
-            supported = ', '.join(f"'{s}'" for s in _OPENAI_SUPPORTED_SIZES)
-            raise UserError(
-                f'OpenAI image generation only supports `size` values: {supported}. '
-                f'Got {tool.size!r}, specify one of the supported values.'
-            )
-        return tool.size
+        # Only return size if it's an OpenAI-supported value
+        if tool.size in ('auto', '1024x1024', '1024x1536', '1536x1024'):
+            return tool.size
+        # Default to auto if an unsupported size is provided
+        return 'auto'
 
     mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
     if mapped_size is None:
