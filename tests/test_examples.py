@@ -539,6 +539,16 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
     'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
+    'Create a record with name "test" and value 42': ToolCallPart(
+        tool_name='final_result_save_to_database',
+        args={'name': 'test', 'value': 42},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
+    'Create user with username "JohnDoe" and email "JOHN@EXAMPLE.COM"': ToolCallPart(
+        tool_name='final_result_normalize_user_data',
+        args={'username': 'JohnDoe', 'email': 'JOHN@EXAMPLE.COM'},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {

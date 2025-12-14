@@ -294,6 +294,7 @@ def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
 
     # Only execute side effect for the final output
     print(f'Saving to database: {record.name} = {record.value}')
+    #> Saving to database: test = 42
     return record
 
 
