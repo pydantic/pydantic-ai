@@ -162,6 +162,11 @@ def test_openai_responses_image_generation_tool_aspect_ratio_conflicts_with_size
         _resolve_openai_image_generation_size(tool)
 
 
+def test_openai_responses_image_generation_tool_unsupported_size_falls_back_to_auto() -> None:
+    tool = ImageGenerationTool(size='2K')
+    assert _resolve_openai_image_generation_size(tool) == 'auto'
+
+
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
