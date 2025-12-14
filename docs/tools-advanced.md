@@ -95,25 +95,25 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
     after_screenshot = capture_screen()
 
     return ToolReturn(
-        return_value=f"Successfully clicked at ({x}, {y})",
+        return_value=f'Successfully clicked at ({x}, {y})',
         content=[
-            f"Clicked at coordinates ({x}, {y}). Here's the comparison:",
-            "Before:",
-            BinaryContent(data=before_screenshot, media_type="image/png"),
-            "After:",
-            BinaryContent(data=after_screenshot, media_type="image/png"),
-            "Please analyze the changes and suggest next steps."
+            f'Clicked at coordinates ({x}, {y}). Here's the comparison:',
+            'Before:',
+            BinaryContent(data=before_screenshot, media_type='image/png'),
+            'After:',
+            BinaryContent(data=after_screenshot, media_type='image/png'),
+            'Please analyze the changes and suggest next steps.'
         ],
         metadata={
-            "coordinates": {"x": x, "y": y},
-            "action_type": "click_and_capture",
-            "timestamp": time.time()
+            'coordinates': {'x': x, 'y': y},
+            'action_type': 'click_and_capture',
+            'timestamp': time.time()
         }
     )
 
 # The model receives the rich visual content for analysis
 # while your application can access the structured return_value and metadata
-result = agent.run_sync("Click on the submit button and tell me what happened")
+result = agent.run_sync('Click on the submit button and tell me what happened')
 print(result.output)
 # The model can analyze the screenshots and provide detailed feedback
 ```
