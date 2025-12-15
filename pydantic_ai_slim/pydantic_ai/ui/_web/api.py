@@ -56,19 +56,19 @@ class ChatRequestExtra(BaseModel, extra='ignore', alias_generator=to_camel):
 def validate_request_options(
     extra_data: ChatRequestExtra,
     model_ids: set[str],
-    allowed_tool_ids: set[str],
+    builtin_tool_ids: set[str],
 ) -> str | None:
     """Validate that requested model and tools are in the allowed lists.
 
     Returns an error message if validation fails, or None if valid.
     """
-    if extra_data.model and model_ids and extra_data.model not in model_ids:
+    if extra_data.model and extra_data.model not in model_ids:
         return f'Model "{extra_data.model}" is not in the allowed models list'
 
     # base model also validates this but makes sense to have an api check, since one could be a UI bug/misbehavior
     # the other would be a pydantic-ai bug
     # also as future proofing since we don't know how users will use this feature in the future
-    invalid_tools = [t for t in extra_data.builtin_tools if t not in allowed_tool_ids]
+    invalid_tools = [t for t in extra_data.builtin_tools if t not in builtin_tool_ids]
     if invalid_tools:
         return f'Builtin tool(s) {invalid_tools} not in the allowed tools list'
 
@@ -105,8 +105,8 @@ def create_api_routes(
     model_infos: list[ModelInfo] = []
 
     # Filter out builtin_tools that are already configured on the agent (they're always included)
-    agent_tool_types = {type(t) for t in agent._builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
-    ui_builtin_tools = [t for t in (builtin_tools or []) if type(t) not in agent_tool_types]
+    agent_tool_ids = {t.unique_id for t in agent._builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
+    ui_builtin_tools = [t for t in (builtin_tools or []) if t.unique_id not in agent_tool_ids]
 
     # Build combined models: agent's model first (if exists), then provided models
     all_models: list[tuple[str | None, Model | str]] = []
@@ -173,8 +173,8 @@ def create_api_routes(
         return streaming_response
 
     return [
-        Route('/api/chat', options_chat, methods=['OPTIONS']),
-        Route('/api/chat', post_chat, methods=['POST']),
-        Route('/api/configure', configure_frontend, methods=['GET']),
-        Route('/api/health', health, methods=['GET']),
+        Route('/chat', options_chat, methods=['OPTIONS']),
+        Route('/chat', post_chat, methods=['POST']),
+        Route('/configure', configure_frontend, methods=['GET']),
+        Route('/health', health, methods=['GET']),
     ]

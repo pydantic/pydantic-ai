@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
@@ -161,8 +161,6 @@ class TestModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """TestModel supports all builtin tools for testing flexibility."""
-        from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
-
         return SUPPORTED_BUILTIN_TOOLS
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:

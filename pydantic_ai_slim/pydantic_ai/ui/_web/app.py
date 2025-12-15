@@ -7,15 +7,23 @@ from pathlib import Path
 from typing import TypeVar
 
 import httpx
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.settings import ModelSettings
 
 from .api import ModelsParam, create_api_routes
+
+try:
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import HTMLResponse, Response
+    from starlette.routing import Mount
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
+        'Please install the `starlette` package to use `Agent.web()` method, '
+        'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
+    ) from _import_error
 
 DEFAULT_UI_VERSION = '0.0.4'
 CDN_URL_TEMPLATE = 'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{version}/dist/index.html'
@@ -97,7 +105,8 @@ def create_web_app(
         instructions=instructions,
     )
 
-    app = Starlette(routes=api_routes)
+    routes = [Mount('/api', routes=api_routes)]
+    app = Starlette(routes=routes)
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""
