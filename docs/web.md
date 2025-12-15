@@ -44,7 +44,6 @@ You can specify additional models to make available in the UI. Models can be pro
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.openai import OpenAIChatModel
 
 # Model with custom configuration
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
