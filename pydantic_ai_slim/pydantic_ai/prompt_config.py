@@ -171,7 +171,7 @@ class ToolConfig:
 
         @agent.tool_plain
         def search(query: str, limit: int) -> list[str]:
-            '''Search for items.'''
+            """Search for items."""
             return []
 
         result = agent.run_sync(
