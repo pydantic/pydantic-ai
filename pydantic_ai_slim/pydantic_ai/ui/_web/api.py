@@ -108,18 +108,29 @@ def create_api_routes(
     agent_tool_types = {type(t) for t in agent._builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
     ui_builtin_tools = [t for t in (builtin_tools or []) if type(t) not in agent_tool_types]
 
-    if models is not None:
-        items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in models]
-        for label, model_ref in items:
-            model = infer_model(model_ref)
-            # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-            model_id = model_ref if isinstance(model_ref, str) else f'{model.system}:{model.model_name}'
-            display_name = label or model.label
-            model_supported_tools = model.profile.supported_builtin_tools
-            supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
+    # Build combined models: agent's model first (if exists), then provided models
+    all_models: list[tuple[str | None, Model | str]] = []
+    if agent.model is not None:
+        all_models.append((None, agent.model))
+    items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
+    all_models.extend(items)
 
-            model_id_to_ref[model_id] = model_ref  # Store original reference
-            model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
+    seen_normalized_ids: set[str] = set()
+    for label, model_ref in all_models:
+        model = infer_model(model_ref)
+        normalized_id = f'{model.system}:{model.model_name}'
+        if normalized_id in seen_normalized_ids:
+            continue
+        seen_normalized_ids.add(normalized_id)
+
+        # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
+        model_id = model_ref if isinstance(model_ref, str) else normalized_id
+        display_name = label or model.label
+        model_supported_tools = model.profile.supported_builtin_tools
+        supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
+
+        model_id_to_ref[model_id] = model_ref
+        model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
 
     model_ids = set(model_id_to_ref.keys())
     allowed_tool_ids = {tool.unique_id for tool in ui_builtin_tools}

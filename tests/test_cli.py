@@ -35,7 +35,7 @@ def test_cli_version(capfd: CaptureFixture[str]):
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
-    assert cli(['chat', '--model', 'potato']) == 1
+    assert cli(['--model', 'potato']) == 1
     assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])
 
 
@@ -73,7 +73,7 @@ def test_agent_flag(
     mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
 
     # Test CLI with custom agent
-    assert cli(['chat', '--agent', 'test_module:custom_agent', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '-p', 'hello']) == 0
 
     # Verify the output contains the custom agent message
     assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
@@ -90,7 +90,7 @@ def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., Non
 
     msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
     with pytest.raises(OpenAIError, match=msg):
-        cli(['chat', '--agent', 'test_module:custom_agent', 'hello'])
+        cli(['--agent', 'test_module:custom_agent', '-p', 'hello'])
 
 
 def test_agent_flag_set_model(
@@ -107,7 +107,7 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['chat', '--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', '-p', 'hello']) == 0
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
@@ -120,12 +120,12 @@ def test_agent_flag_non_agent(
     test_agent = 'Not an Agent object'
     create_test_module(custom_agent=test_agent)
 
-    assert cli(['chat', '--agent', 'test_module:custom_agent', 'hello']) == 1
+    assert cli(['--agent', 'test_module:custom_agent', '-p', 'hello']) == 1
     assert 'Could not load agent from test_module:custom_agent' in capfd.readouterr().out
 
 
 def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
-    assert cli(['chat', '--agent', 'bad_path', 'hello']) == 1
+    assert cli(['--agent', 'bad_path', '-p', 'hello']) == 1
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
@@ -169,9 +169,9 @@ def test_list_models(capfd: CaptureFixture[str]):
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
-        assert cli(['chat', 'hello']) == 0
+        assert cli(['-p', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
-        assert cli(['chat', '--no-stream', 'hello']) == 0
+        assert cli(['--no-stream', '-p', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
@@ -194,7 +194,7 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
         m.return_value = session
         m = TestModel(custom_output_text='goodbye')
         with cli_agent.override(model=m):
-            assert cli(['chat']) == 0
+            assert cli([]) == 0
         assert capfd.readouterr().out.splitlines() == snapshot(
             [
                 IsStr(),
@@ -273,21 +273,21 @@ def test_handle_slash_command_other():
 def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['chat'])
+    cli([])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['chat', '--code-theme=light'])
+    cli(['--code-theme=light'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'pai')
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['chat', '--code-theme=dark'])
+    cli(['--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 
@@ -415,8 +415,8 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         agent_path='test_module:custom_agent',
         host='127.0.0.1',
         port=7932,
-        models=None,
-        tools=None,
+        models=[],
+        tools=[],
         instructions=None,
     )
 
@@ -451,7 +451,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         host='127.0.0.1',
         port=7932,
         models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
-        tools=None,
+        tools=[],
         instructions=None,
     )
 
@@ -476,7 +476,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         agent_path='test_module:custom_agent',
         host='127.0.0.1',
         port=7932,
-        models=None,
+        models=[],
         tools=['web_search', 'code_execution'],
         instructions=None,
     )
@@ -495,7 +495,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         host='127.0.0.1',
         port=7932,
         models=['openai:gpt-5'],
-        tools=None,
+        tools=[],
         instructions='You are a helpful coding assistant',
     )
 
@@ -518,8 +518,8 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         agent_path='test_module:custom_agent',
         host='0.0.0.0',
         port=7932,
-        models=None,
-        tools=None,
+        models=[],
+        tools=[],
         instructions=None,
     )
 
@@ -655,10 +655,10 @@ def test_run_web_command_agent_builtin_tools_not_duplicated(
     assert 'code_execution' in tool_kinds
 
 
-def test_run_web_command_agent_model_merged_with_cli_models(
+def test_run_web_command_cli_models_passed_to_create_web_app(
     mocker: MockerFixture, create_test_module: Callable[..., None]
 ):
-    """Test that agent's model is included as 'default', followed by CLI models."""
+    """Test that CLI models are passed directly to create_web_app (agent model merging happens there)."""
     mock_uvicorn_run = mocker.patch('uvicorn.run')
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
@@ -673,38 +673,5 @@ def test_run_web_command_agent_model_merged_with_cli_models(
     mock_uvicorn_run.assert_called_once()
 
     call_kwargs = mock_create_app.call_args.kwargs
-    # Agent's model stored under 'default' key, CLI models use their names as keys
-    assert call_kwargs.get('models') == snapshot(
-        {
-            'default': IsInstance(TestModel),
-            'openai:gpt-5': 'openai:gpt-5',
-            'anthropic:claude-sonnet-4-5': 'anthropic:claude-sonnet-4-5',
-        }
-    )
-
-
-def test_run_web_command_cli_models_deduplicated(mocker: MockerFixture, create_test_module: Callable[..., None]):
-    """Test that duplicate CLI models are removed."""
-    mock_uvicorn_run = mocker.patch('uvicorn.run')
-    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
-
-    test_agent = Agent(TestModel(custom_output_text='test'))
-    create_test_module(custom_agent=test_agent)
-
-    # Pass duplicate CLI models
-    result = run_web_command(
-        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'openai:gpt-5', 'anthropic:claude-sonnet-4-5']
-    )
-
-    assert result == 0
-    mock_uvicorn_run.assert_called_once()
-
-    call_kwargs = mock_create_app.call_args.kwargs
-    # Agent's model stored under 'default', CLI models deduplicated
-    assert call_kwargs.get('models') == snapshot(
-        {
-            'default': IsInstance(TestModel),
-            'openai:gpt-5': 'openai:gpt-5',
-            'anthropic:claude-sonnet-4-5': 'anthropic:claude-sonnet-4-5',
-        }
-    )
+    # CLI models passed as list; agent model merging/deduplication happens in create_web_app
+    assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']

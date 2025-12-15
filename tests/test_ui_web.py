@@ -59,9 +59,8 @@ async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPa
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-    # Create a specific model instance
     model_instance = TestModel(custom_output_text='Custom output')
-    agent = Agent(TestModel())
+    agent: Agent[None, str] = Agent()
     app = create_web_app(agent, models=[model_instance])
 
     # Mock dispatch_request to capture the model parameter
@@ -147,7 +146,7 @@ def test_chat_app_configure_endpoint():
         assert response.status_code == 200
         assert response.json() == snapshot(
             {
-                'models': [{'id': 'test', 'name': 'Test', 'builtinTools': ['web_search']}],
+                'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': ['web_search']}],
                 'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
             }
         )
@@ -161,7 +160,9 @@ def test_chat_app_configure_endpoint_empty():
     with TestClient(app) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
-        assert response.json() == snapshot({'models': [], 'builtinTools': []})
+        assert response.json() == snapshot(
+            {'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': []}], 'builtinTools': []}
+        )
 
 
 def test_chat_app_index_endpoint():
@@ -268,7 +269,7 @@ async def test_post_chat_endpoint():
                         'parts': [{'type': 'text', 'text': 'Hello'}],
                     }
                 ],
-                'model': 'test',
+                'model': 'test:test',
                 'builtinTools': [],
             },
         )
@@ -364,7 +365,7 @@ def test_post_chat_invalid_builtin_tool():
     from pydantic_ai.models.test import TestModel
 
     agent = Agent(TestModel(custom_output_text='Hello'))
-    app = create_web_app(agent, models=['test'], builtin_tools=[WebSearchTool()])
+    app = create_web_app(agent, builtin_tools=[WebSearchTool()])
 
     with TestClient(app) as client:
         response = client.post(
@@ -379,7 +380,7 @@ def test_post_chat_invalid_builtin_tool():
                         'parts': [{'type': 'text', 'text': 'Hello'}],
                     }
                 ],
-                'model': 'test',
+                'model': 'test:test',
                 'builtinTools': ['code_execution'],  # Not in allowed list
             },
         )
@@ -418,7 +419,7 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
     agent = Agent(TestModel(custom_output_text='Hello'))
-    app = create_web_app(agent, models=['test'], instructions='Always respond in Spanish')
+    app = create_web_app(agent, instructions='Always respond in Spanish')
 
     # Mock dispatch_request to capture the instructions parameter
     mock_dispatch = AsyncMock(return_value=Response(content=b'', status_code=200))
@@ -437,7 +438,7 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
                         'parts': [{'type': 'text', 'text': 'Hello'}],
                     }
                 ],
-                'model': 'test',
+                'model': 'test:test',
                 'builtinTools': [],
             },
         )

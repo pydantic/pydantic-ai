@@ -1,13 +1,36 @@
 # Command Line Interface (CLI)
 
-**Pydantic AI** comes with a CLI, `clai` (pronounced "clay") which you can use to interact with various LLMs from the command line.
-It provides a convenient way to chat with language models and quickly get answers right in the terminal.
+**Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
 
 We originally developed this CLI for our own use, but found ourselves using it so frequently that we decided to share it as part of the Pydantic AI package.
 
 We plan to continue adding new features, such as interaction with MCP servers, access to tools, and more.
 
-## Usage
+## Installation
+
+You can run the `clai` using [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+
+```bash
+uvx clai
+```
+
+Or install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools):
+
+```bash
+uv tool install clai
+...
+clai
+```
+
+Or with `pip`:
+
+```bash
+pip install clai
+...
+clai
+```
+
+## CLI Usage
 
 <!-- clai/README.md links here for full docs -->
 
@@ -19,111 +42,36 @@ E.g. if you're using OpenAI, set the `OPENAI_API_KEY` environment variable:
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
-Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
-
-```bash
-uvx clai
-```
-
-Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools), run:
-
-```bash
-uv tool install clai
-...
-clai
-```
-
-Or with `pip`, run:
-
-```bash
-pip install clai
-...
-clai
-```
-
-Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Then running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
-### Web Chat UI
+### CLI Options
 
-Launch a web-based chat interface:
-
-```bash
-clai web -m openai:gpt-5
-```
-
-This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
-
-You can also serve an existing agent. For example, if you have an agent defined in `my_agent.py`:
-
-```python
-from pydantic_ai import Agent
-
-my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
-```
-
-Launch the web UI with:
-
-```bash
-clai web --agent my_agent:my_agent
-```
-
-#### CLI Options
-
-```bash
-# With a custom agent
-clai web --agent my_module:my_agent
-
-# With specific models (first is default when no --agent)
-clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5
-
-# With builtin tools
-clai web -m openai:gpt-5 -t web_search -t code_execution
-
-# Generic agent with system instructions
-clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
-
-# Custom agent with extra instructions for each run
-clai web --agent my_module:my_agent -i 'Always respond in Spanish'
-```
+<!-- Listing the options at the beginning of the CLI section so it's not too close to the options section of the Web UI -->
 
 | Option | Description |
 |--------|-------------|
-| `--agent`, `-a` | Agent to serve in [`module:variable` format](#custom-agents) |
-| `--model`, `-m` | Models to list as options in the UI (repeatable, agent's model is default if present) |
-| `--tool`, `-t` | [Builtin tool](builtin-tools.md)s to list as options in the UI (repeatable). See [available tools](web.md#builtin-tool-support). |
-| `--instructions`, `-i` | System instructions. In generic mode (no `--agent`), these are the agent instructions. With `--agent`, these are passed as extra instructions to each run. |
-| `--host` | Host to bind server (default: 127.0.0.1) |
-| `--port` | Port to bind server (default: 7932) |
-
-!!! note "Memory Tool"
-    The [`memory`](builtin-tools.md#memory-tool) builtin tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent and provide it via `--agent`.
-
-The web chat UI can also be launched programmatically using [`Agent.to_web()`][pydantic_ai.Agent.to_web], see the [Web UI documentation](web.md).
-
-### Help
-
-To get help on the CLI, use the `--help` flag:
-
-```bash
-uvx clai --help
-uvx clai chat --help
-uvx clai web --help
-```
+| `-p`, `--prompt` | AI prompt for one-shot mode. If omitted, starts interactive mode. |
+| `-m`, `--model` | Model to use in `provider:model` format (e.g., `openai:gpt-5`) |
+| `-a`, `--agent` | Custom agent in `module:variable` format |
+| `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
+| `--no-stream` | Disable streaming from the model |
+| `-l`, `--list-models` | List all available models and exit |
+| `--version` | Show version and exit |
 
 ### Choose a model
 
 You can specify which model to use with the `--model` flag:
 
 ```bash
-uvx clai chat --model anthropic:claude-sonnet-4-0
+clai --model anthropic:claude-sonnet-4-0
 ```
 
-(a full list of models available can be printed with `uvx clai --list-models`)
+(a full list of models available can be printed with `clai --list-models`)
 
 ### Custom Agents
 
@@ -138,7 +86,7 @@ agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 Then run:
 
 ```bash
-uvx clai chat --agent custom_agent:agent "What's the weather today?"
+clai --agent custom_agent:agent -p "What's the weather today?"
 ```
 
 The format must be `module:variable` where:
@@ -195,3 +143,64 @@ agent.to_cli_sync(message_history=message_history)
 ```
 
 The CLI will start with the provided conversation history, allowing the agent to refer back to previous exchanges and maintain context throughout the session.
+
+## Web Chat UI
+
+Launch a web-based chat interface by running:
+
+```bash
+clai web -m openai:gpt-5
+```
+
+This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
+
+You can also serve an existing agent. For example, if you have an agent defined in `my_agent.py`:
+
+```python
+from pydantic_ai import Agent
+
+my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
+```
+
+Launch the web UI:
+
+```bash
+# With a custom agent
+clai web --agent my_module:my_agent
+
+# With specific models (first is default when no --agent)
+clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5
+
+# With builtin tools
+clai web -m openai:gpt-5 -t web_search -t code_execution
+
+# Generic agent with system instructions
+clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
+
+# Custom agent with extra instructions for each run
+clai web --agent my_module:my_agent -i 'Always respond in Spanish'
+```
+
+### Web UI Options
+
+| Option | Description |
+|--------|-------------|
+| `--agent`, `-a` | Agent to serve in [`module:variable` format](#custom-agents) |
+| `--model`, `-m` | Models to list as options in the UI (repeatable) |
+| `--tool`, `-t` | [Builtin tool](builtin-tools.md)s to list as options in the UI (repeatable). See [available tools](web.md#builtin-tool-support). |
+| `--instructions`, `-i`: System instructions. When `--agent` is specified, these are additional to the agent's existing instructions. |
+| `--host` | Host to bind server (default: 127.0.0.1) |
+| `--port` | Port to bind server (default: 7932) |
+
+When using `--agent`, the agent's configured model becomes the default. CLI models (`-m`) are additional options. Without `--agent`, the first `-m` model is the default.
+
+!!! note "Memory Tool"
+    The [`memory`](builtin-tools.md#memory-tool) builtin tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent and provide it via `--agent`.
+
+The web chat UI can also be launched programmatically using [`Agent.to_web()`][pydantic_ai.Agent.to_web], see the [Web UI documentation](web.md).
+
+Run the `web` command with `--help` to see all available options:
+
+```bash
+clai web --help
+```

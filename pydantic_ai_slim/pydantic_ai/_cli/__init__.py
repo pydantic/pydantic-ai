@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
@@ -16,7 +16,7 @@ from typing_inspection.introspection import get_literal_values
 from .. import __version__
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, TOOL_KINDS_THAT_REQUIRE_CONFIG
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
@@ -56,7 +56,9 @@ This folder is used to store the prompt history and configuration.
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 # CLI-supported tool IDs (excludes deprecated and config-requiring tools)
-_CLI_TOOL_IDS = sorted(bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint.kind not in {'mcp_server', 'memory'})
+SUPPORTED_CLI_TOOL_IDS = sorted(
+    bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint.kind not in TOOL_KINDS_THAT_REQUIRE_CONFIG
+)
 
 
 class SimpleCodeBlock(CodeBlock):
@@ -146,50 +148,38 @@ def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', defau
     )
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-
-    # Chat subcommand
-    chat_parser = subparsers.add_parser(
-        'chat',
-        help='Interactive chat with an AI model',
-        description="""\
-Interactive chat mode with an AI model.
-
-Special prompts:
-* `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
-* `/markdown` - show the last markdown output of the last question
-* `/multiline` - toggle multiline mode
-* `/cp` - copy the last response to clipboard
-""",
-        formatter_class=argparse.RawTextHelpFormatter,
+    # Chat arguments (default command)
+    parser.add_argument(
+        '-p',
+        '--prompt',
+        help='AI prompt for one-shot mode. If omitted, starts interactive mode.',
     )
-    chat_parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
-    chat_model_arg = chat_parser.add_argument(
+    model_arg = parser.add_argument(
         '-m',
         '--model',
-        nargs='?',
         help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
     )
-    chat_model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
-    chat_parser.add_argument(
+    model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
+    parser.add_argument(
         '-a',
         '--agent',
         help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
     )
-    chat_parser.add_argument(
+    parser.add_argument(
         '-t',
         '--code-theme',
-        nargs='?',
         help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
         default='dark',
     )
-    chat_parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
     # Web subcommand
     web_parser = subparsers.add_parser(
         'web',
         help='Launch web chat UI for an agent',
-        description='Start a web-based chat interface for the specified agent',
+        description='Start a web-based chat interface for a generic or specified agent',
     )
     web_parser.add_argument(
         '--agent',
@@ -197,29 +187,29 @@ Special prompts:
         help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
         'If omitted, creates a generic agent with the first specified model as default.',
     )
-    web_parser.add_argument(
+    web_model_arg = web_parser.add_argument(
         '-m',
         '--model',
-        choices=KnownModelName.__value__.__args__,
         action='append',
         dest='models',
         help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
         'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
     )
+    web_model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     web_parser.add_argument(
         '-t',
         '--tool',
-        choices=_CLI_TOOL_IDS,
+        choices=SUPPORTED_CLI_TOOL_IDS,
         action='append',
         dest='tools',
         help=f'Builtin tool to make available in the UI (can be repeated, e.g., -t web_search -t code_execution). '
-        f'Available: {", ".join(_CLI_TOOL_IDS)}.',
+        f'Available: {", ".join(SUPPORTED_CLI_TOOL_IDS)}.',
     )
     web_parser.add_argument(
         '-i',
         '--instructions',
-        help='System instructions for the agent. In generic mode (no --agent), these are the agent instructions. '
-        'With --agent, these are passed as extra instructions to each run.',
+        help="System instructions. When `--agent` is specified, these are additional to the agent's existing instructions "
+        'and will be  passed as extra instructions to each run.',
     )
     web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     web_parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
@@ -246,27 +236,19 @@ Special prompts:
             agent_path=args.agent,
             host=args.host,
             port=args.port,
-            models=args.models,
-            tools=args.tools,
+            models=args.models or [],
+            tools=args.tools or [],
             instructions=args.instructions,
         )
 
     # Default to chat command
-    if args.command is None:
-        # Set defaults for chat arguments when no subcommand specified
-        args.prompt = None
-        args.model = None
-        args.agent = None
-        args.code_theme = 'dark'
-        args.no_stream = False
-
     return _run_chat_command(args, console, name_version, default_model, prog_name)
 
 
 def _run_chat_command(
     args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
 ) -> int:
-    """Handle the chat subcommand."""
+    """Handle the chat command."""
     agent: Agent[None, str] = cli_agent
     if args.agent:
         loaded = load_agent(args.agent)
@@ -302,9 +284,9 @@ def _run_chat_command(
     else:
         code_theme = args.code_theme  # pragma: no cover
 
-    if prompt := cast(str, args.prompt):
+    if args.prompt:
         try:
-            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
+            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme))
         except KeyboardInterrupt:
             pass
         return 0

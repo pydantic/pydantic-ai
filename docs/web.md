@@ -4,15 +4,15 @@ Pydantic AI includes a built-in web chat interface that you can use to interact 
 
 <img width="1321" height="949" alt="Web Chat UI" src="https://github.com/user-attachments/assets/462d4647-a74d-4c35-9120-af0d682b04cf" />
 
+For CLI usage with `clai web`, see the [CLI - Web Chat UI documentation](cli.md#web-chat-ui).
+
 ## Installation
 
-Install the `web` extra (installs Starlette):
+Install the `web` extra (installs Starlette and Uvicorn):
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[web]'
 ```
-
-For CLI usage with `clai web`, see the [CLI documentation](cli.md#web-chat-ui).
 
 ## Basic Usage
 
@@ -36,49 +36,28 @@ Run the app with any ASGI server:
 uvicorn my_module:app --host 127.0.0.1 --port 7932
 ```
 
+
 ## Configuring Models
 
-You can specify additional models to make available in the UI. Models can be provided as a list of model names or a dictionary mapping display labels to model names/instances.
-
-### Using Model Names
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-5')
-
-# List of model names (display names are auto-generated)
-app = agent.to_web(
-    models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
-)
-
-# Or with custom display labels
-app = agent.to_web(
-    models={'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'},
-)
-```
-
-### Using Model Instances
+You can specify additional models to make available in the UI. Models can be provided as a list of model names/instances or a dictionary mapping display labels to model names/instances.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel
 
-# Create models with custom configuration
+# Model with custom configuration
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
-openai_model = OpenAIChatModel('gpt-5', provider='openai')
 
-agent = Agent(openai_model)
+agent = Agent('openai:gpt-5')
 
-# Use instances directly
 app = agent.to_web(
-    models=[openai_model, anthropic_model],
+    models=['openai:gpt-5', anthropic_model],
 )
 
-# Or mix instances and strings with custom labels
+# Or with custom display labels
 app = agent.to_web(
-    models={'Custom GPT': openai_model, 'Claude': 'anthropic:claude-sonnet-4-5'},
+    models={'GPT 5': 'openai:gpt-5', 'Claude': anthropic_model},
 )
 ```
 
@@ -93,12 +72,10 @@ from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 agent = Agent('openai:gpt-5')
 
 app = agent.to_web(
-    models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
+    models=['anthropic:claude-sonnet-4-5'],
     builtin_tools=[CodeExecutionTool(), WebSearchTool()],
 )
 ```
-
-The UI will only show tools that the selected model supports.
 
 !!! note "Memory Tool"
     The `memory` builtin tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent at construction time.
@@ -112,10 +89,7 @@ from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5')
 
-app = agent.to_web(
-    models=['openai:gpt-5'],
-    instructions='Always respond in a friendly tone.',
-)
+app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
 
 ## Reserved Routes

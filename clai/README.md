@@ -77,37 +77,7 @@ Launch the web UI with:
 clai web --agent my_agent:my_agent
 ```
 
-### Web Command Options
-
-- `--agent`, `-a`: Agent to serve in `module:variable` format
-- `--model`, `-m`: Models to list as options in the UI (repeatable, agent's model is default if present)
-- `--tool`, `-t`: [Builtin tool](https://ai.pydantic.dev/builtin-tools/)s to list as options in the UI (repeatable). See [available tools](https://ai.pydantic.dev/ui/web/#builtin-tool-support).
-- `--instructions`, `-i`: System instructions. In generic mode (no `--agent`), these are the agent instructions. With `--agent`, these are passed as extra instructions to each run.
-- `--host`: Host to bind the server to (default: 127.0.0.1)
-- `--port`: Port to bind the server to (default: 7932)
-
-### Using with Models and Tools
-
-You can specify which models and builtin tools are available in the UI via CLI flags:
-
-```bash
-# Generic agent with specific models and tools
-clai web -m openai:gpt-5 -m anthropic:claude-sonnet-4-5 -t web_search -t code_execution
-
-# Custom agent with additional models
-clai web --agent my_agent:my_agent -m openai:gpt-5 -m google:gemini-2.5-pro
-
-# Generic agent with system instructions
-clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
-
-# Custom agent with extra instructions for each run
-clai web --agent my_agent:my_agent -i 'Always respond in Spanish'
-```
-
-When using `--agent`, the agent's configured model becomes the default. CLI models (`-m`) are additional options. Without `--agent`, the first `-m` model is the default.
-
-For full documentation, see [Web Chat UI](https://ai.pydantic.dev/web/).
-
 ## Help
 
 For full CLI documentation, see the [CLI documentation](https://ai.pydantic.dev/cli/).
+For full Web UI documentation, see [Web Chat UI](https://ai.pydantic.dev/web/).
