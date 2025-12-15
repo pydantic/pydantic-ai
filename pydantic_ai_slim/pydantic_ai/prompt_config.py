@@ -169,11 +169,11 @@ class ToolConfig:
 
         agent = Agent('openai:gpt-4o')
 
-        @agent.tool_plain
+        @agent.tool_plain(description='Search for items.')
         def search(query: str, limit: int) -> list[str]:
-            """Search for items."""
             return []
 
+        # Override the description and arg descriptions at runtime
         result = agent.run_sync(
             'Find products',
             prompt_config=PromptConfig(
