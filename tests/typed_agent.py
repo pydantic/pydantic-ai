@@ -194,6 +194,10 @@ def str_to_regex(text: str) -> re.Pattern[str]:
     return re.compile(text)
 
 
+def str_to_regex_with_ctx(ctx: RunContext[int], text: str) -> re.Pattern[str]:
+    return re.compile(text)
+
+
 class MyClass:
     def my_method(self) -> bool:
         return True
@@ -280,6 +284,11 @@ Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType,reportCa
 Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,reportCallIssue]
 # since deps are not set, they default to `None`, so can't be `int`
 Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
+
+# TextOutput with RunContext
+Agent('test', output_type=TextOutput(str_to_regex_with_ctx), deps_type=int)
+Agent('test', output_type=TextOutput(str_to_regex_with_ctx), deps_type=str)  # pyright: ignore[reportArgumentType,reportCallIssue]
+Agent('test', output_type=TextOutput(str_to_regex_with_ctx))  # pyright: ignore[reportArgumentType,reportCallIssue]
 
 # prepare example from docs:
 

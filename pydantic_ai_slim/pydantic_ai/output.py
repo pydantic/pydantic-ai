@@ -11,7 +11,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
-from ._run_context import AgentDepsT, RunContext
+from ._run_context import RunContext
 from .messages import ToolCallPart
 from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
 
@@ -34,6 +34,7 @@ __all__ = (
 
 T = TypeVar('T')
 T_co = TypeVar('T_co', covariant=True)
+TextOutputAgentDepsT = TypeVar('TextOutputAgentDepsT', default=None, contravariant=True)
 
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
@@ -61,8 +62,8 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Callable[[RunContext[AgentDepsT], str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
-    type_params=(T_co, AgentDepsT),
+    Callable[[RunContext[TextOutputAgentDepsT], str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
+    type_params=(T_co, TextOutputAgentDepsT),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
 
@@ -260,7 +261,7 @@ class OutputObjectDefinition:
 
 
 @dataclass
-class TextOutput(Generic[OutputDataT, AgentDepsT]):
+class TextOutput(Generic[OutputDataT, TextOutputAgentDepsT]):
     """Marker class to use text output for an output function taking a string argument.
 
     Example:
@@ -282,7 +283,7 @@ class TextOutput(Generic[OutputDataT, AgentDepsT]):
     ```
     """
 
-    output_function: TextOutputFunc[OutputDataT, AgentDepsT]
+    output_function: TextOutputFunc[OutputDataT, TextOutputAgentDepsT]
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
