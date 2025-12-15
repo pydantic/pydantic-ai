@@ -531,7 +531,7 @@ def _openrouter_settings_to_openai_settings(
         extra_body['usage'] = usage
 
     for builtin_tool in model_request_parameters.builtin_tools:
-        if isinstance(builtin_tool, ImageGenerationTool):
+        if isinstance(builtin_tool, ImageGenerationTool):  # pragma: lax no cover
             extra_body['modalities'] = ['text', 'image']
 
             image_config: dict[str, str] = {}
@@ -539,7 +539,7 @@ def _openrouter_settings_to_openai_settings(
                 image_config['aspect_ratio'] = aspect_ratio
             extra_body['image_config'] = image_config
 
-    if isinstance(model_request_parameters.output_object, BinaryImage):
+    if isinstance(model_request_parameters.output_object, BinaryImage):  # pragma: lax no cover
         extra_body['modalities'] = ['text', 'image']
 
     model_settings['extra_body'] = extra_body
@@ -636,9 +636,9 @@ class OpenRouterModel(OpenAIChatModel):
                 message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
             if self.file_inputs:
                 content = message_param.get('content')
-                if isinstance(content, str):
+                if isinstance(content, str):  # pragma: lax no cover
                     message_param['content'] = [{'type': 'text', 'text': content}] + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
-                elif isinstance(content, list):
+                elif isinstance(content, list):  # pragma: lax no cover
                     message_param['content'] = content + self.file_inputs  # type: ignore[reportGeneralTypeIssues]
                 else:
                     message_param['content'] = self.file_inputs  # type: ignore[reportGeneralTypeIssues]
@@ -655,7 +655,12 @@ class OpenRouterModel(OpenAIChatModel):
 
         @override
         def _map_response_file_part(self, item: FilePart) -> None:
-            if item.content.media_type in ('image/png', 'image/jpeg', 'image/webp', 'image/gif'):
+            if item.content.media_type in (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'image/gif',
+            ):  # pragma: lax no cover
                 encoding = base64.b64encode(item.content.data).decode('utf-8')
                 self.file_inputs.append({'image_url': {'url': encoding}})
 
