@@ -218,7 +218,7 @@ def test_merge_citations_none():
 
 def test_merge_citations_single_list():
     """Test merging a single citation list."""
-    citations = [URLCitation(url='https://example.com', start_index=0, end_index=5)]
+    citations: list[Citation] = [URLCitation(url='https://example.com', start_index=0, end_index=5)]
     result = merge_citations(citations)
     assert len(result) == 1
     assert result[0] == citations[0]
@@ -226,9 +226,9 @@ def test_merge_citations_single_list():
 
 def test_merge_citations_multiple_lists():
     """Test merging multiple citation lists."""
-    citations1 = [URLCitation(url='https://example.com', start_index=0, end_index=5)]
-    citations2 = [URLCitation(url='https://example.org', start_index=6, end_index=10)]
-    citations3 = [ToolResultCitation(tool_name='search_tool')]
+    citations1: list[Citation] = [URLCitation(url='https://example.com', start_index=0, end_index=5)]
+    citations2: list[Citation] = [URLCitation(url='https://example.org', start_index=6, end_index=10)]
+    citations3: list[Citation] = [ToolResultCitation(tool_name='search_tool')]
     result = merge_citations(citations1, citations2, citations3)
     assert len(result) == 3
     assert result[0] == citations1[0]
@@ -238,9 +238,9 @@ def test_merge_citations_multiple_lists():
 
 def test_merge_citations_with_none():
     """Test merging citation lists with None values."""
-    citations1 = [URLCitation(url='https://example.com', start_index=0, end_index=5)]
+    citations1: list[Citation] = [URLCitation(url='https://example.com', start_index=0, end_index=5)]
     citations2 = None
-    citations3 = [URLCitation(url='https://example.org', start_index=6, end_index=10)]
+    citations3: list[Citation] = [URLCitation(url='https://example.org', start_index=6, end_index=10)]
     result = merge_citations(citations1, citations2, citations3)
     assert len(result) == 2
     assert result[0] == citations1[0]
@@ -249,7 +249,8 @@ def test_merge_citations_with_none():
 
 def test_merge_citations_empty_lists():
     """Test merging empty citation lists."""
-    result = merge_citations([], [], [])
+    empty: list[Citation] = []
+    result = merge_citations(empty, empty, empty)
     assert result == []
 
 
@@ -408,6 +409,7 @@ def test_text_part_with_single_citation():
     citation = URLCitation(url='https://example.com', start_index=0, end_index=5)
     text_part = TextPart(content='Hello, world!', citations=[citation])
     assert text_part.content == 'Hello, world!'
+    assert text_part.citations is not None
     assert len(text_part.citations) == 1
     assert text_part.citations[0] == citation
     assert isinstance(text_part.citations[0], URLCitation)
@@ -415,13 +417,14 @@ def test_text_part_with_single_citation():
 
 def test_text_part_with_multiple_citations():
     """Test TextPart can be created with multiple citations."""
-    citations = [
+    citations: list[Citation] = [
         URLCitation(url='https://example.com', start_index=0, end_index=5),
         URLCitation(url='https://example.org', title='Example', start_index=6, end_index=11),
         ToolResultCitation(tool_name='search_tool'),
     ]
     text_part = TextPart(content='Hello, world!', citations=citations)
     assert text_part.content == 'Hello, world!'
+    assert text_part.citations is not None
     assert len(text_part.citations) == 3
     assert text_part.citations == citations
 
@@ -452,6 +455,7 @@ def test_text_part_serialization_with_citations():
     json_str = ta.dump_json(text_part)
     parsed = ta.validate_json(json_str)
     assert parsed.content == text_part.content
+    assert parsed.citations is not None
     assert len(parsed.citations) == 1
     assert isinstance(parsed.citations[0], URLCitation)
     assert parsed.citations[0].url == citation.url
@@ -486,6 +490,7 @@ def test_text_part_with_mixed_citation_types():
         GroundingCitation(grounding_metadata={'sources': ['source1']}),
     ]
     text_part = TextPart(content='Mixed citations', citations=citations)
+    assert text_part.citations is not None
     assert len(text_part.citations) == 3
     assert isinstance(text_part.citations[0], URLCitation)
     assert isinstance(text_part.citations[1], ToolResultCitation)

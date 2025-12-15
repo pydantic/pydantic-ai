@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import itertools
 import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
@@ -21,7 +20,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import CodeExecutionTool, ImageAspectRatio, ImageGenerationTool, MCPServerTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -2058,10 +2057,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
     _model: OpenAIModel = field(repr=False)  # Store model reference for parsing annotations
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        # Track if we've seen the final chunk with annotations
-        final_message_with_annotations: chat.ChatCompletionMessage | None = None
-
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
@@ -2083,11 +2079,6 @@ class OpenAIStreamedResponse(StreamedResponse):
             if raw_finish_reason := choice.finish_reason:
                 self.provider_details = {'finish_reason': raw_finish_reason}
                 self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
-
-                # In the final chunk, OpenAI may include the complete message with annotations
-                # Check if choice.message exists (final chunk with complete message)
-                if hasattr(choice, 'message') and choice.message is not None:
-                    final_message_with_annotations = choice.message
 
             # Handle the text part of the response
             content = choice.delta.content
@@ -2160,40 +2151,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             if maybe_event is not None:
                 yield maybe_event
 
-        # After streaming is complete, if we have a final message with annotations,
-        # parse and attach citations to the appropriate TextPart
-        # Note: OpenAI Chat Completions streaming may not include annotations in chunks.
-        # Annotations are typically only available in non-streaming responses or via the Responses API.
-        # This code handles the case where annotations might be present in the final chunk.
-        if final_message_with_annotations is not None:
-            # Get the accumulated content from the parts manager
-            parts = self._parts_manager.get_parts()
-
-            # Parse annotations from the final message
-            # Note: We need to get the full content string to map citations correctly
-            # The final message.content should match the accumulated content
-            full_content = final_message_with_annotations.content
-            if full_content is not None:
-                citations = self._model._parse_openai_annotations(final_message_with_annotations, full_content)
-
-                if citations:
-                    # Find the TextPart(s) to attach citations to
-                    # For Chat Completions, there's typically one TextPart with vendor_part_id='content'
-                    # We need to map citations based on the full content string
-                    text_parts = [part for part in parts if isinstance(part, TextPart)]
-
-                    if text_parts:
-                        # For simplicity, attach all citations to the first TextPart
-                        # In most cases, there's only one TextPart for Chat Completions
-                        # If there are multiple TextParts (e.g., with thinking tags), we'd need
-                        # to map citations based on content offsets (similar to non-streaming)
-                        # For now, attach to the first TextPart
-                        text_part = text_parts[0]
-                        # Merge with existing citations if any
-                        if text_part.citations:
-                            text_part.citations.extend(citations)
-                        else:
-                            text_part.citations = citations
+        # Note: any citations for streamed content are currently handled at the
+        # non-streaming level; streaming annotations for Chat Completions are
+        # not yet wired through this hook.
 
     @property
     def model_name(self) -> OpenAIModelName:
