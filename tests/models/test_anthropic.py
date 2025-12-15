@@ -8082,16 +8082,16 @@ async def test_anthropic_system_prompts_and_instructions_ordering():
         ),
     ]
 
-    model_request_parameters = ModelRequestParameters(
-        function_tools=[],
-        builtin_tools=[],
-        output_tools=[],
-    )
-
-    system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
+    system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
 
     # Verify system prompts and instructions are joined in order: system1, system2, instructions
-    assert system_prompt == 'System prompt 1\n\nSystem prompt 2\n\nInstructions content'
+    assert system_prompt == snapshot("""\
+System prompt 1
+
+System prompt 2
+
+Instructions content\
+""")
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'

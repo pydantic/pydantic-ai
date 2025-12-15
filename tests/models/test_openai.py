@@ -3347,8 +3347,11 @@ async def test_openai_chat_instructions_after_system_prompts(allow_model_request
 
     # Verify order: system1, system2, instructions, user
     assert len(openai_messages) == 4
-    print(f'openai_messages: {openai_messages}')
-    assert openai_messages[0] == {'role': 'system', 'content': 'System prompt 1'}
-    assert openai_messages[1] == {'role': 'system', 'content': 'System prompt 2'}
-    assert openai_messages[2] == {'role': 'system', 'content': 'Instructions content'}
-    assert openai_messages[3]['role'] == 'user'
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'content': 'Instructions content', 'role': 'system'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
+    )

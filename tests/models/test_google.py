@@ -4628,16 +4628,9 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
         ),
     ]
 
-    model_request_parameters = ModelRequestParameters(
-        function_tools=[],
-        builtin_tools=[],
-        output_tools=[],
-    )
-
-    system_instruction, contents = await m._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    system_instruction, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
     # Verify system parts are in order: system1, system2, instructions
-    assert system_instruction
     assert system_instruction == snapshot(
         {
             'role': 'user',

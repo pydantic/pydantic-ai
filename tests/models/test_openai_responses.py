@@ -8247,7 +8247,10 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
     assert instructions == 'Instructions content'
 
     # Verify system prompts are in order, followed by user message
-    assert len(openai_messages) == 3
-    assert openai_messages[0] == {'role': 'system', 'content': 'System prompt 1'}
-    assert openai_messages[1] == {'role': 'system', 'content': 'System prompt 2'}
-    assert openai_messages[2].get('role') == 'user'
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
+    )
