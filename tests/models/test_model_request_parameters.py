@@ -6,7 +6,7 @@ from pydantic_ai.builtin_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,
+    WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
 )
@@ -44,7 +44,7 @@ def test_model_request_parameters_are_serializable():
         builtin_tools=[
             WebSearchTool(user_location=WebSearchUserLocation(city='New York', country='US')),
             CodeExecutionTool(),
-            UrlContextTool(),
+            WebFetchTool(),
             ImageGenerationTool(size='1024x1024'),
             MemoryTool(),
             MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
@@ -68,6 +68,7 @@ def test_model_request_parameters_are_serializable():
                     'sequential': False,
                     'kind': 'function',
                     'metadata': None,
+                    'timeout': None,
                 }
             ],
             'builtin_tools': [
@@ -80,7 +81,14 @@ def test_model_request_parameters_are_serializable():
                     'max_uses': None,
                 },
                 {'kind': 'code_execution'},
-                {'kind': 'url_context'},
+                {
+                    'kind': 'web_fetch',
+                    'max_uses': None,
+                    'allowed_domains': None,
+                    'blocked_domains': None,
+                    'enable_citations': False,
+                    'max_content_tokens': None,
+                },
                 {
                     'kind': 'image_generation',
                     'background': 'auto',
@@ -91,6 +99,7 @@ def test_model_request_parameters_are_serializable():
                     'partial_images': 0,
                     'quality': 'auto',
                     'size': '1024x1024',
+                    'aspect_ratio': None,
                 },
                 {'kind': 'memory'},
                 {
@@ -124,6 +133,7 @@ def test_model_request_parameters_are_serializable():
                     'sequential': False,
                     'kind': 'function',
                     'metadata': None,
+                    'timeout': None,
                 }
             ],
             'prompted_output_template': None,

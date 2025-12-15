@@ -11,6 +11,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
+from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
@@ -25,6 +26,7 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'BuiltinToolFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -122,6 +124,15 @@ agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 Usage `ToolsPrepareFunc[AgentDepsT]`.
 """
 
+BuiltinToolFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
+]
+"""Definition of a function that can prepare a builtin tool at call time.
+
+This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
+or omit it completely from a step.
+"""
+
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 """Supported docstring formats.
 
@@ -147,6 +158,8 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
 
 
 @dataclass(kw_only=True)
@@ -260,6 +273,7 @@ class Tool(Generic[ToolAgentDepsT]):
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    timeout: float | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -283,6 +297,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -339,6 +354,8 @@ class Tool(Generic[ToolAgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout).
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -360,6 +377,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.timeout = timeout
 
     @classmethod
     def from_schema(
@@ -415,6 +433,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
         )
 
@@ -478,7 +497,7 @@ class ToolDefinition:
     When `False`, the model may be free to generate other properties or types (depending on the vendor).
     When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
 
-    Note: this is currently only supported by OpenAI models.
+    Note: this is currently supported by OpenAI and Anthropic models.
     """
 
     sequential: bool = False
@@ -499,6 +518,13 @@ class ToolDefinition:
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
     For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
+    """
+
+    timeout: float | None = None
+    """Timeout in seconds for tool execution.
+
+    If the tool takes longer than this, a retry prompt is returned to the model.
+    Defaults to None (no timeout).
     """
 
     @property

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import KW_ONLY, Field, dataclass
@@ -12,6 +13,7 @@ from typing import (
     Generic,
     Protocol,
     TypeVar,
+    cast,
     runtime_checkable,
 )
 
@@ -21,7 +23,6 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import Instructions
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -43,7 +44,6 @@ __all__ = [
     'StateDeps',
 ]
 
-
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
 
@@ -53,9 +53,11 @@ MessageT = TypeVar('MessageT')
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
-
 StateT = TypeVar('StateT', bound=BaseModel)
 """Type variable for the state type, which must be a subclass of `BaseModel`."""
+
+DispatchDepsT = TypeVar('DispatchDepsT')
+"""TypeVar for deps to avoid awkwardness with unbound classvar deps."""
 
 
 @runtime_checkable
@@ -141,6 +143,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     @abstractmethod
     def load_messages(cls, messages: Sequence[MessageT]) -> list[ModelMessage]:
         """Transform protocol-specific messages into Pydantic AI messages."""
+        raise NotImplementedError
+
+    @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[MessageT]:
+        """Transform Pydantic AI messages into protocol-specific messages."""
         raise NotImplementedError
 
     @abstractmethod
@@ -243,8 +250,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
             deps.state = state
         elif self.state:
-            raise UserError(
-                f'State is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
+            warnings.warn(
+                f'State was provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps[...]` or implement `StateHandler` to receive AG-UI state.',
+                UserWarning,
+                stacklevel=2,
             )
 
         return self.agent.run_stream_events(
@@ -321,18 +330,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         cls,
         request: Request,
         *,
-        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        agent: AbstractAgent[DispatchDepsT, OutputDataT],
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
+        instructions: Instructions[DispatchDepsT] = None,
+        deps: DispatchDepsT = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> Response:
@@ -369,7 +378,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             ) from e
 
         try:
-            adapter = await cls.from_request(request, agent=agent)
+            # The DepsT comes from `agent`, not from `cls`; the cast is necessary to explain this to pyright
+            adapter = cast(
+                UIAdapter[RunInputT, MessageT, EventT, DispatchDepsT, OutputDataT],
+                await cls.from_request(request, agent=agent),
+            )
         except ValidationError as e:  # pragma: no cover
             return Response(
                 content=e.json(),

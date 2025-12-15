@@ -150,6 +150,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -184,6 +185,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -226,6 +228,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -268,6 +271,7 @@ def test_google_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -308,6 +312,7 @@ def test_sphinx_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -354,6 +359,7 @@ def test_numpy_style_with_returns():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -388,6 +394,7 @@ def test_only_returns_type():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -413,6 +420,7 @@ def test_docstring_unknown():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -456,6 +464,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -492,6 +501,7 @@ def test_takes_just_model():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -537,6 +547,7 @@ def test_takes_model_and_int():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -902,6 +913,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -974,6 +986,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
             {
                 'description': None,
@@ -989,6 +1002,7 @@ def test_json_schema_required_parameters():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
         ]
     )
@@ -1077,6 +1091,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
             {
                 'description': None,
@@ -1090,6 +1105,7 @@ def test_schema_generator():
                 'kind': 'function',
                 'sequential': False,
                 'metadata': None,
+                'timeout': None,
             },
         ]
     )
@@ -1127,6 +1143,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'kind': 'function',
             'sequential': False,
             'metadata': None,
+            'timeout': None,
         }
     )
 
@@ -1318,9 +1335,7 @@ def test_tool_raises_call_deferred():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(
-            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-        )
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
     )
 
 
@@ -1396,6 +1411,237 @@ def test_tool_raises_approval_required():
         ]
     )
     assert result.output == snapshot('Done!')
+
+
+def test_approval_required_with_user_prompt():
+    """Test that user_prompt can be provided alongside deferred_tool_results for approval."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            # First call: request approval
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            # Second call: respond to both tool result and user prompt
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+
+            # Verify we received both tool return and user prompt
+            has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
+            has_user_prompt = any(isinstance(p, UserPromptPart) for p in last_request.parts)
+            assert has_tool_return, 'Expected tool return in request'
+            assert has_user_prompt, 'Expected user prompt in request'
+
+            # Get user prompt content
+            user_prompt = next(p.content for p in last_request.parts if isinstance(p, UserPromptPart))
+            return ModelResponse(parts=[TextPart(f'Tool executed and {user_prompt}')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x * 42
+
+    # First run: get approval request
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    # Second run: provide approval AND user prompt
+    result = agent.run_sync(
+        user_prompt='continue with extra instructions',
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': True}),
+    )
+
+    # Verify the response includes both tool result and user prompt
+    assert isinstance(result.output, str)
+    assert 'continue with extra instructions' in result.output
+    assert 'Tool executed' in result.output
+
+
+def test_call_deferred_with_metadata():
+    """Test that CallDeferred exception can carry metadata."""
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred(metadata={'task_id': 'task-123', 'estimated_cost': 25.50})
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            metadata={'pyd_ai_tool_call_id__my_tool': {'task_id': 'task-123', 'estimated_cost': 25.5}},
+        )
+    )
+
+
+def test_approval_required_with_metadata():
+    """Test that ApprovalRequired exception can carry metadata."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(
+                metadata={
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
+                    'cost_usd': 100.0,
+                }
+            )
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr())],
+            metadata={'my_tool': {'reason': 'High compute cost', 'estimated_time': '5 minutes', 'cost_usd': 100.0}},
+        )
+    )
+
+    # Continue with approval
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
+    )
+    assert result.output == 'Done!'
+
+
+def test_call_deferred_without_metadata():
+    """Test backward compatibility: CallDeferred without metadata still works."""
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred  # No metadata
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.calls) == 1
+
+    tool_call_id = result.output.calls[0].tool_call_id
+    # Should have an empty metadata dict for this tool
+    assert result.output.metadata.get(tool_call_id, {}) == {}
+
+
+def test_approval_required_without_metadata():
+    """Test backward compatibility: ApprovalRequired without metadata still works."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired  # No metadata
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    # Should have an empty metadata dict for this tool
+    assert result.output.metadata.get('my_tool', {}) == {}
+
+    # Continue with approval
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
+    )
+    assert result.output == 'Done!'
+
+
+def test_mixed_deferred_tools_with_metadata():
+    """Test multiple deferred tools with different metadata."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {'x': 1}, tool_call_id='call_a'),
+                    ToolCallPart('tool_b', {'y': 2}, tool_call_id='call_b'),
+                    ToolCallPart('tool_c', {'z': 3}, tool_call_id='call_c'),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def tool_a(ctx: RunContext[None], x: int) -> int:
+        raise CallDeferred(metadata={'type': 'external', 'priority': 'high'})
+
+    @agent.tool
+    def tool_b(ctx: RunContext[None], y: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'reason': 'Needs approval', 'level': 'manager'})
+        return y * 10
+
+    @agent.tool
+    def tool_c(ctx: RunContext[None], z: int) -> int:
+        raise CallDeferred  # No metadata
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    # Check that we have the right tools deferred
+    assert len(result.output.calls) == 2  # tool_a and tool_c
+    assert len(result.output.approvals) == 1  # tool_b
+
+    # Check metadata
+    assert result.output.metadata['call_a'] == {'type': 'external', 'priority': 'high'}
+    assert result.output.metadata['call_b'] == {'reason': 'Needs approval', 'level': 'manager'}
+    assert result.output.metadata.get('call_c', {}) == {}
+
+    # Continue with results for all three tools
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            calls={'call_a': 10, 'call_c': 30},
+            approvals={'call_b': ToolApproved()},
+        ),
+    )
+    assert result.output == 'Done!'
 
 
 def test_deferred_tool_with_output_type():
@@ -1590,7 +1836,7 @@ def test_parallel_tool_return_with_deferred():
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-            ],
+            ]
         )
     )
 
@@ -2223,3 +2469,291 @@ def test_retry_tool_until_last_attempt():
             ),
         ]
     )
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_triggers_retry():
+    """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        # First call: try the slow tool
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        # After receiving retry, return text
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=0.1)
+    async def slow_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, but timeout is 0.1s
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call slow_tool')
+
+    # Check that retry prompt was sent to the model
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'slow_tool'
+
+
+@pytest.mark.anyio
+async def test_tool_with_timeout_completes_successfully():
+    """Test that a tool completes successfully when within its timeout."""
+    import asyncio
+
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: ask to run the slow tool
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='slow_but_allowed_tool', args={}, tool_call_id='call-1')]
+            )
+        # Second call: tool completed successfully, return final response
+        return ModelResponse(parts=[TextPart(content='Tool completed successfully')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=5.0)  # 5s per-tool timeout
+    async def slow_but_allowed_tool() -> str:
+        await asyncio.sleep(0.2)  # 200ms - within 5s timeout
+        return 'completed successfully'
+
+    result = await agent.run('call slow_but_allowed_tool')
+
+    # Should NOT have any retry prompts since tool completed within timeout
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 0
+    assert 'completed successfully' in result.output
+
+
+@pytest.mark.anyio
+async def test_no_timeout_by_default():
+    """Test that tools run without timeout by default (backward compatible)."""
+    import asyncio
+
+    agent = Agent(TestModel())  # No tool_timeout specified
+
+    @agent.tool_plain
+    async def normal_tool() -> str:
+        await asyncio.sleep(0.1)
+        return 'completed'
+
+    result = await agent.run('call normal_tool')
+
+    # Should complete normally without timeout
+    assert 'completed' in result.output
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_retry_counts_as_failed():
+    """Test that timeout counts toward tool retry limit."""
+    import asyncio
+
+    agent = Agent(TestModel(), retries=2)
+
+    call_count = 0
+
+    @agent.tool_plain(timeout=0.05)
+    async def flaky_tool() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            await asyncio.sleep(1.0)  # Will timeout
+        return 'finally done'
+
+    await agent.run('call flaky_tool')
+
+    # Tool should have been called 3 times (initial + 2 retries)
+    assert call_count == 3
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_message_format():
+    """Test the format of the retry prompt message on timeout."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=0.1)
+    async def my_slow_tool() -> str:
+        await asyncio.sleep(1.0)
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call my_slow_tool')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    # Check message contains timeout value (tool_name is in the part, not in content)
+    assert '0.1' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'my_slow_tool'
+
+
+def test_tool_timeout_definition():
+    """Test that timeout is properly set on ToolDefinition."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain(timeout=30.0)
+    def tool_with_timeout() -> str:
+        return 'done'  # pragma: no cover
+
+    # Get tool definition through the toolset
+    tool = agent._function_toolset.tools['tool_with_timeout']
+    assert tool.timeout == 30.0
+    assert tool.tool_def.timeout == 30.0
+
+
+def test_tool_timeout_default_none():
+    """Test that timeout defaults to None when not specified."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def tool_without_timeout() -> str:
+        return 'done'  # pragma: no cover
+
+    tool = agent._function_toolset.tools['tool_without_timeout']
+    assert tool.timeout is None
+    assert tool.tool_def.timeout is None
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_exceeds_retry_limit():
+    """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
+    import asyncio
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Always try to call the slow tool
+        return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+
+    @agent.tool_plain(timeout=0.05)
+    async def always_slow_tool() -> str:
+        await asyncio.sleep(1.0)  # Always timeout
+        return 'done'  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        await agent.run('call always_slow_tool')
+
+
+@pytest.mark.anyio
+async def test_agent_level_tool_timeout():
+    """Test that agent-level tool_timeout applies to all tools."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    # Set global tool_timeout on Agent
+    agent = Agent(FunctionModel(model_logic), tool_timeout=0.1)
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, but agent timeout is 0.1s
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call slow_tool')
+
+    # Check that retry prompt was sent
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+
+
+@pytest.mark.anyio
+async def test_per_tool_timeout_overrides_agent_timeout():
+    """Test that per-tool timeout overrides agent-level timeout."""
+    import asyncio
+
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='fast_timeout_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    # Agent has generous 10s timeout, but per-tool timeout is only 0.1s
+    agent = Agent(FunctionModel(model_logic), tool_timeout=10.0)
+
+    @agent.tool_plain(timeout=0.1)  # Per-tool timeout overrides agent timeout
+    async def fast_timeout_tool() -> str:
+        await asyncio.sleep(1.0)  # 1 second, per-tool timeout is 0.1s
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('call fast_timeout_tool')
+
+    # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+
+
+def test_agent_tool_timeout_passed_to_toolset():
+    """Test that agent-level tool_timeout is passed to FunctionToolset as timeout."""
+    agent = Agent(TestModel(), tool_timeout=30.0)
+
+    # The agent's tool_timeout should be passed to the toolset as timeout
+    assert agent._function_toolset.timeout == 30.0

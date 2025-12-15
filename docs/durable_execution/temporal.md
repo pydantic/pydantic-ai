@@ -86,8 +86,8 @@ from temporalio.worker import Worker
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import (
-    AgentPlugin,
     PydanticAIPlugin,
+    PydanticAIWorkflow,
     TemporalAgent,
 )
 
@@ -101,26 +101,27 @@ temporal_agent = TemporalAgent(agent)  # (1)!
 
 
 @workflow.defn
-class GeographyWorkflow:  # (2)!
+class GeographyWorkflow(PydanticAIWorkflow):  # (2)!
+    __pydantic_ai_agents__ = [temporal_agent]  # (3)!
+
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await temporal_agent.run(prompt)  # (3)!
+        result = await temporal_agent.run(prompt)  # (4)!
         return result.output
 
 
 async def main():
-    client = await Client.connect(  # (4)!
-        'localhost:7233',  # (5)!
-        plugins=[PydanticAIPlugin()],  # (6)!
+    client = await Client.connect(  # (5)!
+        'localhost:7233',  # (6)!
+        plugins=[PydanticAIPlugin()],  # (7)!
     )
 
-    async with Worker(  # (7)!
+    async with Worker(  # (8)!
         client,
         task_queue='geography',
         workflows=[GeographyWorkflow],
-        plugins=[AgentPlugin(temporal_agent)],  # (8)!
     ):
-        output = await client.execute_workflow(  # (9)!
+        output = await client.execute_workflow(  # (10)!
             GeographyWorkflow.run,
             args=['What is the capital of Mexico?'],
             id=f'geography-{uuid.uuid4()}',
@@ -131,15 +132,15 @@ async def main():
 ```
 
 1. The original `Agent` cannot be used inside a deterministic Temporal workflow, but the `TemporalAgent` can.
-2. As explained above, the workflow represents a deterministic piece of code that can use non-deterministic activities for operations that require I/O.
-3. [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] works just like [`Agent.run()`][pydantic_ai.Agent.run], but it will automatically offload model requests, tool calls, and MCP server communication to Temporal activities.
-4. We connect to the Temporal server which keeps track of workflow and activity execution.
-5. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
-6. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, and to treat [`UserError`][pydantic_ai.exceptions.UserError] exceptions as non-retryable.
-7. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
-8. The [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] registers the `TemporalAgent`'s activities with the worker.
-9. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
-10. The agent's `name` is used to uniquely identify its activities.
+2. As explained above, the workflow represents a deterministic piece of code that can use non-deterministic activities for operations that require I/O. Subclassing [`PydanticAIWorkflow`][pydantic_ai.durable_exec.temporal.PydanticAIWorkflow] is optional but provides proper typing for the `__pydantic_ai_agents__` class variable.
+3. List the `TemporalAgent`s used by this workflow. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] will automatically register their activities with the worker. Alternatively, if modifying the worker initialization is easier than the workflow class, you can use [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register agents directly on the worker.
+4. [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] works just like [`Agent.run()`][pydantic_ai.Agent.run], but it will automatically offload model requests, tool calls, and MCP server communication to Temporal activities.
+5. We connect to the Temporal server which keeps track of workflow and activity execution.
+6. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
+7. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] tells Temporal to use Pydantic for serialization and deserialization, treats [`UserError`][pydantic_ai.exceptions.UserError] exceptions as non-retryable, and automatically registers activities for agents listed in `__pydantic_ai_agents__`.
+8. We start the worker that will listen on the specified task queue and run workflows and activities. In a real world application, this might be run in a separate service.
+9. The agent's `name` is used to uniquely identify its activities.
+10. We call on the server to execute the workflow on a worker that's listening on the specified task queue.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -172,7 +173,7 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
 
-Specifically, only the `deps`, `run_id`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step` and `partial_output` fields are available by default, and trying to access `model`, `usage`, `prompt`, `messages`, or `tracer` will raise an error.
+Specifically, only the `deps`, `run_id`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
 
 ### Streaming

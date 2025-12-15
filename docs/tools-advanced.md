@@ -353,7 +353,7 @@ If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool
 
 ## Tool Execution and Retries {#tool-retries}
 
-When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic. If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
+When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
 
 Beyond automatic validation errors, the tool's own internal logic can also explicitly request a retry by raising the [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception. This is useful for situations where the parameters were technically valid, but an issue occurred during execution (like a transient network error, or the tool determining the initial attempt needs modification).
 
@@ -371,6 +371,38 @@ def my_flaky_tool(query: str) -> str:
 
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
+### Tool Timeout
+
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+# Set a default timeout for all tools on the agent
+agent = Agent('test', tool_timeout=30)
+
+
+@agent.tool_plain
+async def slow_tool() -> str:
+    """This tool will use the agent's default timeout (30 seconds)."""
+    await asyncio.sleep(10)
+    return 'Done'
+
+
+@agent.tool_plain(timeout=5)
+async def fast_tool() -> str:
+    """This tool has its own timeout (5 seconds) that overrides the agent default."""
+    await asyncio.sleep(1)
+    return 'Done'
+```
+
+- **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.Agent] to apply a default timeout to all tools.
+- **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.Agent.tool], [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
+
+When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+
 ### Parallel tool calls & concurrency
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
@@ -380,6 +412,13 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+
+#### Output Tool Calls
+
+When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
+The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
+
+For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
 ## See Also
 

@@ -106,49 +106,30 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 
 ### Monitoring HTTP Requests
 
-!!! tip "\"F**k you, show me the prompt.\""
-    As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
-    (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
+As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
+(bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-    To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs use the [HTTPX](https://www.python-httpx.org/) library internally.
+To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX](https://www.python-httpx.org/) library internally:
 
-=== "With HTTP instrumentation"
 
-    ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
-    import logfire
+```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
+import logfire
 
-    from pydantic_ai import Agent
+from pydantic_ai import Agent
 
-    logfire.configure()
-    logfire.instrument_pydantic_ai()
-    logfire.instrument_httpx(capture_all=True)  # (1)!
-    agent = Agent('openai:gpt-5')
-    result = agent.run_sync('What is the capital of France?')
-    print(result.output)
-    #> The capital of France is Paris.
-    ```
+logfire.configure()
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)  # (1)!
 
-    1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
+agent = Agent('openai:gpt-5')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
 
-    ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
+1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
 
-=== "Without HTTP instrumentation"
-
-    ```py {title="without_logfire_instrument_httpx.py"}
-    import logfire
-
-    from pydantic_ai import Agent
-
-    logfire.configure()
-    logfire.instrument_pydantic_ai()
-
-    agent = Agent('openai:gpt-5')
-    result = agent.run_sync('What is the capital of France?')
-    print(result.output)
-    #> The capital of France is Paris.
-    ```
-
-    ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
+![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 
 ## Using OpenTelemetry
 
@@ -297,17 +278,17 @@ Note that the OpenTelemetry Semantic Conventions are still experimental and are 
 
 ### Setting OpenTelemetry SDK providers
 
-By default, the global `TracerProvider` and `EventLoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
+By default, the global `TracerProvider` and `LoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
 ```python {title="instrumentation_settings_providers.py"}
-from opentelemetry.sdk._events import EventLoggerProvider
+from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
 from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
-    event_logger_provider=EventLoggerProvider(),
+    logger_provider=LoggerProvider(),
 )
 
 agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
@@ -340,9 +321,9 @@ Agent.instrument_all(instrumentation_settings)
 
 ### Excluding prompts and completions
 
-For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
+For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content.
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent

@@ -16,7 +16,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..builtin_tools import WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -52,7 +52,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, APIError, APIStatusError, AsyncGroq, AsyncStream
+    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -209,6 +209,7 @@ class GroqModel(Model):
                         model_name=e.model_name,
                         timestamp=_utils.now_utc(),
                         provider_name=self._provider.name,
+                        provider_url=self.base_url,
                         finish_reason='error',
                     )
                 except ValidationError:
@@ -314,7 +315,9 @@ class GroqModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -347,6 +350,7 @@ class GroqModel(Model):
             timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -369,6 +373,7 @@ class GroqModel(Model):
             _model_profile=self.profile,
             _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -522,6 +527,7 @@ class GroqStreamedResponse(StreamedResponse):
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
@@ -549,9 +555,10 @@ class GroqStreamedResponse(StreamedResponse):
                         reasoning = True
 
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
-                    )
+                    ):
+                        yield event
                 else:
                     reasoning = False
 
@@ -574,14 +581,13 @@ class GroqStreamedResponse(StreamedResponse):
                 # Handle the text part of the response
                 content = choice.delta.content
                 if content:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
                         thinking_tags=self._model_profile.thinking_tags,
                         ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 # Handle the tool calls
                 for dtc in choice.delta.tool_calls or []:
@@ -618,6 +624,11 @@ class GroqStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

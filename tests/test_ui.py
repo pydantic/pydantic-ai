@@ -88,6 +88,10 @@ class DummyUIAdapter(UIAdapter[DummyUIRunInput, ModelMessage, str, AgentDepsT, O
         return DummyUIRunInput.model_validate_json(body)
 
     @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+        return list(messages)
+
+    @classmethod
     def load_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return list(messages)
 
@@ -439,7 +443,7 @@ async def test_run_stream_external_tools():
             '<request>',
             "<function-tool-call name='external_tool'>{}</function-tool-call>",
             '</request>',
-            "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[])</run-result>",
+            "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[], metadata={})</run-result>",
             '</stream>',
         ]
     )
@@ -676,3 +680,12 @@ async def test_adapter_dispatch_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+
+
+def test_dummy_adapter_dump_messages():
+    """Test that DummyUIAdapter.dump_messages returns messages as-is."""
+    from pydantic_ai.messages import UserPromptPart
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
+    result = DummyUIAdapter.dump_messages(messages)
+    assert result == messages

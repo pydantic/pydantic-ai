@@ -15,6 +15,9 @@ JsonSchema = dict[str, Any]
 class JsonSchemaTransformer(ABC):
     """Walks a JSON schema, applying transformations to it at each level.
 
+    The transformer is called during a model's prepare_request() step to build the JSON schema
+    before it is sent to the model provider.
+
     Note: We may eventually want to rework tools to build the JSON schema from the type directly, using a subclass of
     pydantic.json_schema.GenerateJsonSchema, rather than making use of this machinery.
     """
@@ -25,13 +28,20 @@ class JsonSchemaTransformer(ABC):
         *,
         strict: bool | None = None,
         prefer_inlined_defs: bool = False,
-        simplify_nullable_unions: bool = False,
+        simplify_nullable_unions: bool = False,  # TODO (v2): Remove this, no longer used
     ):
         self.schema = schema
 
         self.strict = strict
-        self.is_strict_compatible = True  # Can be set to False by subclasses to set `strict` on `ToolDefinition` when set not set by user explicitly
+        """The `strict` parameter forces the conversion of the original JSON schema (`self.schema`) of a `ToolDefinition` or `OutputObjectDefinition` to a format supported by the model provider.
 
+        The "strict mode" offered by model providers ensures that the model's output adheres closely to the defined schema. However, not all model providers offer it, and their support for various schema features may differ. For example, a model provider's required schema may not support certain validation constraints like `minLength` or `pattern`.
+        """
+        self.is_strict_compatible = True
+        """Whether the schema is compatible with strict mode.
+
+        This value is used to set `ToolDefinition.strict` or `OutputObjectDefinition.strict` when their values are `None`.
+        """
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
@@ -146,10 +156,9 @@ class JsonSchemaTransformer(ABC):
 
         handled = [self._handle(member) for member in members]
 
-        # convert nullable unions to nullable types
+        # TODO (v2): Remove this feature, no longer used
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
-
         if len(handled) == 1:
             # In this case, no need to retain the union
             return handled[0] | schema
@@ -161,7 +170,7 @@ class JsonSchemaTransformer(ABC):
 
     @staticmethod
     def _simplify_nullable_union(cases: list[JsonSchema]) -> list[JsonSchema]:
-        # TODO: Should we move this to relevant subclasses? Or is it worth keeping here to make reuse easier?
+        # TODO (v2): Remove this method, no longer used
         if len(cases) == 2 and {'type': 'null'} in cases:
             # Find the non-null schema
             non_null_schema = next(

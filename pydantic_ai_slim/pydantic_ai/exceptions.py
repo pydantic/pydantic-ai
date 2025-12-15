@@ -22,6 +22,7 @@ __all__ = (
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
+    'ModelAPIError',
     'ModelHTTPError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
@@ -70,18 +71,30 @@ class CallDeferred(Exception):
     """Exception to raise when a tool call should be deferred.
 
     See [tools docs](../deferred-tools.md#deferred-tools) for more information.
+
+    Args:
+        metadata: Optional dictionary of metadata to attach to the deferred tool call.
+            This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
     """
 
-    pass
+    def __init__(self, metadata: dict[str, Any] | None = None):
+        self.metadata = metadata
+        super().__init__()
 
 
 class ApprovalRequired(Exception):
     """Exception to raise when a tool call requires human-in-the-loop approval.
 
     See [tools docs](../deferred-tools.md#human-in-the-loop-tool-approval) for more information.
+
+    Args:
+        metadata: Optional dictionary of metadata to attach to the deferred tool call.
+            This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
     """
 
-    pass
+    def __init__(self, metadata: dict[str, Any] | None = None):
+        self.metadata = metadata
+        super().__init__()
 
 
 class UserError(RuntimeError):
@@ -139,27 +152,31 @@ class UnexpectedModelBehavior(AgentRunError):
             return self.message
 
 
-class ModelHTTPError(AgentRunError):
+class ModelAPIError(AgentRunError):
+    """Raised when a model provider API request fails."""
+
+    model_name: str
+    """The name of the model associated with the error."""
+
+    def __init__(self, model_name: str, message: str):
+        self.model_name = model_name
+        super().__init__(message)
+
+
+class ModelHTTPError(ModelAPIError):
     """Raised when an model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
     """The HTTP status code returned by the API."""
 
-    model_name: str
-    """The name of the model associated with the error."""
-
     body: object | None
     """The body of the response, if available."""
 
-    message: str
-    """The error message with the status code and response body, if available."""
-
     def __init__(self, status_code: int, model_name: str, body: object | None = None):
         self.status_code = status_code
-        self.model_name = model_name
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
-        super().__init__(message)
+        super().__init__(model_name=model_name, message=message)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

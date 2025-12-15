@@ -57,7 +57,7 @@ print(result.output)
 4. `result.output` will be a boolean indicating if the square is a winner. Pydantic performs the output validation, and it'll be typed as a `bool` since its type is derived from the `output_type` generic parameter of the agent.
 
 !!! tip "Agents are designed for reuse, like FastAPI Apps"
-    Agents are intended to be instantiated once (frequently as module globals) and reused throughout your application, similar to a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter].
+    You can instantiate one agent and use it globally throughout your application, as you would a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter], or dynamically create as many agents as you want. Both are valid and supported ways to use agents.
 
 ## Running Agents
 
@@ -125,10 +125,11 @@ It also takes an optional `event_stream_handler` argument that you can use to ga
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
 !!! note
-    As the `run_stream()` method will consider the first output matching the [output type](output.md#structured-output) to be the final output,
-    it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+    The `run_stream()` method will consider the first output that matches the [output type](output.md#structured-output) to be the final output of the agent run, even when the model generates tool calls after this "final" output.
 
-    If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
+	These "dangling" tool calls will not be executed unless the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] is set to `'exhaustive'`, and even then their results will not be sent back to the model as the agent run will already be considered completed.
+
+    If you want to always keep running the agent when it performs tool calls, and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
 
 ```python {title="run_stream_event_stream_handler.py"}
@@ -708,7 +709,7 @@ print(result_sync.output)
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
 
 !!! note "Model Settings Support"
-    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like `FallbackModel`, `WrapperModel`, and `InstrumentedModel` don't have their own settings - they use the settings of their underlying models.
+    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model), [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], and [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] don't have their own settings - they use the settings of their underlying models.
 
 ### Model specific settings
 

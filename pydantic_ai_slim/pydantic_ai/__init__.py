@@ -14,7 +14,8 @@ from .builtin_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
+    WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
 )
@@ -24,6 +25,7 @@ from .exceptions import (
     CallDeferred,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -126,6 +128,7 @@ __all__ = (
     'CallDeferred',
     'ApprovalRequired',
     'ModelRetry',
+    'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
@@ -214,6 +217,7 @@ __all__ = (
     # builtin_tools
     'WebSearchTool',
     'WebSearchUserLocation',
+    'WebFetchTool',
     'UrlContextTool',
     'CodeExecutionTool',
     'ImageGenerationTool',

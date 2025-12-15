@@ -3,16 +3,18 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
+from os import PathLike
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
-from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
@@ -62,6 +64,9 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
+ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
+"""Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
+
 
 @dataclass(repr=False)
 class SystemPromptPart:
@@ -87,9 +92,9 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
-        return Event(
-            'gen_ai.system.message',
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        return LogRecord(
+            attributes={'event.name': 'gen_ai.system.message'},
             body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
         )
 
@@ -530,6 +535,25 @@ class BinaryContent:
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
+    @classmethod
+    def from_path(cls, path: PathLike[str]) -> BinaryContent:
+        """Create a `BinaryContent` from a path.
+
+        Defaults to 'application/octet-stream' if the media type cannot be inferred.
+
+        Raises:
+            FileNotFoundError: if the file does not exist.
+            PermissionError: if the file cannot be read.
+        """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f'File not found: {path}')
+        media_type, _ = guess_type(path)
+        if media_type is None:
+            media_type = 'application/octet-stream'
+
+        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
+
     @pydantic.computed_field
     @property
     def identifier(self) -> str:
@@ -622,10 +646,18 @@ class CachePoint:
     Supported by:
 
     - Anthropic
+    - Amazon Bedrock (Converse API)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    ttl: Literal['5m', '1h'] = '5m'
+    """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour).
+
+    Supported by:
+
+    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -714,8 +746,8 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
-        content = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        content: Any = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
         for part in content:
             if part['kind'] == 'binary' and 'content' in part:
                 part['binary_content'] = part.pop('content')
@@ -724,7 +756,7 @@ class UserPromptPart:
         ]
         if content in ([{'kind': 'text'}], [self.content]):
             content = content[0]
-        return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
+        return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
@@ -801,9 +833,9 @@ class BaseToolReturnPart:
         else:
             return {'return_value': json_content}
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
-        return Event(
-            'gen_ai.tool.message',
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        return LogRecord(
+            attributes={'event.name': 'gen_ai.tool.message'},
             body={
                 **({'content': self.content} if settings.include_content else {}),
                 'role': 'tool',
@@ -851,6 +883,11 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 
     provider_name: str | None = None
     """The name of the provider that generated the response."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -914,12 +951,15 @@ class RetryPromptPart:
             )
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:
-            return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.user.message'},
+                body={'content': self.model_response(), 'role': 'user'},
+            )
         else:
-            return Event(
-                'gen_ai.tool.message',
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.tool.message'},
                 body={
                     **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
@@ -970,6 +1010,9 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
@@ -989,6 +1032,11 @@ class TextPart:
 
     id: str | None = None
     """An optional identifier of the text part."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1029,6 +1077,11 @@ class ThinkingPart:
     Signatures are only sent back to the same provider.
     """
 
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -1055,12 +1108,17 @@ class FilePart:
     """The name of the provider that generated the response.
     """
 
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
-        return bool(self.content)  # pragma: no cover
+        return bool(self.content.data)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1090,6 +1148,11 @@ class BaseToolCallPart:
     """An optional identifier of the tool call part, separate from the tool call ID.
 
     This is used by some APIs like OpenAI Responses."""
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -1190,16 +1253,15 @@ class ModelResponse:
     provider_name: str | None = None
     """The name of the LLM provider that generated the response."""
 
+    provider_url: str | None = None
+    """The base URL of the LLM provider that generated the response."""
+
     provider_details: Annotated[
         dict[str, Any] | None,
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
     ] = None
-    """Additional provider-specific details in a serializable format.
-
-    This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
-    For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
-    """
+    """Additional data returned by the provider that can't be mapped to standard fields."""
 
     provider_response_id: Annotated[
         str | None,
@@ -1213,6 +1275,9 @@ class ModelResponse:
 
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     @property
     def text(self) -> str | None:
@@ -1279,6 +1344,17 @@ class ModelResponse:
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """
         assert self.model_name, 'Model name is required to calculate price'
+        # Try matching on provider_api_url first as this is more specific, then fall back to provider_id.
+        if self.provider_url:
+            try:
+                return calc_price(
+                    self.usage,
+                    self.model_name,
+                    provider_api_url=self.provider_url,
+                    genai_request_timestamp=self.timestamp,
+                )
+            except LookupError:
+                pass
         return calc_price(
             self.usage,
             self.model_name,
@@ -1286,13 +1362,13 @@ class ModelResponse:
             genai_request_timestamp=self.timestamp,
         )
 
-    def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
+    def otel_events(self, settings: InstrumentationSettings) -> list[LogRecord]:
         """Return OpenTelemetry events for the response."""
-        result: list[Event] = []
+        result: list[LogRecord] = []
 
         def new_event_body():
             new_body: dict[str, Any] = {'role': 'assistant'}
-            ev = Event('gen_ai.assistant.message', body=new_body)
+            ev = LogRecord(attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body)
             result.append(ev)
             return new_body
 
@@ -1420,6 +1496,11 @@ class TextPartDelta:
 
     _: KW_ONLY
 
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
 
@@ -1437,7 +1518,11 @@ class TextPartDelta:
         """
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
-        return replace(part, content=part.content + self.content_delta)
+        return replace(
+            part,
+            content=part.content + self.content_delta,
+            provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
+        )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1460,6 +1545,14 @@ class ThinkingPartDelta:
 
     Signatures are only sent back to the same provider.
     """
+
+    provider_details: ProviderDetailsDelta = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    Can be a dict to merge with existing details, or a callable that takes
+    the existing details and returns updated details.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
 
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
@@ -1486,7 +1579,20 @@ class ThinkingPartDelta:
             new_content = part.content + self.content_delta if self.content_delta else part.content
             new_signature = self.signature_delta if self.signature_delta is not None else part.signature
             new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
-            return replace(part, content=new_content, signature=new_signature, provider_name=new_provider_name)
+            # Resolve callable provider_details if needed
+            resolved_details = (
+                self.provider_details(part.provider_details)
+                if callable(self.provider_details)
+                else self.provider_details
+            )
+            new_provider_details = {**(part.provider_details or {}), **(resolved_details or {})} or None
+            return replace(
+                part,
+                content=new_content,
+                signature=new_signature,
+                provider_name=new_provider_name,
+                provider_details=new_provider_details,
+            )
         elif isinstance(part, ThinkingPartDelta):
             if self.content_delta is None and self.signature_delta is None:
                 raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
@@ -1496,6 +1602,29 @@ class ThinkingPartDelta:
                 part = replace(part, signature_delta=self.signature_delta)
             if self.provider_name is not None:
                 part = replace(part, provider_name=self.provider_name)
+            if self.provider_details is not None:
+                if callable(self.provider_details):
+                    if callable(part.provider_details):
+                        existing_fn = part.provider_details
+                        new_fn = self.provider_details
+
+                        def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
+                            return new_fn(existing_fn(d))
+
+                        part = replace(part, provider_details=chained_both)
+                    else:
+                        part = replace(part, provider_details=self.provider_details)  # pragma: no cover
+                elif callable(part.provider_details):
+                    existing_fn = part.provider_details
+                    new_dict = self.provider_details
+
+                    def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:
+                        return {**existing_fn(d), **new_dict}
+
+                    part = replace(part, provider_details=chained_dict)
+                else:
+                    existing = part.provider_details if isinstance(part.provider_details, dict) else {}
+                    part = replace(part, provider_details={**existing, **self.provider_details})
             return part
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
@@ -1524,6 +1653,11 @@ class ToolCallPartDelta:
     Note this is never treated as a delta — it can replace None, but otherwise if a
     non-matching value is provided an error will be raised."""
 
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
     part_delta_kind: Literal['tool_call'] = 'tool_call'
     """Part delta type identifier, used as a discriminator."""
 
@@ -1536,7 +1670,12 @@ class ToolCallPartDelta:
         if self.tool_name_delta is None:
             return None
 
-        return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
+        return ToolCallPart(
+            self.tool_name_delta,
+            self.args_delta,
+            self.tool_call_id or _generate_tool_call_id(),
+            provider_details=self.provider_details,
+        )
 
     @overload
     def apply(self, part: ModelResponsePart) -> ToolCallPart | BuiltinToolCallPart: ...
@@ -1596,9 +1735,18 @@ class ToolCallPartDelta:
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
+        if self.provider_details:
+            merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
+            delta = replace(delta, provider_details=merged_provider_details)
+
         # If we now have enough data to create a full ToolCallPart, do so
         if delta.tool_name_delta is not None:
-            return ToolCallPart(delta.tool_name_delta, delta.args_delta, delta.tool_call_id or _generate_tool_call_id())
+            return ToolCallPart(
+                delta.tool_name_delta,
+                delta.args_delta,
+                delta.tool_call_id or _generate_tool_call_id(),
+                provider_details=delta.provider_details,
+            )
 
         return delta
 
@@ -1622,6 +1770,11 @@ class ToolCallPartDelta:
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
+
+        if self.provider_details:
+            merged_provider_details = {**(part.provider_details or {}), **self.provider_details}
+            part = replace(part, provider_details=merged_provider_details)
+
         return part
 
     __repr__ = _utils.dataclasses_no_defaults_repr
