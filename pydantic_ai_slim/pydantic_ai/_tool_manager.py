@@ -187,14 +187,14 @@ class ToolManager(Generic[AgentDepsT]):
                             content=e.errors(include_url=False, include_context=False),
                             tool_call_id=call.tool_call_id,
                         )
-                        e = ToolRetryError(m)
+                        e = ToolRetryError(m, message=str(e))
                     elif isinstance(e, ModelRetry):
                         m = _messages.RetryPromptPart(
                             tool_name=name,
                             content=e.message,
                             tool_call_id=call.tool_call_id,
                         )
-                        e = ToolRetryError(m)
+                        e = ToolRetryError(m, message=e.message)
                     else:
                         assert_never(e)
 

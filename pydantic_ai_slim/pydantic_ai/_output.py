@@ -637,7 +637,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 m = _messages.RetryPromptPart(
                     content=e.errors(include_url=False),
                 )
-                raise ToolRetryError(m) from e
+                raise ToolRetryError(m, message=str(e)) from e
             else:
                 raise
 

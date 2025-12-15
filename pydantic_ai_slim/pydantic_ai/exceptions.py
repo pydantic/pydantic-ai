@@ -186,25 +186,12 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 class ToolRetryError(Exception):
     """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
-    def __init__(self, tool_retry: RetryPromptPart):
+    def __init__(self, tool_retry: RetryPromptPart, message: str | None = None):
         self.tool_retry = tool_retry
-        super().__init__(_format_tool_retry_message(tool_retry))
-
-
-def _format_tool_retry_message(tool_retry: RetryPromptPart) -> str:
-    """Format a human-readable error message for ToolRetryError."""
-    content = tool_retry.content
-    if isinstance(content, str):
-        return f"Tool '{tool_retry.tool_name}' failed: {content}"
-
-    # Format list of ErrorDetails in a human-readable way
-    error_count = len(content)
-    error_word = 'error' if error_count == 1 else 'errors'
-    lines = [f"Tool '{tool_retry.tool_name}' failed: {error_count} validation {error_word}"]
-    for error in content:
-        loc = '.'.join(str(loc) for loc in error['loc'])
-        lines.append(f'  {loc}: {error["msg"]}')
-    return '\n'.join(lines)
+        if message:
+            super().__init__(message)
+        else:
+            super().__init__()
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):
