@@ -201,17 +201,6 @@ class ToolConfig:
         """Get the tool argument descriptions for the given tool name."""
         return self.tool_args_descriptions.get(tool_name)
 
-    def get_description_for_tool(self, tool_name: str) -> str | None:
-        """Get the tool description for the given tool name."""
-        return self.tool_descriptions.get(tool_name)
-
-    def get_tool_arg_description(self, tool_name: str, arg_name: str) -> str | None:
-        """Get the tool argument description for the given tool name and argument name."""
-        tool_args = self.get_tool_args_for_tool(tool_name)
-        if tool_args is None:
-            return None
-        return tool_args.get(arg_name)
-
 
 @dataclass
 class PromptConfig:
