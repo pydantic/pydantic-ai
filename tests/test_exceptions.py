@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.exceptions import (
@@ -67,7 +68,22 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
 
 def test_tool_retry_error_str():
     """Test that ToolRetryError has a meaningful string representation."""
-
     part = RetryPromptPart(content='Invalid query syntax', tool_name='sql_query')
     error = ToolRetryError(part)
-    assert 'Invalid query syntax' in str(error)
+    assert str(error) == "Tool 'sql_query' failed: Invalid query syntax"
+
+
+def test_tool_retry_error_str_with_error_details():
+    """Test that ToolRetryError handles list of ErrorDetails content."""
+    error_details: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('field1',), 'msg': 'Field required', 'input': {}},
+        {'type': 'string_type', 'loc': ('field2',), 'msg': 'Input should be a valid string', 'input': 123},
+    ]
+    part = RetryPromptPart(content=error_details, tool_name='my_tool')
+    error = ToolRetryError(part)
+
+    expected = """\
+Tool 'my_tool' failed: 2 validation errors
+  field1: Field required
+  field2: Input should be a valid string"""
+    assert str(error) == expected
