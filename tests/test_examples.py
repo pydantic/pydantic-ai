@@ -344,6 +344,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What is the capital of the UK?': 'The capital of the UK is London.',
     'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
+    'Hello world': 'Hello world',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
     'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
