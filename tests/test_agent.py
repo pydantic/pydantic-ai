@@ -1167,6 +1167,24 @@ def test_output_type_text_output_function_with_retry():
     )
 
 
+def test_output_type_text_output_function_with_deps():
+    """Test that TextOutput functions can use RunContext with custom deps type."""
+
+    @dataclass
+    class Deps:
+        prefix: str
+
+    def add_prefix_and_split(ctx: RunContext[Deps], text: str) -> list[str]:
+        return f'{ctx.deps.prefix}: {text}'.split()
+
+    def return_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Hello world')])
+
+    agent = Agent(FunctionModel(return_text), deps_type=Deps, output_type=TextOutput(add_prefix_and_split))
+    result = agent.run_sync('test prompt', deps=Deps(prefix='Response'))
+    assert result.output == snapshot(['Response:', 'Hello', 'world'])
+
+
 @pytest.mark.parametrize(
     'output_type',
     [[str, str], [str, TextOutput(upcase)], [TextOutput(upcase), TextOutput(upcase)]],

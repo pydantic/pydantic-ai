@@ -11,8 +11,9 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
+from ._run_context import AgentDepsT, RunContext
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
+from .tools import DeferredToolRequests, ObjectJsonSchema, ToolDefinition
 
 __all__ = (
     # classes
@@ -60,8 +61,8 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
-    type_params=(T_co,),
+    Callable[[RunContext[AgentDepsT], str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
+    type_params=(T_co, AgentDepsT),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
 
@@ -259,7 +260,7 @@ class OutputObjectDefinition:
 
 
 @dataclass
-class TextOutput(Generic[OutputDataT]):
+class TextOutput(Generic[OutputDataT, AgentDepsT]):
     """Marker class to use text output for an output function taking a string argument.
 
     Example:
@@ -281,7 +282,7 @@ class TextOutput(Generic[OutputDataT]):
     ```
     """
 
-    output_function: TextOutputFunc[OutputDataT]
+    output_function: TextOutputFunc[OutputDataT, AgentDepsT]
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
@@ -354,7 +355,7 @@ def StructuredDict(
 
 _OutputSpecItem = TypeAliasType(
     '_OutputSpecItem',
-    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
+    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co, Any],
     type_params=(T_co,),
 )
 

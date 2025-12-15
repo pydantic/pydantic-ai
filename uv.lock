@@ -5666,7 +5666,7 @@ requires-dist = [
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.0" },
     { name = "genai-prices", specifier = ">=0.0.40" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.51.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.55.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "httpx", specifier = ">=0.27" },
