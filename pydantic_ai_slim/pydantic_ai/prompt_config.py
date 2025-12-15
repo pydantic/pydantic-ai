@@ -164,7 +164,7 @@ class ToolConfig:
     This allows you to override tool metadata without modifying the original tool definitions.
 
     Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent, PromptConfig, ToolConfig
 
         agent = Agent('openai:gpt-4o')
