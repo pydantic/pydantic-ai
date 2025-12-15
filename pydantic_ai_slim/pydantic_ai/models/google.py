@@ -23,6 +23,7 @@ from ..messages import (
     FilePart,
     FileUrl,
     FinishReason,
+    GroundingCitation,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -55,6 +56,8 @@ try:
     from google.genai import Client, errors
     from google.genai.types import (
         BlobDict,
+        Citation,
+        CitationMetadata,
         CodeExecutionResult,
         CodeExecutionResultDict,
         ContentDict,
@@ -72,7 +75,9 @@ try:
         GenerateContentResponse,
         GenerationConfigDict,
         GoogleSearchDict,
+        GroundingChunk,
         GroundingMetadata,
+        GroundingSupport,
         HttpOptionsDict,
         ImageConfigDict,
         MediaResolution,
@@ -515,6 +520,7 @@ class GoogleModel(Model):
         return _process_response_from_parts(
             parts,
             candidate.grounding_metadata,
+            candidate.citation_metadata,
             response.model_version or self._model_name,
             self._provider.name,
             self._provider.base_url,
@@ -697,14 +703,32 @@ class GeminiStreamedResponse(StreamedResponse):
             #         vendor_part_id=uuid4(), part=web_search_return
             #     )
 
-            # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
-            # so we can safely yield it here
-            web_fetch_call, web_fetch_return = _map_url_context_metadata(
-                candidate.url_context_metadata, self.provider_name
-            )
-            if web_fetch_call and web_fetch_return:
-                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
-                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
+            # Parse citations from metadata (may arrive after text content)
+            # Citations will be attached to TextPart objects when they arrive
+            if candidate.citation_metadata or candidate.grounding_metadata:
+                # Parse citations from both metadata types
+                all_citations: list[GroundingCitation] = []
+                if candidate.citation_metadata:
+                    all_citations.extend(_parse_google_citation_metadata(candidate.citation_metadata))
+                if candidate.grounding_metadata:
+                    all_citations.extend(_parse_google_grounding_metadata(candidate.grounding_metadata))
+
+                # Attach citations to TextPart objects
+                # Find the text part using the vendor_part_id 'content' (used for text deltas)
+                if all_citations:
+                    part_index = self._parts_manager._vendor_id_to_part_index.get('content')
+                    if part_index is not None:
+                        existing_part = self._parts_manager._parts[part_index]
+                        if isinstance(existing_part, TextPart):
+                            # Add citations to existing citations list
+                            existing_citations = existing_part.citations or []
+                            # Avoid duplicates
+                            for citation in all_citations:
+                                if citation not in existing_citations:
+                                    existing_citations.append(citation)
+                            if existing_citations:
+                                updated_part = replace(existing_part, citations=existing_citations)
+                                self._parts_manager._parts[part_index] = updated_part
 
             if candidate.content is None or candidate.content.parts is None:
                 if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
@@ -868,9 +892,10 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
     return ContentDict(role='model', parts=parts)
 
 
-def _process_response_from_parts(
+def _process_response_from_parts(  # noqa: C901
     parts: list[Part],
     grounding_metadata: GroundingMetadata | None,
+    citation_metadata: CitationMetadata | None,
     model_name: GoogleModelName,
     provider_name: str,
     provider_url: str,
@@ -887,10 +912,16 @@ def _process_response_from_parts(
         items.append(web_search_call)
         items.append(web_search_return)
 
-    web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
-    if web_fetch_call and web_fetch_return:
-        items.append(web_fetch_call)
-        items.append(web_fetch_return)
+    # Parse citations from both metadata types
+    all_citations: list[GroundingCitation] = []
+    if citation_metadata:
+        all_citations.extend(_parse_google_citation_metadata(citation_metadata))
+    if grounding_metadata:
+        all_citations.extend(_parse_google_grounding_metadata(grounding_metadata))
+
+    # Build a map of text content to TextPart indices for citation attachment
+    # We'll collect all text parts first, then attach citations based on indices
+    text_parts: list[tuple[int, TextPart, str]] = []  # (index, TextPart, accumulated_text)
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
@@ -918,6 +949,9 @@ def _process_response_from_parts(
                 item = ThinkingPart(content=part.text)
             else:
                 item = TextPart(content=part.text)
+                # Track text parts for citation attachment
+                # Note: Google uses byte offsets, so we need to use len() on bytes
+                text_parts.append((len(items), item, part.text))
         elif part.function_call:
             assert part.function_call.name is not None
             item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
@@ -936,6 +970,74 @@ def _process_response_from_parts(
             item.provider_details = {**(item.provider_details or {}), **provider_details}
 
         items.append(item)
+
+    # Attach citations to TextPart objects based on byte offsets
+    # Citations use byte offsets relative to the entire response text
+    # For citation_metadata: citations have direct start_index/end_index
+    # For grounding_metadata: citations have segment start_index/end_index from grounding_supports
+    if all_citations and text_parts:
+        # Build full response text to calculate byte offsets
+        full_text_parts: list[str] = []
+        for _, _, text_content in text_parts:
+            full_text_parts.append(text_content)
+        full_text = ''.join(full_text_parts)
+        full_text_bytes = full_text.encode('utf-8')
+
+        # Calculate byte offset boundaries for each text part
+        part_boundaries: list[tuple[int, int, int]] = []  # (part_idx, start_byte, end_byte)
+        current_byte_offset = 0
+        for part_idx, text_part, text_content in text_parts:
+            text_bytes = text_content.encode('utf-8')
+            part_start_byte = current_byte_offset
+            part_end_byte = current_byte_offset + len(text_bytes)
+            part_boundaries.append((part_idx, part_start_byte, part_end_byte))
+            current_byte_offset = part_end_byte
+
+        # Match citations to text parts based on byte offsets
+        for citation in all_citations:
+            # Extract indices from citation
+            citation_start: int | None = None
+            citation_end: int | None = None
+
+            # Check citation_metadata citations
+            if citation.citation_metadata and 'citations' in citation.citation_metadata:
+                citations_list = citation.citation_metadata['citations']
+                if citations_list and len(citations_list) > 0:
+                    cit_data = citations_list[0]
+                    citation_start = cit_data.get('start_index')
+                    citation_end = cit_data.get('end_index')
+
+            # Check grounding_metadata citations (from segment)
+            if citation.grounding_metadata and 'segment' in citation.grounding_metadata:
+                segment = citation.grounding_metadata['segment']
+                citation_start = segment.get('start_index')
+                citation_end = segment.get('end_index')
+
+            # Skip if no valid indices
+            if citation_start is None or citation_end is None:
+                continue
+
+            # Validate indices are within bounds
+            if citation_start < 0 or citation_end > len(full_text_bytes):
+                continue
+            if citation_start > citation_end:
+                continue
+
+            # Find the text part(s) that contain this citation
+            # Attach to the first part that contains the citation start
+            for part_idx, part_start_byte, part_end_byte in part_boundaries:
+                if part_start_byte <= citation_start < part_end_byte:
+                    # This part contains the citation start - attach citation here
+                    text_part = items[part_idx]
+                    if isinstance(text_part, TextPart):
+                        existing_citations = text_part.citations or []
+                        # Avoid duplicates
+                        if citation not in existing_citations:
+                            updated_citations = existing_citations + [citation]
+                            updated_part = replace(text_part, citations=updated_citations or None)
+                            items[part_idx] = updated_part
+                    break
+
     return ModelResponse(
         parts=items,
         model_name=model_name,
@@ -1046,26 +1148,200 @@ def _map_grounding_metadata(
         return None, None
 
 
-def _map_url_context_metadata(
-    url_context_metadata: UrlContextMetadata | None, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
-    if url_context_metadata and (url_metadata := url_context_metadata.url_metadata):
-        tool_call_id = _utils.generate_tool_call_id()
-        # Extract URLs from the metadata
-        urls = [meta.retrieved_url for meta in url_metadata if meta.retrieved_url]
-        return (
-            BuiltinToolCallPart(
-                provider_name=provider_name,
-                tool_name=WebFetchTool.kind,
-                tool_call_id=tool_call_id,
-                args={'urls': urls} if urls else None,
-            ),
-            BuiltinToolReturnPart(
-                provider_name=provider_name,
-                tool_name=WebFetchTool.kind,
-                tool_call_id=tool_call_id,
-                content=[meta.model_dump(mode='json') for meta in url_metadata],
-            ),
-        )
-    else:
-        return None, None
+def _parse_google_citation_metadata(
+    citation_metadata: CitationMetadata | None,
+) -> list[GroundingCitation]:
+    """Extract citations from Google's citation_metadata.
+
+    Converts Google's citation format to our GroundingCitation format.
+    Skips invalid ones.
+
+    Args:
+        citation_metadata: The citation metadata from Google's API.
+
+    Returns:
+        List of GroundingCitation objects, empty if none found.
+    """
+    citations: list[GroundingCitation] = []
+    if not citation_metadata or not citation_metadata.citations:
+        return citations
+
+    for citation in citation_metadata.citations:
+        try:
+            if not isinstance(citation, Citation):
+                continue
+
+            # Google uses byte offsets, not character offsets
+            start_index = citation.start_index
+            end_index = citation.end_index
+            uri = citation.uri
+            title = citation.title
+
+            if start_index is not None and not isinstance(start_index, int):
+                continue
+            if end_index is not None and not isinstance(end_index, int):
+                continue
+
+            if start_index is not None and end_index is not None:
+                if start_index < 0 or end_index < 0:
+                    continue
+                if start_index > end_index:
+                    continue
+
+            if not isinstance(uri, str) or not uri:
+                continue
+
+            if title == '':
+                title = None
+
+            citation_data: dict[str, Any] = {
+                'start_index': start_index,
+                'end_index': end_index,
+                'uri': uri,
+                'title': title,
+            }
+
+            if citation.license is not None:
+                citation_data['license'] = citation.license
+            if citation.publication_date is not None:
+                citation_data['publication_date'] = citation.publication_date
+
+            citations.append(
+                GroundingCitation(
+                    citation_metadata={'citations': [citation_data]},
+                )
+            )
+        except (AttributeError, ValueError, TypeError):
+            continue
+
+    return citations
+
+
+def _parse_google_grounding_metadata(  # noqa: C901
+    grounding_metadata: GroundingMetadata | None,
+) -> list[GroundingCitation]:
+    """Extract citations from Google's grounding_metadata.
+
+    Uses grounding_supports to link text segments to grounding chunks
+    (like web search results).
+
+    Args:
+        grounding_metadata: The grounding metadata from Google's API.
+
+    Returns:
+        List of GroundingCitation objects, empty if none found.
+
+    Raises:
+        Nothing - invalid citations are silently skipped to be robust.
+    """
+    citations: list[GroundingCitation] = []
+    if not grounding_metadata:
+        return citations
+
+    grounding_chunks = grounding_metadata.grounding_chunks
+    grounding_supports = grounding_metadata.grounding_supports
+
+    # If no chunks or supports, return empty list
+    if not grounding_chunks or not grounding_supports:
+        return citations
+
+    # Build a map of chunk index to chunk data
+    chunk_map: dict[int, dict[str, Any]] = {}
+    for idx, chunk in enumerate(grounding_chunks):
+        if not isinstance(chunk, GroundingChunk):
+            continue
+
+        chunk_data: dict[str, Any] = {}
+
+        # Extract web chunk data
+        if chunk.web:
+            web_data: dict[str, Any] = {}
+            if chunk.web.uri:
+                web_data['uri'] = chunk.web.uri
+            if chunk.web.title:
+                web_data['title'] = chunk.web.title
+            if chunk.web.domain:
+                web_data['domain'] = chunk.web.domain
+            if hasattr(chunk.web, 'text') and chunk.web.text:
+                web_data['text'] = chunk.web.text
+            if web_data:
+                chunk_data['web'] = web_data
+
+        # Extract maps chunk data (if needed in future)
+        if chunk.maps:
+            # Maps data structure - can be expanded later
+            chunk_data['maps'] = {'type': 'maps'}
+
+        # Extract retrieved context data (if needed in future)
+        if chunk.retrieved_context:
+            # Retrieved context data structure - can be expanded later
+            chunk_data['retrieved_context'] = {'type': 'retrieved_context'}
+
+        if chunk_data:
+            chunk_map[idx] = chunk_data
+
+    # Process grounding supports to create citations
+    for support in grounding_supports:
+        try:
+            if not isinstance(support, GroundingSupport):
+                continue
+
+            # Get the chunk indices this support references
+            chunk_indices = support.grounding_chunk_indices
+            if not chunk_indices:
+                continue
+
+            # Get the segment this support references
+            segment = support.segment
+            if not segment:
+                continue
+
+            # Extract segment indices (byte offsets)
+            segment_start = getattr(segment, 'start_index', None)
+            segment_end = getattr(segment, 'end_index', None)
+            segment_text = getattr(segment, 'text', None)
+
+            # Validate segment indices
+            if segment_start is not None and segment_end is not None:
+                if not isinstance(segment_start, int) or not isinstance(segment_end, int):
+                    continue
+                if segment_start < 0 or segment_end < 0:
+                    continue
+                if segment_start > segment_end:
+                    continue
+
+            # Build grounding chunks data from referenced chunks
+            referenced_chunks: list[dict[str, Any]] = []
+            for chunk_idx in chunk_indices:
+                if chunk_idx in chunk_map:
+                    referenced_chunks.append(chunk_map[chunk_idx])
+
+            if not referenced_chunks:
+                continue
+
+            # Build grounding metadata dict
+            grounding_data: dict[str, Any] = {
+                'grounding_chunks': referenced_chunks,
+                'segment': {
+                    'start_index': segment_start,
+                    'end_index': segment_end,
+                    'text': segment_text,
+                },
+            }
+
+            # Add optional fields if present
+            if grounding_metadata.web_search_queries:
+                grounding_data['web_search_queries'] = grounding_metadata.web_search_queries
+            if grounding_metadata.retrieval_queries:
+                grounding_data['retrieval_queries'] = grounding_metadata.retrieval_queries
+
+            citations.append(
+                GroundingCitation(
+                    grounding_metadata=grounding_data,
+                )
+            )
+        except (AttributeError, ValueError, TypeError):
+            # Skip invalid supports - be robust to API changes
+            continue
+
+    return citations

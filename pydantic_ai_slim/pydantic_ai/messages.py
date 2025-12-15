@@ -1022,6 +1022,103 @@ class ModelRequest:
 
 
 @dataclass(repr=False)
+class URLCitation:
+    """A citation with a URL, used by OpenAI and similar providers.
+
+    Has a URL, optional title, and character ranges showing where in the text
+    the citation applies.
+    """
+
+    url: str
+    """The URL."""
+
+    _: KW_ONLY
+
+    title: str | None = None
+    """An optional title for the cited resource."""
+
+    start_index: int
+    """Where the citation starts in the text (0-based, inclusive)."""
+
+    end_index: int
+    """Where the citation ends in the text (0-based, exclusive)."""
+
+    def __post_init__(self) -> None:
+        """Check that citation indices are valid."""
+        if self.start_index < 0:
+            raise ValueError(f'start_index must be non-negative, got {self.start_index}')
+        if self.end_index < 0:
+            raise ValueError(f'end_index must be non-negative, got {self.end_index}')
+        if self.start_index > self.end_index:
+            raise ValueError(f'start_index ({self.start_index}) must be <= end_index ({self.end_index})')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ToolResultCitation:
+    """A citation from a tool result, used by Anthropic.
+
+    Comes from tool execution results like web searches.
+    """
+
+    tool_name: str
+    """Which tool generated this citation."""
+
+    _: KW_ONLY
+
+    tool_call_id: str | None = None
+    """ID of the tool call that generated this citation."""
+
+    citation_data: dict[str, Any] | None = None
+    """Extra citation data from the tool result.
+
+    Structure varies by provider.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class GroundingCitation:
+    """A citation from grounding metadata, used by Google.
+
+    Comes from Google's grounding_metadata and citation_metadata.
+    """
+
+    _: KW_ONLY
+
+    grounding_metadata: dict[str, Any] | None = None
+    """Grounding metadata from the response.
+
+    Has info about sources used for grounding.
+    """
+
+    citation_metadata: dict[str, Any] | None = None
+    """Citation metadata from the response.
+
+    Has structured citation info.
+    """
+
+    def __post_init__(self) -> None:
+        """Make sure at least one metadata field is set."""
+        if self.grounding_metadata is None and self.citation_metadata is None:
+            raise ValueError('At least one of grounding_metadata or citation_metadata must be provided')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+Citation: TypeAlias = URLCitation | ToolResultCitation | GroundingCitation
+"""All possible citation types from different providers.
+
+Covers:
+- OpenAI (URLCitation)
+- Anthropic (ToolResultCitation)
+- Google (GroundingCitation)
+"""
+
+
+@dataclass(repr=False)
 class TextPart:
     """A plain text response from a model."""
 
@@ -1033,10 +1130,14 @@ class TextPart:
     id: str | None = None
     """An optional identifier of the text part."""
 
-    provider_details: dict[str, Any] | None = None
-    """Additional data returned by the provider that can't be mapped to standard fields.
+    citations: list[Citation] | None = None
+    """Citations for this text part, if any.
 
-    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+    Can come from different providers:
+    - OpenAI: URL citations with character indices
+    - Anthropic: Tool result citations
+    - Google: Grounding and citation metadata
+    """
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1387,9 +1488,46 @@ class ModelResponse:
                 )
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
-                body.setdefault('content', []).append(
-                    {'kind': kind, **({'text': part.content} if settings.include_content else {})}
-                )
+                content_dict: dict[str, Any] = {
+                    'kind': kind,
+                    **({'text': part.content} if settings.include_content else {}),
+                }
+                # Include citations in metadata (not in standard OTEL spec, but useful)
+                if isinstance(part, TextPart) and part.citations:
+                    content_dict['citations'] = [
+                        {
+                            'type': type(citation).__name__,
+                            **(
+                                {
+                                    'url': citation.url,
+                                    'title': citation.title,
+                                    'start_index': citation.start_index,
+                                    'end_index': citation.end_index,
+                                }
+                                if isinstance(citation, URLCitation)
+                                else {}
+                            ),
+                            **(
+                                {
+                                    'tool_name': citation.tool_name,
+                                    'tool_call_id': citation.tool_call_id,
+                                    'citation_data': citation.citation_data,
+                                }
+                                if isinstance(citation, ToolResultCitation)
+                                else {}
+                            ),
+                            **(
+                                {
+                                    'grounding_metadata': citation.grounding_metadata,
+                                    'citation_metadata': citation.citation_metadata,
+                                }
+                                if isinstance(citation, GroundingCitation)
+                                else {}
+                            ),
+                        }
+                        for citation in part.citations
+                    ]
+                body.setdefault('content', []).append(content_dict)
             elif isinstance(part, FilePart):
                 body.setdefault('content', []).append(
                     {
@@ -1405,6 +1543,7 @@ class ModelResponse:
 
         if content := body.get('content'):
             text_content = content[0].get('text')
+            # Only simplify if there's no metadata (like citations) in the content dict
             if content == [{'kind': 'text', 'text': text_content}]:
                 body['content'] = text_content
 
@@ -1414,12 +1553,46 @@ class ModelResponse:
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
-                parts.append(
-                    _otel_messages.TextPart(
-                        type='text',
-                        **({'content': part.content} if settings.include_content else {}),
-                    )
-                )
+                text_part_dict: dict[str, Any] = {
+                    'type': 'text',
+                    **({'content': part.content} if settings.include_content else {}),
+                }
+                # Include citations in metadata (not in standard OTEL spec, but useful)
+                if part.citations:
+                    text_part_dict['citations'] = [  # type: ignore[typeddict-item]
+                        {
+                            'type': type(citation).__name__,
+                            **(
+                                {
+                                    'url': citation.url,
+                                    'title': citation.title,
+                                    'start_index': citation.start_index,
+                                    'end_index': citation.end_index,
+                                }
+                                if isinstance(citation, URLCitation)
+                                else {}
+                            ),
+                            **(
+                                {
+                                    'tool_name': citation.tool_name,
+                                    'tool_call_id': citation.tool_call_id,
+                                    'citation_data': citation.citation_data,
+                                }
+                                if isinstance(citation, ToolResultCitation)
+                                else {}
+                            ),
+                            **(
+                                {
+                                    'grounding_metadata': citation.grounding_metadata,
+                                    'citation_metadata': citation.citation_metadata,
+                                }
+                                if isinstance(citation, GroundingCitation)
+                                else {}
+                            ),
+                        }
+                        for citation in part.citations
+                    ]
+                parts.append(cast(_otel_messages.TextPart, text_part_dict))
             elif isinstance(part, ThinkingPart):
                 parts.append(
                     _otel_messages.ThinkingPart(

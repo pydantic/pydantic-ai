@@ -34,6 +34,7 @@ from ..messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolResultCitation,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -69,6 +70,8 @@ try:
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
+        BetaCitationSearchResultLocation,
+        BetaCitationsWebSearchResultLocation,
         BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
         BetaCodeExecutionToolResultBlockContent,
@@ -512,7 +515,13 @@ class AnthropicModel(Model):
         builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
         for item in response.content:
             if isinstance(item, BetaTextBlock):
-                items.append(TextPart(content=item.text))
+                # Extract citations from text block if present
+                citations = _parse_anthropic_text_block_citations(item)
+                text_part = TextPart(content=item.text)
+                if citations:
+                    # Attach citations to TextPart
+                    text_part = replace(text_part, citations=citations)
+                items.append(text_part)
             elif isinstance(item, BetaServerToolUseBlock):
                 call_part = _map_server_tool_use_block(item, self.system)
                 builtin_tool_calls[call_part.tool_call_id] = call_part
@@ -1103,6 +1112,175 @@ class AnthropicModel(Model):
         return {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
 
+def _parse_anthropic_citation_delta(delta: BetaCitationsDelta) -> ToolResultCitation | None:
+    """Convert an Anthropic citation delta to our format.
+
+    Handles web search and other tool result citations from streaming responses.
+    Skips document citations and invalid data.
+
+    Args:
+        delta: The citation delta from Anthropic's API.
+
+    Returns:
+        A ToolResultCitation if valid, None otherwise.
+    """
+    try:
+        citation = delta.citation
+
+        # Only handle tool result citations (web search, code execution, etc.)
+        # Document citations are a different thing we don't handle
+        if isinstance(citation, BetaCitationsWebSearchResultLocation):
+            url = citation.url
+            if not isinstance(url, str) or not url:
+                return None
+
+            title = citation.title
+            if title == '':
+                title = None
+
+            cited_text = citation.cited_text
+            if not isinstance(cited_text, str):
+                cited_text = ''
+
+            encrypted_index = citation.encrypted_index
+            if not isinstance(encrypted_index, str):
+                encrypted_index = ''
+
+            return ToolResultCitation(
+                tool_name=WebSearchTool.kind,
+                tool_call_id=None,  # Not available in the delta
+                citation_data={
+                    'url': url,
+                    'title': title,
+                    'cited_text': cited_text,
+                    'encrypted_index': encrypted_index,
+                },
+            )
+        elif isinstance(citation, BetaCitationSearchResultLocation):
+            source = citation.source
+            if not isinstance(source, str) or not source:
+                return None
+
+            title = citation.title
+            if title == '':
+                title = None
+
+            cited_text = citation.cited_text
+            if not isinstance(cited_text, str):
+                cited_text = ''
+
+            tool_name = 'search'  # Generic fallback
+
+            return ToolResultCitation(
+                tool_name=tool_name,
+                tool_call_id=None,
+                citation_data={
+                    'source': source,
+                    'title': title,
+                    'cited_text': cited_text,
+                    'search_result_index': citation.search_result_index,
+                    'start_block_index': citation.start_block_index,
+                    'end_block_index': citation.end_block_index,
+                },
+            )
+        else:
+            # Not a tool result citation
+            return None
+    except (AttributeError, ValueError, TypeError):
+        return None
+
+
+def _parse_anthropic_text_block_citations(text_block: BetaTextBlock) -> list[ToolResultCitation]:
+    """Extract citations from a non-streaming text block.
+
+    Pulls out tool result citations from the text block and converts them
+    to our format.
+
+    Args:
+        text_block: The text block with citations.
+
+    Returns:
+        List of ToolResultCitation objects, empty if none found.
+    """
+    citations: list[ToolResultCitation] = []
+
+    if not hasattr(text_block, 'citations') or text_block.citations is None:
+        return citations
+
+    if not text_block.citations:
+        return citations
+
+    for citation_location in text_block.citations:
+        try:
+            if isinstance(citation_location, BetaCitationsWebSearchResultLocation):
+                # Extract fields from web search result citation
+                url = citation_location.url
+                if not isinstance(url, str) or not url:
+                    continue
+
+                title = citation_location.title
+                if title == '':
+                    title = None
+
+                cited_text = citation_location.cited_text
+                if not isinstance(cited_text, str):
+                    cited_text = ''
+
+                encrypted_index = citation_location.encrypted_index
+                if not isinstance(encrypted_index, str):
+                    encrypted_index = ''
+
+                citations.append(
+                    ToolResultCitation(
+                        tool_name=WebSearchTool.kind,  # 'web_search'
+                        tool_call_id=None,  # Need to track from context
+                        citation_data={
+                            'url': url,
+                            'title': title,
+                            'cited_text': cited_text,
+                            'encrypted_index': encrypted_index,
+                        },
+                    )
+                )
+            elif isinstance(citation_location, BetaCitationSearchResultLocation):
+                # Handle search result citations
+                source = citation_location.source
+                if not isinstance(source, str) or not source:
+                    continue
+
+                title = citation_location.title
+                if title == '':
+                    title = None
+
+                cited_text = citation_location.cited_text
+                if not isinstance(cited_text, str):
+                    cited_text = ''
+
+                tool_name = 'search'  # Generic fallback
+
+                citations.append(
+                    ToolResultCitation(
+                        tool_name=tool_name,
+                        tool_call_id=None,
+                        citation_data={
+                            'source': source,
+                            'title': title,
+                            'cited_text': cited_text,
+                            'search_result_index': citation_location.search_result_index,
+                            'start_block_index': citation_location.start_block_index,
+                            'end_block_index': citation_location.end_block_index,
+                        },
+                    )
+                )
+            # Skip document citations (char_location, page_location, content_block_location)
+            # These are a different feature and not handled here
+        except (AttributeError, ValueError, TypeError):
+            # Skip invalid citations - be robust to API changes
+            continue
+
+    return citations
+
+
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
     provider: str,
@@ -1266,9 +1444,23 @@ class AnthropicStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
-                # TODO(Marcelo): We need to handle citations.
                 elif isinstance(event.delta, BetaCitationsDelta):
-                    pass
+                    # Parse citation and attach to the corresponding TextPart
+                    citation = _parse_anthropic_citation_delta(event.delta)
+                    if citation is not None:
+                        # Find the TextPart using event.index as vendor_part_id
+                        part_index = self._parts_manager._vendor_id_to_part_index.get(event.index)
+                        if part_index is not None:
+                            existing_part = self._parts_manager._parts[part_index]
+                            if isinstance(existing_part, TextPart):
+                                # Add citation to existing citations list
+                                existing_citations = existing_part.citations or []
+                                # Avoid duplicates by checking if citation already exists
+                                # (compare by citation_data since tool_call_id may be None)
+                                if citation not in existing_citations:
+                                    updated_citations = existing_citations + [citation]
+                                    updated_part = replace(existing_part, citations=updated_citations)
+                                    self._parts_manager._parts[part_index] = updated_part
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
