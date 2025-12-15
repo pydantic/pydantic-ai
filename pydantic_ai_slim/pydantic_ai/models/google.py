@@ -793,32 +793,32 @@ class GeminiStreamedResponse(StreamedResponse):
             # Grounding metadata is attached to the final text chunk, so
             # we emit the `BuiltinToolReturnPart` after the text delta so
             # that the delta is properly added to the same `TextPart` as earlier chunks
-            async for event in self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata):
-                yield event
+            file_search_part = self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata)
+            if file_search_part is not None:
+                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
 
-    async def _handle_file_search_grounding_metadata_streaming(
+    def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
-    ) -> AsyncIterator[ModelResponseStreamEvent]:
+    ) -> BuiltinToolReturnPart | None:
         """Handle file search grounding metadata for streaming responses.
 
-        Yields a BuiltinToolReturnPart if file search results are available in the grounding metadata.
+        Returns a BuiltinToolReturnPart if file search results are available in the grounding metadata.
         """
         if not self._file_search_tool_call_id or not grounding_metadata:
-            return
+            return None
 
         grounding_chunks = grounding_metadata.grounding_chunks
         retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
         if retrieved_contexts:  # pragma: no branch
-            yield self._parts_manager.handle_part(
-                vendor_part_id=uuid4(),
-                part=BuiltinToolReturnPart(
-                    provider_name=self.provider_name,
-                    tool_name=FileSearchTool.kind,
-                    tool_call_id=self._file_search_tool_call_id,
-                    content=retrieved_contexts,
-                ),
+            part = BuiltinToolReturnPart(
+                provider_name=self.provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=self._file_search_tool_call_id,
+                content=retrieved_contexts,
             )
             self._file_search_tool_call_id = None
+            return part
+        return None  # pragma: no cover
 
     def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart | None:
         """Handle executable code for streaming responses.
