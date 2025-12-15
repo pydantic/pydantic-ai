@@ -164,6 +164,33 @@ class ToolConfig:
     tool_descriptions: dict[str, str] = field(default_factory=lambda: {})
     """Custom descriptions for tools used by the agent."""
 
+    tool_args_descriptions: dict[str, dict[str, str]] = field(default_factory=lambda: {})
+    """Custom descriptions for tool arguments for the tools used by the agent.
+        Structured as a nested dictionary:
+        {
+            'tool_name': {
+                'arg_name': 'arg_description',
+                ...
+            },
+            ...
+        }
+    """
+
+    def get_tool_args_for_tool(self, tool_name: str) -> dict[str, str] | None:
+        """Get the tool argument descriptions for the given tool name."""
+        return self.tool_args_descriptions.get(tool_name)
+
+    def get_description_for_tool(self, tool_name: str) -> str | None:
+        """Get the tool description for the given tool name."""
+        return self.tool_descriptions.get(tool_name)
+
+    def get_tool_arg_description(self, tool_name: str, arg_name: str) -> str | None:
+        """Get the tool argument description for the given tool name and argument name."""
+        tool_args = self.get_tool_args_for_tool(tool_name)
+        if tool_args is None:
+            return None
+        return tool_args.get(arg_name)
+
 
 @dataclass
 class PromptConfig:
@@ -210,18 +237,6 @@ class PromptConfig:
     """Configuration for customizing tool descriptions and metadata.
     See [`ToolConfig`][pydantic_ai.ToolConfig] for available configuration options.
     """
-
-
-# @dataclass
-# class InstructionsConfig:
-#     """
-#       Configuration options to override instructions sent to the model.
-#     """
-
-    # instructions: 
-    # It seems like runtime instuctions being passed to one of the run methods almost do the same thing.
-    # Why do we need this then?
-
 
 
 DEFAULT_PROMPT_CONFIG = PromptConfig()

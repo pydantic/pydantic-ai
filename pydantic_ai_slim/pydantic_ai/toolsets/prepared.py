@@ -21,7 +21,9 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     prepare_func: ToolsPrepareFunc[AgentDepsT] | None
     tool_config: ToolConfig | None = None
 
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+    async def get_tools(
+        self, ctx: RunContext[AgentDepsT], tool_config: ToolConfig | None = None
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
 
         tools_after_tool_config = await self._get_tools_from_tool_config(original_tools)
@@ -32,7 +34,8 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         return tools_after_prepare_func
 
     async def _get_tools_from_tool_config(
-        self, original_tools: dict[str, ToolsetTool[AgentDepsT]]
+        self,
+        original_tools: dict[str, ToolsetTool[AgentDepsT]],
     ) -> dict[str, ToolsetTool[AgentDepsT]]:
         if self.tool_config is None:
             return original_tools
@@ -44,6 +47,22 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
                 original_tool = original_tools[tool_name]
                 updated_tool_def = replace(original_tool.tool_def, description=description)
                 original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
+
+        for tool_name in list(original_tools.keys()):
+            tool_args = self.tool_config.get_tool_args_for_tool(tool_name)
+            if not tool_args:
+                continue
+
+            original_tool = original_tools[tool_name].tool_def
+            parameter_defs = original_tool.parameters_json_schema
+            if not parameter_defs:
+                continue
+
+            for tool_name, tool_arg in parameter_defs.get('properties', {}).items():
+                tool_arg_description = tool_args.get(tool_name)
+                if not tool_arg_description:
+                    continue
+                tool_arg['description'] = tool_arg_description
 
         return original_tools
 

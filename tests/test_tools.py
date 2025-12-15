@@ -30,6 +30,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
     UserPromptPart,
+    prompt_config,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -140,6 +141,47 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
                 'properties': {
                     'foo': {'description': 'The foo thing.', 'type': 'integer'},
                     'bar': {'description': 'The bar thing.', 'type': 'string'},
+                },
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'additionalProperties': False,
+            },
+            'outer_typed_dict_key': None,
+            'strict': None,
+            'kind': 'function',
+            'sequential': False,
+            'metadata': None,
+            'timeout': None,
+        }
+    )
+
+
+@pytest.mark.parametrize('docstring_format', ['google', 'auto'])
+def test_docstring_google_prompt_config(docstring_format: Literal['google', 'auto']):
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
+    p_config = prompt_config.PromptConfig(
+        tool_config=prompt_config.ToolConfig(
+            tool_args_descriptions={
+                'google_style_docstring': {
+                    'foo': 'The foo thing from tool config.',
+                    'bar': 'The bar thing from tool config.',
+                }
+            }
+        )
+    )
+
+    result = agent.run_sync('Hello', prompt_config=p_config)
+    json_schema = json.loads(result.output)
+
+    assert json_schema == snapshot(
+        {
+            'name': 'google_style_docstring',
+            'description': 'Do foobar stuff, a lot.',
+            'parameters_json_schema': {
+                'properties': {
+                    'foo': {'description': 'The foo thing from tool config.', 'type': 'integer'},
+                    'bar': {'description': 'The bar thing from tool config.', 'type': 'string'},
                 },
                 'required': ['foo', 'bar'],
                 'type': 'object',
