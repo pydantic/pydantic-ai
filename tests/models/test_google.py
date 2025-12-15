@@ -4611,6 +4611,8 @@ async def test_google_streaming_tool_call_thought_signature(
             ),
         ]
     )
+
+
 async def test_google_system_prompts_and_instructions_ordering(google_provider: GoogleProvider):
     """Test that instructions are appended after all system prompts in the system instruction."""
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)

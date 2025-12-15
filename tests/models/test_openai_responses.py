@@ -8208,6 +8208,8 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
             'type': 'web_search_call',
         }
     )
+
+
 async def test_openai_responses_system_prompts_ordering(allow_model_requests: None):
     """Test that system prompts are correctly ordered in mapped messages."""
     c = response_message(

@@ -3325,6 +3325,8 @@ response\
 """,
         }
     )
+
+
 async def test_openai_chat_instructions_after_system_prompts(allow_model_requests: None):
     """Test that instructions are inserted after all system prompts in mapped messages."""
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))

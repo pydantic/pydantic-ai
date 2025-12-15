@@ -8065,6 +8065,8 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
+
+
 async def test_anthropic_system_prompts_and_instructions_ordering():
     """Test that instructions are appended after all system prompts in the system prompt string."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
