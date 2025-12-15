@@ -666,7 +666,7 @@ class BedrockConverseModel(Model):
             last_message = cast(dict[str, Any], current_message)
 
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt.insert(0, {'text': instructions})
+            system_prompt.append({'text': instructions})
 
         if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
             system_prompt.append({'cachePoint': {'type': 'default'}})
