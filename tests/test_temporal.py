@@ -63,7 +63,13 @@ try:
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        LogfirePlugin,
+        PydanticAIPlugin,
+        PydanticAIWorkflow,
+        TemporalAgent,
+    )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -2361,3 +2367,53 @@ async def test_beta_graph_parallel_execution_in_workflow(client: Client):
         # Results can be in any order due to parallel execution
         # 10 * 2 = 20, 10 * 3 = 30, 10 * 4 = 40
         assert sorted(output) == [20, 30, 40]
+
+
+@workflow.defn
+class WorkflowWithAgents(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class WorkflowWithAgentsWithoutPydanticAIWorkflow:
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_passing_agents_through_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgents],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgents.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgents.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_passing_agents_through_workflow_without_pydantic_ai_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgentsWithoutPydanticAIWorkflow],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgentsWithoutPydanticAIWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgentsWithoutPydanticAIWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
