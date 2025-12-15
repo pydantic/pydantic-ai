@@ -1172,6 +1172,8 @@ async def download_item(
     """
     if item.url.startswith('gs://'):
         raise UserError('Downloading from protocol "gs://" is not supported.')
+    elif item.url.startswith('s3://'):
+        raise UserError('Downloading from protocol "s3://" is not supported.')
     elif isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 
