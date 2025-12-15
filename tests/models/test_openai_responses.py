@@ -53,7 +53,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -8538,34 +8538,62 @@ async def test_openai_responses_model_file_search_tool_with_results(allow_model_
             model_settings=OpenAIResponsesModelSettings(openai_include_file_search_results=True),
         )
 
-        messages = result.all_messages()
-        assert len(messages) == 2
-
-        # Check that the response has file search results
-        response = messages[1]
-        assert isinstance(response, ModelResponse)
-
-        # Find the BuiltinToolReturnPart
-        return_parts = [p for p in response.parts if isinstance(p, BuiltinToolReturnPart)]
-        assert len(return_parts) == 1
-
-        return_part = return_parts[0]
-        assert return_part.tool_name == 'file_search'
-        assert isinstance(return_part.content, dict)
-        content = cast(dict[str, Any], return_part.content)  # pyright: ignore[reportUnknownMemberType]
-        assert content.get('status') == 'completed'
-
-        # When openai_include_file_search_results is True, results should be included
-        assert 'results' in content, (
-            'Expected file search results to be included when openai_include_file_search_results=True'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['What is the capital of France?']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={
+                                'status': 'completed',
+                                'results': [
+                                    {
+                                        'attributes': {},
+                                        'file_id': IsStr(),
+                                        'filename': IsStr(),
+                                        'score': IsFloat(),
+                                        'text': 'Paris is the capital of France. It is known for the Eiffel Tower.',
+                                        'vector_store_id': IsStr(),
+                                    }
+                                ],
+                            },
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content=IsStr(),
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt(), details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
         )
-        results = cast(list[dict[str, Any]], content['results'])
-        assert isinstance(results, list)
-        assert len(results) > 0
-
-        # Verify the result structure contains expected fields
-        first_result = results[0]
-        assert 'text' in first_result or 'filename' in first_result or 'file_id' in first_result
 
     finally:
         os.unlink(test_file_path)
