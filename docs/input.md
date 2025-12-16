@@ -108,15 +108,15 @@ When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic 
 
 Support for file URLs varies depending on type and provider:
 
-| Model | Supported URL types | Sends URL directly |
-|-------|---------------------|-------------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | `ImageUrl` only |
-| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | Yes |
-| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` | Yes, except `DocumentUrl` (`text/plain`) |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | Yes |
-| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | All URL types | [YouTube](models/google.md#document-image-audio-and-video-input) and [Files API](https://ai.google.dev/gemini-api/docs/files) URLs only |
-| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | Yes |
-| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | S3 URLs (`s3://`) only |
+| Model | Send URL directly | Download and send bytes | Unsupported |
+|-------|-------------------|-------------------------|-------------|
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl` |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | — | — |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](https://ai.google.dev/gemini-api/docs/files) | All other URLs | — |
+| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl` |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 
 A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
