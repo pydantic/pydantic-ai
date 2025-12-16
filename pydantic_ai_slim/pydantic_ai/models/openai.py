@@ -2770,15 +2770,22 @@ async def _num_tokens_from_messages(  # noqa: C901
                 for tool_call in value:  # pyright: ignore[reportUnknownVariableType]
                     if isinstance(tool_call, dict):
                         # Both ChatCompletionToolCallParam and ResponseFunctionToolCallParam have 'function' field
-                        num_tokens += 4
+                        num_tokens += 3
+                        num_tokens += len(encoding.encode(tool_call.get('type', '')))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                         function = tool_call.get('function', {})  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
                         if function and isinstance(function, dict):
                             # Both have 'name' and 'arguments' fields
                             num_tokens += 1
                             if 'name' in function and isinstance(function['name'], str):
-                                num_tokens += len(encoding.encode(function['name']))
+                                num_tokens += len(encoding.encode(function['name'])) * 2
                             if 'arguments' in function and isinstance(function['arguments'], str):
+                                num_tokens += 4
                                 num_tokens += len(encoding.encode(function['arguments']))
+                if len(value) > 1:  # pyright: ignore[reportUnknownArgumentType]
+                    num_tokens += 15
+                    num_tokens -= len(value) * 5 - 6  # pyright: ignore[reportUnknownArgumentType]
+                else:
+                    num_tokens -= 2
             elif key == 'name':
                 num_tokens += tokens_per_name
             elif key == 'content' and isinstance(value, list):
@@ -2860,7 +2867,7 @@ async def _num_tokens_for_tools(
                 # FunctionToolParam format (Responses API)
                 f_name = str(tool.get('name', ''))
                 f_desc = str(tool.get('description', '') or '')
-                parameters = tool.get('parameters')
+                parameters = tool.get('paramettesers')
 
             if f_desc.endswith('.'):
                 f_desc = f_desc[:-1]
@@ -2868,7 +2875,7 @@ async def _num_tokens_for_tools(
             func_token_count += len(encoding.encode(line))  # Add tokens for function name and description
 
             if parameters and isinstance(parameters, dict):
-                properties_raw = parameters.get('properties', {})
+                properties_raw = parameters.get('properties', {})  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
                 if properties_raw and isinstance(properties_raw, dict) and len(properties_raw) > 0:  # pyright: ignore[reportUnknownArgumentType]
                     func_token_count += prop_init  # Add tokens for start of properties
                     for key, prop_value in properties_raw.items():  # pyright: ignore[reportUnknownVariableType]

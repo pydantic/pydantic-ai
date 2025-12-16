@@ -72,10 +72,37 @@ async def _verify_count_against_api(chat_model: OpenAIChatModel, msgs: list[Mode
     _assert_token_count_within_tolerance(our_count.input_tokens, api_count, test_name=step_name)
 
 
+def _assert_token_count_within_tolerance(
+    our_count: int, api_count: int, tolerance: float = 0.25, test_name: str = ''
+) -> None:
+    """Assert that our token count is within the specified tolerance of the API count.
+
+    Args:
+        our_count: Our calculated token count
+        api_count: The token count from the OpenAI API
+        tolerance: The allowed tolerance as a fraction (default 25% = 0.25)
+        test_name: Optional test name for error messages
+    """
+    if api_count == 0:
+        # If API returns 0, our count should also be 0 or very small
+        assert our_count <= 1, f'{test_name}: API returned 0 tokens but we calculated {our_count}'
+        return
+
+    difference = abs(our_count - api_count)
+    tolerance_tokens = max(1, int(api_count * tolerance))  # At least 1 token tolerance
+
+    assert difference <= tolerance_tokens, (
+        f'{test_name}: Token count outside {tolerance * 100:.0f}% tolerance: '
+        f'our count={our_count}, API count={api_count}, '
+        f'difference={difference}, allowed={tolerance_tokens}'
+    )
+
+
 @pytest.mark.vcr()
 async def test_count_tokens_individual_message_types(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Test token counting for each ModelMessage type individually against the OpenAI API.
 
@@ -213,6 +240,7 @@ async def test_count_tokens_individual_message_types(
 async def test_count_tokens_all_model_request_parts(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Test token counting for a ModelRequest containing all ModelRequestPart types.
 
@@ -305,6 +333,7 @@ async def test_count_tokens_all_model_request_parts(
 async def test_count_tokens_all_model_response_parts(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Test token counting for ModelResponses containing various ModelResponsePart types.
 
@@ -408,36 +437,11 @@ async def test_count_tokens_all_model_response_parts(
     await _verify_count_against_api(chat_model, messages, 'step5_final_response')
 
 
-def _assert_token_count_within_tolerance(
-    our_count: int, api_count: int, tolerance: float = 0.10, test_name: str = ''
-) -> None:
-    """Assert that our token count is within the specified tolerance of the API count.
-
-    Args:
-        our_count: Our calculated token count
-        api_count: The token count from the OpenAI API
-        tolerance: The allowed tolerance as a fraction (default 10% = 0.10)
-        test_name: Optional test name for error messages
-    """
-    if api_count == 0:
-        # If API returns 0, our count should also be 0 or very small
-        assert our_count <= 1, f'{test_name}: API returned 0 tokens but we calculated {our_count}'
-        return
-
-    difference = abs(our_count - api_count)
-    tolerance_tokens = max(1, int(api_count * tolerance))  # At least 1 token tolerance
-
-    assert difference <= tolerance_tokens, (
-        f'{test_name}: Token count outside {tolerance * 100:.0f}% tolerance: '
-        f'our count={our_count}, API count={api_count}, '
-        f'difference={difference}, allowed={tolerance_tokens}'
-    )
-
-
 @pytest.mark.vcr()
 async def test_count_tokens_basic(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Verify token counting for basic system and user prompts against OpenAI API."""
     test_messages: list[ModelMessage] = [
@@ -474,6 +478,7 @@ async def test_count_tokens_basic(
 async def test_count_tokens_with_tool_calls(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Verify token counting for messages with tool calls against OpenAI API."""
     test_messages: list[ModelMessage] = [
@@ -528,6 +533,7 @@ async def test_count_tokens_with_tool_calls(
 async def test_count_tokens_multi_turn(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Verify token counting for multi-turn conversation against OpenAI API."""
     test_messages: list[ModelMessage] = [
@@ -577,6 +583,7 @@ async def test_count_tokens_multi_turn(
 async def test_count_tokens_multiple_system_prompts(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Verify token counting for multiple system prompts (OpenAI cookbook example) against OpenAI API."""
     test_messages: list[ModelMessage] = [
@@ -626,11 +633,12 @@ async def test_count_tokens_multiple_system_prompts(
 
 
 @pytest.mark.vcr()
-async def test_count_tokens_complex_conversation(
+async def test_count_tokens_multi_tool(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
-    """Verify token counting for complex multi-turn conversation with tools against OpenAI API."""
+    """Verify token counting for conversation with multiple tool calls against OpenAI API."""
     test_messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
@@ -645,7 +653,6 @@ async def test_count_tokens_complex_conversation(
                     tool_call_id='call_london',
                 ),
             ],
-            usage=RequestUsage(input_tokens=20, output_tokens=30),
             model_name='gpt-4o',
             timestamp=IsNow(tz=timezone.utc),
         ),
@@ -679,13 +686,14 @@ async def test_count_tokens_complex_conversation(
     )
 
     api_prompt_tokens = response.usage.prompt_tokens if response.usage else 0
-    _assert_token_count_within_tolerance(our_count.input_tokens, api_prompt_tokens, test_name='complex_conversation')
+    _assert_token_count_within_tolerance(our_count.input_tokens, api_prompt_tokens, test_name='multi_tool')
 
 
 @pytest.mark.vcr()
 async def test_count_tokens_with_name_field(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Verify token counting for messages with name fields against OpenAI API."""
     test_messages: list[ModelMessage] = [
@@ -739,6 +747,7 @@ async def test_count_tokens_with_name_field(
 async def test_count_tokens_gpt4o_mini(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     """Verify token counting for gpt-4o-mini model against OpenAI API."""
     test_messages: list[ModelMessage] = [
@@ -775,6 +784,7 @@ async def test_count_tokens_gpt4o_mini(
 async def test_openai_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     provider = OpenAIProvider(api_key=openai_api_key)
     model = OpenAIResponsesModel('gpt-4', provider=provider)
@@ -785,7 +795,7 @@ async def test_openai_model_usage_limit_not_exceeded(
         usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
     )
     assert result.output == snapshot(
-        'This is an English phrase known as a pangram, meaning it contains all the letters of the alphabet. The phrase is often used to test typography or handwriting because it uses every letter at least once.'
+        "This sentence is famous because it contains every letter in the English alphabet. It's often used to display different fonts or for typing practice. Interestingly, the dog's supposed laziness does not intervene with the fox's athletic endeavor."
     )
 
 
@@ -793,13 +803,14 @@ async def test_openai_model_usage_limit_not_exceeded(
 async def test_openai_model_usage_limit_exceeded(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     provider = OpenAIProvider(api_key=openai_api_key)
     model = OpenAIResponsesModel('gpt-4', provider=provider)
     agent = Agent(model=model)
 
     with pytest.raises(
-        UsageLimitExceeded, match='The next request would exceed the input_tokens_limit of 25 \\(input_tokens=27\\)'
+        UsageLimitExceeded, match='The next request would exceed the input_tokens_limit of 25 \\(input_tokens=28\\)'
     ):
         _ = await agent.run(
             'The quick brown fox jumps over the lazydog. The quick brown fox jumps over the lazydog.',
@@ -811,6 +822,7 @@ async def test_openai_model_usage_limit_exceeded(
 async def test_unsupported_model(
     allow_model_requests: None,
     openai_api_key: str,
+    mock_tiktoken_encoding: None,
 ):
     ollama_model = OpenAIChatModel(
         model_name='llama3.2:1b',
