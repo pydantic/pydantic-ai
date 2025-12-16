@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -797,7 +797,7 @@ class Model(ABC):
 
     @staticmethod
     def _get_instructions(
-        messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
     ) -> str | None:
         """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
