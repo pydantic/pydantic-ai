@@ -665,6 +665,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,
                 'gen_ai.agent.name': agent_name,
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': f'{agent_name} run',
             },
         )

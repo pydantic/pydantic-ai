@@ -102,8 +102,10 @@ async def execute_traced_output_function(
     instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
-    attributes = {
+    attributes: dict[str, Any] = {
         'gen_ai.tool.name': tool_name,
+        'gen_ai.operation.name': 'execute_tool',
+        'gen_ai.tool.type': 'function',
         'logfire.msg': f'running output function: {tool_name}',
     }
     if run_context.tool_call_id:
