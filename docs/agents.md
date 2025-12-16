@@ -1192,7 +1192,6 @@ with capture_run_messages() as messages:  # (2)!
                         tool_name='calc_volume',
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
-                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id='...',

@@ -120,7 +120,8 @@ class PromptTemplates:
     prompted_output_template: str | None = None
     """Template for prompted output schema instructions.
 
-    If `None`, uses the template from `PromptedOutput` if set, otherwise uses the default template.
+    If `None`, uses the template from `PromptedOutput` if set, otherwise the model's
+    profile-specific default template is used.
     Set explicitly to override the template for all prompted outputs.
     """
 

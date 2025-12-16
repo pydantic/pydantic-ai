@@ -390,15 +390,15 @@ async def _prepare_request_parameters(
     output_schema = ctx.deps.output_schema
 
     # Get the prompted output template with precedence:
-    # PromptConfig template > PromptedOutput.template > default
+    # PromptConfig template > PromptedOutput.template > model profile default (handled downstream)
     prompted_output_template: str | None = None
     if isinstance(output_schema, _output.PromptedOutputSchema):
         prompt_config = ctx.deps.prompt_config
         templates = prompt_config.templates if prompt_config else None
         config_template = templates.prompted_output_template if templates else None
-        prompted_output_template = (
-            config_template or output_schema.template or _prompt_config.DEFAULT_PROMPTED_OUTPUT_TEMPLATE
-        )
+        # Only use config_template if explicitly set, otherwise preserve original behavior
+        # and let the model apply its profile-specific default
+        prompted_output_template = config_template or output_schema.template
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
