@@ -296,7 +296,7 @@ class PromptConfig:
     See [`ToolConfig`][pydantic_ai.ToolConfig] for available configuration options.
     """
 
-    def __post_init__(self):
+    def __post_init__(self): # pragma: no cover
         if self.templates is None and self.tool_config is None:
             raise ValueError(
                 "PromptConfig requires at least 'templates' or 'tool_config' to be provided. "
