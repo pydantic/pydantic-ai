@@ -56,9 +56,9 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             original_tool = original_tools[tool_name].tool_def
             parameter_defs = original_tool.parameters_json_schema
 
-            for tool_name, tool_arg in parameter_defs.get('properties', {}).items():
-                tool_arg_description = tool_args[tool_name]
-                tool_arg['description'] = tool_arg_description
+            for param_name, param_schema in parameter_defs.get('properties', {}).items():
+                if param_name in tool_args:
+                    param_schema['description'] = tool_args[param_name]
 
         return original_tools
 
