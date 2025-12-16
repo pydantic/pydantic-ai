@@ -372,6 +372,15 @@ Please fix these validation errors and try again.\
         ]
     )
 
+    # Covering the branch where retry prompt falls to the default template
+    from pydantic_ai.prompt_config import DEFAULT_MODEL_RETRY
+
+    templates = PromptTemplates(final_result_processed='test')  # Only set non-retry template
+    retry_part_for_default = RetryPromptPart(content='error', tool_name='some_tool')
+    result_part = templates.apply_template(retry_part_for_default, None)  # type: ignore[arg-type]
+    assert isinstance(result_part, RetryPromptPart)
+    assert result_part.retry_message == DEFAULT_MODEL_RETRY
+
 
 def test_prompt_config_string_and_override_prompt_config():
     """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
@@ -6868,7 +6877,7 @@ async def test_hitl_tool_approval():
     )
 
     @agent_no_template.tool_plain(requires_approval=True)
-    def protected_delete(path: str) -> str:
+    def protected_delete(path: str) -> str: # pragma: no cover
         return f'File {path!r} deleted'
 
     result_no_template = await agent_no_template.run('Delete file.txt')

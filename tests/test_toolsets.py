@@ -487,7 +487,7 @@ async def test_comprehensive_toolset_composition():
     partial_args_toolset = FunctionToolset[None]()
 
     @partial_args_toolset.tool
-    def calc(x: int, y: int, z: int) -> int:
+    def calc(x: int, y: int, z: int) -> int: # pragma: no cover
         """Calculate sum"""
         return x + y + z
 
