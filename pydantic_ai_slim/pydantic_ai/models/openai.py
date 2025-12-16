@@ -915,9 +915,9 @@ class OpenAIChatModel(Model):
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
         if _has_dict_typed_params(f.parameters_json_schema):
             warnings.warn(
-                f"Tool '{f.name}' has dict-typed parameters that OpenAI's API will silently ignore. "
-                f'Use a Pydantic BaseModel with explicit fields instead of dict types, '
-                f'or switch to a different provider which supports dict types. '
+                f"Tool {f.name!r} has `dict`-typed parameters that OpenAI's API will silently ignore. "
+                f'Use a Pydantic `BaseModel`, `dataclass`, or `TypedDict` with explicit fields instead, '
+                f'or switch to a different provider which supports `dict` types. '
                 f'See: https://github.com/pydantic/pydantic-ai/issues/3654',
                 UserWarning,
                 stacklevel=4,
