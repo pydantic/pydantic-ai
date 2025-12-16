@@ -105,11 +105,11 @@ class ExaSearchTool:
         Returns:
             The search results with text content.
         """
-        response = await self.client.search_and_contents(
+        response = await self.client.search(
             query,
             num_results=self.num_results,
             type=search_type,
-            text=True,
+            contents={'text': True},
         )
 
         results: list[ExaSearchResult] = []
