@@ -106,7 +106,7 @@ print(result.output)
 
 When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will default to sending the URL to the model provider, so the file is downloaded on their side.
 
-Support for file URLs varies depending on type and provider. Pydantic AI handles this as follows:
+Support for file URLs varies depending on type and provider:
 
 | Model | Supported URL types | Sends URL directly |
 |-------|---------------------|-------------------|
