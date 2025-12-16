@@ -8,8 +8,17 @@ import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
-from pydantic_ai.embeddings import Embedder, EmbeddingResult, KnownEmbeddingModelName, infer_embedding_model
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.embeddings import (
+    Embedder,
+    EmbeddingResult,
+    EmbeddingSettings,
+    InstrumentedEmbeddingModel,
+    KnownEmbeddingModelName,
+    TestEmbeddingModel,
+    infer_embedding_model,
+)
+from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsFloat, IsInt, IsList, try_import
@@ -20,6 +29,7 @@ pytestmark = [
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
+    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
@@ -61,6 +71,21 @@ class TestOpenAI:
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'azure'
         assert 'azure.com' in model.base_url
+
+        assert await model.max_input_tokens() is None
+        with pytest.raises(UserError, match='Counting tokens is not supported for non-OpenAI embedding models'):
+            await model.count_tokens('Hello, world!')
+
+    async def test_infer_model_gateway(self):
+        with patch.dict(
+            os.environ,
+            {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},
+        ):
+            model = infer_embedding_model('gateway/openai:text-embedding-3-small')
+        assert isinstance(model, OpenAIEmbeddingModel)
+        assert model.model_name == 'text-embedding-3-small'
+        assert model.system == 'openai'
+        assert 'gateway.pydantic.dev' in model.base_url
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -247,6 +272,7 @@ class TestCohere:
                 provider_response_id='0728b136-9b30-4fb5-bf9a-2c7cf36d51d3',
             )
         )
+        assert result.cost().total_price == snapshot(Decimal('4.8E-7'))
 
     async def test_documents(self, co_api_key: str):
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
@@ -264,6 +290,7 @@ class TestCohere:
                 provider_response_id='199299d7-f43d-45af-903c-347fff81bbe4',
             )
         )
+        assert result.cost().total_price == snapshot(Decimal('2.4E-7'))
 
     async def test_max_input_tokens(self, co_api_key: str):
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
@@ -366,3 +393,113 @@ def test_known_embedding_model_names():  # pragma: lax no cover
         if extra_names:
             errors.append(f'Extra names: {extra_names}')
         raise AssertionError('\n'.join(errors))
+
+
+def test_infer_model_error():
+    with pytest.raises(ValueError, match='You must provide a provider prefix when specifying an embedding model name'):
+        infer_embedding_model('nonexistent')
+
+
+async def test_instrument_all():
+    model = TestEmbeddingModel()
+    embedder = Embedder(model)
+
+    def get_model():
+        return embedder._get_model()  # pyright: ignore[reportPrivateUsage]
+
+    Embedder.instrument_all(False)
+    assert get_model() is model
+
+    Embedder.instrument_all()
+    m = get_model()
+    assert isinstance(m, InstrumentedEmbeddingModel)
+    assert m.wrapped is model
+    assert m.instrumentation_settings.event_mode == InstrumentationSettings().event_mode
+
+    assert m.model_name == model.model_name
+    assert m.system == model.system
+    assert m.base_url == model.base_url
+    assert m.settings == model.settings
+
+    assert (await m.embed('Hello, world!', input_type='query')).embeddings == (
+        await model.embed('Hello, world!', input_type='query')
+    ).embeddings
+    assert await m.max_input_tokens() == await model.max_input_tokens()
+    assert await m.count_tokens('Hello, world!') == await model.count_tokens('Hello, world!')
+
+    options = InstrumentationSettings(version=1, event_mode='logs')
+    Embedder.instrument_all(options)
+    m = get_model()
+    assert isinstance(m, InstrumentedEmbeddingModel)
+    assert m.wrapped is model
+    assert m.instrumentation_settings is options
+
+    Embedder.instrument_all(False)
+    assert get_model() is model
+
+
+def test_override():
+    model = TestEmbeddingModel()
+    embedder = Embedder(model)
+
+    model2 = TestEmbeddingModel()
+
+    with embedder.override(model=model2):
+        assert embedder._get_model() is model2  # pyright: ignore[reportPrivateUsage]
+
+    assert embedder._get_model() is model  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sync():
+    model = TestEmbeddingModel()
+    embedder = Embedder(model)
+
+    result = embedder.embed_query_sync('Hello, world!')
+    assert isinstance(result, EmbeddingResult)
+
+    result = embedder.embed_documents_sync(['hello', 'world'])
+    assert isinstance(result, EmbeddingResult)
+
+    result = embedder.embed_sync('Hello, world!', input_type='query')
+    assert isinstance(result, EmbeddingResult)
+
+    result = embedder.max_input_tokens_sync()
+    assert isinstance(result, int)
+
+    result = embedder.count_tokens_sync('Hello, world!')
+    assert isinstance(result, int)
+
+
+async def test_settings():
+    model_settings: EmbeddingSettings = {'dimensions': 128, 'from_model': True}  # pyright: ignore[reportAssignmentType]
+    model = TestEmbeddingModel(settings=model_settings)
+    assert model.settings == model_settings
+    await Embedder(model).embed_query('Hello, world!')
+    assert model.last_settings == snapshot({'dimensions': 128, 'from_model': True})
+
+    embedder_settings: EmbeddingSettings = {'dimensions': 256, 'from_embedder': True}  # pyright: ignore[reportAssignmentType]
+    embedder = Embedder(model, settings=embedder_settings)
+    await embedder.embed_query('Hello, world!')
+    assert model.last_settings == snapshot({'dimensions': 256, 'from_model': True, 'from_embedder': True})
+
+    embed_settings: EmbeddingSettings = {'dimensions': 512, 'from_embed': True}  # pyright: ignore[reportAssignmentType]
+    await embedder.embed_query('Hello, world!', settings=embed_settings)
+    assert model.last_settings == snapshot(
+        {'dimensions': 512, 'from_model': True, 'from_embedder': True, 'from_embed': True}
+    )
+
+
+def test_result():
+    result = EmbeddingResult(
+        embeddings=[[-1.0], [-0.5], [0.0], [0.5], [1.0]],
+        inputs=['a', 'b', 'c', 'd', 'e'],
+        input_type='document',
+        model_name='test',
+        timestamp=IsDatetime(),
+        provider_name='test',
+    )
+    assert result[0] == result['a'] == snapshot([-1.0])
+    assert result[1] == result['b'] == snapshot([-0.5])
+    assert result[2] == result['c'] == snapshot([0.0])
+    assert result[3] == result['d'] == snapshot([0.5])
+    assert result[4] == result['e'] == snapshot([1.0])

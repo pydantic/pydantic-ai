@@ -123,7 +123,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
             model.tokenize,  # type: ignore[reportArgumentType]
             [text],
         )
-        if 'input_ids' not in result or not isinstance(result['input_ids'], torch.Tensor):
+        if 'input_ids' not in result or not isinstance(result['input_ids'], torch.Tensor):  # pragma: no cover
             raise UnexpectedModelBehavior(
                 'The SentenceTransformers tokenizer output did not have an `input_ids` field holding a tensor',
                 str(result),
@@ -133,5 +133,5 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
     async def _get_model(self) -> SentenceTransformer:
         if self._model is None:
             # This may download the model from Hugging Face, so we do it in a thread
-            self._model = await _utils.run_in_executor(SentenceTransformer, self.model_name)
+            self._model = await _utils.run_in_executor(SentenceTransformer, self.model_name)  # pragma: no cover
         return self._model

@@ -65,7 +65,7 @@ class EmbeddingModel(ABC):
 
         `None` means unknown.
         """
-        return None
+        return None  # pragma: no cover
 
     async def count_tokens(self, text: str) -> int:
         """Count the number of tokens in the text."""

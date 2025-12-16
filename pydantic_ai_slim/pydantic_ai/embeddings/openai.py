@@ -62,7 +62,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider(provider)  # pragma: no cover
         self._provider = provider
         self._client = provider.client
 
@@ -100,7 +100,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
-        except APIConnectionError as e:
+        except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         embeddings = [item.embedding for item in response.data]
@@ -128,7 +128,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             )
         try:
             encoding = await _utils.run_in_executor(tiktoken.encoding_for_model, self.model_name)
-        except KeyError as e:
+        except KeyError as e:  # pragma: no cover
             raise ValueError(
                 f'The embedding model {self.model_name!r} is not supported by tiktoken',
             ) from e

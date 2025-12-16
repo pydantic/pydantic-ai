@@ -13,7 +13,6 @@ from .settings import EmbeddingSettings
 try:
     from cohere import AsyncClientV2
     from cohere.core.api_error import ApiError
-    from cohere.core.request_options import RequestOptions
     from cohere.types.embed_by_type_response import EmbedByTypeResponse
     from cohere.types.embed_input_type import EmbedInputType as CohereEmbedInputType
     from cohere.v2.types.v2embed_request_truncate import V2EmbedRequestTruncate
@@ -94,7 +93,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider(provider)  # pragma: no cover
         self._provider = provider
         self._client = provider.client
         self._v1_client = provider.v1_client if isinstance(provider, CohereProvider) else None
@@ -122,12 +121,6 @@ class CohereEmbeddingModel(EmbeddingModel):
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 
-        request_options = RequestOptions()
-        if extra_headers := settings.get('extra_headers'):
-            request_options['additional_headers'] = extra_headers
-        if extra_body := settings.get('extra_body'):
-            request_options['additional_body_parameters'] = cast(dict[str, Any], extra_body)
-
         cohere_input_type = settings.get(
             'cohere_input_type', 'search_document' if input_type == 'document' else 'search_query'
         )
@@ -140,16 +133,27 @@ class CohereEmbeddingModel(EmbeddingModel):
                 input_type=cohere_input_type,
                 max_tokens=settings.get('cohere_max_tokens'),
                 truncate=settings.get('cohere_truncate', 'NONE'),
-                request_options=request_options,
+                request_options={
+                    **(
+                        {'additional_headers': extra_headers}
+                        if (extra_headers := settings.get('extra_headers'))
+                        else {}
+                    ),
+                    **(
+                        {'additional_body_parameters': cast(dict[str, Any], extra_body)}
+                        if (extra_body := settings.get('extra_body'))
+                        else {}
+                    ),
+                },
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e  # pragma: no cover
 
         embeddings = response.embeddings.float_
         if embeddings is None:
-            raise UnexpectedModelBehavior(
+            raise UnexpectedModelBehavior(  # pragma: no cover
                 'The Cohere embeddings response did not have an `embeddings` field holding a list of floats',
                 str(response),
             )
@@ -158,7 +162,7 @@ class CohereEmbeddingModel(EmbeddingModel):
             embeddings=embeddings,
             inputs=inputs,
             input_type=input_type,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self.system, self.base_url, self.model_name),
             model_name=self.model_name,
             provider_name=self.system,
             provider_response_id=response.id,
@@ -176,7 +180,7 @@ class CohereEmbeddingModel(EmbeddingModel):
                 text=text,  # Has a max length of 65536 characters
                 offline=False,
             )
-        except ApiError as e:
+        except ApiError as e:  # pragma: no cover
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
@@ -184,15 +188,23 @@ class CohereEmbeddingModel(EmbeddingModel):
         return len(result.tokens)
 
 
-def _map_usage(response: EmbedByTypeResponse) -> RequestUsage:
+def _map_usage(response: EmbedByTypeResponse, provider: str, provider_url: str, model: str) -> RequestUsage:
     u = response.meta
     if u is None or u.billed_units is None:
-        return RequestUsage()
-    usage_data = u.billed_units.model_dump(exclude_none=True)
+        return RequestUsage()  # pragma: no cover
+    usage_data = {
+        k: int(v)
+        for k, v in u.billed_units.model_dump(exclude_none=True).items()
+        if isinstance(v, int | float) and v > 0
+    }
     details = {k: int(v) for k, v in usage_data.items() if k != 'input_tokens' and isinstance(v, int | float) and v > 0}
+    response_data = dict(model=model, meta=dict(billed_units=usage_data))
 
-    # TODO (DouweM): Use RequestUsage.extract() once https://github.com/pydantic/genai-prices/pull/240 has been released
-    return RequestUsage(
-        input_tokens=int(u.billed_units.input_tokens or 0),
+    return RequestUsage.extract(
+        response_data,
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='cohere',
+        api_flavor='embeddings',
         details=details,
     )

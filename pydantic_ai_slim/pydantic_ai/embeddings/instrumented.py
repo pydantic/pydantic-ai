@@ -30,7 +30,7 @@ GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 def instrument_embedding_model(model: EmbeddingModel, instrument: InstrumentationSettings | bool) -> EmbeddingModel:
     """Instrument an embedding model with OpenTelemetry/logfire."""
     if instrument and not isinstance(model, InstrumentedEmbeddingModel):
-        if instrument is True:
+        if instrument is True:  # TODO (DouweM): cover branch
             instrument = InstrumentationSettings()
 
         model = InstrumentedEmbeddingModel(model, instrument)
@@ -85,9 +85,9 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         }
 
         if settings:
-            attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
+            attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))  # TODO (DouweM): cover
 
-        if self.instrumentation_settings.include_content:
+        if self.instrumentation_settings.include_content:  # TODO (DouweM): cover branch
             attributes['inputs'] = json.dumps(inputs)
 
         attributes['logfire.json_schema'] = json.dumps(
@@ -127,9 +127,9 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                             'gen_ai.token.type': 'input',
                         }
                         tokens = result.usage.input_tokens or 0
-                        if tokens:
+                        if tokens:  # TODO (DouweM): cover branch
                             self.instrumentation_settings.tokens_histogram.record(tokens, token_attributes)
-                            if price_calculation is not None:
+                            if price_calculation is not None:  # TODO (DouweM): cover branch
                                 self.instrumentation_settings.cost_histogram.record(
                                     float(getattr(price_calculation, 'input_price', 0.0)),
                                     token_attributes,
@@ -139,7 +139,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     record_metrics = _record_metrics
 
                     if not span.is_recording():
-                        return
+                        return  # TODO (DouweM): cover
 
                     attributes_to_set: dict[str, AttributeValue] = {
                         **result.usage.opentelemetry_attributes(),
@@ -148,10 +148,10 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
 
                     try:
                         price_calculation = result.cost()
-                    except LookupError:
+                    except LookupError:  # TODO (DouweM): cover
                         # The cost of this provider/model is unknown, which is common.
                         pass
-                    except Exception as e:
+                    except Exception as e:  # TODO (DouweM): cover
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
@@ -159,19 +159,19 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
                     embeddings = result.embeddings
-                    if embeddings:
+                    if embeddings:  # TODO (DouweM): cover branch
                         attributes_to_set['gen_ai.embeddings.dimension.count'] = len(embeddings[0])
-                        if self.instrumentation_settings.include_content:
+                        if self.instrumentation_settings.include_content:  # TODO (DouweM): cover branch
                             attributes['embeddings'] = json.dumps(embeddings)
 
                     if result.provider_response_id is not None:
-                        attributes_to_set['gen_ai.response.id'] = result.provider_response_id
+                        attributes_to_set['gen_ai.response.id'] = result.provider_response_id  # TODO (DouweM): cover
 
                     span.set_attributes(attributes_to_set)
 
                 yield finish
         finally:
-            if record_metrics:
+            if record_metrics:  # TODO (DouweM): cover branch
                 # Record metrics after the span finishes to avoid duplication.
                 record_metrics()
 
@@ -181,7 +181,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
         }
-        if base_url := model.base_url:
+        if base_url := model.base_url:  # TODO (DouweM): cover branch
             try:
                 parsed = urlparse(base_url)
             except Exception:  # pragma: no cover
@@ -190,12 +190,12 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                 if parsed.hostname:  # pragma: no branch
                     attributes['server.address'] = parsed.hostname
                 if parsed.port:  # pragma: no branch
-                    attributes['server.port'] = parsed.port
+                    attributes['server.port'] = parsed.port  # TODO (DouweM): cover
 
         return attributes
 
     @staticmethod
-    def serialize_any(value: Any) -> str:
+    def serialize_any(value: Any) -> str:  # TODO (DouweM): cover
         try:
             return ANY_ADAPTER.dump_python(value, mode='json')
         except Exception:

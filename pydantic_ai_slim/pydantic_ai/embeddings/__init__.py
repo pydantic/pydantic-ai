@@ -16,6 +16,7 @@ from .base import EmbeddingModel
 from .instrumented import InstrumentedEmbeddingModel, instrument_embedding_model
 from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings, merge_embedding_settings
+from .test import TestEmbeddingModel
 from .wrapper import WrapperEmbeddingModel
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     'WrapperEmbeddingModel',
     'InstrumentedEmbeddingModel',
     'instrument_embedding_model',
+    'TestEmbeddingModel',
 ]
 
 KnownEmbeddingModelName = TypeAliasType(
@@ -100,7 +102,7 @@ def infer_embedding_model(
 
 @dataclass(init=False)
 class Embedder:
-    """TODO: Docstring."""
+    """TODO (DouweM): Docstring."""
 
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry.
@@ -187,6 +189,14 @@ class Embedder:
         settings = merge_embedding_settings(self._settings, settings)
         return await model.embed(inputs, input_type=input_type, settings=settings)
 
+    async def max_input_tokens(self) -> int | None:
+        model = self._get_model()
+        return await model.max_input_tokens()
+
+    async def count_tokens(self, text: str) -> int:
+        model = self._get_model()
+        return await model.count_tokens(text)
+
     def embed_query_sync(
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
@@ -202,16 +212,8 @@ class Embedder:
     ) -> EmbeddingResult:
         return _utils.get_event_loop().run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))
 
-    async def max_input_tokens(self) -> int | None:
-        model = self._get_model()
-        return await model.max_input_tokens()
-
     def max_input_tokens_sync(self) -> int | None:
         return _utils.get_event_loop().run_until_complete(self.max_input_tokens())
-
-    async def count_tokens(self, text: str) -> int:
-        model = self._get_model()
-        return await model.count_tokens(text)
 
     def count_tokens_sync(self, text: str) -> int:
         return _utils.get_event_loop().run_until_complete(self.count_tokens(text))

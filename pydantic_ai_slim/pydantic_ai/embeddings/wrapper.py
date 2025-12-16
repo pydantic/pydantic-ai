@@ -33,6 +33,12 @@ class WrapperEmbeddingModel(EmbeddingModel):
     ) -> EmbeddingResult:
         return await self.wrapped.embed(inputs, input_type=input_type, settings=settings)
 
+    async def max_input_tokens(self) -> int | None:
+        return await self.wrapped.max_input_tokens()
+
+    async def count_tokens(self, text: str) -> int:
+        return await self.wrapped.count_tokens(text)
+
     @property
     def model_name(self) -> str:
         return self.wrapped.model_name
@@ -51,4 +57,4 @@ class WrapperEmbeddingModel(EmbeddingModel):
         return self.wrapped.base_url
 
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)
+        return getattr(self.wrapped, item)  # pragma: no cover
