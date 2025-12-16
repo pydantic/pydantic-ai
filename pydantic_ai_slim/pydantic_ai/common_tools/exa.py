@@ -119,18 +119,16 @@ class ExaSearchTool:
             contents={'text': text_config},
         )
 
-        results: list[ExaSearchResult] = []
-        for result in response.results:
-            results.append(
-                ExaSearchResult(
-                    title=result.title or '',
-                    url=result.url,
-                    published_date=result.published_date,
-                    author=result.author,
-                    text=result.text or '',
-                )
+        return [
+            ExaSearchResult(
+                title=result.title or '',
+                url=result.url,
+                published_date=result.published_date,
+                author=result.author,
+                text=result.text or '',
             )
-        return results
+            for result in response.results
+        ]
 
 
 @dataclass
@@ -165,18 +163,16 @@ class ExaFindSimilarTool:
             contents={'text': True},
         )
 
-        results: list[ExaSearchResult] = []
-        for result in response.results:
-            results.append(
-                ExaSearchResult(
-                    title=result.title or '',
-                    url=result.url,
-                    published_date=result.published_date,
-                    author=result.author,
-                    text=result.text or '',
-                )
+        return [
+            ExaSearchResult(
+                title=result.title or '',
+                url=result.url,
+                published_date=result.published_date,
+                author=result.author,
+                text=result.text or '',
             )
-        return results
+            for result in response.results
+        ]
 
 
 @dataclass
@@ -200,18 +196,16 @@ class ExaGetContentsTool:
         """
         response = await self.client.get_contents(urls, text=True)
 
-        results: list[ExaContentResult] = []
-        for result in response.results:
-            results.append(
-                ExaContentResult(
-                    url=result.url,
-                    title=result.title or '',
-                    text=result.text or '',
-                    author=result.author,
-                    published_date=result.published_date,
-                )
+        return [
+            ExaContentResult(
+                url=result.url,
+                title=result.title or '',
+                text=result.text or '',
+                author=result.author,
+                published_date=result.published_date,
             )
-        return results
+            for result in response.results
+        ]
 
 
 @dataclass
@@ -235,17 +229,16 @@ class ExaAnswerTool:
         """
         response = await self.client.answer(query, text=True)
 
-        citations = []
-        for citation in response.citations:
-            citations.append({
-                'url': citation.url,
-                'title': citation.title or '',
-                'text': citation.text or '',
-            })
-
         return ExaAnswerResult(
             answer=response.answer,
-            citations=citations,
+            citations=[
+                {
+                    'url': citation.url,
+                    'title': citation.title or '',
+                    'text': citation.text or '',
+                }
+                for citation in response.citations
+            ],
         )
 
 
