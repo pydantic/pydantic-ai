@@ -469,9 +469,6 @@ class BedrockConverseModel(Model):
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
-        if model_request_parameters.builtin_tools:
-            raise UserError('Bedrock does not support built-in tools')
-
         # Bedrock supports a set of specific extra parameters
         if model_settings:
             if guardrail_config := model_settings.get('bedrock_guardrail_config', None):

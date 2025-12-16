@@ -12,7 +12,6 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
-from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -229,9 +228,6 @@ class HuggingFaceModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ChatCompletionOutput | AsyncIterable[ChatCompletionStreamOutput]:
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
-
-        if model_request_parameters.builtin_tools:
-            raise UserError('HuggingFace does not support built-in tools')
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
