@@ -217,6 +217,27 @@ result = agent.run_sync(
 print(result.output)
 ```
 
+Files can be uploaded via the [Files API](https://ai.google.dev/gemini-api/docs/files) and passed as URLs:
+
+```py {title="file_upload.py" test="skip"}
+from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
+
+provider = GoogleProvider()
+file = provider.client.files.upload(file='pydantic-ai-logo.png')
+assert file.uri is not None
+
+agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+result = agent.run_sync(
+    [
+        'What company is this logo from?',
+        DocumentUrl(url=file.uri, media_type=file.mime_type),
+    ]
+)
+print(result.output)
+```
+
 See the [input documentation](../input.md) for more details and examples.
 
 ## Model settings
