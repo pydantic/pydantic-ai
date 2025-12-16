@@ -92,7 +92,7 @@ class ExaSearchTool:
     async def __call__(
         self,
         query: str,
-        search_type: Literal['auto', 'keyword', 'neural'] = 'auto',
+        search_type: Literal['auto', 'keyword', 'neural', 'fast', 'deep'] = 'auto',
     ) -> list[ExaSearchResult]:
         """Searches Exa for the given query and returns the results with content.
 
@@ -100,7 +100,8 @@ class ExaSearchTool:
             query: The search query to execute with Exa.
             search_type: The type of search to perform. 'auto' automatically chooses
                 the best search type, 'keyword' for exact matches, 'neural' for
-                semantic search.
+                semantic search, 'fast' for speed-optimized search, 'deep' for
+                comprehensive multi-query search.
 
         Returns:
             The search results with text content.
