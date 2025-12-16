@@ -767,17 +767,33 @@ class UserPromptPart:
                     _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
-                parts.append(
-                    _otel_messages.MediaUrlPart(
-                        type=part.kind,
-                        **{'url': part.url} if settings.include_content else {},
-                    )
-                )
+                # Map file URL kinds to modality values
+                modality_map = {
+                    'image-url': 'image',
+                    'audio-url': 'audio',
+                    'document-url': 'document',
+                    'video-url': 'video',
+                }
+                uri_part = _otel_messages.UriPart(type='uri', modality=modality_map.get(part.kind, 'unknown'))
+                if settings.include_content:
+                    uri_part['uri'] = part.url
+                parts.append(uri_part)
             elif isinstance(part, BinaryContent):
-                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
+                # Map media type prefix to modality
+                if part.is_image:
+                    modality = 'image'
+                elif part.is_audio:
+                    modality = 'audio'
+                elif part.is_video:
+                    modality = 'video'
+                elif part.is_document:
+                    modality = 'document'
+                else:
+                    modality = part.media_type
+                blob_part = _otel_messages.BlobPart(type='blob', modality=modality)
                 if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = base64.b64encode(part.data).decode()
-                parts.append(converted_part)
+                    blob_part['blob'] = base64.b64encode(part.data).decode()
+                parts.append(blob_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
@@ -1421,43 +1437,19 @@ class ModelResponse:
                     )
                 )
             elif isinstance(part, ThinkingPart):
+                # Per semantic conventions, thinking/reasoning uses 'reasoning' type
                 parts.append(
-                    _otel_messages.ThinkingPart(
-                        type='thinking',
+                    _otel_messages.ReasoningPart(
+                        type='reasoning',
                         **({'content': part.content} if settings.include_content else {}),
                     )
                 )
             elif isinstance(part, FilePart):
-                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
-                if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = base64.b64encode(part.content.data).decode()
-                parts.append(converted_part)
+                parts.append(_file_part_to_otel(part.content, settings))
             elif isinstance(part, BaseToolCallPart):
-                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
-                if isinstance(part, BuiltinToolCallPart):
-                    call_part['builtin'] = True
-                if settings.include_content and part.args is not None:
-                    from .models.instrumented import InstrumentedModel
-
-                    if isinstance(part.args, str):
-                        call_part['arguments'] = part.args
-                    else:
-                        call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
-
-                parts.append(call_part)
+                parts.append(_tool_call_to_otel(part, settings))
             elif isinstance(part, BuiltinToolReturnPart):
-                return_part = _otel_messages.ToolCallResponsePart(
-                    type='tool_call_response',
-                    id=part.tool_call_id,
-                    name=part.tool_name,
-                    builtin=True,
-                )
-                if settings.include_content and part.content is not None:  # pragma: no branch
-                    from .models.instrumented import InstrumentedModel
-
-                    return_part['result'] = InstrumentedModel.serialize_any(part.content)
-
-                parts.append(return_part)
+                parts.append(_builtin_tool_return_to_otel(part, settings))
         return parts
 
     @property
@@ -1476,6 +1468,57 @@ class ModelResponse:
         return self.provider_response_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _file_part_to_otel(bc: BinaryContent, settings: InstrumentationSettings) -> _otel_messages.BlobPart:
+    """Convert a FilePart's BinaryContent to an otel BlobPart."""
+    if bc.is_image:
+        modality = 'image'
+    elif bc.is_audio:
+        modality = 'audio'
+    elif bc.is_video:
+        modality = 'video'
+    elif bc.is_document:
+        modality = 'document'
+    else:
+        modality = bc.media_type
+    blob_part = _otel_messages.BlobPart(type='blob', modality=modality)
+    if settings.include_content and settings.include_binary_content:
+        blob_part['blob'] = base64.b64encode(bc.data).decode()
+    return blob_part
+
+
+def _tool_call_to_otel(part: BaseToolCallPart, settings: InstrumentationSettings) -> _otel_messages.ToolCallPart:
+    """Convert a BaseToolCallPart to an otel ToolCallPart."""
+    call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+    if settings.include_content and part.args is not None:
+        from .models.instrumented import InstrumentedModel
+
+        if isinstance(part.args, str):
+            call_part['arguments'] = part.args
+        else:
+            call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
+
+    if isinstance(part, BuiltinToolCallPart):
+        call_part['builtin'] = True
+    return call_part
+
+
+def _builtin_tool_return_to_otel(
+    part: BuiltinToolReturnPart, settings: InstrumentationSettings
+) -> _otel_messages.ToolCallResponsePart:
+    """Convert a BuiltinToolReturnPart to an otel ToolCallResponsePart."""
+    return_part = _otel_messages.ToolCallResponsePart(
+        type='tool_call_response',
+        id=part.tool_call_id,
+        name=part.tool_name,
+        builtin=True,
+    )
+    if settings.include_content and part.content is not None:  # pragma: no branch
+        from .models.instrumented import InstrumentedModel
+
+        return_part['result'] = InstrumentedModel.serialize_any(part.content)
+    return return_part
 
 
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
