@@ -55,7 +55,6 @@ This folder is used to store the prompt history and configuration.
 
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
-# CLI-supported tool IDs (excludes deprecated and config-requiring tools)
 SUPPORTED_CLI_TOOL_IDS = sorted(
     bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint.kind not in TOOL_KINDS_THAT_REQUIRE_CONFIG
 )
