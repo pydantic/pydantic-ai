@@ -89,6 +89,9 @@ class ExaSearchTool:
     num_results: int
     """The number of results to return."""
 
+    max_characters: int | None
+    """Maximum characters of text content per result, or None for no limit."""
+
     async def __call__(
         self,
         query: str,
@@ -106,11 +109,14 @@ class ExaSearchTool:
         Returns:
             The search results with text content.
         """
+        text_config: bool | dict[str, int] = (
+            {'maxCharacters': self.max_characters} if self.max_characters else True
+        )
         response = await self.client.search(
             query,
             num_results=self.num_results,
             type=search_type,
-            contents={'text': True},
+            contents={'text': text_config},
         )
 
         results: list[ExaSearchResult] = []
@@ -243,7 +249,7 @@ class ExaAnswerTool:
         )
 
 
-def exa_search_tool(api_key: str, num_results: int = 5):
+def exa_search_tool(api_key: str, num_results: int = 5, max_characters: int | None = None):
     """Creates an Exa search tool.
 
     Args:
@@ -251,9 +257,15 @@ def exa_search_tool(api_key: str, num_results: int = 5):
 
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
         num_results: The number of results to return. Defaults to 5.
+        max_characters: Maximum characters of text content per result. Use this to limit
+            token usage. Defaults to None (no limit).
     """
     return Tool[Any](
-        ExaSearchTool(client=AsyncExa(api_key=api_key), num_results=num_results).__call__,
+        ExaSearchTool(
+            client=AsyncExa(api_key=api_key),
+            num_results=num_results,
+            max_characters=max_characters,
+        ).__call__,
         name='exa_search',
         description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
     )
