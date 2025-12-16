@@ -607,7 +607,7 @@ class GoogleModel(Model):
             contents = [{'role': 'user', 'parts': [{'text': ''}]}]
 
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.insert(0, {'text': instructions})
+            system_parts.append({'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents

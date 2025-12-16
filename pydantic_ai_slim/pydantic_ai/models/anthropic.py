@@ -885,7 +885,7 @@ class AnthropicModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_parts.insert(0, instructions)
+            system_prompt_parts.append(instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
