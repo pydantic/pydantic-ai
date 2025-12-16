@@ -151,6 +151,13 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
     '3:2': '1536x1024',
 }
 
+_OPENAI_IMAGE_SIZE_VALUES: tuple[Literal['auto', '1024x1024', '1024x1536', '1536x1024'], ...] = (
+    'auto',
+    '1024x1024',
+    '1024x1536',
+    '1536x1024',
+)
+
 
 def _resolve_openai_image_generation_size(
     tool: ImageGenerationTool,
@@ -158,11 +165,15 @@ def _resolve_openai_image_generation_size(
     """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
     aspect_ratio = tool.aspect_ratio
     if aspect_ratio is None:
-        # Only return size if it's an OpenAI-supported value
-        if tool.size in ('auto', '1024x1024', '1024x1536', '1536x1024'):
-            return tool.size
-        # Default to auto if an unsupported size is provided
-        return 'auto'
+        # If size is None, use 'auto' as the default for OpenAI
+        if tool.size is None:
+            return 'auto'
+        if tool.size not in _OPENAI_IMAGE_SIZE_VALUES:
+            raise UserError(
+                f'OpenAI image generation only supports `size` values: {_OPENAI_IMAGE_SIZE_VALUES}. '
+                f'Got: {tool.size!r}. Omit `size` to use the default (auto).'
+            )
+        return tool.size
 
     mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
     if mapped_size is None:
@@ -172,7 +183,8 @@ def _resolve_openai_image_generation_size(
             'Specify one of those values or omit `aspect_ratio`.'
         )
 
-    if tool.size not in ('auto', mapped_size):
+    # When aspect_ratio is set, size must be None, 'auto', or match the mapped size
+    if tool.size not in (None, 'auto', mapped_size):
         raise UserError(
             '`ImageGenerationTool` cannot combine `aspect_ratio` with a conflicting `size` when using OpenAI.'
         )

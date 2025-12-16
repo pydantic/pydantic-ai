@@ -137,6 +137,8 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.NO_IMAGE: 'error',
 }
 
+_GOOGLE_IMAGE_SIZE_VALUES: tuple[Literal['1K', '2K', '4K'], ...] = ('1K', '2K', '4K')
+
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
@@ -366,7 +368,12 @@ class GoogleModel(Model):
                     image_config = ImageConfigDict()
                     if tool.aspect_ratio is not None:
                         image_config['aspect_ratio'] = tool.aspect_ratio
-                    if tool.size in ('1K', '2K', '4K'):
+                    if tool.size is not None:
+                        if tool.size not in _GOOGLE_IMAGE_SIZE_VALUES:
+                            raise UserError(
+                                f'Google image generation only supports `size` values: {_GOOGLE_IMAGE_SIZE_VALUES}. '
+                                f'Got: {tool.size!r}. Omit `size` to use the default (1K).'
+                            )
                         image_config['image_size'] = tool.size
                 else:  # pragma: no cover
                     raise UserError(
