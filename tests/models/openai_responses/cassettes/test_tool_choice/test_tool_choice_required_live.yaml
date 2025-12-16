@@ -1,0 +1,325 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '715'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the temperature in Paris? Use the weather tool and return the temperature as a number.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            response:
+              type: integer
+          required:
+          - response
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4285'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2789'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765242207
+      error: null
+      id: resp_0c300b9f64a943d1006937755f130881a2b0249fccb582d58a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpN3Vhvfy0YhxKwdujtNarPo-sObDX6MajOh8JawgsmvBUo_yzvrc-ypduxn17CXwgbSeK8NYsAydEzw9pT13rfCZTx7K-jR89HdRAjim5DXabRwllFfmycmYKa6Eb-pCdQQr_zDDKbuCBkSOhQU4vGWF4shTjx3cdnAHRdzctSzZNFJDP0DlHSPGXRlhqRU1SkTvUFI-jSmX37HuPj8Hk6EP7eLGEP7WYQv8BSY_ZqRW7HDiGzjNjAVhBYsWHhN11bPi6MgeiGPin9qYHvbx1fZmP87OtSoGUZXYudIevStixR3Mz261pczfvTDSahuul4b6m9bmTeKhuotHCtKTGKZ-Ew1NKu7lpjYNOXTp7nHlhm8o8lAXWzb6tu3hLhqcKeHfV1heoezg-snJ5j13_J5Je2UavIVpeViTmMtDmYcaAgWAOGZOv0k2Lt-tvv_cD6WIY_osIgIA8GuRKn_B-BYVh6bNIOy6spR0GornWWK-zrjiIbzXQ2JSUU9590UznCj76mTogRCdrtveB0rMmgqzomo6uCkCJsISUD4O64_It6XvayMTDpVfIsbCvIxg2ZGcL58R1cnXl9QKbomK_UWy6xLkaBS2Ik-0Ivt31mBU9LU9XFijAMC_rOZspFMcg5tna2AIy5RtXqdVnjU1PRVJoH67C4tzLeUO4xvGfFvIIVP3ep0Xsn9eBny337Hi_1gfIXMBbnqJAHTPGmK31-aELaRv_GQKDCnNu6rQIr0IXrWj3E89Ma1YyE5V8Dlvdj4Vspt2v1AZfqp7dLJcpt7VDMpkSZ3eTMppmD_-AVzHtnn3V57JwKyIDXuZRiSAy3I2l5DDydBUTOrsAGeE9D0qE0ssSixsPsA_W-FTEe-Do3slmDFI1qTRZX-hkW-yDfoaGtoaC0uJ6f_UXro9rJw9TdzEwvr_id6Vncb4gYYkmZVrPykQcQnkM046Ni6vpmlARRuHIRHppHWHd-cb51QsyVo0eO5mpvc_Egj6wT3Hkt-hUtjaRP1ktTFLdovNgdWqHVQ_AYl628wX8xEu__XJVGwCy4X0VW3NhCoyXkw825oUaw0Z59obZUJOHlXZvQc-vkorY6Eem9ADVUh7ORfXigvz5pnMVzwhgIOmgWVuUw3ztEzdkL0-Cbbr_tPmsLpXKtDE9nmet2Cbr4DjnB056mx3A572w9Ocgi241WTHk22OEcDGew4hZsXVwNF0CaD7wKm56nuE7UR87a14o5f5LlahYPBsCgjfVRbXzj7-8VLe9ILgmBC3hrWsvpCvZrSo614KCkE4on5MLoVbJsH4JJXMSF9s3_M_uuBkooiEBAlAQugCaxCpFdq6DXtnlPR_DmgUzG7gVid49i690u8YKZqU4W8ph5evxEx6iURQ7FRJ3zUJD39NpE7p7f2s829oNydLhdnVSjos0Ed202woR6CZYkyvWBAfzUHvfrzQBcYfsVwzIjXAEPiGv6x7lNaVahCwFUvw7BbwoTuzOGPmBT39WaNJ24gjhpmwMu5I2_8X33Hru6JfKku1WY4f9nAAz-OMs7YrQJ9uXOLPFfRODRD8H53LUWeoGSQNL7UoQIibP1xZJHOu1HF6WXPevAzJ4EFd2vzvZjnacfGS6Ue55Y6nSlqXer5PXhvdvkerLLOiafg6epIMhCW94CfTGQhD7tguJkLlWIRCDmU6uBl1SGdykuKkyXNyHtr49355-aggY4K80GdU8dljA42pTh8Wu5SGXCm87I9MtbjeSQi-wRFu14aHH4YRqaxF6H3TZRwic8OXnqMQb1czzZslfOn8TnVUfzIemJb6Cjt2rpzKYmJL1p3P0TxZbe7Do6KXZssdiK714oB3aQSXsCiMWXvY0LkEoINdbZg7UGhsVAwzQ29-lT7lJYVNMy1RrEfU8jsbS8sDGjvqJ0eLCAWqC2fzS
+        id: rs_0c300b9f64a943d1006937755faf1481a2a6f771da45d4873a
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris"}'
+        call_id: call_PPLNFkXKSZBDITYgrg9dIsOJ
+        id: fc_0c300b9f64a943d1006937756186a481a2b72aa5bc5829ae2f
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            response:
+              type: integer
+          required:
+          - response
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 84
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 148
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 232
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '3075'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=kY_QRp3qdLAe2brCi2cHsMQJ2Zv_Snfkly_TRNir7Xc-1765242209-1.0.1.1-wqtJIzrurJEWZLYVXcWbT46QsWarpOUNmIbvrCGeHlnuuJ3RXf27SZIFcGqORVVDw1Z0jDTizgWSSfNHGyU8XVX_Roq_8t_NIVt7Q3gClvc;
+        _cfuvid=aPA0Oc0NPOUeRgFRkIbnohaThCiw1f4qP.yX9UZUNNY-1765242209867-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the temperature in Paris? Use the weather tool and return the temperature as a number.
+        role: user
+      - encrypted_content: gAAAAABpN3Vhvfy0YhxKwdujtNarPo-sObDX6MajOh8JawgsmvBUo_yzvrc-ypduxn17CXwgbSeK8NYsAydEzw9pT13rfCZTx7K-jR89HdRAjim5DXabRwllFfmycmYKa6Eb-pCdQQr_zDDKbuCBkSOhQU4vGWF4shTjx3cdnAHRdzctSzZNFJDP0DlHSPGXRlhqRU1SkTvUFI-jSmX37HuPj8Hk6EP7eLGEP7WYQv8BSY_ZqRW7HDiGzjNjAVhBYsWHhN11bPi6MgeiGPin9qYHvbx1fZmP87OtSoGUZXYudIevStixR3Mz261pczfvTDSahuul4b6m9bmTeKhuotHCtKTGKZ-Ew1NKu7lpjYNOXTp7nHlhm8o8lAXWzb6tu3hLhqcKeHfV1heoezg-snJ5j13_J5Je2UavIVpeViTmMtDmYcaAgWAOGZOv0k2Lt-tvv_cD6WIY_osIgIA8GuRKn_B-BYVh6bNIOy6spR0GornWWK-zrjiIbzXQ2JSUU9590UznCj76mTogRCdrtveB0rMmgqzomo6uCkCJsISUD4O64_It6XvayMTDpVfIsbCvIxg2ZGcL58R1cnXl9QKbomK_UWy6xLkaBS2Ik-0Ivt31mBU9LU9XFijAMC_rOZspFMcg5tna2AIy5RtXqdVnjU1PRVJoH67C4tzLeUO4xvGfFvIIVP3ep0Xsn9eBny337Hi_1gfIXMBbnqJAHTPGmK31-aELaRv_GQKDCnNu6rQIr0IXrWj3E89Ma1YyE5V8Dlvdj4Vspt2v1AZfqp7dLJcpt7VDMpkSZ3eTMppmD_-AVzHtnn3V57JwKyIDXuZRiSAy3I2l5DDydBUTOrsAGeE9D0qE0ssSixsPsA_W-FTEe-Do3slmDFI1qTRZX-hkW-yDfoaGtoaC0uJ6f_UXro9rJw9TdzEwvr_id6Vncb4gYYkmZVrPykQcQnkM046Ni6vpmlARRuHIRHppHWHd-cb51QsyVo0eO5mpvc_Egj6wT3Hkt-hUtjaRP1ktTFLdovNgdWqHVQ_AYl628wX8xEu__XJVGwCy4X0VW3NhCoyXkw825oUaw0Z59obZUJOHlXZvQc-vkorY6Eem9ADVUh7ORfXigvz5pnMVzwhgIOmgWVuUw3ztEzdkL0-Cbbr_tPmsLpXKtDE9nmet2Cbr4DjnB056mx3A572w9Ocgi241WTHk22OEcDGew4hZsXVwNF0CaD7wKm56nuE7UR87a14o5f5LlahYPBsCgjfVRbXzj7-8VLe9ILgmBC3hrWsvpCvZrSo614KCkE4on5MLoVbJsH4JJXMSF9s3_M_uuBkooiEBAlAQugCaxCpFdq6DXtnlPR_DmgUzG7gVid49i690u8YKZqU4W8ph5evxEx6iURQ7FRJ3zUJD39NpE7p7f2s829oNydLhdnVSjos0Ed202woR6CZYkyvWBAfzUHvfrzQBcYfsVwzIjXAEPiGv6x7lNaVahCwFUvw7BbwoTuzOGPmBT39WaNJ24gjhpmwMu5I2_8X33Hru6JfKku1WY4f9nAAz-OMs7YrQJ9uXOLPFfRODRD8H53LUWeoGSQNL7UoQIibP1xZJHOu1HF6WXPevAzJ4EFd2vzvZjnacfGS6Ue55Y6nSlqXer5PXhvdvkerLLOiafg6epIMhCW94CfTGQhD7tguJkLlWIRCDmU6uBl1SGdykuKkyXNyHtr49355-aggY4K80GdU8dljA42pTh8Wu5SGXCm87I9MtbjeSQi-wRFu14aHH4YRqaxF6H3TZRwic8OXnqMQb1czzZslfOn8TnVUfzIemJb6Cjt2rpzKYmJL1p3P0TxZbe7Do6KXZssdiK714oB3aQSXsCiMWXvY0LkEoINdbZg7UGhsVAwzQ29-lT7lJYVNMy1RrEfU8jsbS8sDGjvqJ0eLCAWqC2fzS
+        id: rs_0c300b9f64a943d1006937755faf1481a2a6f771da45d4873a
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris"}'
+        call_id: call_PPLNFkXKSZBDITYgrg9dIsOJ
+        id: fc_0c300b9f64a943d1006937756186a481a2b72aa5bc5829ae2f
+        name: get_weather
+        type: function_call
+      - call_id: call_PPLNFkXKSZBDITYgrg9dIsOJ
+        output: The weather in Paris is sunny and 72°F.
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            response:
+              type: integer
+          required:
+          - response
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4988'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3263'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765242210
+      error: null
+      id: resp_0c300b9f64a943d10069377562137881a299b8ca9f4c12ade9
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpN3VlOgELAMyXuTnt-RjYoo5t6_6WI5HK7oe52kDCSlM6BrPPFTLVm2AjnsCZbb11Ue8X3m274rEdiZPgSWSyMehHbNL167c8hIp7J5SmOCiJuFYSj6jiNtwMz0PrNNTFEzRy5qeYiUxCxhWY2fhHTqLsZUOWG_ODkGyQPsLK10zDTisC0B_Ie-3eFEJ_jeoIj2yoBqMK0mVOiKuHPzECphM29rAN-7JW7dx_Ri85iMuMctETtjcyhCe0CBJUzWcKI5zC_ZYm8jg040A3xfLYNiDYYsyJoGHzQPqh1dG7d0JP6HwGD0BVvuVuj7CYRon-HnQHnymvMMZZsaAMEagIBXTAK04jQKXrpFwt0ZKTT6iRPuZuTvjAKFXvngnB_rLEVhhZjmYeGbeK8jpTdFNo7dKlib2OJbEIPKn9st2XGXvE-9oDf2bFC7T0qTpVVauC0YvhLvQRf51AFCI0WcFIX24OLLDJt992WgN0kLS2LYHPE95-INXN1xODa2JlgpPyesaLb6-V0sc_LR_vP8iTz7pNU-Auzq0L-_M6oH0qRWdrlyFoNOU_9TnkWNhe9619le5eFbVoHAEVNa8iBx6MmV6tMWgeXIAGrZ_wgRPqNy9hmH-VV_CYtVgYsIAJvy_Kj52lViLCst6SvsydeO3nbozX9DBISfRhXSizS-SDOBBMoFGWXw0dcSgXAFhZ_X2Xhi2B8vlNCCBMyJsJ-I7QdbTa9QzJw8n7sVGEpeETByjc2q_OLwAddnt8U2fhfQ4wVOcb1XW3VWCbh854mty479h9td5KC0SxOhzCZrl-M6jux7QNxu3RZ9NN368cTp71O3AyLSfEcx9P9hb4npWWbSdoNyf1xPKmDpycTa15uBGNUXNK2T7Ym3W1ojkPPxL3al4e8-gJwwkIi6gCPtsgiuN8kRiBrEgvgl4PwKwK6koOfSNDKRq1DF8-V5vPzbZG9_YH5aYwmxO_kym80yM2p7xTknv_y9buGlIMH_o98NICGEkSgEsBL1QEOSvw1-edEnUxcTmaffwwp7Ll_sU086wtTamjp0gk_L2BbQpzAkgRGTVUssRdroph2es6v2MpcepxC9pTIvKsXAAeJT2g7zVuxU-4mO8JssfVzi8P2vRZCawcFyHNbWe3Kf3OXK-D4O3jc94G5VvTloNaDhwDRh_-G83TQTBqPVOpyrooy3xWpfpW_hUBaKLSciL7_bre-oDD6hKIhkhxbuxs-teOT7qZaBi0zbCH4JKFgEhQafOt89dPS2IHzjXkXNd0BzzLTixTpTekjWGGMmT6KHfUQde4pFvQcqLdY_qK9PGpcJZDH14JOs0I7udDI4v-4lEIRKdXALugM_kGXdf_Th4_J-jEyuwF8lpHUXS_3mFNGgn_F38-fEa2C38_4h3GmvXcuhA9sNY2M8SiBgiewT_9JpZQ6itA7pSy7LT7k8t7Aitio1r4kQIy0j7XpNy2PWnPZNTw6YUg5FCfAHiiSEHWUx72XCNvBof_RWxDrla1kxSnBU0dyMuiFa-v_8V2Ky0a0j86m80b9NhR_sHgQNnA69ZMdewZCfybNkK2lM1PZ73s8I6-sxZfBdw8xrjHANSIvfgUElJ2YSl0DSb27_ehzsCeZ0qkeE0ugGyHBmDUvsdnFTCnKX8vjSypRGpNAAe5y07JM4mjnnVUTM9mo6nsWVLb07qZx-pJ_26FD24U8BEpx-v8aFvgoDkQy-Qb9TAp3Eu0ziuSsRjMbu7cfQwndhucHfX9fRPrYgerWduw-l5LatMGZtDfjYdniTgzXsGJhf0qG3Q44kbhzx_T848T8WPEfpacoiVTtT-k9FLpV-Nc-XbzBaqKVCtJN_jlVSk9sErz5a7WtsxDVCACAcU2toLqighhTFhDCoEX0wyChgFoi3tbJvT6BUnTzy9stxq8543YwHgL2caQZCDKC_N3IhG8qXU5hR4rpmg7OR5Mq8WNAle51QAXTjrr_YD97a5alKcFo3tO57lM9DslU-CBmH1u2g96_QgToCJmffCbEentSpXj1ijObWU2SElag4JhsEHHYVkNlz8zpwXK9oMwSTDlQTj6PhJj1pGhSf-RcU9Br1sfoNsvMjs3xA5spifOx9Maxw-p-O27rAwMUvZS0MeP1RN7yo1u7Q_hiWWXZ21Jdpm9AX6D5Fu_hTAKzAn5RNT-6Z_LR5W-EUMurLMoCkAOYSM7fGUb200He6c9uCPkDhaAdakjqKkzr6asubMuMK64dKcz9h_zb-ZGAq3aBLxTOZ4Yb0y3dNFIlyArH2E9JwPf4VjKmG15NODiQdRh1hR1D-zvLLtPnabrUn045LB8bklzXpG6UJ3i_wrGWbZfw4FN4Hp6lXyT8NcEWews5Qlz9vTmLJAvyGttglJf21HRmcJdt-qGo2eJxgraFS18-TofuDd26LZoqSZ5o_FbU-EnivFjOCqMWrmlG1fB_SCagdAP3gdxSlpJN0D00LwkaqI7lmm2MR0OfCzPlwxF_mRKCCVzvcL1muQ8017yeMnKz0UnoiC7yLwH5poX9NZ83v9WiLF-jgp9E3fh05kHEFPbsRxOzf84m0TmPhcJWYtFKI4GWReihQUj9Ip29I_1W1K-CkGdN7EfdmB_JxVPjEPB
+        id: rs_0c300b9f64a943d1006937756263ec81a28a62555ad1cc25eb
+        summary: []
+        type: reasoning
+      - arguments: '{"response":72}'
+        call_id: call_B47N6gnjzH09hv03fN4bLcGv
+        id: fc_0c300b9f64a943d100693775650c6c81a2891b32e16cb5e0af
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            response:
+              type: integer
+          required:
+          - response
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 278
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 276
+        output_tokens_details:
+          reasoning_tokens: 256
+        total_tokens: 554
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

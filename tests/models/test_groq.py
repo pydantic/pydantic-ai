@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -98,6 +98,7 @@ class MockGroq:
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     base_url: str = 'https://api.groq.com'
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
     @cached_property
     def chat(self) -> Any:
@@ -116,8 +117,9 @@ class MockGroq:
         return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        self.chat_completion_kwargs.append(kwargs)
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -136,6 +138,13 @@ class MockGroq:
                 response = cast(chat.ChatCompletion, self.completions)
         self.index += 1
         return response
+
+
+def get_mock_chat_completion_kwargs(groq_client: AsyncGroq) -> list[dict[str, Any]]:
+    if isinstance(groq_client, MockGroq):
+        return groq_client.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockGroq instance')
 
 
 def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage | None = None) -> chat.ChatCompletion:
@@ -5649,3 +5658,141 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'tool_choice,expected',
+    [
+        pytest.param('auto', 'auto', id='auto'),
+        pytest.param('required', 'required', id='required'),
+    ],
+)
+async def test_tool_choice_string_values(allow_model_requests: None, tool_choice: str, expected: str) -> None:
+    """Ensure Groq string values are forwarded unchanged."""
+    mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': tool_choice})  # type: ignore
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == expected
+
+
+async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
+    """Single tool choices should use the named tool payload."""
+    mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def tool_a(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': ['tool_a']})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == {'type': 'function', 'function': {'name': 'tool_a'}}
+
+
+async def test_tool_choice_multiple_tools_falls_back_to_required(allow_model_requests: None) -> None:
+    """Multiple specific tools fall back to 'required'."""
+    mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def tool_a(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_b(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match='Groq only supports forcing a single tool'):
+        await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == 'required'
+
+
+async def test_tool_choice_none_with_output_tools(allow_model_requests: None) -> None:
+    """tool_choice='none' still allows output tools to execute."""
+
+    class MyOutput(BaseModel):
+        result: str
+
+    # Tool call response that returns final_result tool
+    tool_call_response = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='call_1',
+                    type='function',
+                    function=chat.chat_completion_message_tool_call.Function(
+                        name='final_result', arguments='{"result": "done"}'
+                    ),
+                )
+            ],
+        )
+    )
+
+    mock_client = MockGroq.create_mock(tool_call_response)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent: Agent[None, MyOutput] = Agent(m, output_type=MyOutput)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
+
+
+async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
+    """When tool_choice='auto' but structured output is required, falls back to 'required'."""
+
+    class MyOutput(BaseModel):
+        result: str
+
+    tool_call_response = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='call_1',
+                    type='function',
+                    function=chat.chat_completion_message_tool_call.Function(
+                        name='final_result', arguments='{"result": "done"}'
+                    ),
+                )
+            ],
+        )
+    )
+
+    mock_client = MockGroq.create_mock(tool_call_response)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent: Agent[None, MyOutput] = Agent(m, output_type=MyOutput)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'auto'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # With structured output (allow_text_output=False), 'auto' becomes 'required'
+    assert kwargs['tool_choice'] == 'required'

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -50,12 +51,15 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
+from ._tool_choice import filter_tools_for_choice, validate_tool_choice
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
+    from groq.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
+    from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -264,14 +268,8 @@ class GroqModel(Model):
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         tools += self._get_builtin_tools(model_request_parameters)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
 
         groq_messages = self._map_messages(messages, model_request_parameters)
 
@@ -376,8 +374,73 @@ class GroqModel(Model):
             _provider_url=self.base_url,
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    def _get_tool_choice(
+        self,
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
+
+        tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
+        tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
+
+        if not tools:
+            return tools, None
+
+        tool_choice: ChatCompletionToolChoiceOptionParam
+
+        if tool_choice_value is None:
+            if not model_request_parameters.allow_text_output:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+
+        elif tool_choice_value == 'auto':
+            if not model_request_parameters.allow_text_output:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+
+        elif tool_choice_value == 'required':
+            tool_choice = 'required'
+
+        elif tool_choice_value == 'none':
+            # We've filtered to only output tools
+            if len(output_tools) == 1:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function',
+                    function={'name': output_tools[0].name},
+                )
+            elif len(output_tools) > 1:
+                warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
+                tool_choice = 'required'
+            elif not model_request_parameters.allow_text_output:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+
+        elif isinstance(tool_choice_value, list):
+            # Specific tool names
+            if len(tool_choice_value) == 1:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function',
+                    function={'name': tool_choice_value[0]},
+                )
+            else:
+                warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
+                tool_choice = 'required'
+
+        else:
+            assert_never(tool_choice_value)
+
+        return tools, tool_choice
 
     def _get_builtin_tools(
         self, model_request_parameters: ModelRequestParameters

@@ -1,0 +1,337 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '634'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is 2+2?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        name: get_weather
+        type: function
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5776'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5832'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765242224
+      error: null
+      id: resp_025d1e83cbbdd6ec0069377570574881a1bcb3008becbedc3e
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpN3V2I4wd1pU3Je-LmnD52VTgnhUqbTePfv5tWBZ-wxk6xubXG6FX2PNObyZjUaviEOZtIrYbeS4Vbi4SqVJ3fzvWr4I32nlIduN5Hdxor8oVWRB_lK6XZMjPBxwAmEYenPusxCdOcX_MYn5H_917B3VpMS3znZjAmbJttAqMUQCOfen2GmM3fWB9N7gZGPViFhJUYsdvjrQf0E82Nx8xX-HhvKFoi0uaEXQzumNjQl-JAp5cjsDFKQinYPxKBV6yAJKW05OSB4IFPDLJiQZrtDyev4m4pXAPAOvya9XCa5N7jIm4PuGHndlDTPNBLALtfCGK5pWnhKyU4yAX3HQ7eIPQegH1_MLunfeic5vwkFYd1Bs61CRzo9dnLK6qYBukI9yX9aEDAzWplmxyT16qajpPZRtlHMsQZjbjNZ0huylT1iR5CbBWq2VxKAA5BU226XUC70G8iMvKLj1ZYYVy0yJOQnxQfIMzksTADhXKAN9dgapJXNtU0HFPOto_weuIJM6alWaMerAiMUIHr3bAdvo2Ce6xyZfnQE0Agddb2i-Lq3_FR9htbWYltfifcxQF0-PbP8i_TYYkGTH0_IuPqy0I5hwWjvdBbgrFG-gYEcbnk71_oP5O_XPn9gKHVitqEIY7pT2meKpnIybHUqUqw61I2kyntDuLg2R7M-jRjqXFr_nq7XSOkHX5nw8zhjPFXPAzHKIxf3U_qfCYsnV-RMzuD6be6fgucgGdodrJ6G6lK1k4IUjMI5Uvn6AdM_ELsQslF8VDsAuDn-RouM26nFY5F1DBsk-DX4Ny2WpWSzXrn3MLo14Q37zlqJ-6i5ZHhd41xRHK5rPAtFA6hrJV4oWYxnWyB6JRgPnBr6wtSMfVV47s3cV9y_P5O-GhcLYT6JwOXbHhdrH9S0isyxJ09aKrCNuTbil0sDc2aXi2gBupd8yD5P2APc0mbjfyyaoWYAtWjdmwkckrPi61tGMp7tndX9_BUdw2-kwCP5Ee2sHRoczV-vs_7aojWRO_xKz78IVGVBEHF-NkYUKm_l-aAMXZxkXFu3vbUT7xbXTZQutImWXbnNpNVP9qLA7uOikkIrmgNJF9E49MDRTuHEd1iXrdSnKDXAX_qJJ7z994t6NceFXTsGYj6nppCl2VJ1jMZ2H8hk12-8Reo7-VvHGnyCSkCWCrCChaMj9OOYEM3syeK3AQiiXs39PAxl6yt-VXZqtKFYd89liRBCzG7eDri47OV3LJcjn040LgZ4UV5MjD2neXuF4CXX49wK5lDKb9eD1wgDK-SCmYuRNO7YLxuL2GRfi5kIMM1Lzq-2p07HOa2laili_TM3hgXMypoEd1cLnbEHVKOI44ihC3koeODZtDKXdRxwFFezCDRIctCWKUJ_h9qxIAoSa39Kg7_hvbbj_BVvLMkWuU3I7kuBcFRcbhMSUkBA8y45MRhSD6Rhuk1SQLhrgCYJiZaAeApiJ7PzCP4Xljbsl_TTmaWQA39oBQyqLoetPAkbMZflrgKhGJtb1PoEx1CQsoFmlNlsYuqK_flDxic1-2I9npUJsvbZ8H0hCYWHnFXoixFpsGSnKITcMJoxcYy5qAsT2v2fq5Q9_4AtDmaipn_BkwSWNQPUvpubRwP1VIJBzoDAvUbdzEN2SN8dsujYxKF60CWYhOYxT_x6ez8astPvW-VrC3d8dwMicRzPgh2fR8DQ13oJbSRSDJFGsEWiZGWGZAGouAdBKq1kZ5MU43W3MhD5V926B3W49RtsfAWnUB4JzJsofeUJmjFUyuuFaXiFWmA6lUMvZASkhp6LAuJrQC5qu4dfb-eaCLASniNZ_QID_oC_AtCEt8Y1MdFCckIhcNCw_usAkjszOoUM3FIO2mBqkLHeWTZZ2tmXZLlIHI2AH1fJdtQzXNaFsWIRfNVRrRtUw42Nkul8bsYFquZPBq1Sv3GKYp2K37D-_SvBZEmyZWcAzGGjrRI-z_I67pcS7UUet7wtKlFCqKPYzPMLDMfWo4nqWybTev--gLUUmKKFAC5bDdEOu5B9y3_exr77zVKKQX9WXtTiYol9MJrOQ0hT0Ci1j6B779lU2jWYp_cquecZD9aP7DUcKXO6B9rvn_tozspuqA8P0xE9GqnpAW2R0z1BI9Ed4HsdqiERm7G5Gm5WhIIVZmo5YzDzwE2PMnk0206IOb1i3cfX2BQ19C77hV8ehQHO1MTxj0-_AlSd_2TsJWglXWk39wyjG9OkPcyFrmY_1XYFXxzhVw63wxpfwCrMvqqMX3BGM7ezIy4UQyWNdpmgzRhCbn6T5Gu6HHptNcOKEyr0v7xgNSPH9v5HYzQIWIL1GkKzY10nH1_YjdnKOIsPlHRKgNdeeanMFn2zUd8XkRmQuTaoDIZPZeoKIxz2CfYhQ7A-e-czZT2LTmOA-Hjk04DAsWPV8gyqqes9NEfzyG9h2Ut7h89Gs4o97ck6na4yleLwcNm2kC4_vKsi1d933Sn2wjeLqGL_E2QK9DhQdaTLTV84gAd8wnZl590uUmWWrBlwXMYlFDq5DlAWOgIMVE2ETekatqqcxLiqpdIIKfj_GFSKCvWLj5JXM7V68c3fILYFHiriwkGikWMSmIYdVD8dAxPQlSgjQ-GWvkJHc46Fs8EMomTjPHXEjGzAANKmi8rpjmlj9zCakzHqb1nM6VTuAnX88QIymk8CPoLvwzX3AxL14D1fj3n3D86EnAvCc0O00R2WnRptF6mnxzAjRyWps8HKFD_ARmK5biv_Pni4Z4TUsNx8WlTInd5PnrdBpPte8Heg40VdGOA06qBUNLWi4xLIQr_zRQfeQKkzYMnFsk3slgVy7_Tp1Uz-yjmUI3ETh6vxlEpPu_TCF5SzHADZP-crn_fW15J2rXEqEI-YU8iDcNqi78n0b0Qh6DByPtU08o1QeKWU0D6oylbgagN6Mm76YU4VHobTzbclZCG4z1_X1-GPnJelGFfrciRjaMaq2OmIEUTWE8ax2jcP-lCDaJcR7z-t_WTxQinZwcBeOiDuSIQi9aVZpJjZjELbLozdsctMEnFHabz2cqbjqGJ1PWFc1hdUPfVRpNCclMt0ymtflvu4UxegrFFAVLN4hT5zLpamqkueUUupzL4f155zxm7qOAhRetNXi2mpjGnIiNCjz3pTKI3-TwxtlYAZzAnkpqBAfpUDARwT4EEr_NkE0Pgiv3IemTBKgbQY-mjDFyBtMq2T5nANW5RnD3CQpTvg0wDkWSLyApRSQvNEknXA8s6q7Rl_w-m0u8irYof5TVuNOeZTLTbuWWUUHYUqAqMfrI8D4VqolJJfr3hAnaifg70sCugRNE6z3YoSGRTgfdpJtkIUaVFLpvsG_8JHsH-MV_eIHyQkoIvfSQopF3DPu7hvTp2BQzQASwQW-j
+        id: rs_025d1e83cbbdd6ec0069377570970081a1a299cfaf76f7316f
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"New York"}'
+        call_id: call_FMq3A2xkTeLWDmukYTZjnaFQ
+        id: fc_025d1e83cbbdd6ec0069377575c16c81a1912fedf2e78eb874
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        name: get_weather
+        type: function
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 72
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 341
+        output_tokens_details:
+          reasoning_tokens: 320
+        total_tokens: 413
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '4472'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=_nqwe_fhs0loJmBXPufpL7J_mBeSMzvyzqSkFRTG8fY-1765242230-1.0.1.1-c5vfua9JNC4mWRa6FUZP16YCC0PQ.PI8TRJQ.dKee3KNIiLEEdbLO6zqeJVP4YXQ0iTeDFFg4n5CQaWE.fgRjdeGJ6qnElsMyl0cK3Sx9PA;
+        _cfuvid=EwOHzRdWJ1FivS6t.wbQwRv4EKDt3V9bJUSTNkLpopc-1765242230190-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is 2+2?
+        role: user
+      - encrypted_content: gAAAAABpN3V2I4wd1pU3Je-LmnD52VTgnhUqbTePfv5tWBZ-wxk6xubXG6FX2PNObyZjUaviEOZtIrYbeS4Vbi4SqVJ3fzvWr4I32nlIduN5Hdxor8oVWRB_lK6XZMjPBxwAmEYenPusxCdOcX_MYn5H_917B3VpMS3znZjAmbJttAqMUQCOfen2GmM3fWB9N7gZGPViFhJUYsdvjrQf0E82Nx8xX-HhvKFoi0uaEXQzumNjQl-JAp5cjsDFKQinYPxKBV6yAJKW05OSB4IFPDLJiQZrtDyev4m4pXAPAOvya9XCa5N7jIm4PuGHndlDTPNBLALtfCGK5pWnhKyU4yAX3HQ7eIPQegH1_MLunfeic5vwkFYd1Bs61CRzo9dnLK6qYBukI9yX9aEDAzWplmxyT16qajpPZRtlHMsQZjbjNZ0huylT1iR5CbBWq2VxKAA5BU226XUC70G8iMvKLj1ZYYVy0yJOQnxQfIMzksTADhXKAN9dgapJXNtU0HFPOto_weuIJM6alWaMerAiMUIHr3bAdvo2Ce6xyZfnQE0Agddb2i-Lq3_FR9htbWYltfifcxQF0-PbP8i_TYYkGTH0_IuPqy0I5hwWjvdBbgrFG-gYEcbnk71_oP5O_XPn9gKHVitqEIY7pT2meKpnIybHUqUqw61I2kyntDuLg2R7M-jRjqXFr_nq7XSOkHX5nw8zhjPFXPAzHKIxf3U_qfCYsnV-RMzuD6be6fgucgGdodrJ6G6lK1k4IUjMI5Uvn6AdM_ELsQslF8VDsAuDn-RouM26nFY5F1DBsk-DX4Ny2WpWSzXrn3MLo14Q37zlqJ-6i5ZHhd41xRHK5rPAtFA6hrJV4oWYxnWyB6JRgPnBr6wtSMfVV47s3cV9y_P5O-GhcLYT6JwOXbHhdrH9S0isyxJ09aKrCNuTbil0sDc2aXi2gBupd8yD5P2APc0mbjfyyaoWYAtWjdmwkckrPi61tGMp7tndX9_BUdw2-kwCP5Ee2sHRoczV-vs_7aojWRO_xKz78IVGVBEHF-NkYUKm_l-aAMXZxkXFu3vbUT7xbXTZQutImWXbnNpNVP9qLA7uOikkIrmgNJF9E49MDRTuHEd1iXrdSnKDXAX_qJJ7z994t6NceFXTsGYj6nppCl2VJ1jMZ2H8hk12-8Reo7-VvHGnyCSkCWCrCChaMj9OOYEM3syeK3AQiiXs39PAxl6yt-VXZqtKFYd89liRBCzG7eDri47OV3LJcjn040LgZ4UV5MjD2neXuF4CXX49wK5lDKb9eD1wgDK-SCmYuRNO7YLxuL2GRfi5kIMM1Lzq-2p07HOa2laili_TM3hgXMypoEd1cLnbEHVKOI44ihC3koeODZtDKXdRxwFFezCDRIctCWKUJ_h9qxIAoSa39Kg7_hvbbj_BVvLMkWuU3I7kuBcFRcbhMSUkBA8y45MRhSD6Rhuk1SQLhrgCYJiZaAeApiJ7PzCP4Xljbsl_TTmaWQA39oBQyqLoetPAkbMZflrgKhGJtb1PoEx1CQsoFmlNlsYuqK_flDxic1-2I9npUJsvbZ8H0hCYWHnFXoixFpsGSnKITcMJoxcYy5qAsT2v2fq5Q9_4AtDmaipn_BkwSWNQPUvpubRwP1VIJBzoDAvUbdzEN2SN8dsujYxKF60CWYhOYxT_x6ez8astPvW-VrC3d8dwMicRzPgh2fR8DQ13oJbSRSDJFGsEWiZGWGZAGouAdBKq1kZ5MU43W3MhD5V926B3W49RtsfAWnUB4JzJsofeUJmjFUyuuFaXiFWmA6lUMvZASkhp6LAuJrQC5qu4dfb-eaCLASniNZ_QID_oC_AtCEt8Y1MdFCckIhcNCw_usAkjszOoUM3FIO2mBqkLHeWTZZ2tmXZLlIHI2AH1fJdtQzXNaFsWIRfNVRrRtUw42Nkul8bsYFquZPBq1Sv3GKYp2K37D-_SvBZEmyZWcAzGGjrRI-z_I67pcS7UUet7wtKlFCqKPYzPMLDMfWo4nqWybTev--gLUUmKKFAC5bDdEOu5B9y3_exr77zVKKQX9WXtTiYol9MJrOQ0hT0Ci1j6B779lU2jWYp_cquecZD9aP7DUcKXO6B9rvn_tozspuqA8P0xE9GqnpAW2R0z1BI9Ed4HsdqiERm7G5Gm5WhIIVZmo5YzDzwE2PMnk0206IOb1i3cfX2BQ19C77hV8ehQHO1MTxj0-_AlSd_2TsJWglXWk39wyjG9OkPcyFrmY_1XYFXxzhVw63wxpfwCrMvqqMX3BGM7ezIy4UQyWNdpmgzRhCbn6T5Gu6HHptNcOKEyr0v7xgNSPH9v5HYzQIWIL1GkKzY10nH1_YjdnKOIsPlHRKgNdeeanMFn2zUd8XkRmQuTaoDIZPZeoKIxz2CfYhQ7A-e-czZT2LTmOA-Hjk04DAsWPV8gyqqes9NEfzyG9h2Ut7h89Gs4o97ck6na4yleLwcNm2kC4_vKsi1d933Sn2wjeLqGL_E2QK9DhQdaTLTV84gAd8wnZl590uUmWWrBlwXMYlFDq5DlAWOgIMVE2ETekatqqcxLiqpdIIKfj_GFSKCvWLj5JXM7V68c3fILYFHiriwkGikWMSmIYdVD8dAxPQlSgjQ-GWvkJHc46Fs8EMomTjPHXEjGzAANKmi8rpjmlj9zCakzHqb1nM6VTuAnX88QIymk8CPoLvwzX3AxL14D1fj3n3D86EnAvCc0O00R2WnRptF6mnxzAjRyWps8HKFD_ARmK5biv_Pni4Z4TUsNx8WlTInd5PnrdBpPte8Heg40VdGOA06qBUNLWi4xLIQr_zRQfeQKkzYMnFsk3slgVy7_Tp1Uz-yjmUI3ETh6vxlEpPu_TCF5SzHADZP-crn_fW15J2rXEqEI-YU8iDcNqi78n0b0Qh6DByPtU08o1QeKWU0D6oylbgagN6Mm76YU4VHobTzbclZCG4z1_X1-GPnJelGFfrciRjaMaq2OmIEUTWE8ax2jcP-lCDaJcR7z-t_WTxQinZwcBeOiDuSIQi9aVZpJjZjELbLozdsctMEnFHabz2cqbjqGJ1PWFc1hdUPfVRpNCclMt0ymtflvu4UxegrFFAVLN4hT5zLpamqkueUUupzL4f155zxm7qOAhRetNXi2mpjGnIiNCjz3pTKI3-TwxtlYAZzAnkpqBAfpUDARwT4EEr_NkE0Pgiv3IemTBKgbQY-mjDFyBtMq2T5nANW5RnD3CQpTvg0wDkWSLyApRSQvNEknXA8s6q7Rl_w-m0u8irYof5TVuNOeZTLTbuWWUUHYUqAqMfrI8D4VqolJJfr3hAnaifg70sCugRNE6z3YoSGRTgfdpJtkIUaVFLpvsG_8JHsH-MV_eIHyQkoIvfSQopF3DPu7hvTp2BQzQASwQW-j
+        id: rs_025d1e83cbbdd6ec0069377570970081a1a299cfaf76f7316f
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"New York"}'
+        call_id: call_FMq3A2xkTeLWDmukYTZjnaFQ
+        id: fc_025d1e83cbbdd6ec0069377575c16c81a1912fedf2e78eb874
+        name: get_weather
+        type: function_call
+      - call_id: call_FMq3A2xkTeLWDmukYTZjnaFQ
+        output: The weather in New York is sunny and 72°F.
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        name: get_weather
+        type: function
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5013'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2674'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765242230
+      error: null
+      id: resp_025d1e83cbbdd6ec0069377576e48881a1bae0a909378538dc
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpN3V5emoz3SE162s8QpEGWJXJ8lyjBgDeLXFDNNvRACshBPGZVa3FOQpOR4NZ-qT8Ym3Nd-kr66p7-ulp82JVJ0hRJFSfeASUFW6fGb-j4-XoXwNP0IAo_tIFHBjOdX49z5kfjJJsHxjcCe3v8djlL_gA_kCEvhOQymP5W8AKjMm18dBbDQy5Os-goCzGPELGE-z4HJrqJExlujiDWIBbf1mXPsloJPO9Z9xEvFHhqKZS49Lo7cRyhF2UGy8MGLi29LM6i9LDot0Q54NbRjso3YagjEubR86-VAXa0KzqAegQaBSuT0415Vdhv0AjUWouBhngyV9X1ECa09Q0tb4_VhEZ_XQe1CEsJJnnGjJ1iXSS-3E4ZL0V2IV3BrnP9GYjuWTPJR-9MIXk8HQbAquytIkDN5DNHIygjPEfI9wuq2lfpxLCmRVrlsBCb88-QPoeq6l1_9hZhrEAsnIjzrj9qXCetcQPtbAaefaMJVQwcVgqkTNa8aRrNz6OS51hzRHweivOh2ZN5xfKc3VPcQwFBxmIj8D3f4STkE4FYzJPWx6m0JgdGPvh3mX91p2V77pDQt2kMcU16axa3ZiJrFL9wZWEPJpkrfy-ShsRfDl5SFInORfJ--ZerUfN-TAs-eyarEz4zqRW2WSVcgKXcWJ0gLgQCl126q4KLGJS-BBXrCY61pewQ5xPhYzEutdY4wkeR10_fmrC6VOTwpSyD2VCwSEXmbU_ANiDR8Nsvsh6d-V2BOet1eWTNAFYGrLX_-TKJNRag2xCNj4jysWS3n5Ns-Ff_zLzflO-PBk8YWnsPBN28ZfHLOKJrNk3smAg1b4cbKQRK5epTIPtTQfUOcGPCD9GnyibTKGkBA4TTC9vSnhTAHKfRvevJKg4h7DJCRhGtoc9RfB9fIoj086363vllNCJdcvdXetw0xsHC9IY5M2rmfNYHqt55aWKIcXa4DCS4RDdCV9rECzETMafpGqM5LyWiS7gf1PKO-Tw2hygFsiR4F3lqIGTsoaR6tLbTOUb6VrF06JnLuDD82YKEROF0q8jOvjLfAzDO8acXTnk9dtWzzFj3Gbx1kwOfSuGvxZG5d_gTob-wBl36jrxT0O2UWHUWW-8HoWASZtu5RYJIgKHzWOHV5dxDwXno-7-oC1nBGkybn2LV3lR8vHI61_oYVU65GfFyLTXtqUJD3RmvHfabrMQDMcivJxOS1dGMNLJTldrSl5nPzLWsJs_sWZ3aWmMRWFpCbZ3ck6na8eODC-Vm9efHeRCZWCuaWLyMCd8SGAu7NGgW5uStNLVNt8fT8xs1ALkvp0zrR6T7KMcQ3TsPBmeqXC38acGtIEVEgwmsdGZRBSsdik0LBAOlPikmkEenPd9Bg4IL6IgPxz4w5zd8tr9hipmElWSKVZb4ZO6pV8mSnXehP_3xM9XzWmu9kX0uyyYV7YvO7BHNsjHgyu8mY2JWwpbtN_8TrKYKPrC-RR26flBNt2SM_WQcKvnXo0h5--3hE5IJ8Hn0R1w0g45lsNWndn23p_rfq8bTMeNeIY3M4y4QToxABeBeob-zeRPQpm0DTwQjudmnmIJFnvKVjY=
+        id: rs_025d1e83cbbdd6ec00693775775ed881a1b6107d6136ef176f
+        summary: []
+        type: reasoning
+      - encrypted_content: gAAAAABpN3V5hM8lgApa0Pe97wsWluHWNkpqm6fuZPAjQaz6aqjDVzDjI2ZIlmD89220_7SWvuVn0f11Sglv0OZqgQLaA1yHHXXfHxssQzgZ6PpxWavjzGTpdniAX1oDO1Nmv3Xw8OlNRvO9EYdgoQZUa1cdo6LIP1LHcPJm4OlL4q6JFQ5y0rEF_l6hVR5DOfbV7w8MXVYIbIYZFlbc-73JWt1CKosbOpXGXWUZkylEFgLX-ldEwnmTZMSBe9rR_KYicZr5lG2Ha8iRVzgyZq_K-5LdkoNCreUIpamDKH5YWfVALKLbTHT7uT5rFuF2lbP6DusINN3kOL_3CsPIwyC6ys49HVEnntqUWn-YysXf3U-BfFxDwR80cxW4RtAa_M9f95c7XaQW7JXKSXLqZOdaNrvfT8bTjOoubokuUaTdHlsnacbC7B400YjjCYdhkZkaxxgLyU4ut72iy-mSu2sUyTMdNrYL1h_txw9N2kgSgK1BheHAQ51VvlZ5zsUeBIUkb03u1jhmSRKhhtZEvuyyRAiOCEUkcZH23UiIhjbCnO2-gQKodVr-9SVLW-uwYUvbsQwZxtI61LMdKvVe9k5PmfmwRrCyu6r3SZRVFbSV-Hbc4Sat_VnVTeQ96O6h1_DWArwl0oAYuvcfTLbsyRBKQqZljh2YG4-idxdIHvDR6w8422lEia6TT-aE8ZdIaco3a_G3v9XbKjGUMSSgksdjR7b_z8Z_DrZO_0yIWeTGLy7hzoa0EYRa3hlSKyuTd-u2ckVMYGtkg6-_NQ6m9T6LI1oG9RSVMHAAthR276KrUw-BM8XAg4gCpdtrg5KCpcBeRwav5KJ985bXfw8CeMH4xsBfj9OIFZUiENugHEYeMSRIofJHmAE=
+        id: rs_025d1e83cbbdd6ec0069377578f58c81a19479691e1f52003c
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"New York"}'
+        call_id: call_6d0Ml7A8HyBCVJEM1erWCIU5
+        id: fc_025d1e83cbbdd6ec0069377579229081a1b6ba86ea6b11f955
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        name: get_weather
+        type: function
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a city.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 489
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 149
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 638
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

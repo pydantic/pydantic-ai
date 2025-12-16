@@ -29,6 +29,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
@@ -55,7 +57,7 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
+    from pydantic_ai.models.mistral import MistralModel, MistralModelSettings, MistralStreamedResponse
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -2386,3 +2388,125 @@ By following these steps, you can ensure a safe crossing.\
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'tool_choice,expected_tool_choice',
+    [
+        pytest.param('auto', 'auto', id='auto'),
+        pytest.param('required', 'required', id='required'),
+    ],
+)
+def test_tool_choice_string_values(tool_choice: str, expected_tool_choice: str) -> None:
+    """Ensure Mistral string values pass through, returning tools and tool_choice."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': tool_choice}  # type: ignore[assignment]
+    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tools is not None
+    assert len(tools) == 1
+    assert tools[0].function.name == 'my_tool'
+    assert result_tool_choice == expected_tool_choice
+
+
+def test_tool_choice_none_filters_to_empty() -> None:
+    """tool_choice='none' filters out function tools, returns None if no output tools."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=True, output_tools=[])
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': 'none'}
+    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tools is None
+    assert result_tool_choice is None
+
+
+def test_tool_choice_specific_tool_filters_to_requested() -> None:
+    """Specific tool choice filters to only the requested tools."""
+    tool_a = ToolDefinition(
+        name='tool_a',
+        description='Test tool A',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    tool_b = ToolDefinition(
+        name='tool_b',
+        description='Test tool B',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[tool_a, tool_b], allow_text_output=True, output_tools=[]
+    )
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': ['tool_a']}
+
+    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tools is not None
+    assert len(tools) == 1
+    assert tools[0].function.name == 'tool_a'
+    assert result_tool_choice == 'required'
+
+
+def test_tool_choice_none_with_output_tools_keeps_output_tools() -> None:
+    """tool_choice='none' filters out function tools but keeps output tools."""
+    func_tool = ToolDefinition(
+        name='func_tool',
+        description='Function tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool = ToolDefinition(
+        name='output_tool',
+        description='Output tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[func_tool], allow_text_output=False, output_tools=[output_tool]
+    )
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': 'none'}
+
+    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tools is not None
+    assert len(tools) == 1
+    assert tools[0].function.name == 'output_tool'
+    assert result_tool_choice == 'required'
+
+
+def test_tool_choice_auto_with_required_output() -> None:
+    """When tool_choice='auto' but output is required, falls back to 'required'."""
+    my_tool = ToolDefinition(
+        name='my_tool',
+        description='Test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    # allow_text_output=False simulates structured output requirement
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
+
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='ok', role='assistant')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    settings: MistralModelSettings = {'tool_choice': 'auto'}
+    tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tools is not None
+    assert len(tools) == 1
+    # With allow_text_output=False, 'auto' becomes 'required'
+    assert result_tool_choice == 'required'

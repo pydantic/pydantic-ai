@@ -42,15 +42,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1720'
+      - '1754'
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1811'
+      - '2123'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -61,9 +61,9 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1761323546
+      created_at: 1765216837
       error: null
-      id: resp_04907f5d3de791830068fbaa19bb908195a91378279dba0f14
+      id: resp_0098e6898ef1de50006937124569a481a3bda8b1b858020932
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -73,14 +73,15 @@ interactions:
       object: response
       output:
       - arguments: '{"country":"PotatoLand"}'
-        call_id: call_YfwRsW8sUxDKipwyhWTzOXCA
-        id: fc_04907f5d3de791830068fbaa1b310c81958dc9c508e878c632
+        call_id: call_kcWh9j9hyUL1tNm1GIKH0nZX
+        id: fc_0098e6898ef1de500069371246676881a38f9192ffdd2416bd
         name: get_capital
         status: completed
         type: function_call
       parallel_tool_calls: true
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null
@@ -131,12 +132,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '579'
+      - '565'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=g29aPgrRIxmp3X5o6PZW9E8aKljsJ3_YKN58sMhqjnI-1761323547-1.0.1.1-Uj.mPGHnvAjpHojYAfG.QReYxHtLCz0jBoPrirBGA48A.LawB_Afgv0C8s0DC2TIU2y6zbyq4bA1moTVcNApxaq4NaLqfKpLe2hQBB_xM.M;
-        _cfuvid=kiKLNQ6S_H_I6dKfHm0bpQwt35G4FrXx6u4P3LxaXIQ-1761323547535-0.0.1.1-604800000
+      - __cf_bm=rNFW2HXvBcwKYFTyo2r9Kn6xEgVWiRCwuofw_Y7MgnU-1765216839-1.0.1.1-EomCcZa_DuoXHdeLvTDDqvgfVjx6EO2ePh26V1z54f6IZVzCT6ZLLWEYSSQKFrCT9k2D5FAoUvaWTDWelXEPtKYJhYzXIg1KrGaW_EL0F14;
+        _cfuvid=xaAIsidmbLe4Yt5wP4pfjvOB.UZq7mRODDOhHtWv1u4-1765216839552-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -145,11 +146,10 @@ interactions:
       - content: What is the capital of PotatoLand?
         role: user
       - arguments: '{"country":"PotatoLand"}'
-        call_id: call_YfwRsW8sUxDKipwyhWTzOXCA
+        call_id: call_kcWh9j9hyUL1tNm1GIKH0nZX
         name: get_capital
-        status: null
         type: function_call
-      - call_id: call_YfwRsW8sUxDKipwyhWTzOXCA
+      - call_id: call_kcWh9j9hyUL1tNm1GIKH0nZX
         output: Potato City
         type: function_call_output
       model: gpt-4o
@@ -176,15 +176,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1810'
+      - '1844'
       content-type:
       - application/json
       openai-organization:
-      - pydantic-28gund
+      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1028'
+      - '2160'
       openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -195,9 +195,9 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1761323547
+      created_at: 1765216840
       error: null
-      id: resp_0e9950da9eac6a780068fbaa1bc030819da585a6f85ddad1e6
+      id: resp_077bb69e040244a30069371248858c8193bad172300ddd4528
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -211,13 +211,14 @@ interactions:
           logprobs: []
           text: The capital of PotatoLand is Potato City.
           type: output_text
-        id: msg_0e9950da9eac6a780068fbaa1c738c819d8bddf998e57232c3
+        id: msg_077bb69e040244a30069371249a1ec819385b08d57120776b8
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_retention: null
       reasoning:
         effort: null
         summary: null

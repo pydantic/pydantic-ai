@@ -47,15 +47,18 @@ from . import (
     StreamedResponse,
     check_allow_model_requests,
 )
+from ._tool_choice import filter_tools_for_choice, validate_tool_choice
 
 try:
     import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
+        ChatCompletionInputFunctionName,
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
         ChatCompletionInputTool,
         ChatCompletionInputToolCall,
+        ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
@@ -225,14 +228,7 @@ class HuggingFaceModel(Model):
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ChatCompletionOutput | AsyncIterable[ChatCompletionStreamOutput]:
-        tools = self._get_tools(model_request_parameters)
-
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
 
         if model_request_parameters.builtin_tools:
             raise UserError('HuggingFace does not support built-in tools')
@@ -326,8 +322,61 @@ class HuggingFaceModel(Model):
             _provider_url=self.base_url,
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    def _get_tool_choice(
+        self,
+        model_settings: HuggingFaceModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[
+        list[ChatCompletionInputTool],
+        Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None,
+    ]:
+        """Get tools and tool choice for the model.
+
+        Returns a tuple of (tools, tool_choice).
+        """
+        tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
+        function_tools = model_request_parameters.function_tools
+        output_tools = model_request_parameters.output_tools
+
+        tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+
+        if not tool_defs_to_send:
+            return [], None
+
+        tools = [self._map_tool_definition(r) for r in tool_defs_to_send]
+        tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
+
+        # Determine tool_choice value
+        if tool_choice_value is None or tool_choice_value == 'auto':
+            # Default behavior: infer from allow_text_output
+            if not model_request_parameters.allow_text_output:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+        elif tool_choice_value == 'required':
+            # Tools have been filtered to only include function tools
+            tool_choice = 'required'
+        elif tool_choice_value == 'none':
+            if len(output_tools) == 1:
+                tool_choice = ChatCompletionInputToolChoiceClass(
+                    function=ChatCompletionInputFunctionName(name=output_tools[0].name)  # pyright: ignore[reportCallIssue]
+                )
+            else:
+                # HuggingFace only supports forcing a single tool; use 'required' to force one of them
+                tool_choice = 'required'
+        elif isinstance(tool_choice_value, list):
+            # Specific tool names
+            if len(tool_choice_value) == 1:
+                tool_choice = ChatCompletionInputToolChoiceClass(
+                    function=ChatCompletionInputFunctionName(name=tool_choice_value[0])  # pyright: ignore[reportCallIssue]
+                )
+            else:
+                # HuggingFace only supports forcing a single tool; tools have been filtered
+                tool_choice = 'required'
+        else:
+            assert_never(tool_choice_value)
+
+        return tools, tool_choice
 
     async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters

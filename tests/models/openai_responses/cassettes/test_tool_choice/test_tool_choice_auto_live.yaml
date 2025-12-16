@@ -1,0 +1,135 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '380'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is 2+2?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3036'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1164'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765242204
+      error: null
+      id: resp_0477a600c0ff0451006937755ca4fc819184301e68defe1284
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpN3VdTLjJI3BztEIXoVDlvXvDxMcqTUwq956B3B1YY9BcTmBcZEVy9j8khotd4LfbKoVxxay_4UoqP0XdImPKWHBp9N3kNxM2DR76Y734cBn-_zsr4L4nObl--qkUBqoGJWxNZ_a79gP3xWvpSSBaDbINgTKhL3hv2E7i6BhG9_a6AyHTcUNyAw70iG5RC12K5MjKe3xi3rs78VmRrZRNKhG1u5JiIRAGVeJ3yatx0fgjsVNeFGCNlUVNf1idCDF9ZLuWIDr4F1jsxSw2Ly18P2XNB6ZMXP-QLHv18V8_p2Wx_sAuM35cSYMPn8dA3B1oBMgc9Sk0IT9278UUDbUFiVOBHPFXGvCBLZEAcCRpYMxJcp5HncIeaPCexfBMGjpAft5jpqqA-uryYF2UckXUgwejykh7ncZenvrjcKb9KduCRZLH7PVOb_PDf3Mj0Fw0ERLD2JjAGVdkiXJK3aq-DzHWf30p_2Z3GSftLDT6Ko91IPTymJIfY-TrDFz1mN3UawAVBEgNg9kaYRmzRt_IEQgHC6WC-vW-MY-qTKiboY-Qs8Qgyv5YLGx1C-tVSj0q3XrU7RFHp2NjA18wRQAQoPq45Zn5Xwty-8ebyltlwpALPeGedtYsG9X4nSF0aGq-mC8gFmjrCEaa6596O8XpabItPBq71gSvujUEZmIB5YAmMq3e2OyWnehhkZv7JFNZ7dY8CSpdB-me6chIageLAbZHXMPDlV9L5nNv_btGKAS5lCk1FBPAA6B8tpT6qZwAPs-0dI3LLRfFsS9vnsaIgO4LnN0dhTC7qsfgX_hl9AX4iIhfh7SA8L70EiuUdQO-6Kj_vHqTu1hpyePXZsG3YjqWsRHfRrUF6RIVeTDMri9EnjlDepEn9rig7Zop9qaQ-_lIlLxIg5hXz-SP1Yx3VnwkIBSS1BSKz3_ZUy0zIekMa-6mnbV3oWlR7cydz5yuzibCzzIfaogUSj-SEIV18LLr1GjLm8oLI53v9gQ_y6e7_HrRZxEju9dNlg7KuluKPvmt
+        id: rs_0477a600c0ff0451006937755d1da4819193e1aa6f057d14f7
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 2 + 2 = 4.
+          type: output_text
+        id: msg_0477a600c0ff0451006937755d87ec81919cf9aaec2742c63a
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 50
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 14
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 64
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

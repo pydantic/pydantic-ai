@@ -1,0 +1,79 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '369'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is 2+2?
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      tool_choice:
+        type: none
+      tools:
+      - description: Get the weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '480'
+      content-type:
+      - application/json
+      retry-after:
+      - '45'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          2 + 2 = 4
+
+          This is a simple arithmetic problem. The sum of 2 and 2 is 4.
+        type: text
+      id: msg_01SXvsFVTX8YH6EuEmvTgEiW
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 571
+        output_tokens: 35
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

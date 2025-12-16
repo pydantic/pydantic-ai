@@ -1419,7 +1419,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_name='get_user_country',
                         args='{}',
                         tool_call_id=IsStr(),
-                        id='fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                        id='fc_04c1bf8ad3be7d27006937124d6218819cad7022b00dd3530b',
                     )
                 ],
                 usage=RequestUsage(input_tokens=62, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1428,7 +1428,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+                provider_response_id='resp_04c1bf8ad3be7d27006937124c0f18819c8e3cfa2c478b5678',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1437,7 +1437,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH',
+                        tool_call_id='call_bzir81UHdS66eGfDbGdkxItT',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1448,17 +1448,17 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
-                        id='fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
+                        tool_call_id='call_pQ58SKRjGbf62NBIIqpX4JB0',
+                        id='fc_032b8ae48d9012e100693712501798819d81203cd609c1e77a',
                     )
                 ],
-                usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=81, output_tokens=20, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
+                provider_response_id='resp_032b8ae48d9012e1006937124ef11c819dbf3ff33c3a91e4ae',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1467,7 +1467,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        tool_call_id='call_pQ58SKRjGbf62NBIIqpX4JB0',
                         timestamp=IsDatetime(),
                     )
                 ],

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
 
@@ -7,8 +9,10 @@ from typing_extensions import TypedDict
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers,
+    Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
+
+    All types must be JSON-serializable.
     """
 
     max_tokens: int
@@ -86,6 +90,34 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    """
+
+    tool_choice: Literal['none', 'required', 'auto'] | list[str] | None
+    """Control which function tools the model can use.
+
+    This setting controls the API's tool_choice parameter. When possible, we send all tools and use
+    API-native features (e.g., OpenAI's `allowed_tools`, Gemini's `allowed_function_names`) to restrict
+    which tools the model can call. This preserves API caching benefits. Filtering tools before sending
+    only happens when the provider doesn't support API-native restrictions.
+
+    Output tools (used for structured output) are managed separately and remain available when needed.
+
+    * `None` (default): All tools sent, tool_choice determined by output configuration
+    * `'auto'`: All tools sent, model decides whether to use them
+    * `'required'`: Only function tools sent (no output tools), model must use one
+    * `'none'`: Only output tools available (function tools disabled)
+    * `list[str]`: Only specified tools available (can include function or output tool names)
+    * `[]` (empty list): Treated as `'none'`
+
+    Supported by:
+
+    * OpenAI (uses `allowed_tools` for multi-tool restrictions)
+    * Anthropic (note: `'required'` and specific tools not supported with thinking/extended thinking)
+    * Gemini (uses `allowed_function_names` for restrictions)
+    * Groq (only supports forcing a single tool; falls back for multi-tool lists)
+    * Mistral (no specific tool support; uses `'required'` for lists)
+    * HuggingFace (only supports forcing a single tool; falls back for multi-tool lists)
+    * Bedrock (only supports forcing a single tool; falls back for multi-tool lists)
     """
 
     seed: int
