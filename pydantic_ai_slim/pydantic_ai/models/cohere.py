@@ -225,6 +225,7 @@ class CohereModel(Model):
             usage=_map_usage(response),
             model_name=self._model_name,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -271,7 +272,8 @@ class CohereModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in cohere_messages if isinstance(m, SystemChatMessageV2))
+            cohere_messages.insert(system_prompt_count, SystemChatMessageV2(role='system', content=instructions))
         return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:

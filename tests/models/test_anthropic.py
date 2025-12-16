@@ -142,7 +142,7 @@ class MockAnthropic:
     stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]] | None = None
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
-    base_url: str | None = None
+    base_url: str = 'https://api.anthropic.com'
 
     @cached_property
     def beta(self) -> AsyncBeta:
@@ -248,6 +248,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -263,6 +264,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1069,6 +1071,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1139,6 +1142,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1167,6 +1171,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1189,6 +1194,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1464,6 +1470,7 @@ async def test_stream_structured(allow_model_requests: None):
                         model_name='claude-3-5-haiku-123',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_url='https://api.anthropic.com',
                         provider_details={'finish_reason': 'end_turn'},
                         provider_response_id='msg_123',
                         finish_reason='stop',
@@ -1555,6 +1562,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
                 finish_reason='tool_call',
@@ -1597,6 +1605,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
                 finish_reason='stop',
@@ -1753,6 +1762,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
                 finish_reason='stop',
@@ -1808,6 +1818,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
                 finish_reason='stop',
@@ -1865,6 +1876,7 @@ I'll keep the format similar to my street-crossing response for consistency.\
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1916,6 +1928,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
                 finish_reason='stop',
@@ -1962,6 +1975,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
                 finish_reason='stop',
@@ -2027,6 +2041,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
                 finish_reason='stop',
@@ -2175,6 +2190,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
@@ -2225,6 +2241,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
                 finish_reason='stop',
@@ -2281,6 +2298,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
                 finish_reason='stop',
@@ -2856,6 +2874,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
                 finish_reason='stop',
@@ -3055,6 +3074,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
                 finish_reason='stop',
@@ -3338,6 +3358,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
                 finish_reason='stop',
@@ -4191,6 +4212,7 @@ Let me fetch the page first.\
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4272,6 +4294,7 @@ Let me fetch the page first.\
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4332,6 +4355,7 @@ It notes that "virtually every Python agent framework and LLM library" uses Pyda
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4433,6 +4457,7 @@ async def test_anthropic_web_fetch_tool_stream(
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5059,6 +5084,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
@@ -5196,6 +5222,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
@@ -5305,6 +5332,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
@@ -5556,6 +5584,7 @@ print(f"3 * 12390 = {result}")\
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwceSoRxi8Pf16Fb7Tn'},
                 provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
@@ -5623,6 +5652,7 @@ print(f"4 * 12390 = {result}")\
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwdXe48NC7LaX3rxQ4d'},
                 provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
@@ -5732,6 +5762,7 @@ Here's how it breaks down following the order of operations:
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
@@ -6252,6 +6283,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
@@ -6372,6 +6404,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
                 finish_reason='tool_call',
@@ -6409,6 +6442,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
                 finish_reason='tool_call',
@@ -6479,6 +6513,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
                 finish_reason='tool_call',
@@ -6514,6 +6549,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
                 finish_reason='stop',
@@ -6570,6 +6606,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
                 finish_reason='tool_call',
@@ -6601,6 +6638,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
                 finish_reason='stop',
@@ -6656,6 +6694,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
                 finish_reason='stop',
@@ -8026,3 +8065,33 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
+
+
+async def test_anthropic_system_prompts_and_instructions_ordering():
+    """Test that instructions are appended after all system prompts in the system prompt string."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+                UserPromptPart(content='Hello'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+
+    # Verify system prompts and instructions are joined in order: system1, system2, instructions
+    assert system_prompt == snapshot("""\
+System prompt 1
+
+System prompt 2
+
+Instructions content\
+""")
+    # Verify user message is in anthropic_messages
+    assert len(anthropic_messages) == 1
+    assert anthropic_messages[0]['role'] == 'user'

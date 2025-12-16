@@ -561,6 +561,7 @@ class AnthropicModel(Model):
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -884,7 +885,7 @@ class AnthropicModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_parts.insert(0, instructions)
+            system_prompt_parts.append(instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
@@ -1297,6 +1298,11 @@ class AnthropicStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

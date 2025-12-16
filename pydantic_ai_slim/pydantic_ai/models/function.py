@@ -211,8 +211,8 @@ class AgentInfo:
     function_tools: list[ToolDefinition]
     """The function tools available on this agent.
 
-    These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
-    [`tool_plain`][pydantic_ai.Agent.tool_plain] decorators.
+    These are the tools registered via the [`tool`][pydantic_ai.agent.Agent.tool] and
+    [`tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorators.
     """
     allow_text_output: bool
     """Whether a plain text output is allowed."""
@@ -345,6 +345,11 @@ class FunctionStreamedResponse(StreamedResponse):
     @property
     def provider_name(self) -> None:
         """Get the provider name."""
+        return None
+
+    @property
+    def provider_url(self) -> None:
+        """Get the provider base URL."""
         return None
 
     @property

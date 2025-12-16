@@ -517,6 +517,7 @@ class GoogleModel(Model):
             candidate.grounding_metadata,
             response.model_version or self._model_name,
             self._provider.name,
+            self._provider.base_url,
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
@@ -597,7 +598,7 @@ class GoogleModel(Model):
             contents = [{'role': 'user', 'parts': [{'text': ''}]}]
 
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.insert(0, {'text': instructions})
+            system_parts.append({'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents
@@ -790,6 +791,11 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -867,6 +873,7 @@ def _process_response_from_parts(
     grounding_metadata: GroundingMetadata | None,
     model_name: GoogleModelName,
     provider_name: str,
+    provider_url: str,
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
@@ -936,6 +943,7 @@ def _process_response_from_parts(
         provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
+        provider_url=provider_url,
         finish_reason=finish_reason,
     )
 

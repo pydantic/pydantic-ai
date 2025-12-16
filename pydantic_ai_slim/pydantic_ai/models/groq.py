@@ -209,6 +209,7 @@ class GroqModel(Model):
                         model_name=e.model_name,
                         timestamp=_utils.now_utc(),
                         provider_name=self._provider.name,
+                        provider_url=self.base_url,
                         finish_reason='error',
                     )
                 except ValidationError:
@@ -349,6 +350,7 @@ class GroqModel(Model):
             timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -371,6 +373,7 @@ class GroqModel(Model):
             _model_profile=self.profile,
             _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -428,7 +431,10 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            groq_messages.insert(
+                system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
+            )
         return groq_messages
 
     @staticmethod
@@ -524,6 +530,7 @@ class GroqStreamedResponse(StreamedResponse):
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
@@ -620,6 +627,11 @@ class GroqStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
