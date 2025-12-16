@@ -913,15 +913,7 @@ class OpenAIChatModel(Model):
         return response_format_param
 
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        if _has_dict_typed_params(f.parameters_json_schema):
-            warnings.warn(
-                f"Tool {f.name!r} has `dict`-typed parameters that OpenAI's API will silently ignore. "
-                f'Use a Pydantic `BaseModel`, `dataclass`, or `TypedDict` with explicit fields instead, '
-                f'or switch to a different provider which supports `dict` types. '
-                f'See: https://github.com/pydantic/pydantic-ai/issues/3654',
-                UserWarning,
-                stacklevel=4,
-            )
+        _warn_on_dict_typed_params(f.name, f.parameters_json_schema)
 
         tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
@@ -1537,15 +1529,7 @@ class OpenAIResponsesModel(Model):
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
-        if _has_dict_typed_params(f.parameters_json_schema):
-            warnings.warn(
-                f"Tool '{f.name}' has dict-typed parameters that OpenAI's API will silently ignore. "
-                f'Use a Pydantic BaseModel with explicit fields instead of dict types, '
-                f'or switch to a different provider which supports dict types. '
-                f'See: https://github.com/pydantic/pydantic-ai/issues/3654',
-                UserWarning,
-                stacklevel=4,
-            )
+        _warn_on_dict_typed_params(f.parameters_json_schema)
 
         return {
             'name': f.name,
@@ -2699,8 +2683,8 @@ def _map_mcp_call(
     )
 
 
-def _has_dict_typed_params(json_schema: dict[str, Any]) -> bool:
-    """Detect if a JSON schema contains dict-typed parameters.
+def _warn_on_dict_typed_params(tool_name: str, json_schema: dict[str, Any]) -> bool:
+    """Detect if a JSON schema contains dict-typed parameters and emit a warning if so.
 
     Dict types manifest as objects with additionalProperties that is:
     - True (allows any additional properties)
@@ -2710,6 +2694,8 @@ def _has_dict_typed_params(json_schema: dict[str, Any]) -> bool:
 
     c.f. https://github.com/pydantic/pydantic-ai/issues/3654
     """
+    has_dict_params = False
+
     properties: dict[str, Any] = json_schema.get('properties', {})
     for prop_schema in properties.values():
         if isinstance(prop_schema, dict):
@@ -2718,17 +2704,29 @@ def _has_dict_typed_params(json_schema: dict[str, Any]) -> bool:
                 additional_props: Any = prop_schema.get('additionalProperties')  # type: ignore[reportUnknownMemberType]
                 # If additionalProperties is True or a schema object (not False/absent)
                 if additional_props not in (False, None):
-                    return True
+                    has_dict_params = True
 
             # Check arrays of objects with additionalProperties
             if prop_schema.get('type') == 'array':  # type: ignore[reportUnknownMemberType]
                 items: Any = prop_schema.get('items', {})  # type: ignore[reportUnknownMemberType]
                 if isinstance(items, dict) and items.get('type') == 'object':  # type: ignore[reportUnknownMemberType]
                     if items.get('additionalProperties') not in (False, None):  # type: ignore[reportUnknownMemberType]
-                        return True
+                        has_dict_params = True
 
             # Recursively check nested objects
-            if 'properties' in prop_schema and _has_dict_typed_params(prop_schema):  # type: ignore[reportUnknownArgumentType]
-                return True
+            # by default python's warnings module will filter out repeated warnings
+            # so even with recursion we'll emit a single warning
+            if 'properties' in prop_schema and _warn_on_dict_typed_params(tool_name, prop_schema):  # type: ignore[reportUnknownArgumentType]
+                has_dict_params = True
 
-    return False
+    if has_dict_params:
+        warnings.warn(
+            f"Tool {tool_name!r} has `dict`-typed parameters that OpenAI's API will silently ignore. "
+            f'Use a Pydantic `BaseModel`, `dataclass`, or `TypedDict` with explicit fields instead, '
+            f'or switch to a different provider which supports `dict` types. '
+            f'See: https://github.com/pydantic/pydantic-ai/issues/3654',
+            UserWarning,
+            stacklevel=4,
+        )
+
+    return has_dict_params
