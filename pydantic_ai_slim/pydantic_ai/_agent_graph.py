@@ -1063,11 +1063,14 @@ async def _call_tools(
     for call in tool_calls:
         current_tool_use = tool_manager.get_current_use_of_tool(call.tool_name)
         max_tool_use = tool_manager.get_max_use_of_tool(call.tool_name)
-        if (max_tool_use is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tool_use) or not can_make_tool_calls:
+        if (
+            max_tool_use is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tool_use
+        ) or not can_make_tool_calls:
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content=f'Tool call limit reached for tool "{call.tool_name}".',
                 tool_call_id=call.tool_call_id,
+                # TODO: Add return kind and prompt_config here once supported by #3656
             )
             output_parts.append(return_part)
             yield _messages.FunctionToolResultEvent(return_part)

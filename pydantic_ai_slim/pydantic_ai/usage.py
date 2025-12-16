@@ -9,7 +9,7 @@ from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
 from typing_extensions import deprecated, overload
 
-from . import ToolReturnPart, _utils
+from . import _utils
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
@@ -335,7 +335,6 @@ class UsageLimits:
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
-
         # deprecated:
         request_tokens_limit: int | None = None,
         response_tokens_limit: int | None = None,
@@ -403,7 +402,7 @@ class UsageLimits:
             raise UsageLimitExceeded(
                 f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).'
             )
-        
+
         return True
 
     __repr__ = _utils.dataclasses_no_defaults_repr
