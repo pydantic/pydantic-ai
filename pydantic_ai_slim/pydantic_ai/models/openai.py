@@ -902,8 +902,7 @@ class OpenAIChatModel(Model):
         )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
-
-        _warn_on_dict_typed_params(o.name, o.json_schema)
+        _warn_on_dict_typed_params(o.name or DEFAULT_OUTPUT_TOOL_NAME, o.json_schema)
 
         response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
             'type': 'json_schema',
@@ -1532,7 +1531,7 @@ class OpenAIResponsesModel(Model):
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
-        _warn_on_dict_typed_params(f.parameters_json_schema)
+        _warn_on_dict_typed_params(f.name, f.parameters_json_schema)
 
         return {
             'name': f.name,
