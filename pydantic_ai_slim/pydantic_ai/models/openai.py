@@ -8,6 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Se
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
@@ -19,7 +20,14 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, ImageAspectRatio, ImageGenerationTool, MCPServerTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    ImageAspectRatio,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebSearchTool,
+)
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -455,10 +463,44 @@ class OpenAIChatModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool})
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
+
+        WebSearchTool is only supported if openai_chat_supports_web_search is True.
+        """
+        _profile = super().profile
+        openai_profile = OpenAIModelProfile.from_profile(_profile)
+        if not openai_profile.openai_chat_supports_web_search:
+            new_tools = _profile.supported_builtin_tools - {WebSearchTool}
+            _profile = replace(_profile, supported_builtin_tools=new_tools)
+        return _profile
+
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
         return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Check for WebSearchTool before base validation to provide a helpful error message
+        if (
+            any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
+            and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
+        ):
+            raise UserError(
+                f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
+                f'Please use `OpenAIResponsesModel` instead.'
+            )
+        return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
         self,
@@ -736,12 +778,6 @@ class OpenAIChatModel(Model):
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
-                if not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search:
-                    raise UserError(
-                        f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
-                        f'Please use `OpenAIResponsesModel` instead.'
-                    )
-
                 if tool.user_location:
                     return WebSearchOptions(
                         search_context_size=tool.search_context_size,
@@ -751,10 +787,7 @@ class OpenAIChatModel(Model):
                         ),
                     )
                 return WebSearchOptions(search_context_size=tool.search_context_size)
-            else:
-                raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
-                )
+        return None
 
     @dataclass
     class _MapModelResponseContext:
@@ -1143,6 +1176,11 @@ class OpenAIResponsesModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, ImageGenerationTool})
 
     async def request(
         self,

@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -224,9 +224,6 @@ class MistralModel(Model):
         """Make a non-streaming request to the model."""
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
-            raise UserError('Mistral does not support built-in tools')
-
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
@@ -263,9 +260,6 @@ class MistralModel(Model):
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
-            raise UserError('Mistral does not support built-in tools')
-
         if model_request_parameters.function_tools:
             # Function Calling
             response = await self.client.chat.stream_async(
@@ -342,7 +336,7 @@ class MistralModel(Model):
             )
             for r in model_request_parameters.tool_defs.values()
         ]
-        return tools if tools else None
+        return tools or None
 
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
