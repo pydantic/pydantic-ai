@@ -972,9 +972,10 @@ class RetryPromptPart:
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
-        
+
         if self.retry_message is None:
             from .prompt_config import DEFAULT_MODEL_RETRY
+
             return f'{description}\n\n{DEFAULT_MODEL_RETRY}'
 
         return f'{description}\n\n{self.retry_message}'
