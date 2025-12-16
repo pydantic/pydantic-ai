@@ -6877,7 +6877,7 @@ async def test_hitl_tool_approval():
     )
 
     @agent_no_template.tool_plain(requires_approval=True)
-    def protected_delete(path: str) -> str: # pragma: no cover
+    def protected_delete(path: str) -> str:  # pragma: no cover
         return f'File {path!r} deleted'
 
     result_no_template = await agent_no_template.run('Delete file.txt')
