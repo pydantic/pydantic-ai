@@ -7,12 +7,23 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    get_args,
+    get_origin,
+    overload,
+)
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
@@ -41,8 +52,33 @@ if TYPE_CHECKING:
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
+_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+
+
+@contextmanager
+def disable_threads() -> Iterator[None]:
+    """Context manager to disable thread-based execution for sync functions.
+
+    Inside this context, sync functions will execute inline rather than
+    being sent to a thread pool via [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
+
+    This is useful in environments where threading is restricted, such as
+    Temporal workflows which use a sandboxed event loop.
+
+    Yields:
+        None
+    """
+    token = _disable_threads.set(True)
+    try:
+        yield
+    finally:
+        _disable_threads.reset(token)
+
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    if _disable_threads.get():
+        return func(*args, **kwargs)
+
     wrapped_func = partial(func, *args, **kwargs)
     return await run_sync(wrapped_func)
 
