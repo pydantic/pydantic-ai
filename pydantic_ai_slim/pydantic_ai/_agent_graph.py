@@ -142,9 +142,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     model: models.Model
     model_settings: ModelSettings | None
-    prompt_config: _prompt_config.PromptConfig = dataclasses.field(
-        default_factory=lambda: _prompt_config.DEFAULT_PROMPT_CONFIG
-    )
+    prompt_config: _prompt_config.PromptConfig | None = None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -391,8 +389,16 @@ async def _prepare_request_parameters(
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
 
-    prompt_config = ctx.deps.prompt_config
-    prompted_output_template = prompt_config.templates.get_prompted_output_template(output_schema)
+    # Get the prompted output template with precedence:
+    # PromptConfig template > PromptedOutput.template > default
+    prompted_output_template: str | None = None
+    if isinstance(output_schema, _output.PromptedOutputSchema):
+        prompt_config = ctx.deps.prompt_config
+        templates = prompt_config.templates if prompt_config else None
+        config_template = templates.prompted_output_template if templates else None
+        prompted_output_template = (
+            config_template or output_schema.template or _prompt_config.DEFAULT_PROMPTED_OUTPUT_TEMPLATE
+        )
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -517,9 +523,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         prompt_config = ctx.deps.prompt_config
 
-        message_history = _apply_prompt_templates_to_message_history(
-            message_history, prompt_config.templates, run_context
-        )
+        # Only apply templates if explicitly configured - when prompt_config or templates is None,
+        # message parts already have default values set at creation time
+        if prompt_config and prompt_config.templates is not None:
+            message_history = _apply_prompt_templates_to_message_history(
+                message_history, prompt_config.templates, run_context
+            )
 
         ctx.state.message_history[:] = message_history
 
@@ -799,8 +808,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            run_ctx = build_run_context(ctx)
-            tool_responses = [ctx.deps.prompt_config.templates.apply_template(part, run_ctx) for part in tool_responses]
+            # Only apply templates if explicitly configured
+            if ctx.deps.prompt_config and ctx.deps.prompt_config.templates is not None:
+                run_ctx = build_run_context(ctx)
+                tool_responses = [
+                    ctx.deps.prompt_config.templates.apply_template(part, run_ctx) for part in tool_responses
+                ]
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
         return End(final_result)
@@ -886,7 +899,7 @@ async def process_tool_calls(  # noqa: C901
         if final_result and final_result.tool_call_id == call.tool_call_id:
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.final_result_processed,
+                content=_prompt_config.DEFAULT_FINAL_RESULT_PROCESSED,
                 tool_call_id=call.tool_call_id,
                 return_kind='final-result-processed',
             )
@@ -896,7 +909,7 @@ async def process_tool_calls(  # noqa: C901
             yield _messages.FunctionToolCallEvent(call)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.output_tool_not_executed,
+                content=_prompt_config.DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
                 tool_call_id=call.tool_call_id,
                 return_kind='output-tool-not-executed',
             )
@@ -915,9 +928,8 @@ async def process_tool_calls(  # noqa: C901
                     yield _messages.FunctionToolCallEvent(call)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
-                        content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.output_tool_not_executed,
+                        content=_prompt_config.DEFAULT_OUTPUT_VALIDATION_FAILED,
                         tool_call_id=call.tool_call_id,
-                        return_kind='output-tool-not-executed',
                     )
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)
@@ -940,7 +952,7 @@ async def process_tool_calls(  # noqa: C901
             else:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.final_result_processed,
+                    content=_prompt_config.DEFAULT_FINAL_RESULT_PROCESSED,
                     tool_call_id=call.tool_call_id,
                     return_kind='final-result-processed',
                 )
@@ -957,7 +969,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.function_tool_not_executed,
+                    content=_prompt_config.DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
                     tool_call_id=call.tool_call_id,
                     return_kind='function-tool-not-executed',
                 )
@@ -1016,7 +1028,7 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.function_tool_not_executed,
+                            content=_prompt_config.DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
                             tool_call_id=call.tool_call_id,
                             return_kind='function-tool-not-executed',
                         )

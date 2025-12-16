@@ -534,6 +534,125 @@ Custom retry message""")
 
 Custom retry message override""")
 
+    def model_with_tool_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools is not None
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('retry_tool', '{}')])
+        else:
+            return ModelResponse(parts=[TextPart('done')])
+
+    agent_tool_retry = Agent(
+        FunctionModel(model_with_tool_retry),
+        output_type=str,
+        prompt_config=PromptConfig(templates=PromptTemplates(model_retry_string_tool='Custom tool retry message')),
+    )
+
+    @agent_tool_retry.tool_plain
+    def retry_tool() -> str:
+        raise ModelRetry('Tool failed')
+
+    result_tool_retry = agent_tool_retry.run_sync('Test')
+    assert result_tool_retry.output == 'done'
+    assert result_tool_retry.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Test',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='retry_tool', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_with_tool_retry:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Tool failed',
+                        tool_name='retry_tool',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        retry_message='Custom tool retry message',
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=57, output_tokens=3),
+                model_name='function:model_with_tool_retry:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Test model_retry_string_no_tool template (RetryPromptPart with string content, no tool)
+    def model_with_no_tool_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('invalid')])
+        else:
+            return ModelResponse(parts=[TextPart('valid')])
+
+    agent_no_tool_retry = Agent(
+        FunctionModel(model_with_no_tool_retry),
+        output_type=str,
+        prompt_config=PromptConfig(templates=PromptTemplates(model_retry_string_no_tool='Custom no-tool retry')),
+    )
+
+    @agent_no_tool_retry.output_validator
+    def check_valid(ctx: RunContext[None], output: str) -> str:
+        if output == 'invalid':
+            raise ModelRetry('Output is invalid')
+        return output
+
+    result_no_tool = agent_no_tool_retry.run_sync('Test')
+    assert result_no_tool.output == 'valid'
+    assert result_no_tool.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Test',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='invalid')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='function:model_with_no_tool_retry:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Output is invalid',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        retry_message='Custom no-tool retry',
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='valid')],
+                usage=RequestUsage(input_tokens=59, output_tokens=2),
+                model_name='function:model_with_no_tool_retry:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
 
 def test_prompt_config_tool_config_descriptions():
     """Test that ToolConfig.tool_descriptions updates tool descriptions at the agent level."""
@@ -5624,7 +5743,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_call_id': IsStr(),
                     'timestamp': IsStr(),
                     'part_kind': 'retry-prompt',
-                    'retry_message': 'Fix the errors and try again.',
+                    'retry_message': None,
                 }
             ],
             'instructions': None,
@@ -6553,7 +6672,7 @@ async def test_hitl_tool_approval():
 
     model = FunctionModel(model_function)
 
-    # Using prompt_config without setting tool_call_denied to cover line 78 in prompt_config.py
+    # Test with tool_call_denied template set (covers the True branch at line 139)
     agent = Agent(
         model,
         output_type=[str, DeferredToolRequests],
@@ -6726,6 +6845,74 @@ async def test_hitl_tool_approval():
                 parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=80, output_tokens=24),
                 model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    def model_function_for_none_template(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='protected_delete', args={'path': 'file.txt'}, tool_call_id='del_call'),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent_no_template = Agent(
+        FunctionModel(model_function_for_none_template),
+        output_type=[str, DeferredToolRequests],
+        prompt_config=PromptConfig(templates=PromptTemplates(final_result_processed='Done')),
+    )
+
+    @agent_no_template.tool_plain(requires_approval=True)
+    def protected_delete(path: str) -> str:
+        return f'File {path!r} deleted'
+
+    result_no_template = await agent_no_template.run('Delete file.txt')
+    result_no_template = await agent_no_template.run(
+        message_history=result_no_template.all_messages(),
+        deferred_tool_results=DeferredToolResults(
+            approvals={'del_call': ToolDenied('Original denial message preserved')},
+        ),
+    )
+
+    assert result_no_template.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete file.txt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='protected_delete', args={'path': 'file.txt'}, tool_call_id='del_call')],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='function:model_function_for_none_template:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='protected_delete',
+                        content='Original denial message preserved',
+                        tool_call_id='del_call',
+                        timestamp=IsDatetime(),
+                        return_kind='tool-denied',
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=57, output_tokens=7),
+                model_name='function:model_function_for_none_template:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),

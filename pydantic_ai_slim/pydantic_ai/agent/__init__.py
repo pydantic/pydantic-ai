@@ -1378,17 +1378,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _get_prompt_config(self, prompt_config: _prompt_config.PromptConfig | None) -> _prompt_config.PromptConfig:
+    def _get_prompt_config(
+        self, prompt_config: _prompt_config.PromptConfig | None
+    ) -> _prompt_config.PromptConfig | None:
         """Get prompt_config for a run.
 
         If we've overridden prompt_config via `_override_prompt_config`, use that,
-        otherwise use the prompt_config passed to the call, falling back to the agent default,
-        and finally falling back to the global default.
+        otherwise use the prompt_config passed to the call, falling back to the agent default.
+        Returns None if no prompt_config is configured at any level.
         """
         if some_prompt_config := self._override_prompt_config.get():
             return some_prompt_config.value
         else:
-            return prompt_config or self.prompt_config or _prompt_config.DEFAULT_PROMPT_CONFIG
+            return prompt_config or self.prompt_config
 
     def _normalize_instructions(
         self,
@@ -1452,7 +1454,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 return toolset
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
-        tool_config = self._get_prompt_config(prompt_config).tool_config
+
+        # Resolve tool_config from the prompt_config precedence chain:
+        # 1. Context override (agent.override(prompt_config=...))
+        # 2. Per-call parameter (agent.run(..., prompt_config=...))
+        # 3. Agent-level default (Agent(..., prompt_config=...))
+        tool_config = (
+            effective_prompt_config.tool_config
+            if (effective_prompt_config := self._get_prompt_config(prompt_config))
+            else None
+        )
 
         if self._prepare_tools or tool_config:
             toolset = PreparedToolset(toolset, self._prepare_tools, tool_config=tool_config)

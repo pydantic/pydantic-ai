@@ -916,12 +916,6 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-def _get_default_model_retry_message() -> str:
-    from .prompt_config import DEFAULT_PROMPT_CONFIG
-
-    return cast(str, DEFAULT_PROMPT_CONFIG.templates.default_model_retry)
-
-
 @dataclass(repr=False)
 class RetryPromptPart:
     """A message back to a model asking it to try again.
@@ -962,7 +956,7 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    retry_message: str | None = field(default_factory=_get_default_model_retry_message)
+    retry_message: str | None = None
     """The retry message rendered using the user's prompt template. It is populated after checking the conditions for the retry so that the correct template is used."""
 
     def model_response(self) -> str:
@@ -978,6 +972,10 @@ class RetryPromptPart:
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
+        
+        if self.retry_message is None:
+            from .prompt_config import DEFAULT_MODEL_RETRY
+            return f'{description}\n\n{DEFAULT_MODEL_RETRY}'
 
         return f'{description}\n\n{self.retry_message}'
 

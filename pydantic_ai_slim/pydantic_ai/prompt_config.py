@@ -5,12 +5,41 @@ from dataclasses import dataclass, field, replace
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
+from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
+
 if TYPE_CHECKING:
-    from ._output import OutputSchema
     from ._run_context import RunContext as _RunContext
 
 
-from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
+# Default template strings - used when template field is None
+DEFAULT_FINAL_RESULT_PROCESSED = 'Final result processed.'
+"""Default confirmation message when a final result is successfully processed."""
+
+DEFAULT_OUTPUT_TOOL_NOT_EXECUTED = 'Output tool not used - a final result was already processed.'
+"""Default message when an output tool call is skipped because a result was already found."""
+
+DEFAULT_OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
+"""Default message when an output tool fails validation but another output tool already succeeded."""
+
+DEFAULT_FUNCTION_TOOL_NOT_EXECUTED = 'Tool not executed - a final result was already processed.'
+"""Default message when a function tool call is skipped because a result was already found."""
+
+DEFAULT_TOOL_CALL_DENIED = 'The tool call was denied.'
+"""Default message when a tool call is denied by an approval handler."""
+
+DEFAULT_MODEL_RETRY = 'Fix the errors and try again.'
+"""Default message appended to retry prompts."""
+
+DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
+    """
+    Always respond with a JSON object that's compatible with this schema:
+
+    {schema}
+
+    Don't include any text or Markdown fencing before or after.
+    """
+)
+"""Default template for prompted output schema instructions."""
 
 
 @dataclass
@@ -18,6 +47,7 @@ class PromptTemplates:
     """Templates for customizing system-generated messages that Pydantic AI sends to models.
 
     Each template can be either:
+    - `None` to use the default message (or preserve existing content for `tool_call_denied`)
     - A static string that replaces the default message
     - A callable that receives the message part and [`RunContext`][pydantic_ai.RunContext]
       and returns a dynamically generated string
@@ -44,71 +74,90 @@ class PromptTemplates:
         ```
     """
 
-    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'Final result processed.'
-    """Confirmation message sent when a final result is successfully processed."""
+    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Confirmation message sent when a final result is successfully processed.
 
-    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = (
-        'Output tool not used - a final result was already processed.'
-    )
-    """Message sent when an output tool call is skipped because a result was already found."""
-
-    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = (
-        'Tool not executed - a final result was already processed.'
-    )
-    """Message sent when a function tool call is skipped because a result was already found."""
-
-    tool_call_denied: str | Callable[[ToolReturnPart, _RunContext[Any]], str] = 'The tool call was denied.'
-    """Message sent when a tool call is denied by an approval handler.
-
-    Note: Custom messages set via `ToolDenied` are preserved unless this template is explicitly overridden.
+    If `None`, uses the default: 'Final result processed.'
     """
 
-    default_model_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again.'
-    """Default message sent when a `ModelRetry` exception is raised."""
+    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when an output tool call is skipped because a result was already found.
 
-    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again.'
-    """Message appended to validation errors when asking the model to retry."""
+    If `None`, uses the default: 'Output tool not used - a final result was already processed.'
+    """
 
-    model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = 'Fix the errors and try again.'
-    """Message sent when a `ModelRetry` exception is raised from a tool."""
+    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when a function tool call is skipped because a result was already found.
 
-    model_retry_string_no_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = (
-        'Fix the errors and try again.'
-    )
-    """Message sent when a `ModelRetry` exception is raised outside of a tool context."""
+    If `None`, uses the default: 'Tool not executed - a final result was already processed.'
+    """
 
-    prompted_output_template: str = dedent(
-        """
-        Always respond with a JSON object that's compatible with this schema:
+    tool_call_denied: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    """Message sent when a tool call is denied by an approval handler.
 
-        {schema}
+    If `None`, preserves the custom message from `ToolDenied` (or uses the default if none was set).
+    Set explicitly to override all denied tool messages.
+    """
 
-        Don't include any text or Markdown fencing before or after.
-        """
-    )
+    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    """Message appended to validation errors when asking the model to retry.
+
+    If `None`, uses the default: 'Fix the errors and try again.'
+    """
+
+    model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    """Message sent when a `ModelRetry` exception is raised from a tool.
+
+    If `None`, uses the default: 'Fix the errors and try again.'
+    """
+
+    model_retry_string_no_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    """Message sent when a `ModelRetry` exception is raised outside of a tool context.
+
+    If `None`, uses the default: 'Fix the errors and try again.'
+    """
+
+    prompted_output_template: str | None = None
+    """Template for prompted output schema instructions.
+
+    If `None`, uses the template from `PromptedOutput` if set, otherwise uses the default template.
+    Set explicitly to override the template for all prompted outputs.
+    """
 
     def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
             if message_part.return_kind == 'final-result-processed':
-                return self._apply_tool_template(message_part, ctx, self.final_result_processed)
+                template = (
+                    self.final_result_processed
+                    if self.final_result_processed is not None
+                    else DEFAULT_FINAL_RESULT_PROCESSED
+                )
+                message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'output-tool-not-executed':
-                return self._apply_tool_template(message_part, ctx, self.output_tool_not_executed)
+                template = (
+                    self.output_tool_not_executed
+                    if self.output_tool_not_executed is not None
+                    else DEFAULT_OUTPUT_TOOL_NOT_EXECUTED
+                )
+                message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'function-tool-not-executed':
-                return self._apply_tool_template(message_part, ctx, self.function_tool_not_executed)
+                template = (
+                    self.function_tool_not_executed
+                    if self.function_tool_not_executed is not None
+                    else DEFAULT_FUNCTION_TOOL_NOT_EXECUTED
+                )
+                message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'tool-denied':
-                # The content may already have a custom message from ToolDenied in which case we should not override it
-                if self.tool_call_denied != DEFAULT_PROMPT_CONFIG.templates.tool_call_denied:
-                    return self._apply_tool_template(message_part, ctx, self.tool_call_denied)
-                return message_part
+                if self.tool_call_denied is not None:
+                    message_part = self._apply_tool_template(message_part, ctx, self.tool_call_denied)
         elif isinstance(message_part, RetryPromptPart):
             template = self._get_template_for_retry(message_part)
-            return self._apply_retry_template(message_part, ctx, template)
-        return message_part  # Returns the original message if no template is applied
+            message_part = self._apply_retry_template(message_part, ctx, template)
+        return message_part
 
     def _get_template_for_retry(
         self, message_part: RetryPromptPart
     ) -> str | Callable[[RetryPromptPart, _RunContext[Any]], str]:
-        template: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = self.default_model_retry
         # This is based on RetryPromptPart.model_response() implementation
         # We follow the same structure here to populate the correct template
         if isinstance(message_part.content, str):
@@ -118,6 +167,9 @@ class PromptTemplates:
                 template = self.model_retry_string_tool
         else:
             template = self.validation_errors_retry
+
+        if template is None:
+            template = DEFAULT_MODEL_RETRY
 
         return template
 
@@ -146,22 +198,6 @@ class PromptTemplates:
         else:
             message_part = replace(message_part, content=template(message_part, ctx))
         return message_part
-
-    def get_prompted_output_template(self, output_schema: OutputSchema[Any]) -> str | None:
-        """Get the prompted output template for the given output schema.
-
-        Precedence: PromptConfig template (if explicitly set) > PromptedOutput.template > default.
-        """
-        from ._output import PromptedOutputSchema
-
-        if not isinstance(output_schema, PromptedOutputSchema):
-            return None
-
-        # PromptConfig takes precedence if explicitly set (different from default)
-        if self.prompted_output_template != DEFAULT_PROMPT_CONFIG.templates.prompted_output_template:
-            return self.prompted_output_template
-
-        return output_schema.template
 
 
 @dataclass
@@ -218,11 +254,15 @@ class PromptConfig:
 
     - **Prompt Templates**: Messages for retry prompts, tool return confirmations,
       validation errors, and other system-generated text via [`PromptTemplates`][pydantic_ai.PromptTemplates].
-    - **Tool Configuration** (planned): Tool descriptions, parameter descriptions, and other
+    - **Tool Configuration**: Tool descriptions, parameter descriptions, and other
       tool metadata - allowing you to override descriptions and args for tools at the agent level.
 
     This allows you to fully customize how your agent communicates with the model
     without modifying the underlying tool or agent code.
+
+    Note:
+        At least one of `templates` or `tool_config` must be provided. Creating a
+        `PromptConfig()` with no arguments will raise a `ValueError`.
 
     Example:
         ```python
@@ -242,9 +282,10 @@ class PromptConfig:
     Attributes:
         templates: Templates for customizing system-generated messages like retry prompts,
             tool return confirmations, and validation error messages.
+        tool_config: Configuration for customizing tool descriptions and metadata.
     """
 
-    templates: PromptTemplates = field(default_factory=PromptTemplates)
+    templates: PromptTemplates | None = None
     """Templates for customizing system-generated messages sent to the model.
 
     See [`PromptTemplates`][pydantic_ai.PromptTemplates] for available template options.
@@ -255,10 +296,10 @@ class PromptConfig:
     See [`ToolConfig`][pydantic_ai.ToolConfig] for available configuration options.
     """
 
-
-DEFAULT_PROMPT_CONFIG = PromptConfig()
-"""The default prompt configuration used when no custom configuration is provided.
-
-This uses the default [`PromptTemplates`][pydantic_ai.PromptTemplates] with sensible
-defaults for all system-generated messages.
-"""
+    def __post_init__(self):
+        if self.templates is None and self.tool_config is None:
+            raise ValueError(
+                "PromptConfig requires at least 'templates' or 'tool_config' to be provided. "
+                'Use PromptConfig(templates=PromptTemplates()) for default template behavior, '
+                'or PromptConfig(tool_config=ToolConfig(...)) for tool customization.'
+            )

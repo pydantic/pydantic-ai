@@ -25,6 +25,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.prompt_config import ToolConfig
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
@@ -482,6 +483,33 @@ async def test_comprehensive_toolset_composition():
             ),
         ]
     )
+
+    partial_args_toolset = FunctionToolset[None]()
+
+    @partial_args_toolset.tool
+    def calc(x: int, y: int, z: int) -> int:
+        """Calculate sum"""
+        return x + y + z
+
+    partial_tool_config = ToolConfig(
+        tool_args_descriptions={
+            'calc': {
+                'x': 'First number',
+                'z': 'Third number',
+                # 'y' intentionally missing
+            }
+        }
+    )
+    prepared_partial = PreparedToolset(partial_args_toolset, None, tool_config=partial_tool_config)
+    partial_context = build_run_context(None)
+    partial_manager = await ToolManager[None](prepared_partial).for_run_step(partial_context)
+
+    calc_def = partial_manager.tool_defs[0]
+    assert calc_def.name == 'calc'
+    # 'x' and 'z' should have descriptions, 'y' should not
+    assert calc_def.parameters_json_schema['properties']['x'].get('description') == 'First number'
+    assert 'description' not in calc_def.parameters_json_schema['properties']['y']
+    assert calc_def.parameters_json_schema['properties']['z'].get('description') == 'Third number'
 
 
 async def test_context_manager():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, replace
 
 from pydantic_ai.prompt_config import ToolConfig
@@ -21,9 +22,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     prepare_func: ToolsPrepareFunc[AgentDepsT] | None
     tool_config: ToolConfig | None = None
 
-    async def get_tools(
-        self, ctx: RunContext[AgentDepsT], tool_config: ToolConfig | None = None
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
 
         tools_after_tool_config = await self._get_tools_from_tool_config(original_tools)
@@ -53,12 +52,15 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             if not tool_args:
                 continue
 
-            original_tool = original_tools[tool_name].tool_def
-            parameter_defs = original_tool.parameters_json_schema
+            original_tool = original_tools[tool_name]
+            parameter_defs = deepcopy(original_tool.tool_def.parameters_json_schema)
 
             for param_name, param_schema in parameter_defs.get('properties', {}).items():
                 if param_name in tool_args:
                     param_schema['description'] = tool_args[param_name]
+
+            updated_tool_def = replace(original_tool.tool_def, parameters_json_schema=parameter_defs)
+            original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
 
         return original_tools
 
