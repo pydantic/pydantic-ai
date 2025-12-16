@@ -638,6 +638,11 @@ class BedrockConverseModel(Model):
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
+                    elif isinstance(item, CachePoint):
+                        if not profile.bedrock_supports_prompt_caching:
+                            # Silently skip CachePoint for models that don't support prompt caching
+                            continue
+                        _append_cache_control(content)
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -783,17 +788,7 @@ class BedrockConverseModel(Model):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
-                    if not content or 'cachePoint' in content[-1]:
-                        raise UserError(
-                            'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
-                            'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
-                        )
-                    if 'text' not in content[-1]:
-                        # AWS currently rejects cache points that directly follow non-text content.
-                        # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
-                        # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
-                        content.append({'text': '\n'})
-                    content.append({'cachePoint': {'type': 'default'}})
+                    _append_cache_control(content)
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -1009,3 +1004,24 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise StopAsyncIteration
             else:
                 raise e  # pragma: lax no cover
+
+
+def _append_cache_control(content: list[ContentBlockOutputTypeDef] | list[ContentBlockUnionTypeDef]) -> None:
+    """Appends cache control to the last content block.
+
+    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+
+    Args:
+        content: List of content blocks to modify.
+    """
+    if not content or 'cachePoint' in content[-1]:
+        raise UserError(
+            'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
+            'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+        )
+    if 'text' not in content[-1]:
+        # AWS currently rejects cache points that directly follow non-text content.
+        # Insert an empty text block as a workaround (see https://github.com/pydantic/pydantic-ai/issues/3418
+        # and https://github.com/pydantic/pydantic-ai/pull/2560#discussion_r2349209916).
+        content.append({'text': '\n'})
+    content.append({'cachePoint': {'type': 'default'}})

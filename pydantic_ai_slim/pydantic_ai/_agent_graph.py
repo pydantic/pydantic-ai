@@ -659,6 +659,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
+                    elif isinstance(part, _messages.CachePoint):
+                        # CachePoint is not part of the final result output, so we skip it.
+                        pass
                     else:
                         assert_never(part)
 

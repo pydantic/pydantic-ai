@@ -29,6 +29,7 @@ from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
     BinaryImage,
+    CachePoint,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -800,7 +801,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
@@ -841,6 +842,11 @@ class StreamedResponse(ABC):
                         # Parts other than these 3 don't have deltas, so don't need an end part.
                         return None
 
+                    if isinstance(next_part, CachePoint):
+                        # CachePoint is metadata for prompt caching, skip when emitting part end events. Technically, we should
+                        # skip it before calling this function, but having a CachePoint here should not happen at runtime.
+                        return None
+
                     return PartEndEvent(
                         index=index,
                         part=part,
@@ -849,7 +855,9 @@ class StreamedResponse(ABC):
 
                 async for event in iterator:
                     if isinstance(event, PartStartEvent):
-                        if last_start_event:
+                        # CachePoint is metadata for prompt caching, skip when emitting part end events. Technically, we should
+                        # skip it before calling this function, but having a CachePoint here should not happen at runtime.
+                        if last_start_event and not isinstance(last_start_event.part, CachePoint):
                             end_event = part_end_event(event.part)
                             if end_event:
                                 yield end_event

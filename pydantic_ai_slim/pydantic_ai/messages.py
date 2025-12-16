@@ -652,6 +652,9 @@ class CachePoint:
     kind: Literal['cache-point'] = 'cache-point'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    part_kind: Literal['cache-point'] = 'cache-point'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
     ttl: Literal['5m', '1h'] = '5m'
     """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour).
 
@@ -1217,7 +1220,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart | CachePoint,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""

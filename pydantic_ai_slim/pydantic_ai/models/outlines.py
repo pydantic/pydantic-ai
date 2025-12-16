@@ -22,6 +22,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     ImageUrl,
     ModelMessage,
@@ -485,6 +486,9 @@ class OutlinesModel(Model):
                             raise UserError(
                                 'File parts other than `BinaryImage` are not supported for Outlines models yet.'
                             )
+                    elif isinstance(part, CachePoint):
+                        # Outlines doesn't support prompt caching via CachePoint.
+                        pass
                     else:
                         assert_never(part)
                 if len(text_parts) == 1 and len(image_parts) == 0:

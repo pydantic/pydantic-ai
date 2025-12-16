@@ -361,6 +361,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             state='input-available',
                         )
                     )
+            elif isinstance(part, CachePoint):
+                # CachePoint is metadata for prompt caching, skip for UI conversion.
+                pass
             else:
                 assert_never(part)
 

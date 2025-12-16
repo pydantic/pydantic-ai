@@ -15,6 +15,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -309,6 +310,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FilePart():  # pragma: no branch
                 async for e in self.handle_file(part):
                     yield e
+            case CachePoint():  # pragma: no branch
+                # CachePoint is metadata for prompt caching, skip for UI conversion.
+                pass
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
         """Handle a PartDeltaEvent.
@@ -370,6 +374,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case BuiltinToolReturnPart() | FilePart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
+                pass
+            case CachePoint():  # pragma: no branch
+                # CachePoint is metadata for prompt caching, skip for UI conversion.
                 pass
 
     async def before_stream(self) -> AsyncIterator[EventT]:

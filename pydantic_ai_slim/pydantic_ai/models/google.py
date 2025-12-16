@@ -806,6 +806,10 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
     thinking_part_signature: str | None = None
     function_call_requires_signature: bool = True
     for item in m.parts:
+        if isinstance(item, CachePoint):
+            # Google Gemini doesn't support prompt caching via CachePoint.
+            continue
+
         part: PartDict = {}
         if (
             item.provider_details

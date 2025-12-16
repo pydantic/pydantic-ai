@@ -19,7 +19,7 @@ from ._output import (
 )
 from ._run_context import AgentDepsT, RunContext
 from ._tool_manager import ToolManager
-from .messages import ModelResponseStreamEvent
+from .messages import CachePoint, ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
@@ -87,6 +87,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # if the message currently has any parts with content, yield before streaming
         msg = self.response
         for part in msg.parts:
+            if isinstance(part, CachePoint):
+                # CachePoint is metadata for prompt caching, skip when streaming responses.
+                continue
+
             if part.has_content():
                 yield msg
                 break
