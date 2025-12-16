@@ -335,6 +335,7 @@ class UsageLimits:
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
+        tool_calls_limit_enforcement: Literal['soft', 'hard'] = 'hard',
         # deprecated:
         request_tokens_limit: int | None = None,
         response_tokens_limit: int | None = None,
@@ -345,6 +346,7 @@ class UsageLimits:
         self.output_tokens_limit = output_tokens_limit or response_tokens_limit
         self.total_tokens_limit = total_tokens_limit
         self.count_tokens_before_request = count_tokens_before_request
+        self.tool_calls_limit_enforcement = tool_calls_limit_enforcement
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.

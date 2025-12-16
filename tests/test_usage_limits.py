@@ -17,6 +17,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RunContext,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
@@ -28,7 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from .conftest import IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -268,6 +269,52 @@ async def test_tool_call_limit() -> None:
 
     result = await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=1))
     assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
+
+
+async def test_tool_call_limit_soft() -> None:
+    test_agent = Agent(TestModel())
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    result = await test_agent.run(
+        'Hello', usage_limits=UsageLimits(tool_calls_limit=0, tool_calls_limit_enforcement='soft')
+    )
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a',
+                        content='Tool call limit reached for tool "ret_a".',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"Tool call limit reached for tool \\"ret_a\\"."}')],
+                usage=RequestUsage(input_tokens=59, output_tokens=16),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_output_tool_not_counted() -> None:
