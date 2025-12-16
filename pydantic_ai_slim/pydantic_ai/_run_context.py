@@ -58,6 +58,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Number of retries of this tool so far."""
     max_retries: int = 0
     """The maximum number of retries of this tool."""
+    max_uses: int = 0
+    """The maximum number of times this tool can be used in the run."""
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False

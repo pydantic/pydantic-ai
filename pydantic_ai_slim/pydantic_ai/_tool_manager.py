@@ -170,6 +170,7 @@ class ToolManager(Generic[AgentDepsT]):
                 max_retries=tool.max_retries,
                 tool_call_approved=approved,
                 partial_output=allow_partial,
+                max_uses=tool.max_uses,
             )
 
             self.ctx.tool_usage[name] = self.ctx.tool_usage.get(name, 0) + 1

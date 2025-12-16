@@ -358,6 +358,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 tool_name=original_name,
                 retry=ctx.retries.get(original_name, 0),
                 max_retries=max_retries,
+                max_uses=max_uses if max_uses is not None else 0,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:
