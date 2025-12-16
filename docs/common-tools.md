@@ -138,3 +138,83 @@ Here are some of the top recent news articles related to GenAI:
 Feel free to click on the links to dive deeper into each story!
 """
 ```
+
+## Exa Search Tool
+
+!!! info
+    Exa is a paid service with free credits to explore their product.
+
+    You need to [sign up for an account](https://dashboard.exa.ai) and get an API key to use the Exa tools.
+
+Exa is a neural search engine that finds high-quality, relevant results across billions of web pages.
+It provides several tools including web search, finding similar pages, content retrieval, and AI-powered answers.
+
+### Installation
+
+To use Exa tools, you need to install [`pydantic-ai-slim`](install.md#slim-install) with the `exa` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[exa]"
+```
+
+### Usage
+
+You can use Exa tools individually or as a toolset.
+
+#### Using Individual Tools
+
+```py {title="exa_search.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.exa import exa_search_tool
+
+api_key = os.getenv('EXA_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-4o',
+    tools=[exa_search_tool(api_key, num_results=5, max_characters=1000)],
+    system_prompt='Search the web for information using Exa.',
+)
+
+result = agent.run_sync('What are the latest developments in quantum computing?')
+print(result.output)
+```
+
+#### Using ExaToolset
+
+For better efficiency when using multiple Exa tools, use [`ExaToolset`][pydantic_ai.common_tools.exa.ExaToolset]
+which shares a single API client across all tools:
+
+```py {title="exa_toolset.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.exa import ExaToolset
+
+api_key = os.getenv('EXA_API_KEY')
+assert api_key is not None
+
+toolset = ExaToolset(
+    api_key,
+    num_results=5,
+    max_characters=1000,  # Limit text content to control token usage
+)
+
+agent = Agent(
+    'openai:gpt-4o',
+    toolsets=[toolset],
+    system_prompt='You have access to Exa search tools to find information on the web.',
+)
+
+result = agent.run_sync('Find recent AI research papers and summarize the key findings.')
+print(result.output)
+```
+
+### Available Tools
+
+- [`exa_search_tool`][pydantic_ai.common_tools.exa.exa_search_tool]: Search the web with various search types (auto, keyword, neural, fast, deep)
+- [`exa_find_similar_tool`][pydantic_ai.common_tools.exa.exa_find_similar_tool]: Find pages similar to a given URL
+- [`exa_get_contents_tool`][pydantic_ai.common_tools.exa.exa_get_contents_tool]: Get full text content from URLs
+- [`exa_answer_tool`][pydantic_ai.common_tools.exa.exa_answer_tool]: Get AI-powered answers with citations
