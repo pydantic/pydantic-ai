@@ -151,11 +151,11 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        response = await self.client.find_similar_and_contents(
+        response = await self.client.find_similar(
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
-            text=True,
+            contents={'text': True},
         )
 
         results: list[ExaSearchResult] = []
