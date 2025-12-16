@@ -10,6 +10,7 @@ from typing import Literal
 
 from typing_extensions import Any, TypedDict
 
+from pydantic_ai import FunctionToolset
 from pydantic_ai.tools import Tool
 
 try:
@@ -21,6 +22,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 __all__ = (
+    'ExaToolset',
     'exa_search_tool',
     'exa_find_similar_tool',
     'exa_get_contents_tool',
@@ -308,3 +310,88 @@ def exa_answer_tool(api_key: str):
         name='exa_answer',
         description='Generates an AI-powered answer to a question with citations from web sources. Returns a comprehensive answer backed by real sources.',
     )
+
+
+class ExaToolset(FunctionToolset):
+    """A toolset that provides Exa search tools with a shared client.
+
+    This is more efficient than creating individual tools when using multiple
+    Exa tools, as it shares a single API client across all tools.
+
+    Example:
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.common_tools.exa import ExaToolset
+
+    toolset = ExaToolset(api_key='your-api-key')
+    agent = Agent('openai:gpt-4o', toolsets=[toolset])
+    ```
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        num_results: int = 5,
+        max_characters: int | None = None,
+        include_search: bool = True,
+        include_find_similar: bool = True,
+        include_get_contents: bool = True,
+        include_answer: bool = True,
+        id: str | None = None,
+    ):
+        """Creates an Exa toolset with a shared client.
+
+        Args:
+            api_key: The Exa API key.
+
+                You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
+            num_results: The number of results to return for search and find_similar. Defaults to 5.
+            max_characters: Maximum characters of text content per result. Use this to limit
+                token usage. Defaults to None (no limit).
+            include_search: Whether to include the search tool. Defaults to True.
+            include_find_similar: Whether to include the find_similar tool. Defaults to True.
+            include_get_contents: Whether to include the get_contents tool. Defaults to True.
+            include_answer: Whether to include the answer tool. Defaults to True.
+            id: Optional ID for the toolset, used for durable execution environments.
+        """
+        client = AsyncExa(api_key=api_key)
+        tools: list[Tool[Any]] = []
+
+        if include_search:
+            tools.append(
+                Tool[Any](
+                    ExaSearchTool(client=client, num_results=num_results, max_characters=max_characters).__call__,
+                    name='exa_search',
+                    description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
+                )
+            )
+
+        if include_find_similar:
+            tools.append(
+                Tool[Any](
+                    ExaFindSimilarTool(client=client, num_results=num_results).__call__,
+                    name='exa_find_similar',
+                    description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
+                )
+            )
+
+        if include_get_contents:
+            tools.append(
+                Tool[Any](
+                    ExaGetContentsTool(client=client).__call__,
+                    name='exa_get_contents',
+                    description='Gets the full text content of specified URLs. Useful for reading articles, documentation, or any web page when you have the exact URL.',
+                )
+            )
+
+        if include_answer:
+            tools.append(
+                Tool[Any](
+                    ExaAnswerTool(client=client).__call__,
+                    name='exa_answer',
+                    description='Generates an AI-powered answer to a question with citations from web sources. Returns a comprehensive answer backed by real sources.',
+                )
+            )
+
+        super().__init__(tools, id=id)
