@@ -13,7 +13,14 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -267,6 +274,11 @@ class AnthropicModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """The set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
     async def request(
         self,
@@ -885,7 +897,7 @@ class AnthropicModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_parts.insert(0, instructions)
+            system_prompt_parts.append(instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
