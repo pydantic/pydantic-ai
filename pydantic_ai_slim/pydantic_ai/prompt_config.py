@@ -150,14 +150,18 @@ class PromptTemplates:
     def get_prompted_output_template(self, output_schema: OutputSchema[Any]) -> str | None:
         """Get the prompted output template for the given output schema.
 
-        Precedence: PromptedOutput.template (explicit) > PromptConfig template (agent-level).
+        Precedence: PromptConfig template (if explicitly set) > PromptedOutput.template > default.
         """
         from ._output import PromptedOutputSchema
 
         if not isinstance(output_schema, PromptedOutputSchema):
             return None
 
-        return output_schema.template or self.prompted_output_template
+        # PromptConfig takes precedence if explicitly set (different from default)
+        if self.prompted_output_template != DEFAULT_PROMPT_CONFIG.templates.prompted_output_template:
+            return self.prompted_output_template
+
+        return output_schema.template
 
 
 @dataclass
