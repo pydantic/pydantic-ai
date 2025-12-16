@@ -67,13 +67,9 @@ with try_import() as imports_successful:
         ChoiceDeltaToolCallFunction,
     )
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
-    from openai.types.chat.chat_completion_message_function_tool_call import (
-        ChatCompletionMessageFunctionToolCall,
-    )
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
     from openai.types.chat.chat_completion_message_tool_call import Function
-    from openai.types.chat.chat_completion_token_logprob import (
-        ChatCompletionTokenLogprob,
-    )
+    from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
     from pydantic_ai.models.google import GoogleModel
@@ -287,10 +283,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 tool_calls=[
                     ChatCompletionMessageFunctionToolCall(
                         id='1',
-                        function=Function(
-                            arguments='{"loc_name": "San Fransisco"}',
-                            name='get_location',
-                        ),
+                        function=Function(arguments='{"loc_name": "San Fransisco"}', name='get_location'),
                         type='function',
                     )
                 ],
@@ -340,10 +333,7 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='this is the system prompt',
-                        timestamp=IsNow(tz=timezone.utc),
-                    ),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
                 run_id=IsStr(),
@@ -428,13 +418,7 @@ async def test_request_tool_call(allow_model_requests: None):
         ]
     )
     assert result.usage() == snapshot(
-        RunUsage(
-            requests=3,
-            cache_read_tokens=3,
-            input_tokens=5,
-            output_tokens=3,
-            tool_calls=1,
-        )
+        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, tool_calls=1)
     )
 
 
@@ -508,17 +492,14 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
 
 def struc_chunk(
-    tool_name: str | None,
-    tool_arguments: str | None,
-    finish_reason: FinishReason | None = None,
+    tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
 ) -> chat.ChatCompletionChunk:
     return chunk(
         [
             ChoiceDelta(
                 tool_calls=[
                     ChoiceDeltaToolCall(
-                        index=0,
-                        function=ChoiceDeltaToolCallFunction(name=tool_name, arguments=tool_arguments),
+                        index=0, function=ChoiceDeltaToolCallFunction(name=tool_name, arguments=tool_arguments)
                     )
                 ]
             ),
@@ -552,12 +533,7 @@ async def test_stream_structured(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
@@ -580,11 +556,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -604,11 +576,7 @@ async def test_stream_native_output(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -621,8 +589,7 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
                     content='',  # Ollama will include an empty text delta even when it's going to call a tool
                     tool_calls=[
                         ChoiceDeltaToolCall(
-                            index=0,
-                            function=ChoiceDeltaToolCallFunction(name='final_result', arguments=None),
+                            index=0, function=ChoiceDeltaToolCallFunction(name='final_result', arguments=None)
                         )
                     ],
                 ),
@@ -640,18 +607,12 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
-async def test_stream_text_empty_think_tag_and_text_before_tool_call(
-    allow_model_requests: None,
-):
+async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model_requests: None):
     # Ollama + Qwen3 will emit `<think>\n</think>\n\n` ahead of tool calls,
     # which we don't want to end up treating as a final result.
     stream = [
@@ -672,12 +633,7 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
@@ -699,9 +655,7 @@ async def test_no_delta(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
-def none_delta_chunk(
-    finish_reason: FinishReason | None = None,
-) -> chat.ChatCompletionChunk:
+def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
     choice = ChunkChoice(index=0, delta=ChoiceDelta())
     # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
     choice.delta = None  # pyright: ignore[reportAttributeAccessIssue]
@@ -742,9 +696,7 @@ async def test_system_prompt_role(
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'gpt-4o',
-        system_prompt_role=system_prompt_role,
-        provider=OpenAIProvider(openai_client=mock_client),
+        'gpt-4o', system_prompt_role=system_prompt_role, provider=OpenAIProvider(openai_client=mock_client)
     )
     assert m.system_prompt_role == system_prompt_role  # type: ignore[reportDeprecated]
 
@@ -755,10 +707,7 @@ async def test_system_prompt_role(
     assert get_mock_chat_completion_kwargs(mock_client) == [
         {
             'messages': [
-                {
-                    'content': 'some instructions',
-                    'role': system_prompt_role or 'system',
-                },
+                {'content': 'some instructions', 'role': system_prompt_role or 'system'},
                 {'content': 'hello', 'role': 'user'},
             ],
             'model': 'gpt-4o',
@@ -779,10 +728,7 @@ async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api
 async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
     profile = ModelProfile(supports_tools=False)
     model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini',
-        profile=profile,
-        provider=OpenAIProvider(api_key=openai_api_key),
-        system_prompt_role='user',
+        'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
     )
     profile = OpenAIModelProfile.from_profile(model.profile)
     assert profile.openai_system_prompt_role == 'user'
@@ -796,16 +742,11 @@ async def test_openai_o1_mini_system_role(
     openai_api_key: str,
 ) -> None:
     model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini',
-        provider=OpenAIProvider(api_key=openai_api_key),
-        system_prompt_role=system_prompt_role,
+        'o1-mini', provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role=system_prompt_role
     )
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
-    with pytest.raises(
-        ModelHTTPError,
-        match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*",
-    ):
+    with pytest.raises(ModelHTTPError, match=r".*Unsupported value: 'messages\[0\]\.role' does not support.*"):
         await agent.run('Hello')
 
 
@@ -826,11 +767,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(
-        m,
-        output_type=list[int],
-        model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls),
-    )
+    agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     await agent.run('Hello')
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
@@ -965,13 +902,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_image',
-                        args='{}',
-                        tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
                 usage=RequestUsage(
                     input_tokens=46,
                     output_tokens=11,
@@ -1060,13 +991,7 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_image',
-                        args='{}',
-                        tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY',
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY')],
                 usage=RequestUsage(
                     input_tokens=46,
                     output_tokens=11,
@@ -1187,9 +1112,7 @@ async def test_text_document_url_input(allow_model_requests: None, openai_api_ke
 
 
 async def test_text_document_as_binary_content_input(
-    allow_model_requests: None,
-    text_document_content: BinaryContent,
-    openai_api_key: str,
+    allow_model_requests: None, text_document_content: BinaryContent, openai_api_key: str
 ):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -1298,9 +1221,7 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
     assert result.output == snapshot('The capital of France is Paris.\n')
 
     result = await agent.run(
-        'What is the capital of England?',
-        model=openai_model,
-        message_history=result.all_messages(),
+        'What is the capital of England?', model=openai_model, message_history=result.all_messages()
     )
     assert result.output == snapshot('The capital of England is London.')
 
@@ -1360,10 +1281,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
 async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(
-        m,
-        model_settings=OpenAIChatModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}),
-    )
+    agent = Agent(m, model_settings=OpenAIChatModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
     await agent.run('hello')
 
 
@@ -1571,12 +1489,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {
-                        'x': {
-                            'type': 'string',
-                            'description': 'minLength=1, format=uri',
-                        }
-                    },
+                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1592,10 +1505,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'MyDefaultRecursiveDc': {
                             'properties': {
                                 'field': {
-                                    'anyOf': [
-                                        {'$ref': '#/$defs/MyDefaultRecursiveDc'},
-                                        {'type': 'null'},
-                                    ],
+                                    'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}],
                                     'default': None,
                                 }
                             },
@@ -1605,16 +1515,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
                             'properties': {
-                                'field': {
-                                    'anyOf': [
-                                        {'$ref': '#/$defs/MyRecursiveDc'},
-                                        {'type': 'null'},
-                                    ]
-                                },
-                                'my_enum': {
-                                    'description': 'my enum',
-                                    'anyOf': [{'$ref': '#/$defs/MyEnum'}],
-                                },
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
                             },
                             'required': ['field', 'my_enum'],
                             'type': 'object',
@@ -1640,12 +1542,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     '$defs': {
                         'MyDefaultRecursiveDc': {
                             'properties': {
-                                'field': {
-                                    'anyOf': [
-                                        {'$ref': '#/$defs/MyDefaultRecursiveDc'},
-                                        {'type': 'null'},
-                                    ]
-                                }
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}]}
                             },
                             'type': 'object',
                             'additionalProperties': False,
@@ -1654,16 +1551,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
                             'properties': {
-                                'field': {
-                                    'anyOf': [
-                                        {'$ref': '#/$defs/MyRecursiveDc'},
-                                        {'type': 'null'},
-                                    ]
-                                },
-                                'my_enum': {
-                                    'description': 'my enum',
-                                    'anyOf': [{'$ref': '#/$defs/MyEnum'}],
-                                },
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
                             },
                             'type': 'object',
                             'additionalProperties': False,
@@ -1713,10 +1602,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {
-                        'foo': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
-                        'bar': {'type': 'string'},
-                    },
+                    'properties': {'foo': {'anyOf': [{'type': 'string'}, {'type': 'null'}]}, 'bar': {'type': 'string'}},
                     'required': ['foo', 'bar'],
                     'type': 'object',
                 }
@@ -1755,10 +1641,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {
-                        'foo': {'type': 'string'},
-                        'bar': {'type': 'string'},
-                    },
+                    'properties': {'foo': {'type': 'string'}, 'bar': {'type': 'string'}},
                     'required': ['bar'],
                     'type': 'object',
                 }
@@ -1854,14 +1737,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         }
                     },
                     'additionalProperties': False,
-                    'properties': {
-                        'x': {
-                            'anyOf': [
-                                {'type': 'integer'},
-                                {'$ref': '#/$defs/MyDefaultDc'},
-                            ]
-                        }
-                    },
+                    'properties': {'x': {'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1882,14 +1758,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         }
                     },
                     'additionalProperties': False,
-                    'properties': {
-                        'x': {
-                            'anyOf': [
-                                {'type': 'integer'},
-                                {'$ref': '#/$defs/MyDefaultDc'},
-                            ]
-                        }
-                    },
+                    'properties': {'x': {'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1909,14 +1778,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         }
                     },
                     'additionalProperties': False,
-                    'properties': {
-                        'x': {
-                            'oneOf': [
-                                {'type': 'integer'},
-                                {'$ref': '#/$defs/MyDefaultDc'},
-                            ]
-                        }
-                    },
+                    'properties': {'x': {'oneOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1937,14 +1799,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         }
                     },
                     'additionalProperties': False,
-                    'properties': {
-                        'x': {
-                            'anyOf': [
-                                {'type': 'integer'},
-                                {'$ref': '#/$defs/MyDefaultDc'},
-                            ]
-                        }
-                    },
+                    'properties': {'x': {'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1966,10 +1821,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'additionalProperties': False,
                     'properties': {
                         'x': {'items': {'type': 'integer'}, 'type': 'array'},
-                        'y': {
-                            'items': {'$ref': '#/$defs/MyDefaultDc'},
-                            'type': 'array',
-                        },
+                        'y': {'items': {'$ref': '#/$defs/MyDefaultDc'}, 'type': 'array'},
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -1993,10 +1845,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'additionalProperties': False,
                     'properties': {
                         'x': {'items': {'type': 'integer'}, 'type': 'array'},
-                        'y': {
-                            'items': {'$ref': '#/$defs/MyDefaultDc'},
-                            'type': 'array',
-                        },
+                        'y': {'items': {'$ref': '#/$defs/MyDefaultDc'}, 'type': 'array'},
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -2011,12 +1860,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {
-                            'maxItems': 1,
-                            'minItems': 1,
-                            'prefixItems': [{'type': 'integer'}],
-                            'type': 'array',
-                        },
+                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                         'y': {
                             'default': ['abc'],
                             'maxItems': 1,
@@ -2038,18 +1882,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {
-                            'maxItems': 1,
-                            'minItems': 1,
-                            'prefixItems': [{'type': 'integer'}],
-                            'type': 'array',
-                        },
-                        'y': {
-                            'maxItems': 1,
-                            'minItems': 1,
-                            'prefixItems': [{'type': 'string'}],
-                            'type': 'array',
-                        },
+                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -2074,11 +1908,7 @@ async def test_strict_mode_cannot_infer_strict(
 
     async def assert_strict(expected_strict: bool | None, profile: ModelProfile | None = None):
         mock_client = MockOpenAI.create_mock(c)
-        m = OpenAIChatModel(
-            'gpt-4o',
-            provider=OpenAIProvider(openai_client=mock_client),
-            profile=profile,
-        )
+        m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
         agent = Agent(m)
 
         agent.tool_plain(strict=tool_strict)(tool)
@@ -2138,12 +1968,7 @@ def test_strict_schema():
                 'MyModel': {
                     'additionalProperties': False,
                     'properties': {
-                        'my_discriminated_union': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/Apple'},
-                                {'$ref': '#/$defs/Banana'},
-                            ]
-                        },
+                        'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
                         'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                         'my_patterns': {
                             'additionalProperties': False,
@@ -2160,13 +1985,7 @@ def test_strict_schema():
                             'type': 'array',
                         },
                     },
-                    'required': [
-                        'my_recursive',
-                        'my_patterns',
-                        'my_tuple',
-                        'my_list',
-                        'my_discriminated_union',
-                    ],
+                    'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
                     'type': 'object',
                 },
             },
@@ -2179,22 +1998,11 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {
-                    'maxItems': 1,
-                    'minItems': 1,
-                    'prefixItems': [{'type': 'integer'}],
-                    'type': 'array',
-                },
+                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
-            'required': [
-                'my_recursive',
-                'my_patterns',
-                'my_tuple',
-                'my_list',
-                'my_discriminated_union',
-            ],
+            'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
             'type': 'object',
             'additionalProperties': False,
         }
@@ -2297,23 +2105,12 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is the temperature in Tokyo?',
-                        timestamp=IsDatetime(),
-                    )
-                ],
+                parts=[UserPromptPart(content='What is the temperature in Tokyo?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_temperature',
-                        args='{"city":"Tokyo"}',
-                        tool_call_id=IsStr(),
-                    )
-                ],
+                parts=[ToolCallPart(tool_name='get_temperature', args='{"city":"Tokyo"}', tool_call_id=IsStr())],
                 usage=RequestUsage(
                     input_tokens=50,
                     output_tokens=15,
@@ -2336,10 +2133,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_temperature',
-                        content=20.0,
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
+                        tool_name='get_temperature', content=20.0, tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
                 ],
                 instructions='You are a helpful assistant.',
@@ -2391,20 +2185,10 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a',
-                    ),
-                    TextPart(
-                        content=IsStr(),
-                        id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a',
-                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a'),
+                    TextPart(content=IsStr(), id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a'),
                 ],
-                usage=RequestUsage(
-                    input_tokens=13,
-                    output_tokens=1915,
-                    details={'reasoning_tokens': 1600},
-                ),
+                usage=RequestUsage(input_tokens=13, output_tokens=1915, details={'reasoning_tokens': 1600}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2465,10 +2249,7 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
         logprobs=ChoiceLogprobs(
             content=[
                 ChatCompletionTokenLogprob(
-                    token='world',
-                    logprob=-0.6931,
-                    top_logprobs=[],
-                    bytes=[119, 111, 114, 108, 100],
+                    token='world', logprob=-0.6931, top_logprobs=[], bytes=[119, 111, 114, 108, 100]
                 )
             ],
         ),
@@ -2515,37 +2296,12 @@ async def test_openai_instructions_with_responses_logprobs(allow_model_requests:
     assert 'logprobs' in text_part.provider_details
     assert text_part.provider_details['logprobs'] == [
         {'token': 'The', 'logprob': -0.0, 'bytes': [84, 104, 101], 'top_logprobs': []},
-        {
-            'token': ' capital',
-            'logprob': 0.0,
-            'bytes': [32, 99, 97, 112, 105, 116, 97, 108],
-            'top_logprobs': [],
-        },
+        {'token': ' capital', 'logprob': 0.0, 'bytes': [32, 99, 97, 112, 105, 116, 97, 108], 'top_logprobs': []},
         {'token': ' of', 'logprob': 0.0, 'bytes': [32, 111, 102], 'top_logprobs': []},
-        {
-            'token': ' Minas',
-            'logprob': -0.0,
-            'bytes': [32, 77, 105, 110, 97, 115],
-            'top_logprobs': [],
-        },
-        {
-            'token': ' Gerais',
-            'logprob': -0.0,
-            'bytes': [32, 71, 101, 114, 97, 105, 115],
-            'top_logprobs': [],
-        },
-        {
-            'token': ' is',
-            'logprob': -5.2e-05,
-            'bytes': [32, 105, 115],
-            'top_logprobs': [],
-        },
-        {
-            'token': ' Belo',
-            'logprob': -4.3e-05,
-            'bytes': [32, 66, 101, 108, 111],
-            'top_logprobs': [],
-        },
+        {'token': ' Minas', 'logprob': -0.0, 'bytes': [32, 77, 105, 110, 97, 115], 'top_logprobs': []},
+        {'token': ' Gerais', 'logprob': -0.0, 'bytes': [32, 71, 101, 114, 97, 105, 115], 'top_logprobs': []},
+        {'token': ' is', 'logprob': -5.2e-05, 'bytes': [32, 105, 115], 'top_logprobs': []},
+        {'token': ' Belo', 'logprob': -4.3e-05, 'bytes': [32, 66, 101, 108, 111], 'top_logprobs': []},
         {
             'token': ' Horizonte',
             'logprob': -2.0e-06,
@@ -2559,24 +2315,17 @@ async def test_openai_instructions_with_responses_logprobs(allow_model_requests:
 async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m,
-        instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(search_context_size='low')],
+        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
     )
 
-    with pytest.raises(
-        UserError,
-        match=r'WebSearchTool is not supported with `OpenAIChatModel` and model.*',
-    ):
+    with pytest.raises(UserError, match=r'WebSearchTool is not supported with `OpenAIChatModel` and model.*'):
         await agent.run('What day is today?')
 
 
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m,
-        instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(search_context_size='low')],
+        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
     )
 
     result = await agent.run('What day is today?')
@@ -2592,8 +2341,7 @@ async def test_openai_web_search_tool_with_user_location(allow_model_requests: N
     )
 
     result = await agent.run('What is the current temperature?')
-    assert result.output == snapshot(
-        """\
+    assert result.output == snapshot("""\
 Het is momenteel zonnig in Utrecht met een temperatuur van 22°C.
 
 ## Weer voor Utrecht, Nederland:
@@ -2608,8 +2356,7 @@ Dagvoorspelling:
 * maandag, mei 19: minimum: 49°F (9°C), maximum: 70°F (21°C), beschrijving: Deels zonnig
 * dinsdag, mei 20: minimum: 49°F (10°C), maximum: 72°F (22°C), beschrijving: Zonnig tot gedeeltelijk bewolkt
  \
-"""
-    )
+""")
 
 
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
@@ -2646,9 +2393,7 @@ def test_openai_model_profile_custom():
 
 def test_openai_model_profile_function():
     def model_profile(model_name: str) -> ModelProfile:
-        return ModelProfile(
-            json_schema_transformer=(InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
-        )
+        return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
     assert isinstance(m.profile, ModelProfile)
@@ -2663,7 +2408,7 @@ def test_openai_model_profile_from_provider():
     class CustomProvider(OpenAIProvider):
         def model_profile(self, model_name: str) -> ModelProfile:
             return ModelProfile(
-                json_schema_transformer=(InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
+                json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None
             )
 
     m = OpenAIChatModel('gpt-4o', provider=CustomProvider(api_key='foobar'))
@@ -2679,11 +2424,7 @@ def test_model_profile_strict_not_supported():
     my_tool = ToolDefinition(
         name='my_tool',
         description='This is my tool',
-        parameters_json_schema={
-            'type': 'object',
-            'title': 'Result',
-            'properties': {'spam': {'type': 'number'}},
-        },
+        parameters_json_schema={'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
         strict=True,
     )
 
@@ -2696,11 +2437,7 @@ def test_model_profile_strict_not_supported():
             'function': {
                 'name': 'my_tool',
                 'description': 'This is my tool',
-                'parameters': {
-                    'type': 'object',
-                    'title': 'Result',
-                    'properties': {'spam': {'type': 'number'}},
-                },
+                'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
                 'strict': True,
             },
         }
@@ -2720,11 +2457,7 @@ def test_model_profile_strict_not_supported():
             'function': {
                 'name': 'my_tool',
                 'description': 'This is my tool',
-                'parameters': {
-                    'type': 'object',
-                    'title': 'Result',
-                    'properties': {'spam': {'type': 'number'}},
-                },
+                'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
             },
         }
     )
@@ -2897,11 +2630,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_user_country',
-                        args='{}',
-                        tool_call_id='call_J1YabdC7G7kzEZNbbZopwenH',
-                    )
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_J1YabdC7G7kzEZNbbZopwenH')
                 ],
                 usage=RequestUsage(
                     input_tokens=42,
@@ -2989,11 +2718,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_user_country',
-                        args='{}',
-                        tool_call_id='call_PkRGedQNRFUzJp2R7dO7avWR',
-                    )
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_PkRGedQNRFUzJp2R7dO7avWR')
                 ],
                 usage=RequestUsage(
                     input_tokens=71,
@@ -3083,11 +2808,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_user_country',
-                        args='{}',
-                        tool_call_id='call_SIttSeiOistt33Htj4oiHOOX',
-                    )
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_SIttSeiOistt33Htj4oiHOOX')
                 ],
                 usage=RequestUsage(
                     input_tokens=160,
@@ -3177,11 +2898,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_user_country',
-                        args='{}',
-                        tool_call_id='call_s7oT9jaLAsEqTgvxZTmFh0wB',
-                    )
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_s7oT9jaLAsEqTgvxZTmFh0wB')
                 ],
                 usage=RequestUsage(
                     input_tokens=109,
@@ -3271,11 +2988,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_user_country',
-                        args='{}',
-                        tool_call_id='call_wJD14IyJ4KKVtjCrGyNCHO09',
-                    )
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_wJD14IyJ4KKVtjCrGyNCHO09')
                 ],
                 usage=RequestUsage(
                     input_tokens=273,
@@ -3350,8 +3063,7 @@ async def test_invalid_response(allow_model_requests: None):
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(
-            api_key='foobar',
-            base_url='https://demo-endpoints.pydantic.workers.dev/bin/content-type/application/json',
+            api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/content-type/application/json'
         ),
     )
     agent = Agent(m)
@@ -3366,11 +3078,7 @@ async def test_invalid_response(allow_model_requests: None):
 async def test_text_response(allow_model_requests: None):
     """VCR recording is of a text response."""
     m = OpenAIChatModel(
-        'gpt-4o',
-        provider=OpenAIProvider(
-            api_key='foobar',
-            base_url='https://demo-endpoints.pydantic.workers.dev/bin/',
-        ),
+        'gpt-4o', provider=OpenAIProvider(api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/')
     )
     agent = Agent(m)
 
@@ -3436,11 +3144,7 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
-    model = OpenAIResponsesModel(
-        'openai/gpt-oss',
-        provider=OpenAIProvider(openai_client=mock_client),
-        profile=profile,
-    )
+    model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
 
@@ -3528,9 +3232,7 @@ async def test_cache_point_filtering_responses_model():
     assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
 
 
-async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(
-    allow_model_requests: None,
-):
+async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
     )
@@ -3559,9 +3261,7 @@ response\
     )
 
 
-async def test_openai_custom_reasoning_field_sending_back_in_custom_field(
-    allow_model_requests: None,
-):
+async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
     )
