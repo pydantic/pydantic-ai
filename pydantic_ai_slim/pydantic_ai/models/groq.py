@@ -421,9 +421,10 @@ class GroqModel(Model):
             elif len(output_tools) > 1:
                 warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
                 tool_choice = 'required'
-            elif not model_request_parameters.allow_text_output:
+            elif not model_request_parameters.allow_text_output:  # pragma: no cover
+                # Unreachable: if output_tools is empty, early return above will have already triggered
                 tool_choice = 'required'
-            else:
+            else:  # pragma: no cover
                 tool_choice = 'auto'
 
         elif isinstance(tool_choice_value, list):

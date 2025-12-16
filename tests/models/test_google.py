@@ -4622,9 +4622,9 @@ def test_tool_choice_specific_tool_single_text_not_allowed(google_provider: Goog
     func_names: list[str] = []
     for t in tools:
         decls = t.get('function_declarations')
-        if decls:
+        if decls:  # pragma: no branch
             name = decls[0].get('name')
-            if name:
+            if name:  # pragma: no branch
                 func_names.append(name)
     assert 'tool_a' in func_names
     assert 'tool_b' in func_names
@@ -4661,9 +4661,9 @@ def test_tool_choice_none_with_output_tools_uses_allowed_function_names(google_p
     func_names: list[str] = []
     for t in tools:
         decls = t.get('function_declarations')
-        if decls:
+        if decls:  # pragma: no branch
             name = decls[0].get('name')
-            if name:
+            if name:  # pragma: no branch
                 func_names.append(name)
     assert 'func_tool' in func_names
     assert 'output_tool' in func_names
@@ -4671,6 +4671,37 @@ def test_tool_choice_none_with_output_tools_uses_allowed_function_names(google_p
     assert tool_config is not None
     fcc = tool_config.get('function_calling_config')
     assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['output_tool']})
+
+
+def test_tool_choice_none_with_output_tools_and_text_allowed(google_provider: GoogleProvider) -> None:
+    """tool_choice='none' with output tools and allow_text_output=True uses AUTO mode."""
+    func_tool = ToolDefinition(
+        name='func_tool',
+        description='Function tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool = ToolDefinition(
+        name='output_tool',
+        description='Output tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    # allow_text_output=True means model can respond with text
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[func_tool], allow_text_output=True, output_tools=[output_tool]
+    )
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings: GoogleModelSettings = {'tool_choice': 'none'}
+
+    tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    # With allow_text_output=True, function tools are filtered out (only output tool remains)
+    assert tools is not None
+    assert len(tools) == 1
+    assert tool_config is not None
+    fcc = tool_config.get('function_calling_config')
+    # With allow_text_output=True, uses AUTO mode (can't use ANY as it forces tool)
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.AUTO})
 
 
 def test_tool_choice_auto_with_required_output(google_provider: GoogleProvider) -> None:

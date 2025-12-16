@@ -5761,6 +5761,46 @@ async def test_tool_choice_none_with_output_tools(allow_model_requests: None) ->
     assert kwargs['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
 
 
+async def test_tool_choice_none_multiple_output_tools_falls_back(allow_model_requests: None) -> None:
+    """tool_choice='none' with multiple output tools falls back to 'required' with warning."""
+
+    class OutputA(BaseModel):
+        city: str
+
+    class OutputB(BaseModel):
+        country: str
+
+    tool_call_response = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='call_1',
+                    type='function',
+                    function=chat.chat_completion_message_tool_call.Function(
+                        name='final_result_OutputA', arguments='{"city": "Paris"}'
+                    ),
+                )
+            ],
+        )
+    )
+
+    mock_client = MockGroq.create_mock(tool_call_response)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent: Agent[None, OutputA | OutputB] = Agent(m, output_type=[OutputA, OutputB])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match='Groq only supports forcing a single tool'):
+        await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == 'required'
+
+
 async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
     """When tool_choice='auto' but structured output is required, falls back to 'required'."""
 

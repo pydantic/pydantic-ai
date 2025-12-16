@@ -708,7 +708,7 @@ class AnthropicModel(Model):
                 tool_choice['disable_parallel_tool_use'] = disable_parallel
 
         elif tool_choice_value == 'none':
-            if len(output_tools) == 0:
+            if len(output_tools) == 0:  # pragma: no cover
                 assert model_request_parameters.allow_text_output, (
                     'Internal error: tool_choice=none with no output tools but text output not allowed'
                 )

@@ -8834,3 +8834,114 @@ async def test_tool_choice_none_without_output_tools(allow_model_requests: None)
     assert isinstance(kwargs.get('tools'), Omit)  # pyright: ignore[reportUnknownMemberType]
     # tool_choice is also Omit when no tools are sent
     assert isinstance(kwargs.get('tool_choice'), Omit)  # pyright: ignore[reportUnknownMemberType]
+
+
+async def test_tool_choice_required_with_parallel_tool_calls_disabled(allow_model_requests: None) -> None:
+    """tool_choice='required' with parallel_tool_calls=False sets disable_parallel_tool_use."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'required', 'parallel_tool_calls': False})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice'] == snapshot({'type': 'any', 'disable_parallel_tool_use': True})
+
+
+async def test_tool_choice_none_single_output_with_parallel_disabled(allow_model_requests: None) -> None:
+    """tool_choice='none' with single output tool and parallel_tool_calls=False."""
+
+    class Location(BaseModel):
+        city: str
+
+    c = completion_message(
+        [BetaToolUseBlock(id='1', type='tool_use', name='final_result', input={'city': 'Paris'})],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, output_type=Location)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': 'none', 'parallel_tool_calls': False})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice'] == snapshot(
+        {'type': 'tool', 'name': 'final_result', 'disable_parallel_tool_use': True}
+    )
+
+
+async def test_tool_choice_none_multiple_output_tools_with_text_allowed(allow_model_requests: None) -> None:
+    """Multiple output tools with text allowed falls back to 'auto'."""
+
+    class LocationA(BaseModel):
+        city: str
+
+    class LocationB(BaseModel):
+        country: str
+
+    c = completion_message([BetaTextBlock(text='Just text', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, LocationA | LocationB | str] = Agent(m, output_type=[LocationA, LocationB, str])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match='Anthropic only supports forcing a single tool'):
+        await agent.run('hello', model_settings={'tool_choice': 'none'})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    # With allow_text_output=True, falls back to 'auto'
+    assert kwargs['tool_choice']['type'] == 'auto'
+
+
+async def test_tool_choice_none_multiple_output_with_parallel_disabled(allow_model_requests: None) -> None:
+    """Multiple output tools with parallel_tool_calls=False sets disable_parallel_tool_use."""
+
+    class LocationA(BaseModel):
+        city: str
+
+    class LocationB(BaseModel):
+        country: str
+
+    c = completion_message([BetaTextBlock(text='Just text', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, LocationA | LocationB | str] = Agent(m, output_type=[LocationA, LocationB, str])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    with pytest.warns(UserWarning, match='Anthropic only supports forcing a single tool'):
+        await agent.run('hello', model_settings={'tool_choice': 'none', 'parallel_tool_calls': False})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice'] == snapshot({'type': 'auto', 'disable_parallel_tool_use': True})
+
+
+async def test_tool_choice_specific_with_parallel_disabled(allow_model_requests: None) -> None:
+    """Specific tool forcing with parallel_tool_calls=False."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings={'tool_choice': ['my_tool'], 'parallel_tool_calls': False})
+
+    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert kwargs['tool_choice'] == snapshot({'type': 'tool', 'name': 'my_tool', 'disable_parallel_tool_use': True})

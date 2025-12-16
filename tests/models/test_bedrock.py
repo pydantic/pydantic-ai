@@ -2406,6 +2406,32 @@ async def test_tool_choice_none_with_output_tools_uses_auto(bedrock_provider: Be
     assert tool_config.get('toolChoice') == {'auto': {}}
 
 
+async def test_tool_choice_none_with_output_required_uses_any(bedrock_provider: BedrockProvider) -> None:
+    """When tool_choice='none' with allow_text_output=False, uses 'any' to force output tool use."""
+    function_tool = ToolDefinition(
+        name='my_tool',
+        description='Function tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Output tool',
+        parameters_json_schema={'type': 'object', 'properties': {'result': {'type': 'string'}}},
+    )
+    # allow_text_output=False means model must use a tool
+    mrp = ModelRequestParameters(
+        output_mode='tool', function_tools=[function_tool], allow_text_output=False, output_tools=[output_tool]
+    )
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    settings: BedrockModelSettings = {'tool_choice': 'none'}
+    tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    # With allow_text_output=False, uses 'any' to force tool call
+    assert tool_config.get('toolChoice') == {'any': {}}
+
+
 async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):
     """Test that ModelResponse with empty parts (e.g. content_filtered) is skipped in message mapping."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)

@@ -797,7 +797,7 @@ class OpenAIChatModel(Model):
 
         elif tool_choice_value == 'none':
             tool_names = [t.name for t in output_tools]
-            if len(tool_names) == 0:
+            if len(tool_names) == 0:  # pragma: no cover
                 # No output tools - let model generate text
                 assert model_request_parameters.allow_text_output, (
                     'Internal error: tool_choice=none with no output tools but text output not allowed'
