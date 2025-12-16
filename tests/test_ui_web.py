@@ -146,7 +146,10 @@ def test_chat_app_configure_endpoint():
         assert response.status_code == 200
         assert response.json() == snapshot(
             {
-                'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': ['web_search']}],
+                'models': [
+                    {'id': 'test:test', 'name': 'Test', 'builtinTools': ['web_search']},
+                    {'id': 'test', 'name': 'Test', 'builtinTools': ['web_search']},
+                ],
                 'builtinTools': [{'id': 'web_search', 'name': 'Web Search'}],
             }
         )
@@ -163,6 +166,26 @@ def test_chat_app_configure_endpoint_empty():
         assert response.json() == snapshot(
             {'models': [{'id': 'test:test', 'name': 'Test', 'builtinTools': []}], 'builtinTools': []}
         )
+
+
+def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.MonkeyPatch):
+    """Test that openai-chat: and openai-responses: models are kept as separate entries."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
+
+    agent = Agent('test')
+    app = create_web_app(
+        agent,
+        models=['openai-chat:gpt-4o', 'openai-responses:gpt-4o'],
+    )
+
+    with TestClient(app) as client:
+        response = client.get('/api/configure')
+        assert response.status_code == 200
+        data = response.json()
+        model_ids = [m['id'] for m in data['models']]
+        assert 'openai-chat:gpt-4o' in model_ids
+        assert 'openai-responses:gpt-4o' in model_ids
+        assert len([m for m in model_ids if 'gpt-4o' in m]) == 2
 
 
 def test_chat_app_index_endpoint():
@@ -232,6 +255,42 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     result = await _get_ui_html('cached-version')
 
     assert result == test_content
+
+
+def test_chat_app_index_invalid_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Test that index endpoint returns 502 for invalid UI version."""
+    import httpx
+
+    import pydantic_ai.ui._web.app as app_module
+
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    class MockResponse:
+        status_code = 404
+
+        def raise_for_status(self) -> None:
+            raise httpx.HTTPStatusError('Not Found', request=None, response=self)  # type: ignore
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    agent = Agent('test')
+    app = create_web_app(agent)
+
+    with TestClient(app) as client:
+        response = client.get('/?version=nonexistent-version')
+        assert response.status_code == 502
+        assert 'nonexistent-version' in response.text
+        assert '404' in response.text
 
 
 def test_chat_app_index_caching():

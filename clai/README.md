@@ -51,6 +51,8 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
+For full CLI documentation, see the [CLI documentation](https://ai.pydantic.dev/cli/).
+
 ## Web Chat UI
 
 Launch a web-based chat interface:
@@ -59,7 +61,7 @@ Launch a web-based chat interface:
 clai web -m openai:gpt-5
 ```
 
-![Web Chat UI](https://github.com/user-attachments/assets/462d4647-a74d-4c35-9120-af0d682b04cf)
+![Web Chat UI](../docs/img/web-chat-ui.png)
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
 
@@ -77,7 +79,4 @@ Launch the web UI with:
 clai web --agent my_agent:my_agent
 ```
 
-## Help
-
-For full CLI documentation, see the [CLI documentation](https://ai.pydantic.dev/cli/).
 For full Web UI documentation, see [Web Chat UI](https://ai.pydantic.dev/web/).

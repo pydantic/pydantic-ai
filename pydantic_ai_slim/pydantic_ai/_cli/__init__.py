@@ -16,7 +16,7 @@ from typing_inspection.introspection import get_literal_values
 from .. import __version__
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, TOOL_KINDS_THAT_REQUIRE_CONFIG
+from ..builtin_tools import BUILTIN_TOOLS_REQUIRING_CONFIG, SUPPORTED_BUILTIN_TOOLS
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
@@ -56,7 +56,7 @@ This folder is used to store the prompt history and configuration.
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 SUPPORTED_CLI_TOOL_IDS = sorted(
-    bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint.kind not in TOOL_KINDS_THAT_REQUIRE_CONFIG
+    bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint not in BUILTIN_TOOLS_REQUIRING_CONFIG
 )
 
 

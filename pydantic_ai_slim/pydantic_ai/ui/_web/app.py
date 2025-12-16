@@ -12,7 +12,7 @@ from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.settings import ModelSettings
 
-from .api import ModelsParam, create_api_routes
+from .api import ModelsParam, create_api_app
 
 try:
     from starlette.applications import Starlette
@@ -96,7 +96,7 @@ def create_web_app(
     Returns:
         A configured Starlette application ready to be served
     """
-    api_routes = create_api_routes(
+    api_app = create_api_app(
         agent=agent,
         models=models,
         builtin_tools=builtin_tools,
@@ -105,7 +105,7 @@ def create_web_app(
         instructions=instructions,
     )
 
-    routes = [Mount('/api', routes=api_routes)]
+    routes = [Mount('/api', app=api_app)]
     app = Starlette(routes=routes)
 
     async def index(request: Request) -> Response:
@@ -113,7 +113,13 @@ def create_web_app(
         version = request.query_params.get('version')
         ui_version = version or DEFAULT_UI_VERSION
 
-        content = await _get_ui_html(ui_version)
+        try:
+            content = await _get_ui_html(ui_version)
+        except httpx.HTTPStatusError as e:
+            return HTMLResponse(
+                content=f'Failed to fetch UI version "{ui_version}": {e.response.status_code}',
+                status_code=502,
+            )
 
         return HTMLResponse(
             content=content,

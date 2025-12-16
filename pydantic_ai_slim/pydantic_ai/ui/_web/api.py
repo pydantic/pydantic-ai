@@ -5,6 +5,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -75,15 +76,15 @@ def validate_request_options(
     return None
 
 
-def create_api_routes(
+def create_api_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
     builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
-) -> list[Route]:
-    """Create API routes for the web chat UI.
+) -> Starlette:
+    """Create API app for the web chat UI.
 
     Args:
         agent: Agent instance.
@@ -98,7 +99,7 @@ def create_api_routes(
         instructions: Optional extra instructions to pass to each agent run.
 
     Returns:
-        A list of Starlette Route objects for the API endpoints.
+        A Starlette application with the API endpoints.
     """
     # Build model ID → original reference mapping and ModelInfo list for frontend
     model_id_to_ref: dict[str, Model | str] = {}
@@ -115,16 +116,14 @@ def create_api_routes(
     items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
     all_models.extend(items)
 
-    seen_normalized_ids: set[str] = set()
+    seen_model_ids: set[str] = set()
     for label, model_ref in all_models:
         model = infer_model(model_ref)
-        normalized_id = f'{model.system}:{model.model_name}'
-        if normalized_id in seen_normalized_ids:
-            continue
-        seen_normalized_ids.add(normalized_id)
-
         # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        model_id = model_ref if isinstance(model_ref, str) else normalized_id
+        model_id = model_ref if isinstance(model_ref, str) else f'{model.system}:{model.model_name}'
+        if model_id in seen_model_ids:
+            continue
+        seen_model_ids.add(model_id)
         display_name = label or model.label
         model_supported_tools = model.profile.supported_builtin_tools
         supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
@@ -172,9 +171,10 @@ def create_api_routes(
         )
         return streaming_response
 
-    return [
+    routes = [
         Route('/chat', options_chat, methods=['OPTIONS']),
         Route('/chat', post_chat, methods=['POST']),
         Route('/configure', configure_frontend, methods=['GET']),
         Route('/health', health, methods=['GET']),
     ]
+    return Starlette(routes=routes)

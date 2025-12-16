@@ -19,7 +19,7 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'BUILTIN_TOOL_TYPES',
-    'DEPRECATED_BUILTIN_TOOL_KINDS',
+    'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
 )
 
@@ -433,12 +433,10 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.kind
 
 
-DEPRECATED_BUILTIN_TOOL_KINDS: frozenset[str] = frozenset({'url_context'})
+DEPRECATED_BUILTIN_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset({UrlContextTool})  # pyright: ignore[reportDeprecated]
 """Set of deprecated builtin tool IDs that should not be offered in new UIs."""
 
-SUPPORTED_BUILTIN_TOOLS = frozenset(
-    cls for kind, cls in BUILTIN_TOOL_TYPES.items() if kind not in DEPRECATED_BUILTIN_TOOL_KINDS
-)
+SUPPORTED_BUILTIN_TOOLS = frozenset(cls for cls in BUILTIN_TOOL_TYPES.values() if cls not in DEPRECATED_BUILTIN_TOOLS)
 """Get the set of all builtin tool types (excluding deprecated tools)."""
 
-TOOL_KINDS_THAT_REQUIRE_CONFIG: frozenset[str] = frozenset({'mcp_server', 'memory'})
+BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset({MCPServerTool, MemoryTool})

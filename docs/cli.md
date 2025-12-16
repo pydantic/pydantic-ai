@@ -2,10 +2,6 @@
 
 **Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
 
-We originally developed this CLI for our own use, but found ourselves using it so frequently that we decided to share it as part of the Pydantic AI package.
-
-We plan to continue adding new features, such as interaction with MCP servers, access to tools, and more.
-
 ## Installation
 
 You can run the `clai` using [`uvx`](https://docs.astral.sh/uv/guides/tools/):
@@ -50,8 +46,6 @@ Then running `clai` will start an interactive session where you can chat with th
 - `/cp`: Copy the last response to clipboard
 
 ### CLI Options
-
-<!-- Listing the options at the beginning of the CLI section so it's not too close to the options section of the Web UI -->
 
 | Option | Description |
 |--------|-------------|
@@ -181,6 +175,9 @@ clai web -m openai:gpt-5 -i 'You are a helpful coding assistant'
 clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 ```
 
+!!! note "Memory Tool"
+    The [`memory`](builtin-tools.md#memory-tool) builtin tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent and provide it via `--agent`.
+
 ### Web UI Options
 
 | Option | Description |
@@ -193,9 +190,6 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 | `--port` | Port to bind server (default: 7932) |
 
 When using `--agent`, the agent's configured model becomes the default. CLI models (`-m`) are additional options. Without `--agent`, the first `-m` model is the default.
-
-!!! note "Memory Tool"
-    The [`memory`](builtin-tools.md#memory-tool) builtin tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent and provide it via `--agent`.
 
 The web chat UI can also be launched programmatically using [`Agent.to_web()`][pydantic_ai.Agent.to_web], see the [Web UI documentation](web.md).
 
