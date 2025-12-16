@@ -243,12 +243,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _temporal_overrides(self) -> Iterator[None]:
-        from pydantic_ai._utils import blocking_execution
-
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
         with (
             super().override(model=self._model, toolsets=self._toolsets, tools=[]),
-            blocking_execution(),
+            _utils.disable_threads(),
         ):
             temporal_active_token = self._temporal_overrides_active.set(True)
             try:

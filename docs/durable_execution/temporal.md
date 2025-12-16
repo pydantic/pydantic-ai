@@ -161,12 +161,6 @@ When `TemporalAgent` dynamically creates activities for the wrapped agent's mode
 
 Other than that, any agent and toolset will just work!
 
-### Instructions Functions, Output Functions, and History Processors
-
-Pydantic AI runs non-async [instructions](../agents.md#instructions) and [system prompt](../agents.md#system-prompts) functions, [history processors](../message-history.md#processing-message-history), [output functions](../output.md#output-functions), and [output validators](../output.md#output-validator-functions) in threads. Inside Temporal workflows, [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] automatically enables blocking execution mode to avoid threading, allowing synchronous versions of these functions to work correctly. For consistency and performance, it's still recommended to use async functions where possible.
-
-Synchronous tool functions are supported, as tools are automatically run in activities unless this is [explicitly disabled](#activity-configuration). Still, it's recommended to make tool functions async as well to improve performance.
-
 ### Agent Run Context and Dependencies
 
 As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB.

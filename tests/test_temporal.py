@@ -1278,7 +1278,7 @@ class AgentWithSyncHistoryProcessorWorkflow:
 async def test_temporal_agent_with_sync_history_processor(allow_model_requests: None, client: Client):
     """Test that sync history processors work inside Temporal workflows.
 
-    This validates that the _prefer_blocking_execution ContextVar is properly set
+    This validates that the _disable_threads ContextVar is properly set
     by TemporalAgent._temporal_overrides(), allowing sync history processors to
     execute without triggering NotImplementedError from anyio.to_thread.run_sync.
     """
@@ -1292,6 +1292,49 @@ async def test_temporal_agent_with_sync_history_processor(allow_model_requests: 
             AgentWithSyncHistoryProcessorWorkflow.run,
             args=['What is the capital of Mexico?'],
             id=AgentWithSyncHistoryProcessorWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+agent_with_sync_instructions = Agent(model, name='agent_with_sync_instructions')
+
+
+@agent_with_sync_instructions.instructions
+def sync_instructions_fn() -> str:
+    return 'You are a helpful assistant.'
+
+
+temporal_agent_with_sync_instructions = TemporalAgent(
+    agent_with_sync_instructions, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_instructions.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_instructions(allow_model_requests: None, client: Client):
+    """Test that sync instructions functions work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync instructions functions to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncInstructionsWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_instructions)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncInstructionsWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncInstructionsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')

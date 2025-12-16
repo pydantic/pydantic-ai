@@ -166,8 +166,8 @@ async def test_run_in_executor_with_contextvars() -> None:
     assert old_result != ctx_var.get()
 
 
-async def test_run_in_executor_with_blocking_execution_enabled() -> None:
-    from pydantic_ai._utils import blocking_execution
+async def test_run_in_executor_with_disable_threads() -> None:
+    from pydantic_ai._utils import disable_threads
 
     calls: list[str] = []
 
@@ -175,14 +175,14 @@ async def test_run_in_executor_with_blocking_execution_enabled() -> None:
         calls.append('called')
         return 'result'
 
-    # Without blocking mode, should use threading
+    # Without disable_threads, should use threading
     result = await run_in_executor(sync_func)
     assert result == 'result'
     assert calls == ['called']
 
-    # With blocking mode enabled, should execute directly
+    # With disable_threads enabled, should execute directly
     calls.clear()
-    with blocking_execution():
+    with disable_threads():
         result = await run_in_executor(sync_func)
         assert result == 'result'
         assert calls == ['called']

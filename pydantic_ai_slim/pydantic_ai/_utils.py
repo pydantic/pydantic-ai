@@ -52,12 +52,12 @@ if TYPE_CHECKING:
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
-_prefer_blocking_execution: ContextVar[bool] = ContextVar('_prefer_blocking_execution', default=False)
+_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
 
 
 @contextmanager
-def blocking_execution() -> Iterator[None]:
-    """Context manager to enable blocking execution mode.
+def disable_threads() -> Iterator[None]:
+    """Context manager to disable thread-based execution for sync functions.
 
     Inside this context, sync functions will execute inline rather than
     being sent to a thread pool via [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
@@ -68,15 +68,15 @@ def blocking_execution() -> Iterator[None]:
     Yields:
         None
     """
-    token = _prefer_blocking_execution.set(True)
+    token = _disable_threads.set(True)
     try:
         yield
     finally:
-        _prefer_blocking_execution.reset(token)
+        _disable_threads.reset(token)
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if _prefer_blocking_execution.get():
+    if _disable_threads.get():
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
