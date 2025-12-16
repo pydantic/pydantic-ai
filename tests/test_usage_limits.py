@@ -271,7 +271,7 @@ async def test_tool_call_limit() -> None:
     assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
 
 
-async def test_tool_call_limit_soft() -> None:
+async def test_tool_call_soft_limit() -> None:
     test_agent = Agent(TestModel())
 
     @test_agent.tool_plain
