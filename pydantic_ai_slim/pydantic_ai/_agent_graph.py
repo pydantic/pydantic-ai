@@ -1052,7 +1052,7 @@ async def _call_tools(
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
         projected_usage.tool_calls += len(tool_calls)
-        can_make_tool_calls = cast(bool, usage_limits.check_before_tool_call(projected_usage))
+        can_make_tool_calls = bool(usage_limits.check_before_tool_call(projected_usage))
 
     calls_to_run: list[_messages.ToolCallPart] = []
 

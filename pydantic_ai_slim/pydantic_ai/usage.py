@@ -262,7 +262,7 @@ class UsageLimits:
     tool_calls_limit_enforcement: Literal['soft', 'hard'] = 'soft'
     """ Whether to enforce the tool calls limit in a 'soft' or 'hard' manner.
         Hard limits will raise UsageLimitExceeded before making a tool call that would exceed the limit.
-        Soft limits will return a ToolReturnPart indicating the limit would be exceeded so the tool call cannot be made. You can customize this response in PromptConfig
+        Soft limits will return a ToolReturnPart indicating the limit would be exceeded so the tool call cannot be made. You can customize this response using PromptTemplates.
     """
     input_tokens_limit: int | None = None
     """The maximum number of input/prompt tokens allowed."""
