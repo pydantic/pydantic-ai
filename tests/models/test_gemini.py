@@ -710,7 +710,6 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),

@@ -788,7 +788,7 @@ from pydantic_ai.tools import RunContext
 
 
 def custom_retry_message(part: RetryPromptPart, ctx: RunContext) -> str:
-    return f'Attempt #{ctx.retries + 1}: Please fix the errors and try again.'
+    return f'Attempt #{ctx.retry + 1}: Please fix the errors and try again.'
 
 agent = Agent(
     'openai:gpt-5',

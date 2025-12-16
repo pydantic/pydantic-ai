@@ -477,7 +477,6 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_name='get_capital',
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                         timestamp=IsDatetime(),
-                        retry_message='Fix the errors and try again.',
                     )
                 ],
                 run_id=IsStr(),
