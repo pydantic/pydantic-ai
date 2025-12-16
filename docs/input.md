@@ -116,7 +116,7 @@ Support for file URLs varies depending on type and provider:
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | Yes |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | All URL types | [YouTube](models/google.md#document-image-audio-and-video-input) and [Files API](https://ai.google.dev/gemini-api/docs/files) URLs only |
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | Yes |
-| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | No, always downloads |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | S3 URLs (`s3://`) only |
 
 A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
@@ -151,3 +151,5 @@ result = agent.run_sync(
 )
 print(result.output)
 ```
+
+`BedrockConverseModel` supports `s3://<bucket-name>/<object-key>` URIs, provided that the assumed role has the `s3:GetObject` permission. An optional `bucketOwner` query parameter must be specified if the bucket is not owned by the account making the request. For example: `s3://my-bucket/my-file.png?bucketOwner=123456789012`.
