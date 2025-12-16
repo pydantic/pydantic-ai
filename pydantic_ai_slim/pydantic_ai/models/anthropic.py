@@ -1077,14 +1077,14 @@ class AnthropicModel(Model):
                 elif isinstance(item, BinaryContent):
                     yield AnthropicModel._map_binary_data(item.data, item.media_type)
                 elif isinstance(item, ImageUrl):
-                    if item.force_download is True:
+                    if item.force_download:
                         downloaded = await download_item(item, data_format='bytes')
                         yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
                     else:
                         yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
-                        if item.force_download is True:
+                        if item.force_download:
                             downloaded = await download_item(item, data_format='bytes')
                             yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
                         else:
@@ -1092,20 +1092,13 @@ class AnthropicModel(Model):
                                 source={'url': item.url, 'type': 'url'}, type='document'
                             )
                     elif item.media_type == 'text/plain':
-                        # the request will fail as evidenced by test_text_document_url_input_no_force_download
-                        # but if the user is explicitly setting `force_download` to `False` we comply
-                        if item.force_download is False:
-                            yield BetaRequestDocumentBlockParam(
-                                source={'url': item.url, 'type': 'url'}, type='document'
-                            )
-                        else:
-                            downloaded_item = await download_item(item, data_format='text')
-                            yield BetaRequestDocumentBlockParam(
-                                source=BetaPlainTextSourceParam(
-                                    data=downloaded_item['data'], media_type=item.media_type, type='text'
-                                ),
-                                type='document',
-                            )
+                        downloaded_item = await download_item(item, data_format='text')
+                        yield BetaRequestDocumentBlockParam(
+                            source=BetaPlainTextSourceParam(
+                                data=downloaded_item['data'], media_type=item.media_type, type='text'
+                            ),
+                            type='document',
+                        )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 else:

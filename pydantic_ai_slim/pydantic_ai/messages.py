@@ -120,12 +120,11 @@ class FileUrl(ABC):
 
     _: KW_ONLY
 
-    force_download: bool | None = None
-    """Controls download behavior for file URLs.
+    force_download: bool = False
+    """For OpenAI and Google APIs it:
 
-    * If None (default), the provider decides whether to download or send the URL directly.
-    * If True, the file is always downloaded and sent as bytes.
-    * If False, the URL is always sent directly without downloading (useful for proxies).
+    * If True, the file is downloaded and the data is sent to the model as bytes.
+    * If False, the URL is sent directly to the model and no download is performed.
     """
 
     vendor_metadata: dict[str, Any] | None = None
@@ -150,7 +149,7 @@ class FileUrl(ABC):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool | None = None,
+        force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.url = url
@@ -214,7 +213,7 @@ class VideoUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool | None = None,
+        force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['video-url'] = 'video-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -290,7 +289,7 @@ class AudioUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool | None = None,
+        force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['audio-url'] = 'audio-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -353,7 +352,7 @@ class ImageUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool | None = None,
+        force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['image-url'] = 'image-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
@@ -411,7 +410,7 @@ class DocumentUrl(FileUrl):
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool | None = None,
+        force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['document-url'] = 'document-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.

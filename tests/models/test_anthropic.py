@@ -1877,27 +1877,6 @@ The document also includes metadata about the file itself, including its purpose
 """)
 
 
-@pytest.mark.vcr()
-async def test_text_document_url_input_no_force_download(allow_model_requests: None, anthropic_api_key: str):
-    """Test text/plain DocumentUrl with force_download=False sends URL directly to Anthropic.
-
-    Anthropic doesn't support URL passthrough for text/plain documents (only PDFs),
-    so this test verifies the expected API error when using force_download=False.
-    """
-    from pydantic_ai.exceptions import ModelHTTPError
-
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
-
-    text_document_url = DocumentUrl(
-        url='https://example-files.online-convert.com/document/txt/example.txt',
-        force_download=False,
-    )
-
-    with pytest.raises(ModelHTTPError, match='invalid_request_error'):
-        await agent.run(['What is the main content on this document?', text_document_url])
-
-
 async def test_text_document_as_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, text_document_content: BinaryContent
 ):

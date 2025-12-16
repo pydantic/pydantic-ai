@@ -624,11 +624,10 @@ class GoogleModel(Model):
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
                 elif isinstance(item, FileUrl):
-                    if item.force_download is True or (
+                    if item.force_download or (
                         # google-gla does not support passing file urls directly, except for youtube videos
                         # (see above) and files uploaded to the file API (which cannot be downloaded anyway)
-                        item.force_download is None
-                        and self.system == 'google-gla'
+                        self.system == 'google-gla'
                         and not item.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
                     ):
                         downloaded_item = await download_item(item, data_format='bytes')

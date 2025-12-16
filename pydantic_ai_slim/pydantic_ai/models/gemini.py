@@ -383,7 +383,7 @@ class GeminiModel(Model):
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                     content.append(file_data)
                 elif isinstance(item, FileUrl):
-                    if item.force_download is True or (item.force_download is None and self.system == 'google-gla'):
+                    if self.system == 'google-gla' or item.force_download:
                         downloaded_item = await download_item(item, data_format='base64')
                         inline_data = _GeminiInlineDataPart(
                             inline_data={'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}

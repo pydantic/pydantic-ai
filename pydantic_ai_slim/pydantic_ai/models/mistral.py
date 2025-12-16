@@ -587,7 +587,7 @@ class MistralModel(Model):
                 if isinstance(item, str):
                     content.append(MistralTextChunk(text=item))
                 elif isinstance(item, ImageUrl):
-                    if item.force_download is True:
+                    if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
                         image_url = MistralImageURL(url=downloaded['data'])
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
@@ -603,7 +603,7 @@ class MistralModel(Model):
                         raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
-                        if item.force_download is True:
+                        if item.force_download:
                             downloaded = await download_item(item, data_format='base64_uri')
                             content.append(
                                 MistralDocumentURLChunk(document_url=downloaded['data'], type='document_url')

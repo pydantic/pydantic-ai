@@ -116,39 +116,18 @@ Support for file URLs varies depending on type and provider. Pydantic AI handles
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | Yes |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | All URL types | [YouTube](models/google.md#document-image-audio-and-video-input) and [Files API](https://ai.google.dev/gemini-api/docs/files) URLs only |
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | Yes |
-| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | No, defaults to `force_download` |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | No, always downloads |
 
-### How to use private URLs or disallow local download
+A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
-The `force_download` parameter controls how file URLs are handled:
+```py {title="force_download.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl, AudioUrl, VideoUrl, DocumentUrl
 
-| Value | Behavior |
-|-------|----------|
-| `None` (default) | Provider decides - downloads if needed, sends URL if supported |
-| `True` | Always download content locally and send as bytes |
-| `False` | Never download - always pass URL directly to the API |
-
-Use `force_download=True` when a model API is unable to download a file (e.g., because the URL isn't publicly accessible, or may get blocked by crawling or access restrictions):
-
-```py {title="force_download_true.py" test="skip" lint="skip"}
-from pydantic_ai import ImageUrl, DocumentUrl
-
-# Force local download when the API can't fetch the URL
 ImageUrl(url='https://example.com/image.png', force_download=True)
+AudioUrl(url='https://example.com/audio.mp3', force_download=True)
+VideoUrl(url='https://example.com/video.mp4', force_download=True)
 DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 ```
-
-Use `force_download=False` to pass URLs directly without any download attempt. This is useful when you have a proxy or middleware that intercepts requests:
-
-```py {title="force_download_false.py" test="skip" lint="skip"}
-from pydantic_ai import DocumentUrl
-
-# Pass URL as-is (useful for proxies handling custom URL schemes)
-DocumentUrl(url='file://local/path/to/doc.pdf', force_download=False)
-```
-
-!!! note
-    Setting `force_download=False` for providers or content types that don't support URL passthrough will result in an API error. For example, Bedrock doesn't support URLs at all, and Anthropic doesn't support URL passthrough for `text/plain` documents. (As of Dec 2025)
 
 ## Uploaded Files
 
