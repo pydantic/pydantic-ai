@@ -102,14 +102,14 @@ class PromptTemplates:
                 return message_part
         elif isinstance(message_part, RetryPromptPart):
             template = self._get_template_for_retry(message_part)
-            return self._apply_retry_tempelate(message_part, ctx, template)
+            return self._apply_retry_template(message_part, ctx, template)
         return message_part  # Returns the original message if no template is applied
 
     def _get_template_for_retry(
         self, message_part: RetryPromptPart
     ) -> str | Callable[[RetryPromptPart, _RunContext[Any]], str]:
         template: str | Callable[[RetryPromptPart, _RunContext[Any]], str] = self.default_model_retry
-        # This is based no RetryPromptPart.model_response() implementation
+        # This is based on RetryPromptPart.model_response() implementation
         # We follow the same structure here to populate the correct template
         if isinstance(message_part.content, str):
             if message_part.tool_name is None:
@@ -121,7 +121,7 @@ class PromptTemplates:
 
         return template
 
-    def _apply_retry_tempelate(
+    def _apply_retry_template(
         self,
         message_part: RetryPromptPart,
         ctx: _RunContext[Any],
@@ -148,13 +148,16 @@ class PromptTemplates:
         return message_part
 
     def get_prompted_output_template(self, output_schema: OutputSchema[Any]) -> str | None:
-        """Get the prompted output template for the given output schema."""
+        """Get the prompted output template for the given output schema.
+
+        Precedence: PromptedOutput.template (explicit) > PromptConfig template (agent-level).
+        """
         from ._output import PromptedOutputSchema
 
         if not isinstance(output_schema, PromptedOutputSchema):
             return None
 
-        return self.prompted_output_template
+        return output_schema.template or self.prompted_output_template
 
 
 @dataclass

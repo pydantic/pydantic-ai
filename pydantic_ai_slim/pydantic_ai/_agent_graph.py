@@ -915,8 +915,9 @@ async def process_tool_calls(  # noqa: C901
                     yield _messages.FunctionToolCallEvent(call)
                     part = _messages.ToolReturnPart(
                         tool_name=call.tool_name,
-                        content='Output tool not used - output failed validation.',
+                        content=_prompt_config.DEFAULT_PROMPT_CONFIG.templates.output_tool_not_executed,
                         tool_call_id=call.tool_call_id,
+                        return_kind='output-tool-not-executed',
                     )
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)
