@@ -29,6 +29,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -4636,3 +4637,30 @@ async def test_google_streaming_tool_call_thought_signature(
             ),
         ]
     )
+
+
+async def test_google_system_prompts_and_instructions_ordering(google_provider: GoogleProvider):
+    """Test that instructions are appended after all system prompts in the system instruction."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+                UserPromptPart(content='Hello'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    system_instruction, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Verify system parts are in order: system1, system2, instructions
+    assert system_instruction == snapshot(
+        {
+            'role': 'user',
+            'parts': [{'text': 'System prompt 1'}, {'text': 'System prompt 2'}, {'text': 'Instructions content'}],
+        }
+    )
+    assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
