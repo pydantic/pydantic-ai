@@ -781,10 +781,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         part_obj.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
                 elif part.code_execution_result is not None:
-                    assert self._code_execution_tool_call_id is not None
-                    part = _map_code_execution_result(
-                        part.code_execution_result, self.provider_name, self._code_execution_tool_call_id
-                    )
+                    part = self._map_code_execution_result(part.code_execution_result)
                     part.provider_details = provider_details
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
                 else:
@@ -819,6 +816,11 @@ class GeminiStreamedResponse(StreamedResponse):
             self._file_search_tool_call_id = None
             return part
         return None  # pragma: no cover
+
+    def _map_code_execution_result(self, code_execution_result: CodeExecutionResult) -> BuiltinToolReturnPart:
+        """Map code execution result to a BuiltinToolReturnPart using instance state."""
+        assert self._code_execution_tool_call_id is not None
+        return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
 
     def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart | None:
         """Handle executable code for streaming responses.
