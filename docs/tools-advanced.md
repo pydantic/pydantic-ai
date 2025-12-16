@@ -95,25 +95,25 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
     after_screenshot = capture_screen()
 
     return ToolReturn(
-        return_value=f"Successfully clicked at ({x}, {y})",
+        return_value=f'Successfully clicked at ({x}, {y})',
         content=[
-            f"Clicked at coordinates ({x}, {y}). Here's the comparison:",
-            "Before:",
-            BinaryContent(data=before_screenshot, media_type="image/png"),
-            "After:",
-            BinaryContent(data=after_screenshot, media_type="image/png"),
-            "Please analyze the changes and suggest next steps."
+            f'Clicked at coordinates ({x}, {y}). Here's the comparison:',
+            'Before:',
+            BinaryContent(data=before_screenshot, media_type='image/png'),
+            'After:',
+            BinaryContent(data=after_screenshot, media_type='image/png'),
+            'Please analyze the changes and suggest next steps.'
         ],
         metadata={
-            "coordinates": {"x": x, "y": y},
-            "action_type": "click_and_capture",
-            "timestamp": time.time()
+            'coordinates': {'x': x, 'y': y},
+            'action_type': 'click_and_capture',
+            'timestamp': time.time()
         }
     )
 
 # The model receives the rich visual content for analysis
 # while your application can access the structured return_value and metadata
-result = agent.run_sync("Click on the submit button and tell me what happened")
+result = agent.run_sync('Click on the submit button and tell me what happened')
 print(result.output)
 # The model can analyze the screenshots and provide detailed feedback
 ```
@@ -126,7 +126,7 @@ This separation allows you to provide rich context to the model while maintainin
 
 ## Custom Tool Schema
 
-If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description, JSON schema, and whether the function takes a `RunContext` for the function directly:
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] function. With this you provide the name, description, JSON schema, and whether the function takes a `RunContext` for the function directly:
 
 ```python
 from pydantic_ai import Agent, Tool
@@ -169,8 +169,8 @@ customize the definition of the tool passed to the model, or omit the tool compl
 
 A `prepare` method can be registered via the `prepare` kwarg to any of the tool registration mechanisms:
 
-- [`@agent.tool`][pydantic_ai.Agent.tool] decorator
-- [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator
+- [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator
+- [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator
 - [`Tool`][pydantic_ai.tools.Tool] dataclass
 
 The `prepare` method, should be of type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc], a function which takes [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and should either return that `ToolDefinition` with or without modifying it, return a new `ToolDefinition`, or return `None` to indicate this tools should not be registered for that step.
@@ -371,6 +371,38 @@ def my_flaky_tool(query: str) -> str:
 
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
+### Tool Timeout
+
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+
+# Set a default timeout for all tools on the agent
+agent = Agent('test', tool_timeout=30)
+
+
+@agent.tool_plain
+async def slow_tool() -> str:
+    """This tool will use the agent's default timeout (30 seconds)."""
+    await asyncio.sleep(10)
+    return 'Done'
+
+
+@agent.tool_plain(timeout=5)
+async def fast_tool() -> str:
+    """This tool has its own timeout (5 seconds) that overrides the agent default."""
+    await asyncio.sleep(1)
+    return 'Done'
+```
+
+- **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to all tools.
+- **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
+
+When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+
 ### Parallel tool calls & concurrency
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
@@ -380,6 +412,13 @@ Async functions are run on the event loop, while sync functions are offloaded to
 
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+
+#### Output Tool Calls
+
+When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
+The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
+
+For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
 ## See Also
 

@@ -60,11 +60,6 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
-"""The strategy for handling multiple tool calls when a final result is found.
-
-- `'early'`: Stop processing other tool calls once a final result is found
-- `'exhaustive'`: Process all tool calls even after finding a final result
-"""
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -865,35 +860,56 @@ async def process_tool_calls(  # noqa: C901
 
     # First, we handle output tool calls
     for call in tool_calls_by_kind['output']:
-        if final_result:
-            if final_result.tool_call_id == call.tool_call_id:
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Final result processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-            else:
-                yield _messages.FunctionToolCallEvent(call)
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Output tool not used - a final result was already processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-                yield _messages.FunctionToolResultEvent(part)
-
+        # `final_result` can be passed into `process_tool_calls` from `Agent.run_stream`
+        # when streaming and there's already a final result
+        if final_result and final_result.tool_call_id == call.tool_call_id:
+            part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content='Final result processed.',
+                tool_call_id=call.tool_call_id,
+            )
             output_parts.append(part)
+        # Early strategy is chosen and final result is already set
+        elif ctx.deps.end_strategy == 'early' and final_result:
+            yield _messages.FunctionToolCallEvent(call)
+            part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content='Output tool not used - a final result was already processed.',
+                tool_call_id=call.tool_call_id,
+            )
+            yield _messages.FunctionToolResultEvent(part)
+            output_parts.append(part)
+        # Early strategy is chosen and final result is not yet set
+        # Or exhaustive strategy is chosen
         else:
             try:
                 result_data = await tool_manager.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
-                ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
-                )
-                raise e  # pragma: lax no cover
+                # If we already have a valid final result, don't fail the entire run
+                # This allows exhaustive strategy to complete successfully when at least one output tool is valid
+                if final_result:
+                    # If output tool fails when we already have a final result, skip it without retrying
+                    yield _messages.FunctionToolCallEvent(call)
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Output tool not used - output failed validation.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    output_parts.append(part)
+                    yield _messages.FunctionToolResultEvent(part)
+                else:
+                    # No valid result yet, so this is a real failure
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
+                    raise e  # pragma: lax no cover
             except ToolRetryError as e:
-                ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
-                )
+                # If we already have a valid final result, don't increment retries for invalid output tools
+                # This allows the run to succeed if at least one output tool returned a valid result
+                if not final_result:
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
                 yield _messages.FunctionToolCallEvent(call)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
@@ -904,7 +920,10 @@ async def process_tool_calls(  # noqa: C901
                     tool_call_id=call.tool_call_id,
                 )
                 output_parts.append(part)
-                final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
+
+                # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+                if not final_result:
+                    final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
