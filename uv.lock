@@ -5406,6 +5406,7 @@ prefect = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "anthropic" },
     { name = "anyio" },
     { name = "asgi-lifespan" },
     { name = "boto3-stubs", extra = ["bedrock-runtime"] },
@@ -5465,6 +5466,7 @@ provides-extras = ["a2a", "dbos", "examples", "outlines-llamacpp", "outlines-mlx
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anthropic", specifier = ">=0.69.0" },
     { name = "anyio", specifier = ">=4.5.0" },
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "boto3-stubs", extras = ["bedrock-runtime"] },

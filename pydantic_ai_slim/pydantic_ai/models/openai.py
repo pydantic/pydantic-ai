@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import itertools
 import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
@@ -14,13 +13,14 @@ from pydantic import ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
-from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._citation_utils import map_citation_to_text_part
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import CodeExecutionTool, ImageAspectRatio, ImageGenerationTool, MCPServerTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -44,6 +44,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    URLCitation,
     UserPromptPart,
     VideoUrl,
 )
@@ -587,24 +588,72 @@ class OpenAIChatModel(Model):
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
-        """Hook that validates chat completions before processing.
+    def _parse_openai_annotations(self, message: chat.ChatCompletionMessage, content: str | None) -> list[URLCitation]:
+        """Extract citations from OpenAI's annotation format.
 
-        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
+        Pulls out url_citation annotations from the message and converts them
+        to our URLCitation format. Skips invalid ones.
+
+        Args:
+            message: The message with annotations.
+            content: The message content for validation (can be None).
+
+        Returns:
+            List of URLCitation objects, empty if no valid citations found.
         """
-        return chat.ChatCompletion.model_validate(response.model_dump())
+        from openai.types.chat.chat_completion_message import Annotation
 
-    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
-        """Hook that response content to provider details.
+        citations: list[URLCitation] = []
 
-        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
-        """
-        return _map_provider_details(response.choices[0])
+        if not hasattr(message, 'annotations') or message.annotations is None:
+            return citations
 
-    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
+        if not message.annotations:
+            return citations
+
+        content_length = len(content) if content is not None else None
+
+        for annotation in message.annotations:
+            if not isinstance(annotation, Annotation):
+                continue
+
+            if annotation.type != 'url_citation':
+                continue
+
+            url_citation = annotation.url_citation
+
+            try:
+                url = url_citation.url
+                title = url_citation.title
+                if title == '':
+                    title = None
+                start_index = url_citation.start_index
+                end_index = url_citation.end_index
+
+                # Validate indices if we have the content
+                if content_length is not None:
+                    if start_index < 0 or end_index < 0:
+                        continue
+                    if start_index > end_index:
+                        continue
+                    if end_index > content_length:
+                        continue
+
+                citation = URLCitation(
+                    url=url,
+                    title=title,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+                citations.append(citation)
+            except (AttributeError, ValueError, TypeError):
+                # Skip broken annotations
+                continue
+
+        return citations
+
+    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:  # noqa: C901
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
@@ -633,13 +682,112 @@ class OpenAIChatModel(Model):
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
 
-        if thinking_parts := self._process_thinking(choice.message):
-            items.extend(thinking_parts)
+        # The `reasoning_content` field is only present in DeepSeek models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+        if reasoning_content := getattr(choice.message, 'reasoning_content', None):
+            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
 
-        if choice.message.content:
+        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(choice.message, 'reasoning', None):
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+
+        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+        # If you need this, please file an issue.
+
+        vendor_details: dict[str, Any] = {}
+
+        # Add logprobs to vendor_details if available
+        if choice.logprobs is not None and choice.logprobs.content:
+            # Convert logprobs to a serializable format
+            vendor_details['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
+
+        # Parse annotations from the message (if any)
+        citations = self._parse_openai_annotations(choice.message, choice.message.content)
+
+        if choice.message.content is not None:
+            # Split content into TextParts and ThinkingParts
+            content_parts = split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
+
+            # Collect TextParts and calculate their offsets in the original content
+            # Citations are based on the original content string (choice.message.content),
+            # which may include thinking tags. We need to map citations to TextParts
+            # by tracking where each TextPart appears in the original content string.
+            text_parts: list[TextPart] = []
+            content_offsets: list[int] = []
+
+            # Calculate offsets by tracking position in original content as we process parts
+            # This is more robust than using str.find() because it accounts for the exact
+            # splitting process used by split_content_into_text_and_thinking()
+            original_content = choice.message.content
+            start_tag, end_tag = self.profile.thinking_tags
+            current_pos = 0  # Position in original content
+
+            for part in content_parts:
+                if isinstance(part, TextPart):
+                    text_parts.append(part)
+                    # Find where this TextPart's content starts in the original content
+                    # by searching from the current position
+                    part_start = original_content.find(part.content, current_pos)
+                    if part_start >= 0:
+                        content_offsets.append(part_start)
+                        # Update current position to after this TextPart
+                        current_pos = part_start + len(part.content)
+                    else:
+                        # Fallback: if TextPart content doesn't appear (shouldn't happen),
+                        # use current position and advance by TextPart length
+                        # This handles edge cases where content structure is unexpected
+                        content_offsets.append(current_pos)
+                        current_pos += len(part.content)
+                elif isinstance(part, ThinkingPart):
+                    # For ThinkingParts, find the thinking tag in the original content
+                    # and advance past it (including the tags)
+                    tag_start = original_content.find(start_tag, current_pos)
+                    if tag_start >= 0:
+                        tag_end = original_content.find(end_tag, tag_start + len(start_tag))
+                        if tag_end >= 0:
+                            # Advance past the entire thinking tag (including both tags)
+                            current_pos = tag_end + len(end_tag)
+                        else:
+                            # Malformed tag, just advance past start tag
+                            current_pos = tag_start + len(start_tag)
+                    # If thinking tag not found, don't advance (shouldn't happen)
+
+            # Map citations to TextParts and attach them
+            if citations and text_parts:
+                # Group citations by TextPart index
+                citations_by_part: dict[int, list[URLCitation]] = {}
+                for citation in citations:
+                    part_index = map_citation_to_text_part(citation, text_parts, content_offsets)
+                    if part_index is not None:
+                        if part_index not in citations_by_part:
+                            citations_by_part[part_index] = []
+                        citations_by_part[part_index].append(citation)
+
+                # Update TextParts in content_parts with citations
+                text_part_index = 0
+                for i, part in enumerate(content_parts):
+                    if isinstance(part, TextPart):
+                        if text_part_index in citations_by_part:
+                            content_parts[i] = replace(part, citations=citations_by_part[text_part_index])
+                        text_part_index += 1
+
+            # Add all parts to items (with updated TextParts that may have citations)
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
+                for part in content_parts
             )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
@@ -647,7 +795,7 @@ class OpenAIChatModel(Model):
                     part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
                 elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
                     # NOTE: Custom tool calls are not supported.
-                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
+                    # See <https://github.com/pydantic/pydantic-ai/issues/v> for more details.
                     raise RuntimeError('Custom tool calls are not supported')
                 else:
                     assert_never(c)
@@ -716,19 +864,8 @@ class OpenAIChatModel(Model):
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
-            _provider_url=self._provider.base_url,
+            _model=self,  # Store model reference for parsing annotations
         )
-
-    @property
-    def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
-        """Returns the `StreamedResponse` type that will be used for streamed responses.
-
-        This method may be overridden by subclasses of `OpenAIChatModel` to provide their own `StreamedResponse` type.
-        """
-        return OpenAIStreamedResponse
-
-    def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -1924,11 +2061,11 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
-    _provider_url: str
+    _model: OpenAIModel = field(repr=False)  # Store model reference for parsing annotations
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for chunk in self._validate_response():
-            self._usage += self._map_usage(chunk)
+        async for chunk in self._response:
+            self._usage += _map_usage(chunk)
 
             if chunk.id:  # pragma: no branch
                 self.provider_response_id = chunk.id
@@ -1946,57 +2083,41 @@ class OpenAIStreamedResponse(StreamedResponse):
                 continue
 
             if raw_finish_reason := choice.finish_reason:
-                self.finish_reason = self._map_finish_reason(raw_finish_reason)
+                self.provider_details = {'finish_reason': raw_finish_reason}
+                self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
-            if provider_details := self._map_provider_details(chunk):
-                self.provider_details = provider_details
+            # Handle the text part of the response
+            content = choice.delta.content
+            if content is not None:
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
+                        maybe_event.part.id = 'content'
+                        maybe_event.part.provider_name = self.provider_name
+                    yield maybe_event
 
-            for event in self._map_part_delta(choice):
-                yield event
+            # The `reasoning_content` field is only present in DeepSeek models.
+            # https://api-docs.deepseek.com/guides/reasoning_model
+            if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning_content',
+                    id='reasoning_content',
+                    content=reasoning_content,
+                    provider_name=self.provider_name,
+                )
 
-    def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
-        """Hook that validates incoming chunks.
-
-        This method may be overridden by subclasses of `OpenAIStreamedResponse` to apply custom chunk validations.
-
-        By default, this is a no-op since `ChatCompletionChunk` is already validated.
-        """
-        return self._response
-
-    def _map_part_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
-        """Hook that determines the sequence of mappings that will be called to produce events.
-
-        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
-        """
-        return itertools.chain(
-            self._map_thinking_delta(choice), self._map_text_delta(choice), self._map_tool_call_delta(choice)
-        )
-
-    def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
-        """Hook that maps thinking delta content to events.
-
-        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
-        """
-        profile = OpenAIModelProfile.from_profile(self._model_profile)
-        custom_field = profile.openai_chat_thinking_field
-
-        # Prefer the configured custom reasoning field, if present in profile.
-        # Fall back to built-in fields if no custom field result was found.
-
-        # The `reasoning_content` field is typically present in DeepSeek and Moonshot models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-
-        # The `reasoning` field is typically present in gpt-oss via Ollama and OpenRouter.
-        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
-        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        for field_name in (custom_field, 'reasoning', 'reasoning_content'):
-            if not field_name:
-                continue
-            reasoning: str | None = getattr(choice.delta, field_name, None)
-            if reasoning:  # pragma: no branch
-                yield from self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=field_name,
-                    id=field_name,
+            # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+            # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+            # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+            if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning',
+                    id='reasoning',
                     content=reasoning,
                     provider_name=self.provider_name,
                 )
@@ -2036,24 +2157,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             if maybe_event is not None:
                 yield maybe_event
 
-    def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
-        """Hook that generates the provider details from chunk content.
-
-        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
-        """
-        return _map_provider_details(chunk.choices[0])
-
-    def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
-
-    def _map_finish_reason(
-        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
-    ) -> FinishReason | None:
-        """Hooks that maps a finish reason key to a [FinishReason](pydantic_ai.messages.FinishReason).
-
-        This method may be overridden by subclasses of `OpenAIChatModel` to accommodate custom keys.
-        """
-        return _CHAT_FINISH_REASON_MAP.get(key)
+        # Note: any citations for streamed content are currently handled at the
+        # non-streaming level; streaming annotations for Chat Completions are
+        # not yet wired through this hook.
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -2084,7 +2190,71 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
     _provider_name: str
-    _provider_url: str
+
+    def _parse_responses_annotation(
+        self, event: responses.ResponseOutputTextAnnotationAddedEvent
+    ) -> URLCitation | None:
+        """Extract a citation from a Responses API annotation event.
+
+        Takes the annotation event and converts it to a URLCitation. Returns
+        None if the annotation is invalid or not a url_citation type.
+
+        Args:
+            event: The annotation event from the Responses API.
+
+        Returns:
+            A URLCitation if valid, None otherwise.
+        """
+        try:
+            annotation = event.annotation
+
+            if not hasattr(annotation, 'type'):
+                return None
+
+            if annotation.type != 'url_citation':
+                return None
+
+            if not hasattr(annotation, 'url_citation') or annotation.url_citation is None:
+                return None
+
+            url_citation = annotation.url_citation
+
+            if (
+                not hasattr(url_citation, 'url')
+                or not hasattr(url_citation, 'start_index')
+                or not hasattr(url_citation, 'end_index')
+            ):
+                return None
+
+            url = url_citation.url
+            if not isinstance(url, str) or not url:
+                return None
+
+            title = getattr(url_citation, 'title', None)
+            if title == '':
+                title = None
+
+            start_index = url_citation.start_index
+            end_index = url_citation.end_index
+
+            if not isinstance(start_index, int) or not isinstance(end_index, int):
+                return None
+
+            if start_index < 0 or end_index < 0:
+                return None
+            if start_index > end_index:
+                return None
+
+            # Can't validate against content length here since we might still be streaming
+            citation = URLCitation(
+                url=url,
+                title=title,
+                start_index=start_index,
+                end_index=end_index,
+            )
+            return citation
+        except (AttributeError, ValueError, TypeError):
+            return None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
@@ -2276,8 +2446,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # content already accumulated via delta events
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                # TODO(Marcelo): We should support annotations in the future.
-                pass  # there's nothing we need to do here
+                # Parse annotation and attach citation to the corresponding TextPart
+                citation = self._parse_responses_annotation(chunk)
+                if citation is not None:
+                    # Find the TextPart using item_id as vendor_part_id
+                    part_index = self._parts_manager._vendor_id_to_part_index.get(chunk.item_id)
+                    if part_index is not None:
+                        existing_part = self._parts_manager._parts[part_index]
+                        if isinstance(existing_part, TextPart):
+                            # Update the TextPart with the new citation
+                            existing_citations = existing_part.citations or []
+                            # Check if citation already exists (avoid duplicates)
+                            if citation not in existing_citations:
+                                updated_citations = existing_citations + [citation]
+                                updated_part = replace(existing_part, citations=updated_citations)
+                                self._parts_manager._parts[part_index] = updated_part
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(

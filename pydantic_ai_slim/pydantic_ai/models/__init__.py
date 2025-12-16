@@ -1019,18 +1019,20 @@ def infer_model(  # noqa: C901
     if model_kind in (
         'openai',
         'azure',
+        'cerebras',
         'deepseek',
         'fireworks',
         'github',
         'grok',
         'heroku',
+        'litellm',
         'moonshotai',
-        'ollama',
+        'openai',
+        'openai-chat',
+        'openrouter',
+        'perplexity',
         'together',
         'vercel',
-        'litellm',
-        'nebius',
-        'ovhcloud',
     ):
         model_kind = 'openai-chat'
     elif model_kind in ('google-gla', 'google-vertex'):

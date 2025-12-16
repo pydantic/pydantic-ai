@@ -137,18 +137,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .litellm import LiteLLMProvider
 
         return LiteLLMProvider
-    elif provider == 'nebius':
-        from .nebius import NebiusProvider
+    elif provider == 'perplexity':
+        from .perplexity import PerplexityProvider
 
-        return NebiusProvider
-    elif provider == 'ovhcloud':
-        from .ovhcloud import OVHcloudProvider
-
-        return OVHcloudProvider
-    elif provider == 'outlines':
-        from .outlines import OutlinesProvider
-
-        return OutlinesProvider
+        return PerplexityProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 
