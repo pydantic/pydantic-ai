@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -224,9 +224,6 @@ class MistralModel(Model):
         """Make a non-streaming request to the model."""
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
-            raise UserError('Mistral does not support built-in tools')
-
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
@@ -263,9 +260,6 @@ class MistralModel(Model):
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
-            raise UserError('Mistral does not support built-in tools')
-
         if model_request_parameters.function_tools:
             # Function Calling
             response = await self.client.chat.stream_async(
@@ -342,7 +336,7 @@ class MistralModel(Model):
             )
             for r in model_request_parameters.tool_defs.values()
         ]
-        return tools if tools else None
+        return tools or None
 
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -380,6 +374,7 @@ class MistralModel(Model):
             timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -408,6 +403,7 @@ class MistralModel(Model):
             _model_name=first_chunk.data.model,
             _timestamp=timestamp,
             _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
         )
 
     @staticmethod
@@ -557,7 +553,8 @@ class MistralModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            mistral_messages.insert(0, MistralSystemMessage(content=instructions))
+            system_prompt_count = sum(1 for m in mistral_messages if isinstance(m, MistralSystemMessage))
+            mistral_messages.insert(system_prompt_count, MistralSystemMessage(content=instructions))
 
         # Post-process messages to insert fake assistant message after tool message if followed by user message
         # to work around `Unexpected role 'user' after role 'tool'` error.
@@ -615,6 +612,7 @@ class MistralStreamedResponse(StreamedResponse):
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     _delta_content: str = field(default='', init=False)
 
@@ -675,6 +673,11 @@ class MistralStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

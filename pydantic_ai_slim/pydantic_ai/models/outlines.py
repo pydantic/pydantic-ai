@@ -298,12 +298,9 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[Chat, JsonSchema | None, dict[str, Any]]:
         """Build the generation arguments for the model."""
-        if (
-            model_request_parameters.function_tools
-            or model_request_parameters.builtin_tools
-            or model_request_parameters.output_tools
-        ):
-            raise UserError('Outlines does not support function tools and builtin tools yet.')
+        # the builtin_tool check now happens in `Model.prepare_request()`
+        if model_request_parameters.function_tools or model_request_parameters.output_tools:
+            raise UserError('Outlines does not support function tools yet.')
 
         if model_request_parameters.output_object:
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)
@@ -546,6 +543,7 @@ class OutlinesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[str]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for content in self._response:
@@ -566,6 +564,11 @@ class OutlinesStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

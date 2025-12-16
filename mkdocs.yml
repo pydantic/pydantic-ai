@@ -30,6 +30,7 @@ nav:
           - models/anthropic.md
           - models/google.md
           - models/bedrock.md
+          - models/cerebras.md
           - models/cohere.md
           - models/groq.md
           - models/huggingface.md
@@ -55,6 +56,7 @@ nav:
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Testing: testing.md
+      - Web Chat UI: web.md
 
   - Pydantic Evals:
       - Overview: evals.md
@@ -146,6 +148,7 @@ nav:
           - api/models/anthropic.md
           - api/models/base.md
           - api/models/bedrock.md
+          - api/models/cerebras.md
           - api/models/cohere.md
           - api/models/fallback.md
           - api/models/function.md
@@ -288,6 +291,10 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
   - sane_lists # this means you can start a list from any number
+  - material.extensions.preview:
+      targets:
+        include:
+          - '*'
   - pydantic_docs.mdext
 
 watch:
@@ -305,6 +312,11 @@ plugins:
         python:
           paths: [pydantic_ai_slim/pydantic_ai]
           options:
+            docstring_options:
+              # pydantic_graph/beta/graph.py uses "Type Parameters:" sections to document Generic type params
+              # like StateT, OutputT, etc. Griffe can't extract these from Generic[T] base classes
+              # (only from PEP 695 syntax), so we disable the validation warnings.
+              warn_unknown_params: false
             relative_crossrefs: true
             members_order: source
             separate_signature: true
@@ -317,7 +329,7 @@ plugins:
               - griffe_warnings_deprecated:
                   kind: warning
                   title: Deprecated
-          import:
+          inventories:
             - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv
