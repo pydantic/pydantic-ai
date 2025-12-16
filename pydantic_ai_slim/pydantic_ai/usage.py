@@ -295,7 +295,7 @@ class UsageLimits:
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
-        tool_calls_limit_enforcement: Literal['soft', 'hard'] = 'soft',
+        tool_calls_limit_enforcement: Literal['soft', 'hard'] = 'hard',
     ) -> None:
         self.request_limit = request_limit
         self.tool_calls_limit = tool_calls_limit

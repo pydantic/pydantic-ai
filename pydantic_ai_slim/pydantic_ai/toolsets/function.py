@@ -73,8 +73,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             max_uses: The maximum number of uses allowed for each tool during a run.
                 Applies to all tools, unless overridden when adding a tool.
-            max_uses: The maximum number of uses allowed for each tool during a run.
-                Applies to all tools, unless overridden when adding a tool.
             timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
                 Defaults to None (no timeout).
