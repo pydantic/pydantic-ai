@@ -24,6 +24,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -54,6 +55,7 @@ from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
+    from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
@@ -1068,7 +1070,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content={
-                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'sources': [{'type': 'api', 'name': 'oai-weather'}],
                             'status': 'completed',
                         },
                         tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1155,7 +1157,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed', 'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}]},
+                    content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -1249,7 +1251,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}], 'status': 'completed'},
+                    content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -1288,7 +1290,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content={
-                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'sources': [{'type': 'api', 'name': 'oai-weather'}],
                             'status': 'completed',
                         },
                         tool_call_id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
@@ -8136,3 +8138,119 @@ async def test_openai_responses_runs_with_instructions_only(
     assert result.output
     assert isinstance(result.output, str)
     assert len(result.output) > 0
+
+
+async def test_web_search_call_action_find_in_page(allow_model_requests: None):
+    """Test for https://github.com/pydantic/pydantic-ai/issues/3653"""
+    c1 = response_message(
+        [
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={
+                    'type': 'find_in_page',
+                    'pattern': 'test',
+                    'url': 'https://example.com',
+                },
+                status='completed',
+                type='web_search_call',
+            ),
+        ]
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('test')
+
+    assert result.all_messages()[1] == snapshot(
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'type': 'find_in_page', 'pattern': 'test', 'url': 'https://example.com'},
+                    tool_call_id='web-search-1',
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'status': 'completed'},
+                    tool_call_id='web-search-1',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ],
+            model_name='gpt-4o-123',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1',
+            provider_response_id='123',
+            run_id=IsStr(),
+        )
+    )
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[1]['input'][1] == snapshot(
+        {
+            'id': 'web-search-1',
+            'action': {'type': 'find_in_page', 'pattern': 'test', 'url': 'https://example.com'},
+            'status': 'completed',
+            'type': 'web_search_call',
+        }
+    )
+
+
+async def test_openai_responses_system_prompts_ordering(allow_model_requests: None):
+    """Test that system prompts are correctly ordered in mapped messages."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+                UserPromptPart(content='Hello'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    instructions, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # Verify instructions are returned separately
+    assert instructions == 'Instructions content'
+
+    # Verify system prompts are in order, followed by user message
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
+    )

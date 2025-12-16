@@ -120,8 +120,8 @@ docs = [
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-llmstxt>=0.2.0",
     "mkdocs-redirects>=1.2.2",
-    "mkdocs-material[imaging]>=9.5.45",
-    "mkdocstrings-python>=1.12.2",
+    "mkdocs-material[imaging]>=9.7.0",
+    "mkdocstrings-python>=2.0.0",
     "griffe-warnings-deprecated>=1.1.0",
     "pydantic-docs",
 ]
@@ -307,6 +307,8 @@ exclude_lines = [
     'except ImportError as _import_error:',
     '$\s*pass$',
     'assert False',
+    '@pytest\.mark\.skip',
+    '@pytest\.mark\.xfail',
 ]
 
 [tool.logfire]

@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import AbstractBuiltinTool, CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -229,6 +229,11 @@ class GoogleModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, ImageGenerationTool})
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -598,7 +603,7 @@ class GoogleModel(Model):
             contents = [{'role': 'user', 'parts': [{'text': ''}]}]
 
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.insert(0, {'text': instructions})
+            system_parts.append({'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents

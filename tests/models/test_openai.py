@@ -2318,7 +2318,10 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
     )
 
-    with pytest.raises(UserError, match=r'WebSearchTool is not supported with `OpenAIChatModel` and model.*'):
+    with pytest.raises(
+        UserError,
+        match=r"WebSearchTool is not supported with `OpenAIChatModel` and model 'gpt-4o'.*OpenAIResponsesModel",
+    ):
         await agent.run('What day is today?')
 
 
@@ -3324,6 +3327,36 @@ reasoning
 response\
 """,
         }
+    )
+
+
+async def test_openai_chat_instructions_after_system_prompts(allow_model_requests: None):
+    """Test that instructions are inserted after all system prompts in mapped messages."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+                UserPromptPart(content='Hello'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Verify order: system1, system2, instructions, user
+    assert len(openai_messages) == 4
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'content': 'Instructions content', 'role': 'system'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
     )
 
 
