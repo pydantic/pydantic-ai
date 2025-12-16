@@ -811,12 +811,13 @@ The available template fields in [`PromptTemplates`][pydantic_ai.PromptTemplates
 | `validation_errors_retry` | Message appended to validation errors when asking the model to retry |
 | `model_retry_string_tool` | Message when a `ModelRetry` exception is raised from a tool |
 | `model_retry_string_no_tool` | Message when a `ModelRetry` exception is raised outside of a tool context |
+| `prompted_output_template` | Template for prompted output schema instructions (uses `{schema}` placeholder) |
 
 #### Customizing Tool Descriptions with ToolConfig
 
-[`ToolConfig`][pydantic_ai.ToolConfig] allows you to override tool descriptions at runtime without modifying
-the original tool definitions. This is useful when you want to provide different descriptions for the same
-tool in different contexts or agent runs.
+[`ToolConfig`][pydantic_ai.ToolConfig] allows you to override tool descriptions and argument descriptions
+at runtime without modifying the original tool definitions. This is useful when you want to provide
+different descriptions for the same tool in different contexts or agent runs.
 
 ```python {title="tool_config_example.py"}
 from pydantic_ai import Agent, PromptConfig, ToolConfig
@@ -828,7 +829,16 @@ agent = Agent(
             tool_descriptions={
                 'search_database': 'Search the customer database for user records by name or email.',
                 'send_notification': 'Send an urgent notification to the user via their preferred channel.',
-            }
+            },
+            tool_args_descriptions={
+                'search_database': {
+                    'query': 'Search term to match against user names or email addresses.',
+                },
+                'send_notification': {
+                    'user_id': 'The unique identifier of the user to notify.',
+                    'message': 'The notification message content (max 500 characters).',
+                },
+            },
         ),
     ),
 )

@@ -67,7 +67,7 @@ class PromptTemplates:
 
         # Using callable for dynamic messages
         templates = PromptTemplates(
-            validation_errors_retry=lambda part, ctx: f'Retry #{ctx.retries}: Fix the errors.',
+            validation_errors_retry=lambda part, ctx: f'Retry #{ctx.retry}: Fix the errors.',
         )
 
         agent = Agent('openai:gpt-4o', prompt_config=PromptConfig(templates=templates))
