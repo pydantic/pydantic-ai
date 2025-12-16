@@ -61,7 +61,7 @@ Launch a web-based chat interface:
 clai web -m openai:gpt-5
 ```
 
-![Web Chat UI](../docs/img/web-chat-ui.png)
+![Web Chat UI](https://ai.pydantic.dev/img/web-chat-ui.png)
 
 This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
 

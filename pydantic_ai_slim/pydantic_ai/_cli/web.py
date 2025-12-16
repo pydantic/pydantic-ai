@@ -16,6 +16,7 @@ def run_web_command(
     models: list[str] = [],
     tools: list[str] = [],
     instructions: str | None = None,
+    default_model: str = 'openai:gpt-5',
 ) -> int:
     """Run the web command to serve an agent via web UI.
 
@@ -29,6 +30,7 @@ def run_web_command(
         models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']).
         tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution']).
         instructions: System instructions passed as extra instructions to each agent run.
+        default_model: Default model to use when no agent or models are specified.
     """
     console = Console()
 
@@ -40,9 +42,9 @@ def run_web_command(
     else:
         agent = Agent()
 
+    # Use default model if neither agent nor CLI specifies one
     if agent.model is None and not models:
-        console.print('[red]Error: At least one model (-m) is required when agent has no model[/red]')
-        return 1
+        models = [default_model]
 
     tool_instances: list[AbstractBuiltinTool] = []
     for tool_id in tools:

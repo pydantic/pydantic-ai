@@ -132,7 +132,73 @@ def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', defau
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
     qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+    args_list = list(args_list) if args_list is not None else sys.argv[1:]
 
+    # Check if this is a web command - route to web parser if so
+    # This allows positional prompt arg in main parser without conflicting with subcommands
+    if args_list and args_list[0] == 'web':
+        return _cli_web(args_list[1:], prog_name, default_model, qualified_model_names)
+
+    return _cli_chat(args_list, prog_name, default_model, qualified_model_names)
+
+
+def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified_model_names: list[str]) -> int:
+    """Handle the web subcommand."""
+    parser = argparse.ArgumentParser(
+        prog=f'{prog_name} web',
+        description='Start a web-based chat interface for a generic or specified agent',
+    )
+    parser.add_argument(
+        '--agent',
+        '-a',
+        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+        'If omitted, creates a generic agent with the first specified model as default.',
+    )
+    model_arg = parser.add_argument(
+        '-m',
+        '--model',
+        action='append',
+        dest='models',
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+        'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
+    )
+    model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
+    parser.add_argument(
+        '-t',
+        '--tool',
+        choices=SUPPORTED_CLI_TOOL_IDS,
+        action='append',
+        dest='tools',
+        help=f'Builtin tool to make available in the UI (can be repeated, e.g., -t web_search -t code_execution). '
+        f'Available: {", ".join(SUPPORTED_CLI_TOOL_IDS)}.',
+    )
+    parser.add_argument(
+        '-i',
+        '--instructions',
+        help="System instructions. When `--agent` is specified, these are additional to the agent's existing instructions "
+        'and will be passed as extra instructions to each run.',
+    )
+    parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
+    parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
+
+    argcomplete.autocomplete(parser)
+    args = parser.parse_args(args_list)
+
+    from .web import run_web_command
+
+    return run_web_command(
+        agent_path=args.agent,
+        host=args.host,
+        port=args.port,
+        models=args.models or [],
+        tools=args.tools or [],
+        instructions=args.instructions,
+        default_model=default_model,
+    )
+
+
+def _cli_chat(args_list: list[str], prog_name: str, default_model: str, qualified_model_names: list[str]) -> int:
+    """Handle the chat command (default)."""
     parser = argparse.ArgumentParser(
         prog=prog_name,
         description=f'Pydantic AI CLI v{__version__}',
@@ -147,10 +213,10 @@ def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', defau
     )
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
-    # Chat arguments (default command)
+    # Chat arguments
     parser.add_argument(
-        '-p',
-        '--prompt',
+        'prompt',
+        nargs='?',
         help='AI prompt for one-shot mode. If omitted, starts interactive mode.',
     )
     model_arg = parser.add_argument(
@@ -172,47 +238,6 @@ def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', defau
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
 
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-
-    # Web subcommand
-    web_parser = subparsers.add_parser(
-        'web',
-        help='Launch web chat UI for an agent',
-        description='Start a web-based chat interface for a generic or specified agent',
-    )
-    web_parser.add_argument(
-        '--agent',
-        '-a',
-        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
-        'If omitted, creates a generic agent with the first specified model as default.',
-    )
-    web_model_arg = web_parser.add_argument(
-        '-m',
-        '--model',
-        action='append',
-        dest='models',
-        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
-        'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
-    )
-    web_model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
-    web_parser.add_argument(
-        '-t',
-        '--tool',
-        choices=SUPPORTED_CLI_TOOL_IDS,
-        action='append',
-        dest='tools',
-        help=f'Builtin tool to make available in the UI (can be repeated, e.g., -t web_search -t code_execution). '
-        f'Available: {", ".join(SUPPORTED_CLI_TOOL_IDS)}.',
-    )
-    web_parser.add_argument(
-        '-i',
-        '--instructions',
-        help="System instructions. When `--agent` is specified, these are additional to the agent's existing instructions "
-        'and will be  passed as extra instructions to each run.',
-    )
-    web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
-    web_parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
-
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
@@ -227,18 +252,6 @@ def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', defau
         for model in qualified_model_names:
             console.print(f'  {model}', highlight=False)
         return 0
-
-    if args.command == 'web':
-        from .web import run_web_command
-
-        return run_web_command(
-            agent_path=args.agent,
-            host=args.host,
-            port=args.port,
-            models=args.models or [],
-            tools=args.tools or [],
-            instructions=args.instructions,
-        )
 
     # Default to chat command
     return _run_chat_command(args, console, name_version, default_model, prog_name)

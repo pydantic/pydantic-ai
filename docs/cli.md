@@ -49,7 +49,7 @@ Then running `clai` will start an interactive session where you can chat with th
 
 | Option | Description |
 |--------|-------------|
-| `-p`, `--prompt` | AI prompt for one-shot mode. If omitted, starts interactive mode. |
+| `prompt` | AI prompt for one-shot mode (positional). If omitted, starts interactive mode. |
 | `-m`, `--model` | Model to use in `provider:model` format (e.g., `openai:gpt-5`) |
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
@@ -80,7 +80,7 @@ agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 Then run:
 
 ```bash
-clai --agent custom_agent:agent -p "What's the weather today?"
+clai --agent custom_agent:agent "What's the weather today?"
 ```
 
 The format must be `module:variable` where:

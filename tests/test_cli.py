@@ -73,7 +73,7 @@ def test_agent_flag(
     mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
 
     # Test CLI with custom agent
-    assert cli(['--agent', 'test_module:custom_agent', '-p', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
 
     # Verify the output contains the custom agent message
     assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
@@ -90,7 +90,7 @@ def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., Non
 
     msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
     with pytest.raises(OpenAIError, match=msg):
-        cli(['--agent', 'test_module:custom_agent', '-p', 'hello'])
+        cli(['--agent', 'test_module:custom_agent', 'hello'])
 
 
 def test_agent_flag_set_model(
@@ -107,7 +107,7 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', '-p', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
@@ -120,12 +120,12 @@ def test_agent_flag_non_agent(
     test_agent = 'Not an Agent object'
     create_test_module(custom_agent=test_agent)
 
-    assert cli(['--agent', 'test_module:custom_agent', '-p', 'hello']) == 1
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
     assert 'Could not load agent from test_module:custom_agent' in capfd.readouterr().out
 
 
 def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
-    assert cli(['--agent', 'bad_path', '-p', 'hello']) == 1
+    assert cli(['--agent', 'bad_path', 'hello']) == 1
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
@@ -169,9 +169,9 @@ def test_list_models(capfd: CaptureFixture[str]):
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
-        assert cli(['-p', 'hello']) == 0
+        assert cli(['hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
-        assert cli(['--no-stream', '-p', 'hello']) == 0
+        assert cli(['--no-stream', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
@@ -398,6 +398,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=['web_search'],
         instructions=None,
+        default_model='openai:gpt-5',
     )
 
 
@@ -418,6 +419,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         models=[],
         tools=[],
         instructions=None,
+        default_model='openai:gpt-5',
     )
 
 
@@ -453,6 +455,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
         tools=[],
         instructions=None,
+        default_model='openai:gpt-5',
     )
 
 
@@ -479,6 +482,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         models=[],
         tools=['web_search', 'code_execution'],
         instructions=None,
+        default_model='openai:gpt-5',
     )
 
 
@@ -497,6 +501,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         models=['openai:gpt-5'],
         tools=[],
         instructions='You are a helpful coding assistant',
+        default_model='openai:gpt-5',
     )
 
 
@@ -521,6 +526,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         models=[],
         tools=[],
         instructions=None,
+        default_model='openai:gpt-5',
     )
 
 
@@ -541,14 +547,18 @@ def test_run_web_command_agent_with_model(
     mock_uvicorn_run.assert_called_once()
 
 
-def test_run_web_command_generic_agent_no_model(capfd: CaptureFixture[str]):
-    """Test run_web_command returns error when no agent and no model provided."""
+def test_run_web_command_generic_agent_no_model(mocker: MockerFixture, capfd: CaptureFixture[str]):
+    """Test run_web_command uses default model when no agent and no model provided."""
+    mock_uvicorn_run = mocker.patch('uvicorn.run')
+    mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     result = run_web_command()
 
-    assert result == 1
-    output = capfd.readouterr().out
-    assert 'At least one model (-m) is required' in output
+    assert result == 0
+    mock_uvicorn_run.assert_called_once()
+    # Verify default model was passed
+    call_kwargs = mock_create_app.call_args.kwargs
+    assert call_kwargs['models'] == ['openai:gpt-5']
 
 
 def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
