@@ -413,6 +413,8 @@ Async functions are run on the event loop, while sync functions are offloaded to
 !!! note "Limiting tool executions"
     You can cap the total number of tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). For finer control, you can limit how many times a *specific* tool can be called by setting the `max_uses` parameter when registering the tool (e.g., `@agent.tool(max_uses=3)` or `Tool(func, max_uses=3)`). Once a tool reaches its `max_uses` limit, it is automatically removed from the available tools for subsequent steps in the run. The `tool_calls` counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
+    For a "soft" limit that lets the model decide how to proceed instead of raising an error, use the [`max_tool_calls`](agents.md#soft-tool-call-limits-with-max_tool_calls) parameter on the agent or run method.
+
 #### Raising Hard Errors on Tool Usage Limits
 
 By default, when a tool reaches its `max_uses` limit, it is silently removed from the available tools. If you want to raise an error instead, you can use a [`prepare`](#tool-prepare) function to check the tool usage and raise a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception:
