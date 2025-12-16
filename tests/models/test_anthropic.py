@@ -346,6 +346,62 @@ async def test_cache_point_adds_cache_control(allow_model_requests: None):
     )
 
 
+async def test_cache_point_few_shot_prompting_caches_assistant_response(allow_model_requests: None):
+    """Test that CachePoint correctly adds cache_control to content blocks of an assistant message.
+
+    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='user prompt example')]),
+        ModelResponse(parts=[TextPart(content='assistant response example'), CachePoint()]),
+    ]
+
+    await agent.run(['Now the question'], message_history=messages)
+
+    # Verify cache_control was added with default ttl='5m'
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'user prompt example',
+                        'type': 'text',
+                    },
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': 'assistant response example',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Now the question',
+                        'type': 'text',
+                    },
+                ],
+            },
+        ]
+    )
+
+
 async def test_cache_point_multiple_markers(allow_model_requests: None):
     """Test multiple CachePoint markers in a single prompt."""
     c = completion_message(
