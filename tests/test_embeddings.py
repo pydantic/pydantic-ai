@@ -287,13 +287,13 @@ class TestCohere:
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self) -> SentenceTransformer:
+    def stsb_bert_tiny_model(self):
         model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
 
     @pytest.fixture
-    def embedder(self, stsb_bert_tiny_model: SentenceTransformer) -> Embedder:
+    def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
         return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
 
     async def test_infer_model(self):
