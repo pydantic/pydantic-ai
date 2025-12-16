@@ -17,17 +17,17 @@ try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to use the DashScope provider, '
+        'Please install the `openai` package to use the Alibaba provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 
-class DashScopeProvider(Provider[AsyncOpenAI]):
-    """Provider for DashScope (Qwen) OpenAI-compatible API."""
+class AlibabaProvider(Provider[AsyncOpenAI]):
+    """Provider for Alibaba Cloud Model Studio (DashScope) OpenAI-compatible API."""
 
     @property
     def name(self) -> str:
-        return 'dashscope'
+        return 'alibaba'
 
     @property
     def base_url(self) -> str:
@@ -77,12 +77,12 @@ class DashScopeProvider(Provider[AsyncOpenAI]):
             if not api_key:
                 raise UserError(
                     'Set the `DASHSCOPE_API_KEY` environment variable or pass it via '
-                    '`DashScopeProvider(api_key=...)` to use the DashScope provider.'
+                    '`AlibabaProvider(api_key=...)` to use the Alibaba provider.'
                 )
 
             self._base_url = base_url or 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
 
             if http_client is None:
-                http_client = cached_async_http_client(provider='dashscope')
+                http_client = cached_async_http_client(provider='alibaba')
 
             self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)

@@ -48,4 +48,4 @@
 
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
-::: pydantic_ai.providers.dashscope.DashScopeProvider
+::: pydantic_ai.providers.alibaba.AlibabaProvider

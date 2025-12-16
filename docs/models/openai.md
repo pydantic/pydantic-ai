@@ -307,14 +307,14 @@ agent = Agent(model)
 ...
 ```
 
-### DashScope
+### Alibaba Cloud Model Studio (DashScope)
 
-To use Qwen models via [Alibaba Cloud DashScope](https://www.alibabacloud.com/en/product/modelstudio), you can set the `DASHSCOPE_API_KEY` environment variable and use [`DashScopeProvider`][pydantic_ai.providers.dashscope.DashScopeProvider] by name:
+To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `DASHSCOPE_API_KEY` environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('dashscope:qwen-max')
+agent = Agent('alibaba:qwen-max')
 ...
 ```
 
@@ -323,26 +323,26 @@ Or initialise the model and provider directly:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.dashscope import DashScopeProvider
+from pydantic_ai.providers.alibaba import AlibabaProvider
 
 model = OpenAIChatModel(
     'qwen-max',
-    provider=DashScopeProvider(api_key='your-dashscope-api-key'),
+    provider=AlibabaProvider(api_key='your-dashscope-api-key'),
 )
 agent = Agent(model)
 ...
 ```
 
-The `DashScopeProvider` uses the international DashScope compatible endpoint `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` by default. You can override this by passing a custom `base_url`:
+The `AlibabaProvider` uses the international DashScope compatible endpoint `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` by default. You can override this by passing a custom `base_url`:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.dashscope import DashScopeProvider
+from pydantic_ai.providers.alibaba import AlibabaProvider
 
 model = OpenAIChatModel(
     'qwen-max',
-    provider=DashScopeProvider(
+    provider=AlibabaProvider(
         api_key='your-dashscope-api-key',
         base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',  # China region
     ),

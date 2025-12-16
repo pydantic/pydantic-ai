@@ -145,10 +145,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .ovhcloud import OVHcloudProvider
 
         return OVHcloudProvider
-    elif provider == 'dashscope':
-        from .dashscope import DashScopeProvider
+    elif provider == 'alibaba':
+        from .alibaba import AlibabaProvider
 
-        return DashScopeProvider
+        return AlibabaProvider
     elif provider == 'outlines':
         from .outlines import OutlinesProvider
 
