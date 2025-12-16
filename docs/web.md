@@ -2,7 +2,7 @@
 
 Pydantic AI includes a built-in web chat interface that you can use to interact with your agents through a browser.
 
-![Web Chat UI](../docs/img/web-chat-ui.png)
+![Web Chat UI](img/web-chat-ui.png)
 
 For CLI usage with `clai web`, see the [CLI - Web Chat UI documentation](cli.md#web-chat-ui).
 
