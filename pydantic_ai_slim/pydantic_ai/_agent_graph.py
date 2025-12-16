@@ -1047,10 +1047,12 @@ async def _call_tools(
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+    can_make_tool_calls: bool = True
+
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
         projected_usage.tool_calls += len(tool_calls)
-        usage_limits.check_before_tool_call(projected_usage)
+        can_make_tool_calls = cast(bool, usage_limits.check_before_tool_call(projected_usage))
 
     calls_to_run: list[_messages.ToolCallPart] = []
 
@@ -1061,7 +1063,7 @@ async def _call_tools(
     for call in tool_calls:
         current_tool_use = tool_manager.get_current_use_of_tool(call.tool_name)
         max_tool_use = tool_manager.get_max_use_of_tool(call.tool_name)
-        if max_tool_use is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tool_use:
+        if (max_tool_use is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tool_use) or not can_make_tool_calls:
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content=f'Tool call limit reached for tool "{call.tool_name}".',

@@ -3,13 +3,13 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass, fields
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
 from typing_extensions import deprecated, overload
 
-from . import _utils
+from . import ToolReturnPart, _utils
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
@@ -259,6 +259,11 @@ class UsageLimits:
     """The maximum number of requests allowed to the model."""
     tool_calls_limit: int | None = None
     """The maximum number of successful tool calls allowed to be executed."""
+    tool_calls_limit_enforcement: Literal['soft', 'hard'] = 'soft'
+    """ Whether to enforce the tool calls limit in a 'soft' or 'hard' manner.
+        Hard limits will raise UsageLimitExceeded before making a tool call that would exceed the limit.
+        Soft limits will return a ToolReturnPart indicating the limit would be exceeded so the tool call cannot be made. You can customize this response in PromptConfig
+    """
     input_tokens_limit: int | None = None
     """The maximum number of input/prompt tokens allowed."""
     output_tokens_limit: int | None = None
@@ -290,6 +295,7 @@ class UsageLimits:
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
+        tool_calls_limit_enforcement: Literal['soft', 'hard'] = 'soft',
     ) -> None:
         self.request_limit = request_limit
         self.tool_calls_limit = tool_calls_limit
@@ -297,6 +303,7 @@ class UsageLimits:
         self.output_tokens_limit = output_tokens_limit
         self.total_tokens_limit = total_tokens_limit
         self.count_tokens_before_request = count_tokens_before_request
+        self.tool_calls_limit_enforcement = tool_calls_limit_enforcement
 
     @overload
     @deprecated(
@@ -328,6 +335,7 @@ class UsageLimits:
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
+
         # deprecated:
         request_tokens_limit: int | None = None,
         response_tokens_limit: int | None = None,
@@ -385,13 +393,17 @@ class UsageLimits:
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
 
-    def check_before_tool_call(self, projected_usage: RunUsage) -> None:
+    def check_before_tool_call(self, projected_usage: RunUsage) -> None | bool:
         """Raises a `UsageLimitExceeded` exception if the next tool call(s) would exceed the tool call limit."""
         tool_calls_limit = self.tool_calls_limit
         tool_calls = projected_usage.tool_calls
         if tool_calls_limit is not None and tool_calls > tool_calls_limit:
+            if self.tool_calls_limit_enforcement == 'soft':
+                return False
             raise UsageLimitExceeded(
                 f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).'
             )
+        
+        return True
 
     __repr__ = _utils.dataclasses_no_defaults_repr
