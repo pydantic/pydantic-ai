@@ -136,6 +136,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model_settings: ModelSettings | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
+    max_tool_calls: int | None
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
@@ -818,6 +819,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
         tool_usage=ctx.state.tool_usage,
+        max_tool_calls=ctx.deps.max_tool_calls,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1047,12 +1049,13 @@ async def _call_tools(
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
-    can_make_tool_calls: bool = True
-
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
         projected_usage.tool_calls += len(tool_calls)
-        can_make_tool_calls = bool(usage_limits.check_before_tool_call(projected_usage))
+        usage_limits.check_before_tool_call(projected_usage)
+
+    # Checks for soft limits(if any set on total tools)
+    can_make_tool_calls = tool_manager.can_make_tool_calls(len(tool_calls), deepcopy(usage))
 
     calls_to_run: list[_messages.ToolCallPart] = []
 

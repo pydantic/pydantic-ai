@@ -304,3 +304,19 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         return self.ctx.tool_usage.get(tool_name, 0)
+
+    def _get_max_tool_calls(self) -> int | None:
+        """Get the maximum number of tool calls allowed during this run, or `None` if unlimited."""
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        return self.ctx.max_tool_calls
+
+    def can_make_tool_calls(self, num_tool_calls: int, usage: RunUsage) -> bool:
+        """Check if the tool calls can be made within max_tool_calls limit if it is set."""
+        max_tool_calls = self._get_max_tool_calls()
+        if max_tool_calls is not None:
+            usage.tool_calls += num_tool_calls
+            if usage.tool_calls > max_tool_calls:
+                return False
+        return True

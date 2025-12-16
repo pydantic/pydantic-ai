@@ -68,6 +68,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
+    max_tool_calls: int | None = None
+    """The maximum number of tool calls allowed during this run, or `None` if unlimited."""
 
     @property
     def last_attempt(self) -> bool:

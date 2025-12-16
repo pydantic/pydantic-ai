@@ -1431,6 +1431,54 @@ def test_tool_max_uses():
     )
 
 
+def test_max_tool_calls():
+    agent = Agent(TestModel(), max_tool_calls=0)
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='Tool call limit reached for tool "my_tool".',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":"Tool call limit reached for tool \\"my_tool\\"."}')],
+                usage=RequestUsage(input_tokens=59, output_tokens=15),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def test_tool_raises_call_deferred():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
