@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from textwrap import dedent
-from typing import Any
+from typing import Any, assert_never
 
 from ._run_context import RunContext
 from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
@@ -158,6 +158,10 @@ class PromptTemplates:
             elif message_part.return_kind == 'tool-denied':
                 if self.tool_call_denied is not None:
                     message_part = self._apply_tool_template(message_part, ctx, self.tool_call_denied)
+            elif message_part.return_kind == 'tool-executed' or message_part.return_kind is None:
+                pass  # No template applied for normal tool execution or when return_kind is None
+            else:
+                assert_never(message_part.return_kind)
         elif isinstance(message_part, RetryPromptPart):
             template = self._get_template_for_retry(message_part)
             message_part = self._apply_retry_template(message_part, ctx, template)
