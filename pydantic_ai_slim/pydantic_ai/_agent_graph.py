@@ -393,12 +393,14 @@ async def _prepare_request_parameters(
     # PromptConfig template > PromptedOutput.template > model profile default (handled downstream)
     prompted_output_template: str | None = None
     if isinstance(output_schema, _output.PromptedOutputSchema):
-        prompt_config = ctx.deps.prompt_config
-        templates = prompt_config.templates if prompt_config else None
-        config_template = templates.prompted_output_template if templates else None
-        # Only use config_template if explicitly set, otherwise preserve original behavior
-        # and let the model apply its profile-specific default
-        prompted_output_template = config_template or output_schema.template
+        if (
+            (prompt_config := ctx.deps.prompt_config)
+            and (prompt_templates := prompt_config.templates)
+            and (template := prompt_templates.prompted_output_template)
+        ):
+            prompted_output_template = template
+        else:
+            prompted_output_template = output_schema.template
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
