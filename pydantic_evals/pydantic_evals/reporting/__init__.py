@@ -55,11 +55,11 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     name: str
     """The name of the [case][pydantic_evals.Case]."""
     inputs: InputsT
-    """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
+    """The inputs to the task, from [`Case.inputs`][pydantic_evals.dataset.Case.inputs]."""
     metadata: MetadataT | None
-    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
+    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.dataset.Case.metadata]."""
     expected_output: OutputT | None
-    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
+    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.dataset.Case.expected_output]."""
     output: OutputT
     """The output of the task execution."""
 
@@ -88,11 +88,11 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
     name: str
     """The name of the [case][pydantic_evals.Case]."""
     inputs: InputsT
-    """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
+    """The inputs to the task, from [`Case.inputs`][pydantic_evals.dataset.Case.inputs]."""
     metadata: MetadataT | None
-    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
+    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.dataset.Case.metadata]."""
     expected_output: OutputT | None
-    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
+    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.dataset.Case.expected_output]."""
 
     error_message: str
     """The message of the exception that caused the failure."""

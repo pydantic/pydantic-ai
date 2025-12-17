@@ -127,10 +127,10 @@ For a deeper understanding, see [Core Concepts](evals/core-concepts.md).
 
 ## Datasets and Cases
 
-In Pydantic Evals, everything begins with [`Dataset`][pydantic_evals.Dataset]s and [`Case`][pydantic_evals.Case]s:
+In Pydantic Evals, everything begins with [`Dataset`][pydantic_evals.dataset.Dataset]s and [`Case`][pydantic_evals.dataset.Case]s:
 
-- **[`Dataset`][pydantic_evals.Dataset]**: A collection of test Cases designed for the evaluation of a specific task or function
-- **[`Case`][pydantic_evals.Case]**: A single test scenario corresponding to Task inputs, with optional expected outputs, metadata, and case-specific evaluators
+- **[`Dataset`][pydantic_evals.dataset.Dataset]**: A collection of test Cases designed for the evaluation of a specific task or function
+- **[`Case`][pydantic_evals.dataset.Case]**: A single test scenario corresponding to Task inputs, with optional expected outputs, metadata, and case-specific evaluators
 
 ```python {title="simple_eval_dataset.py"}
 from pydantic_evals import Case, Dataset
@@ -187,7 +187,7 @@ class MyEvaluator(Evaluator):
 dataset.add_evaluator(MyEvaluator())
 ```
 
-1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.Dataset.add_evaluator] method.
+1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.dataset.Dataset.add_evaluator] method.
 2. This custom evaluator returns a simple score based on whether the output matches the expected output.
 
 _(This example is complete, it can be run "as is")_
@@ -204,7 +204,7 @@ Learn more:
 
 Performing evaluations involves running a task against all cases in a dataset, also known as running an "experiment".
 
-Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.Dataset]:
+Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.dataset.Dataset]:
 
 ```python {title="simple_eval_complete.py"}
 from pydantic_evals import Case, Dataset
@@ -255,10 +255,10 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 """
 ```
 
-1. Create a [test case][pydantic_evals.Case] as above
-2. Create a [`Dataset`][pydantic_evals.Dataset] with test cases and [`evaluators`][pydantic_evals.Dataset.evaluators]
+1. Create a [test case][pydantic_evals.dataset.Case] as above
+2. Create a [`Dataset`][pydantic_evals.dataset.Dataset] with test cases and [`evaluators`][pydantic_evals.dataset.Dataset.evaluators]
 3. Our function to evaluate.
-4. Run the evaluation with [`evaluate_sync`][pydantic_evals.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
+4. Run the evaluation with [`evaluate_sync`][pydantic_evals.dataset.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
 5. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation. We have omitted duration here just to keep the printed output from changing from run to run.
 
 _(This example is complete, it can be run "as is")_

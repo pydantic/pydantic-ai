@@ -8,7 +8,8 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Se
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from functools import cached_property
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from pydantic_core import to_json
@@ -19,7 +20,14 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    ImageAspectRatio,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebSearchTool,
+)
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -55,7 +63,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -90,27 +98,13 @@ try:
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+
+    OMIT = omit
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-if TYPE_CHECKING:
-    from openai import Omit, omit
-
-    OMIT = omit
-else:
-    # Backward compatibility with openai<2
-    try:
-        from openai import Omit, omit
-
-        OMIT = omit
-    except ImportError:  # pragma: lax no cover
-        from openai import NOT_GIVEN, NotGiven
-
-        OMIT = NOT_GIVEN
-        Omit = NotGiven
 
 
 __all__ = (
@@ -159,6 +153,36 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'failed': 'error',
 }
 
+_OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
+    '1:1': '1024x1024',
+    '2:3': '1024x1536',
+    '3:2': '1536x1024',
+}
+
+
+def _resolve_openai_image_generation_size(
+    tool: ImageGenerationTool,
+) -> Literal['auto', '1024x1024', '1024x1536', '1536x1024']:
+    """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
+    aspect_ratio = tool.aspect_ratio
+    if aspect_ratio is None:
+        return tool.size
+
+    mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
+    if mapped_size is None:
+        supported = ', '.join(_OPENAI_ASPECT_RATIO_TO_SIZE)
+        raise UserError(
+            f'OpenAI image generation only supports `aspect_ratio` values: {supported}. '
+            'Specify one of those values or omit `aspect_ratio`.'
+        )
+
+    if tool.size not in ('auto', mapped_size):
+        raise UserError(
+            '`ImageGenerationTool` cannot combine `aspect_ratio` with a conflicting `size` when using OpenAI.'
+        )
+
+    return mapped_size
+
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
@@ -199,6 +223,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Enables [predictive outputs](https://platform.openai.com/docs/guides/predicted-outputs).
 
     This feature is currently only supported for some OpenAI models.
+    """
+
+    openai_prompt_cache_key: str
+    """Used by OpenAI to cache responses for similar requests to optimize your cache hit rates.
+
+    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
+    """
+
+    openai_prompt_cache_retention: Literal['in-memory', '24h']
+    """The retention policy for the prompt cache. Set to 24h to enable extended prompt caching, which keeps cached prefixes active for longer, up to a maximum of 24 hours.
+
+    See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
 
@@ -427,10 +463,44 @@ class OpenAIChatModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool})
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
+
+        WebSearchTool is only supported if openai_chat_supports_web_search is True.
+        """
+        _profile = super().profile
+        openai_profile = OpenAIModelProfile.from_profile(_profile)
+        if not openai_profile.openai_chat_supports_web_search:
+            new_tools = _profile.supported_builtin_tools - {WebSearchTool}
+            _profile = replace(_profile, supported_builtin_tools=new_tools)
+        return _profile
+
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
         return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Check for WebSearchTool before base validation to provide a helpful error message
+        if (
+            any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
+            and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
+        ):
+            raise UserError(
+                f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
+                f'Please use `OpenAIResponsesModel` instead.'
+            )
+        return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
         self,
@@ -550,6 +620,8 @@ class OpenAIChatModel(Model):
                 logit_bias=model_settings.get('logit_bias', OMIT),
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -632,6 +704,7 @@ class OpenAIChatModel(Model):
             provider_details=self._process_provider_details(response),
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
@@ -705,12 +778,6 @@ class OpenAIChatModel(Model):
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
-                if not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search:
-                    raise UserError(
-                        f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
-                        f'Please use `OpenAIResponsesModel` instead.'
-                    )
-
                 if tool.user_location:
                     return WebSearchOptions(
                         search_context_size=tool.search_context_size,
@@ -720,10 +787,7 @@ class OpenAIChatModel(Model):
                         ),
                     )
                 return WebSearchOptions(search_context_size=tool.search_context_size)
-            else:
-                raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
-                )
+        return None
 
     @dataclass
     class _MapModelResponseContext:
@@ -846,7 +910,7 @@ class OpenAIChatModel(Model):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
@@ -859,7 +923,10 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
+            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            openai_messages.insert(
+                system_prompt_count, chat.ChatCompletionSystemMessageParam(content=instructions, role='system')
+            )
         return openai_messages
 
     @staticmethod
@@ -958,7 +1025,7 @@ class OpenAIChatModel(Model):
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        audio = InputAudio(data=base64.b64encode(item.data).decode('utf-8'), format=item.format)
+                        audio = InputAudio(data=item.base64, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
                         content.append(
@@ -1110,6 +1177,11 @@ class OpenAIResponsesModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, ImageGenerationTool})
+
     async def request(
         self,
         messages: list[ModelRequest | ModelResponse],
@@ -1253,6 +1325,7 @@ class OpenAIResponsesModel(Model):
             provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -1337,7 +1410,10 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            openai_messages.insert(
+                system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
+            )
             instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
@@ -1393,6 +1469,8 @@ class OpenAIResponsesModel(Model):
                 user=model_settings.get('openai_user', OMIT),
                 text=text or OMIT,
                 include=include or OMIT,
+                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1469,6 +1547,7 @@ class OpenAIResponsesModel(Model):
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
+                size = _resolve_openai_image_generation_size(tool)
                 tools.append(
                     responses.tool_param.ImageGeneration(
                         type='image_generation',
@@ -1479,7 +1558,7 @@ class OpenAIResponsesModel(Model):
                         output_format=tool.output_format or 'png',
                         partial_images=tool.partial_images,
                         quality=tool.quality,
-                        size=tool.size,
+                        size=size,
                     )
                 )
             else:
@@ -1645,6 +1724,8 @@ class OpenAIResponsesModel(Model):
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
                             ):
+                                # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
+                                args = {k: v for k, v in args.items() if v is not None}
                                 web_search_item = responses.ResponseFunctionWebSearchParam(
                                     id=item.tool_call_id,
                                     action=cast(responses.response_function_web_search_param.Action, args),
@@ -1844,24 +1925,23 @@ class OpenAIResponsesModel(Model):
                             detail=detail,
                         )
                     )
-                elif isinstance(item, AudioUrl):  # pragma: no cover
-                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_data=downloaded_item['data'],
-                            filename=f'filename.{downloaded_item["data_type"]}',
+                elif isinstance(item, AudioUrl | DocumentUrl):
+                    if item.force_download:
+                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                        content.append(
+                            responses.ResponseInputFileParam(
+                                type='input_file',
+                                file_data=downloaded_item['data'],
+                                filename=f'filename.{downloaded_item["data_type"]}',
+                            )
                         )
-                    )
-                elif isinstance(item, DocumentUrl):
-                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_data=downloaded_item['data'],
-                            filename=f'filename.{downloaded_item["data_type"]}',
+                    else:
+                        content.append(
+                            responses.ResponseInputFileParam(
+                                type='input_file',
+                                file_url=item.url,
+                            )
                         )
-                    )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 elif isinstance(item, CachePoint):
@@ -2021,6 +2101,11 @@ class OpenAIStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
@@ -2354,6 +2439,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -2517,7 +2607,8 @@ def _map_web_search_tool_call(
     }
 
     if action := item.action:
-        args = action.model_dump(mode='json')
+        # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
+        args = action.model_dump(mode='json', exclude_none=True)
 
         # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
         if sources := args.pop('sources', None):

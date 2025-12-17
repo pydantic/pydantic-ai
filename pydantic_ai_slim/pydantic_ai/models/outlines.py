@@ -52,7 +52,7 @@ try:
     from outlines.inputs import Chat, Image
     from outlines.models.base import AsyncModel as OutlinesAsyncBaseModel, Model as OutlinesBaseModel
     from outlines.models.llamacpp import LlamaCpp, from_llamacpp
-    from outlines.models.mlxlm import MLXLM, from_mlxlm
+    from outlines.models.mlxlm import MLXLM, from_mlxlm  # pyright: ignore[reportUnknownVariableType]
     from outlines.models.sglang import AsyncSGLang, SGLang, from_sglang
     from outlines.models.transformers import (
         Transformers,
@@ -60,7 +60,7 @@ try:
     )
     from outlines.models.vllm_offline import (
         VLLMOffline,
-        from_vllm_offline,
+        from_vllm_offline,  # pyright: ignore[reportUnknownVariableType]
     )
     from outlines.types.dsl import JsonSchema
     from PIL import Image as PILImage
@@ -72,7 +72,7 @@ except ImportError as _import_error:
 
 if TYPE_CHECKING:
     import llama_cpp
-    import mlx.nn as nn
+    import mlx.nn as nn  # pyright: ignore[reportMissingImports]
     import transformers
 
 
@@ -157,7 +157,7 @@ class OutlinesModel(Model):
     @classmethod
     def from_mlxlm(  # pragma: no cover
         cls,
-        mlx_model: nn.Module,
+        mlx_model: nn.Module,  # pyright: ignore[reportUnknownParameterType, reportUnknownMemberType]
         mlx_tokenizer: transformers.tokenization_utils.PreTrainedTokenizer,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
@@ -174,7 +174,7 @@ class OutlinesModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider.
             settings: Default model settings for this model instance.
         """
-        outlines_model: OutlinesBaseModel = from_mlxlm(mlx_model, mlx_tokenizer)
+        outlines_model: OutlinesBaseModel = from_mlxlm(mlx_model, mlx_tokenizer)  # pyright: ignore[reportUnknownArgumentType]
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
@@ -298,12 +298,9 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[Chat, JsonSchema | None, dict[str, Any]]:
         """Build the generation arguments for the model."""
-        if (
-            model_request_parameters.function_tools
-            or model_request_parameters.builtin_tools
-            or model_request_parameters.output_tools
-        ):
-            raise UserError('Outlines does not support function tools and builtin tools yet.')
+        # the builtin_tool check now happens in `Model.prepare_request()`
+        if model_request_parameters.function_tools or model_request_parameters.output_tools:
+            raise UserError('Outlines does not support function tools yet.')
 
         if model_request_parameters.output_object:
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)
@@ -393,7 +390,9 @@ class OutlinesModel(Model):
         self, model_settings: dict[str, Any]
     ) -> dict[str, Any]:
         """Select the model settings supported by the vLLMOffline model."""
-        from vllm.sampling_params import SamplingParams
+        from vllm.sampling_params import (  # pyright: ignore[reportMissingImports]
+            SamplingParams,  # pyright: ignore[reportUnknownVariableType]
+        )
 
         supported_args = [
             'max_tokens',
@@ -544,6 +543,7 @@ class OutlinesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[str]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for content in self._response:
@@ -564,6 +564,11 @@ class OutlinesStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

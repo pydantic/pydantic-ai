@@ -76,13 +76,7 @@ jobs:
 
       - run: uv sync --group docs
 
-        # always build docs to check it works without insiders packages
       - run: make docs
-
-      - run: make docs-insiders
-        if: (github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main') && github.repository == 'pydantic/pydantic-ai'
-        env:
-          PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
       - run: tree -sh site
       - uses: actions/setup-node@v4
@@ -171,7 +165,7 @@ jobs:
 
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.5.x
 
       - run: mkdir .coverage
 
@@ -222,7 +216,7 @@ jobs:
 
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.5.x
 
       - run: mkdir .coverage
 
