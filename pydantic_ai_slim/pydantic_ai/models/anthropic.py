@@ -671,7 +671,7 @@ class AnthropicModel(Model):
                 mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.add('mcp-client-2025-04-04')
             else:
-                raise UserError(
+                raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
         return tools, mcp_servers, beta_features
