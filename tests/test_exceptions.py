@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.exceptions import (
@@ -81,7 +82,29 @@ def test_tool_retry_error_str_with_error_details():
     part = RetryPromptPart(content=validation_error.errors(include_url=False), tool_name='my_tool')
     error = ToolRetryError(part)
 
-    # Should contain the full Pydantic error with input value
-    assert 'my_tool' in str(error)
-    assert 'name' in str(error)
-    assert 'input_value=123' in str(error)
+    assert str(error) == (
+        '1 validation error for my_tool\nname\n  Input should be a valid string [type=string_type, input_value=123]'
+    )
+
+
+def test_tool_retry_error_str_with_value_error_type():
+    """Test that ToolRetryError handles value_error type without ctx.error.
+
+    When ErrorDetails are serialized, the exception object in ctx is stripped.
+    This test ensures we handle error types that normally require ctx.error.
+    """
+    # Simulate serialized ErrorDetails where ctx.error has been stripped
+    error_details: list[ErrorDetails] = [
+        {
+            'type': 'value_error',
+            'loc': ('field',),
+            'msg': 'Value error, must not be foo',
+            'input': 'foo',
+        }
+    ]
+    part = RetryPromptPart(content=error_details, tool_name='my_tool')
+    error = ToolRetryError(part)
+
+    assert str(error) == (
+        "1 validation error for my_tool\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
+    )
