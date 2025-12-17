@@ -333,45 +333,42 @@ class HuggingFaceModel(Model):
         tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
         function_tools = model_request_parameters.function_tools
         output_tools = model_request_parameters.output_tools
+        all_tools = [*function_tools, *output_tools]
+        allow_text = model_request_parameters.allow_text_output
 
-        tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+        def _force_one(name: str) -> ChatCompletionInputToolChoiceClass:
+            return ChatCompletionInputToolChoiceClass(
+                function=ChatCompletionInputFunctionName(name=name)  # pyright: ignore[reportCallIssue]
+            )
+
+        tool_defs_to_send: list[ToolDefinition]
+        tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
+
+        if tool_choice_value in (None, 'auto'):
+            tool_defs_to_send = all_tools
+            tool_choice = 'auto' if allow_text else 'required'
+
+        elif tool_choice_value == 'required':
+            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+            tool_choice = 'required'
+
+        elif tool_choice_value == 'none':
+            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+            # HF only supports forcing a single tool; 'required' forces one of filtered output tools
+            tool_choice = _force_one(output_tools[0].name) if len(output_tools) == 1 else 'required'
+
+        elif isinstance(tool_choice_value, list):
+            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+            # HF only supports forcing a single tool; 'required' forces one of filtered tools
+            tool_choice = _force_one(tool_choice_value[0]) if len(tool_choice_value) == 1 else 'required'
+
+        else:
+            assert_never(tool_choice_value)
 
         if not tool_defs_to_send:
             return [], None
 
         tools = [self._map_tool_definition(r) for r in tool_defs_to_send]
-        tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
-
-        # Determine tool_choice value
-        if tool_choice_value is None or tool_choice_value == 'auto':
-            # Default behavior: infer from allow_text_output
-            if not model_request_parameters.allow_text_output:
-                tool_choice = 'required'
-            else:
-                tool_choice = 'auto'
-        elif tool_choice_value == 'required':
-            # Tools have been filtered to only include function tools
-            tool_choice = 'required'
-        elif tool_choice_value == 'none':
-            if len(output_tools) == 1:
-                tool_choice = ChatCompletionInputToolChoiceClass(
-                    function=ChatCompletionInputFunctionName(name=output_tools[0].name)  # pyright: ignore[reportCallIssue]
-                )
-            else:
-                # HuggingFace only supports forcing a single tool; use 'required' to force one of them
-                tool_choice = 'required'
-        elif isinstance(tool_choice_value, list):
-            # Specific tool names
-            if len(tool_choice_value) == 1:
-                tool_choice = ChatCompletionInputToolChoiceClass(
-                    function=ChatCompletionInputFunctionName(name=tool_choice_value[0])  # pyright: ignore[reportCallIssue]
-                )
-            else:
-                # HuggingFace only supports forcing a single tool; tools have been filtered
-                tool_choice = 'required'
-        else:
-            assert_never(tool_choice_value)
-
         return tools, tool_choice
 
     async def _map_messages(

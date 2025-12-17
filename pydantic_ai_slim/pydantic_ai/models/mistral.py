@@ -344,9 +344,8 @@ class MistralModel(Model):
             return None, None
 
         _tool_functions = [
-            MistralFunction(
-                name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
-            ) for r in tool_defs_to_send
+            MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description or '')
+            for r in tool_defs_to_send
         ]
         tools = [MistralTool(function=f) for f in _tool_functions]
 
