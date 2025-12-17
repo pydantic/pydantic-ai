@@ -97,6 +97,7 @@ dev = [
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
+    "exa-py>=2.0.0",
     "inline-snapshot>=0.19.3",
     "pytest>=8.3.3",
     "pytest-examples>=0.0.18",
