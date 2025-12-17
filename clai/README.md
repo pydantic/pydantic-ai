@@ -51,31 +51,32 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
-## Help
+For full CLI documentation, see the [CLI documentation](https://ai.pydantic.dev/cli/).
 
+## Web Chat UI
+
+Launch a web-based chat interface:
+
+```bash
+clai web -m openai:gpt-5
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
 
-Pydantic AI CLI v...
+![Web Chat UI](https://ai.pydantic.dev/img/web-chat-ui.png)
 
-Special prompts:
-* `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
-* `/markdown` - show the last markdown output of the last question
-* `/multiline` - toggle multiline mode
-* `/cp` - copy the last response to clipboard
+This will start a web server (default: http://127.0.0.1:7932) with a chat interface.
 
-positional arguments:
-  prompt                AI Prompt, if omitted fall into interactive mode
+You can also serve an existing agent. For example, if you have an agent defined in `my_agent.py`:
 
-options:
-  -h, --help            show this help message and exit
-  -m [MODEL], --model [MODEL]
-                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "openai:gpt-5".
-  -a AGENT, --agent AGENT
-                        Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
-  -l, --list-models     List all available models and exit
-  -t [CODE_THEME], --code-theme [CODE_THEME]
-                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
-  --no-stream           Disable streaming from the model
-  --version             Show version and exit
+```python
+from pydantic_ai import Agent
+
+my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
 ```
+
+Launch the web UI with:
+
+```bash
+clai web --agent my_agent:my_agent
+```
+
+For full Web UI documentation, see [Web Chat UI](https://ai.pydantic.dev/web/).

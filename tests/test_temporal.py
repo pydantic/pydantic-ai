@@ -1258,6 +1258,91 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
             )
 
 
+def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
+    return msgs[1:] if len(msgs) > 1 else msgs
+
+
+agent_with_sync_history_processor = Agent(
+    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message]
+)
+temporal_agent_with_sync_history_processor = TemporalAgent(
+    agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncHistoryProcessorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_history_processor.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_history_processor(allow_model_requests: None, client: Client):
+    """Test that sync history processors work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync history processors to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncHistoryProcessorWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_history_processor)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncHistoryProcessorWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncHistoryProcessorWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+agent_with_sync_instructions = Agent(model, name='agent_with_sync_instructions')
+
+
+@agent_with_sync_instructions.instructions
+def sync_instructions_fn() -> str:
+    return 'You are a helpful assistant.'
+
+
+temporal_agent_with_sync_instructions = TemporalAgent(
+    agent_with_sync_instructions, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_instructions.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_instructions(allow_model_requests: None, client: Client):
+    """Test that sync instructions functions work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync instructions functions to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncInstructionsWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_instructions)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncInstructionsWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
 @workflow.defn
 class SimpleAgentWorkflowWithRunStream:
     @workflow.run

@@ -179,6 +179,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
+    env.set('ALIBABA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
@@ -697,6 +698,12 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='wide-axolotl-city')),
+                ]
+            )
+        elif m.content == 'Generate a high-resolution wide landscape illustration of an axolotl.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='high-res-axolotl')),
                 ]
             )
         elif m.content == 'Generate a chart of y=x^2 for x=-5 to 5.':

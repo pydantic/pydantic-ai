@@ -1499,6 +1499,32 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
     )
 
 
+async def test_image_url_input_force_download(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(
+                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                force_download=True,
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        """\
+This is a **potato**, specifically a yellow or gold potato variety. You can identify it by its characteristic features:
+
+- **Oval/round shape** with smooth skin
+- **Golden-yellow color** with small dark spots or eyes
+- **Starchy appearance** typical of potatoes
+
+This appears to be a russet or similar yellow potato variety commonly used for cooking, baking, or making mashed potatoes.\
+"""
+    )
+
+
 async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -1526,6 +1552,140 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
     assert result.output == snapshot(
         'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The image shows the owl perched on a log or branch, surrounded by soft yellow and green vegetation. The owl has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage in woodland and grassland environments. Great Horned Owls are known for their impressive size, sharp talons, and nocturnal hunting habits. They are formidable predators that can hunt animals as large as skunks, rabbits, and even other birds of prey.'
     )
+
+
+async def test_image_url_force_download() -> None:
+    """Test that force_download=True calls download_item for ImageUrl."""
+    from unittest.mock import AsyncMock, patch
+
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': b'\x89PNG\r\n\x1a\n fake image data',
+            'content_type': 'image/png',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/image.png'
+
+
+async def test_image_url_no_force_download() -> None:
+    """Test that force_download=False does not call download_item for ImageUrl."""
+    from unittest.mock import AsyncMock, patch
+
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_not_called()
+
+
+async def test_document_url_pdf_force_download() -> None:
+    """Test that force_download=True calls download_item for DocumentUrl (PDF)."""
+    from unittest.mock import AsyncMock, patch
+
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': b'%PDF-1.4 fake pdf data',
+            'content_type': 'application/pdf',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test PDF',
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/doc.pdf'
+
+
+async def test_document_url_text_force_download() -> None:
+    """Test that force_download=True calls download_item for DocumentUrl (text/plain)."""
+    from unittest.mock import AsyncMock, patch
+
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'Sample text content',
+            'content_type': 'text/plain',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test text file',
+                            DocumentUrl(
+                                url='https://example.com/doc.txt',
+                                media_type='text/plain',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/doc.txt'
 
 
 async def test_image_as_binary_content_tool_response(
@@ -1631,7 +1791,7 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='Only images and PDFs are supported for binary content'):
+    with pytest.raises(RuntimeError, match='Unsupported binary content media type for Anthropic'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
 
 
@@ -1722,6 +1882,16 @@ This document is a TXT test file that contains example content about the use of 
 
 The document also includes metadata about the file itself, including its purpose, type, and version, as well as attribution information indicating that the example content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.\
 """)
+
+
+async def test_text_document_as_binary_content_input(
+    allow_model_requests: None, anthropic_api_key: str, text_document_content: BinaryContent
+):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What does this text file say?', text_document_content])
+    assert result.output == snapshot('The text file says "Dummy TXT file".')
 
 
 def test_init_with_provider():
