@@ -19,7 +19,10 @@ def filter_tools_for_choice(
     This is a helper function for model implementations that need to filter
     tools before sending them to the API. Some providers support native
     tool filtering (like Google's `allowed_function_names` or OpenAI's
-    `allowed_tools`), so filtering may not always be necessary.
+    `allowed_tools`).
+
+    This is only called when necessary:
+        when there are multiple specific tools to be called, and the provider doesn't support a "require one of multiple tools" feature.
 
     Args:
         tool_choice: The validated tool_choice value from `validate_tool_choice`.
