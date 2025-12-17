@@ -20,9 +20,16 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'BUILTIN_TOOL_TYPES',
+    'DEPRECATED_BUILTIN_TOOLS',
+    'SUPPORTED_BUILTIN_TOOLS',
 )
 
-_BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
+BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
+"""Registry of all builtin tool types, keyed by their kind string.
+
+This dict is populated automatically via `__init_subclass__` when tool classes are defined.
+"""
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
@@ -48,9 +55,17 @@ class AbstractBuiltinTool(ABC):
         """
         return self.kind
 
+    @property
+    def label(self) -> str:
+        """Human-readable label for UI display.
+
+        Subclasses should override this to provide a meaningful label.
+        """
+        return self.kind.replace('_', ' ').title()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        _BUILTIN_TOOL_TYPES[cls.kind] = cls
+        BUILTIN_TOOL_TYPES[cls.kind] = cls
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -59,7 +74,7 @@ class AbstractBuiltinTool(ABC):
         if cls is not AbstractBuiltinTool:
             return handler(cls)
 
-        tools = _BUILTIN_TOOL_TYPES.values()
+        tools = BUILTIN_TOOL_TYPES.values()
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
@@ -408,6 +423,10 @@ class MCPServerTool(AbstractBuiltinTool):
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
 
+    @property
+    def label(self) -> str:
+        return f'MCP: {self.id}'
+
 
 @dataclass(kw_only=True)
 class FileSearchTool(AbstractBuiltinTool):
@@ -438,3 +457,12 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
         return tool_data.get('kind', AbstractBuiltinTool.kind)
     else:
         return tool_data.kind
+
+
+DEPRECATED_BUILTIN_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset({UrlContextTool})  # pyright: ignore[reportDeprecated]
+"""Set of deprecated builtin tool IDs that should not be offered in new UIs."""
+
+SUPPORTED_BUILTIN_TOOLS = frozenset(cls for cls in BUILTIN_TOOL_TYPES.values() if cls not in DEPRECATED_BUILTIN_TOOLS)
+"""Get the set of all builtin tool types (excluding deprecated tools)."""
+
+BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset({MCPServerTool, MemoryTool})

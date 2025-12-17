@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -465,9 +465,6 @@ class BedrockConverseModel(Model):
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
-        if model_request_parameters.builtin_tools:
-            raise UserError('Bedrock does not support built-in tools')
-
         # Bedrock supports a set of specific extra parameters
         if model_settings:
             if guardrail_config := model_settings.get('bedrock_guardrail_config', None):
@@ -548,7 +545,7 @@ class BedrockConverseModel(Model):
 
     async def _map_messages(  # noqa: C901
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
