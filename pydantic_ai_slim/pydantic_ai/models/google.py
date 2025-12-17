@@ -452,7 +452,13 @@ class GoogleModel(Model):
 
         if function_calling_mode is None:
             tool_config = None
-        else: 
+        elif allowed_function_names is None:
+             tool_config = ToolConfigDict(
+                function_calling_config=FunctionCallingConfigDict(
+                    mode=function_calling_mode,
+                )
+            )
+        else:
             tool_config = ToolConfigDict(
                 function_calling_config=FunctionCallingConfigDict(
                     mode=function_calling_mode,
