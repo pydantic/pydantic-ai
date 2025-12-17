@@ -3408,7 +3408,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image model.
-    agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool(size='1K')])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
     assert result.output == snapshot(
@@ -3671,6 +3671,44 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     builtin_tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert builtin_tools == []
     assert image_config == {'aspect_ratio': '16:9'}
+
+
+async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:
+    """Test that resolution parameter from ImageGenerationTool is added to image_config."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'image_size': '2K'}
+
+
+async def test_google_image_generation_resolution_with_aspect_ratio(google_provider: GoogleProvider) -> None:
+    """Test that resolution and aspect_ratio from ImageGenerationTool work together."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
+
+
+async def test_google_image_generation_unsupported_size_raises_error(google_provider: GoogleProvider) -> None:
+    """Test that unsupported size values raise an error."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='1024x1024')])
+
+    with pytest.raises(UserError, match='Google image generation only supports `size` values'):
+        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
+    """Test that 'auto' size raises an error for Google since it doesn't support intelligent size selection."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='auto')])
+
+    with pytest.raises(UserError, match='Google image generation only supports `size` values'):
+        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):

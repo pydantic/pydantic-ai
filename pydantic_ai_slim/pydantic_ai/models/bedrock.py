@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -572,7 +572,7 @@ class BedrockConverseModel(Model):
 
     async def _map_messages(  # noqa: C901
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
