@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union
 
@@ -18,6 +19,7 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'FileSearchTool',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -423,6 +425,30 @@ class MCPServerTool(AbstractBuiltinTool):
     @property
     def label(self) -> str:
         return f'MCP: {self.id}'
+
+
+@dataclass(kw_only=True)
+class FileSearchTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to search through uploaded files using vector search.
+
+    This tool provides a fully managed Retrieval-Augmented Generation (RAG) system that handles
+    file storage, chunking, embedding generation, and context injection into prompts.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Google (Gemini)
+    """
+
+    file_store_ids: Sequence[str]
+    """The file store IDs to search through.
+
+    For OpenAI, these are the IDs of vector stores created via the OpenAI API.
+    For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
+    """
+
+    kind: str = 'file_search'
+    """The kind of tool."""
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
