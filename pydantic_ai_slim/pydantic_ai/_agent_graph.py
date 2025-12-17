@@ -1426,13 +1426,9 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
 def _apply_prompt_templates_to_message_history(
     messages: list[_messages.ModelMessage], prompt_templates: _prompt_config.PromptTemplates, ctx: RunContext[Any]
 ) -> list[_messages.ModelMessage]:
-    messages_with_templates_applied: list[_messages.ModelMessage] = []
-
-    for msg in messages:
-        if isinstance(msg, _messages.ModelRequest):
-            parts_template_applied = [prompt_templates.apply_template(part, ctx) for part in msg.parts]
-            messages_with_templates_applied.append(replace(msg, parts=parts_template_applied))
-        else:
-            messages_with_templates_applied.append(msg)
-
-    return messages_with_templates_applied
+    return [
+        replace(msg, parts=[prompt_templates.apply_template(part, ctx) for part in msg.parts])
+        if isinstance(msg, _messages.ModelRequest)
+        else msg
+        for msg in messages
+    ]
