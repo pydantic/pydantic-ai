@@ -159,7 +159,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                         binary_part = BinaryContent(
                                             data=b64decode(part.data), media_type=part.mime_type
                                         )
-                                    else:
+                                    else:  # pragma: no cover
                                         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
                                     user_prompt_content.append(binary_part)
                                 case _:  # pragma: no cover

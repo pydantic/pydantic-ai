@@ -72,6 +72,7 @@ with try_import() as imports_successful:
         RunAgentInput,
         StateSnapshotEvent,
         SystemMessage,
+        TextInputContent,
         Tool,
         ToolCall,
         ToolMessage,
@@ -1584,23 +1585,26 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
         ),
         UserMessage(
             id='msg_1',
-            content=[BinaryInputContent(url=image_content.data_uri, mime_type=image_content.media_type)],
+            content=[
+                TextInputContent(text='this is an image:'),
+                BinaryInputContent(url=image_content.data_uri, mime_type=image_content.media_type),
+            ],
         ),
         UserMessage(
             id='msg2',
-            content=[BinaryInputContent(id='img1', url='http://example.com/image.png', mime_type='image/png')],
+            content=[BinaryInputContent(url='http://example.com/image.png', mime_type='image/png')],
         ),
         UserMessage(
             id='msg3',
-            content=[BinaryInputContent(url='http://example.com/video.mp4', mime_type='video/mp4', id='vid1')],
+            content=[BinaryInputContent(url='http://example.com/video.mp4', mime_type='video/mp4')],
         ),
         UserMessage(
             id='msg4',
-            content=[BinaryInputContent(url='http://example.com/audio.mp3', mime_type='audio/mpeg', id='aud1')],
+            content=[BinaryInputContent(url='http://example.com/audio.mp3', mime_type='audio/mpeg')],
         ),
         UserMessage(
             id='msg5',
-            content=[BinaryInputContent(url='http://example.com/doc.pdf', mime_type='application/pdf', id='doc1')],
+            content=[BinaryInputContent(url='http://example.com/doc.pdf', mime_type='application/pdf')],
         ),
         UserMessage(
             id='msg6', content=[BinaryInputContent(data=document_content.base64, mime_type=document_content.media_type)]
@@ -1691,7 +1695,7 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[image_content],
+                        content=['this is an image:', image_content],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
