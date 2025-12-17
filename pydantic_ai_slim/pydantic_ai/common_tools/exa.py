@@ -14,7 +14,7 @@ from pydantic_ai import FunctionToolset
 from pydantic_ai.tools import Tool
 
 try:
-    from exa_py import AsyncExa
+    from exa_py import AsyncExa  # type: ignore[reportMissingImports]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `exa-py` to use the Exa tools, '
@@ -114,7 +114,7 @@ class ExaSearchTool:
         text_config: bool | dict[str, int] = (
             {'maxCharacters': self.max_characters} if self.max_characters else True
         )
-        response = await self.client.search(
+        response = await self.client.search(  # type: ignore[reportUnknownMemberType]
             query,
             num_results=self.num_results,
             type=search_type,
@@ -123,13 +123,13 @@ class ExaSearchTool:
 
         return [
             ExaSearchResult(
-                title=result.title or '',
-                url=result.url,
-                published_date=result.published_date,
-                author=result.author,
-                text=result.text or '',
+                title=result.title or '',  # type: ignore[reportUnknownMemberType]
+                url=result.url,  # type: ignore[reportUnknownMemberType]
+                published_date=result.published_date,  # type: ignore[reportUnknownMemberType]
+                author=result.author,  # type: ignore[reportUnknownMemberType]
+                text=result.text or '',  # type: ignore[reportUnknownMemberType]
             )
-            for result in response.results
+            for result in response.results  # type: ignore[reportUnknownMemberType]
         ]
 
 
@@ -158,7 +158,7 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        response = await self.client.find_similar(
+        response = await self.client.find_similar(  # type: ignore[reportUnknownMemberType]
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
@@ -167,13 +167,13 @@ class ExaFindSimilarTool:
 
         return [
             ExaSearchResult(
-                title=result.title or '',
-                url=result.url,
-                published_date=result.published_date,
-                author=result.author,
-                text=result.text or '',
+                title=result.title or '',  # type: ignore[reportUnknownMemberType]
+                url=result.url,  # type: ignore[reportUnknownMemberType]
+                published_date=result.published_date,  # type: ignore[reportUnknownMemberType]
+                author=result.author,  # type: ignore[reportUnknownMemberType]
+                text=result.text or '',  # type: ignore[reportUnknownMemberType]
             )
-            for result in response.results
+            for result in response.results  # type: ignore[reportUnknownMemberType]
         ]
 
 
@@ -196,17 +196,17 @@ class ExaGetContentsTool:
         Returns:
             The content of each URL.
         """
-        response = await self.client.get_contents(urls, text=True)
+        response = await self.client.get_contents(urls, text=True)  # type: ignore[reportUnknownMemberType]
 
         return [
             ExaContentResult(
-                url=result.url,
-                title=result.title or '',
-                text=result.text or '',
-                author=result.author,
-                published_date=result.published_date,
+                url=result.url,  # type: ignore[reportUnknownMemberType]
+                title=result.title or '',  # type: ignore[reportUnknownMemberType]
+                text=result.text or '',  # type: ignore[reportUnknownMemberType]
+                author=result.author,  # type: ignore[reportUnknownMemberType]
+                published_date=result.published_date,  # type: ignore[reportUnknownMemberType]
             )
-            for result in response.results
+            for result in response.results  # type: ignore[reportUnknownMemberType]
         ]
 
 
@@ -229,17 +229,17 @@ class ExaAnswerTool:
         Returns:
             An answer with supporting citations from web sources.
         """
-        response = await self.client.answer(query, text=True)
+        response = await self.client.answer(query, text=True)  # type: ignore[reportUnknownMemberType]
 
         return ExaAnswerResult(
-            answer=response.answer,
+            answer=response.answer,  # type: ignore[reportUnknownMemberType]
             citations=[
                 {
-                    'url': citation.url,
-                    'title': citation.title or '',
-                    'text': citation.text or '',
+                    'url': citation.url,  # type: ignore[reportUnknownMemberType]
+                    'title': citation.title or '',  # type: ignore[reportUnknownMemberType]
+                    'text': citation.text or '',  # type: ignore[reportUnknownMemberType]
                 }
-                for citation in response.citations
+                for citation in response.citations  # type: ignore[reportUnknownMemberType]
             ],
         )
 
