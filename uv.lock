@@ -1625,6 +1625,20 @@ wheels = [
 ]
 
 [[package]]
+name = "exa-py"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openai" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/72/7f/38cda469587b2c69645d3ccc2dda47a5c1213cc98e9090271b462704496e/exa_py-2.0.1.tar.gz", hash = "sha256:aaae32b6356ed855b4decee3fcb8e71272439c4614a20419612c1674c8c1f648", size = 43553, upload-time = "2025-11-21T15:54:51.306Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/da/70ff6161914988ec756e6b2a57e23d28247cc825bfdbdcddf0bb967e87d0/exa_py-2.0.1-py3-none-any.whl", hash = "sha256:e2773f16dc2d70baad284139d58a292ac911307c6898ecd1dbb413035db0c950", size = 56043, upload-time = "2025-11-21T15:54:50.2Z" },
+]
+
+[[package]]
 name = "exceptiongroup"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -5414,6 +5428,7 @@ dev = [
     { name = "diff-cover" },
     { name = "dirty-equals" },
     { name = "duckduckgo-search" },
+    { name = "exa-py" },
     { name = "genai-prices" },
     { name = "inline-snapshot" },
     { name = "mcp-run-python" },
@@ -5473,6 +5488,7 @@ dev = [
     { name = "diff-cover", specifier = ">=9.2.0" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
+    { name = "exa-py", specifier = ">=2.0.0" },
     { name = "genai-prices", specifier = ">=0.0.28" },
     { name = "inline-snapshot", specifier = ">=0.19.3" },
     { name = "mcp-run-python", specifier = ">=0.0.20" },
@@ -5593,6 +5609,9 @@ duckduckgo = [
 evals = [
     { name = "pydantic-evals" },
 ]
+exa = [
+    { name = "exa-py" },
+]
 fastmcp = [
     { name = "fastmcp" },
 ]
@@ -5679,6 +5698,7 @@ requires-dist = [
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.14.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
+    { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.12.0" },
@@ -5724,7 +5744,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "vllm", marker = "(python_full_version < '3.12' and platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'outlines-vllm-offline')" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "tavily", "temporal", "ui", "vertexai", "web"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "tavily", "temporal", "ui", "vertexai", "web"]
 
 [[package]]
 name = "pydantic-core"

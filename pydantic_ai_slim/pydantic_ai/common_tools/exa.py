@@ -255,9 +255,9 @@ def exa_search_tool(api_key: str, num_results: int = 5, max_characters: int | No
         max_characters: Maximum characters of text content per result. Use this to limit
             token usage. Defaults to None (no limit).
     """
-    return Tool[Any](
+    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
         ExaSearchTool(
-            client=AsyncExa(api_key=api_key),
+            client=AsyncExa(api_key=api_key),  # type: ignore[reportUnknownArgumentType]
             num_results=num_results,
             max_characters=max_characters,
         ).__call__,
@@ -275,8 +275,8 @@ def exa_find_similar_tool(api_key: str, num_results: int = 5):
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
         num_results: The number of similar results to return. Defaults to 5.
     """
-    return Tool[Any](
-        ExaFindSimilarTool(client=AsyncExa(api_key=api_key), num_results=num_results).__call__,
+    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
+        ExaFindSimilarTool(client=AsyncExa(api_key=api_key), num_results=num_results).__call__,  # type: ignore[reportUnknownArgumentType]
         name='exa_find_similar',
         description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
     )
@@ -290,8 +290,8 @@ def exa_get_contents_tool(api_key: str):
 
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
     """
-    return Tool[Any](
-        ExaGetContentsTool(client=AsyncExa(api_key=api_key)).__call__,
+    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
+        ExaGetContentsTool(client=AsyncExa(api_key=api_key)).__call__,  # type: ignore[reportUnknownArgumentType]
         name='exa_get_contents',
         description='Gets the full text content of specified URLs. Useful for reading articles, documentation, or any web page when you have the exact URL.',
     )
@@ -305,8 +305,8 @@ def exa_answer_tool(api_key: str):
 
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
     """
-    return Tool[Any](
-        ExaAnswerTool(client=AsyncExa(api_key=api_key)).__call__,
+    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
+        ExaAnswerTool(client=AsyncExa(api_key=api_key)).__call__,  # type: ignore[reportUnknownArgumentType]
         name='exa_answer',
         description='Generates an AI-powered answer to a question with citations from web sources. Returns a comprehensive answer backed by real sources.',
     )
@@ -355,12 +355,12 @@ class ExaToolset(FunctionToolset):
             include_answer: Whether to include the answer tool. Defaults to True.
             id: Optional ID for the toolset, used for durable execution environments.
         """
-        client = AsyncExa(api_key=api_key)
+        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
         tools: list[Tool[Any]] = []
 
         if include_search:
             tools.append(
-                Tool[Any](
+                Tool[Any](  # type: ignore[reportUnknownArgumentType]
                     ExaSearchTool(client=client, num_results=num_results, max_characters=max_characters).__call__,
                     name='exa_search',
                     description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
@@ -369,7 +369,7 @@ class ExaToolset(FunctionToolset):
 
         if include_find_similar:
             tools.append(
-                Tool[Any](
+                Tool[Any](  # type: ignore[reportUnknownArgumentType]
                     ExaFindSimilarTool(client=client, num_results=num_results).__call__,
                     name='exa_find_similar',
                     description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
@@ -378,7 +378,7 @@ class ExaToolset(FunctionToolset):
 
         if include_get_contents:
             tools.append(
-                Tool[Any](
+                Tool[Any](  # type: ignore[reportUnknownArgumentType]
                     ExaGetContentsTool(client=client).__call__,
                     name='exa_get_contents',
                     description='Gets the full text content of specified URLs. Useful for reading articles, documentation, or any web page when you have the exact URL.',
@@ -387,7 +387,7 @@ class ExaToolset(FunctionToolset):
 
         if include_answer:
             tools.append(
-                Tool[Any](
+                Tool[Any](  # type: ignore[reportUnknownArgumentType]
                     ExaAnswerTool(client=client).__call__,
                     name='exa_answer',
                     description='Generates an AI-powered answer to a question with citations from web sources. Returns a comprehensive answer backed by real sources.',
