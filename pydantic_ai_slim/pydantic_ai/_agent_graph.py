@@ -930,6 +930,7 @@ async def process_tool_calls(  # noqa: C901
                         tool_name=call.tool_name,
                         content=_prompt_config.DEFAULT_OUTPUT_VALIDATION_FAILED,
                         tool_call_id=call.tool_call_id,
+                        return_kind='output-validation-failed',
                     )
                     output_parts.append(part)
                     yield _messages.FunctionToolResultEvent(part)

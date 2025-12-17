@@ -881,6 +881,7 @@ class ToolReturnPart(BaseToolReturnPart):
             'function-tool-not-executed',
             'tool-executed',
             'tool-denied',
+            'output-validation-failed',
         ]
         | None
     ) = None
