@@ -174,10 +174,8 @@ def _resolve_openai_image_generation_size(
     if mapped_size is None:
         supported = ', '.join(_OPENAI_ASPECT_RATIO_TO_SIZE)
         raise UserError(
-            f'OpenAI image generation only supports `aspect_ratio` values: {supported}. '
-            'Specify one of those values or omit `aspect_ratio`.'
+            f'OpenAI image generation only supports `aspect_ratio` values: {supported}. Specify one of those values or omit `aspect_ratio`.'
         )
-
     # When aspect_ratio is set, size must be None, 'auto', or match the mapped size
     if tool.size not in (None, 'auto', mapped_size):
         raise UserError(

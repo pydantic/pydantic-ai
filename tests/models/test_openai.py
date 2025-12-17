@@ -37,7 +37,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -79,6 +79,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -101,6 +102,12 @@ def test_init():
     assert m.base_url == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
+
+
+def test_openai_image_generation_tool_aspect_ratio_invalid_covered() -> None:
+    tool = ImageGenerationTool(aspect_ratio='16:9')
+    with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
+        _resolve_openai_image_generation_size(tool)
 
 
 async def test_request_simple_success(allow_model_requests: None):
