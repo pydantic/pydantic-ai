@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import io
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -58,7 +57,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import filter_tools_for_choice, validate_tool_choice
+from ._tool_choice import validate_tool_choice
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'end_turn': 'stop',
@@ -676,22 +675,49 @@ class AnthropicModel(Model):
             A tuple of (filtered_tools, tool_choice).
         """
         thinking_enabled = model_settings.get('anthropic_thinking') is not None
-        function_tools = model_request_parameters.function_tools
-        output_tools = model_request_parameters.output_tools
+        tool_defs = model_request_parameters.tool_defs
 
-        tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
+        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
 
-        # Single specific tool: send all tools, force via tool_choice (preserves cache)
-        if isinstance(tool_choice_value, list) and len(tool_choice_value) == 1:
-            tool_defs_to_send = [*function_tools, *output_tools]
+        tool_choice: BetaToolChoiceParam
+
+        if validated_tool_choice == 'auto':
+            tool_choice = {'type': 'auto'}
+        elif validated_tool_choice == 'required':
+            if thinking_enabled:
+                # TODO: come back to this
+                raise UserError(
+                    "Anthropic does not support `tool_choice='required'` with thinking mode. "
+                    "Disable thinking or use `tool_choice='auto'`."
+                )
+            tool_choice = {'type': 'any'}
+        elif validated_tool_choice == 'none':
+            tool_choice = {'type': 'none'}
+        elif isinstance(validated_tool_choice, tuple):
+            tool_names, tool_choice_mode = validated_tool_choice
+            if tool_choice_mode == 'auto':
+                tool_choice = {'type': 'auto'}
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            else:
+                if thinking_enabled:
+                    # TODO: come back to this
+                    raise UserError(
+                        'Anthropic does not support forcing specific tools with thinking mode. '
+                        "Disable thinking or use `tool_choice='auto'`."
+                    )
+                if len(tool_names) == 1:
+                    tool_choice = {'type': 'tool', 'name': tool_names[0]}
+                else:
+                    tool_choice = {'type': 'any'}
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
         else:
-            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+            assert_never(validated_tool_choice)
 
-        if not tool_defs_to_send:
+        if not tool_defs:
             return [], None
 
         # Map ToolDefinitions to Anthropic format
-        tools: list[BetaToolUnionParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
+        tools: list[BetaToolUnionParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
 
         # Add cache_control to the last tool if enabled
         if cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions'):
@@ -699,65 +725,8 @@ class AnthropicModel(Model):
             last_tool = tools[-1]
             last_tool['cache_control'] = self._build_cache_control(ttl)
 
-        # parallel_tool_calls -> disable_parallel_tool_use (only if key present)
-        disable_parallel: bool | None = (
-            (not model_settings['parallel_tool_calls']) if 'parallel_tool_calls' in model_settings else None
-        )
-
-        tool_choice: BetaToolChoiceParam
-
-        allow_text = model_request_parameters.allow_text_output
-        fallback_type: Literal['auto', 'any'] = 'auto' if allow_text else 'any'
-
-        if fallback_type == 'auto':
-            fallback_choice: BetaToolChoiceParam = {'type': 'auto'}
-        else:
-            fallback_choice = {'type': 'any'}
-
-        if tool_choice_value in (None, 'auto'):
-            tool_choice = fallback_choice
-
-        elif tool_choice_value == 'required':
-            if thinking_enabled:
-                raise UserError(
-                    "Anthropic does not support `tool_choice='required'` with thinking mode. "
-                    "Disable thinking or use `tool_choice='auto'`."
-                )
-            tool_choice = {'type': 'any'}
-
-        elif tool_choice_value == 'none':
-            if len(output_tools) == 0:  # pragma: no cover
-                assert allow_text, 'Internal error: `tool_choice=none` with no output tools but text output not allowed'
-                tool_choice = {'type': 'none'}
-            elif len(output_tools) == 1:
-                tool_choice = {'type': 'tool', 'name': output_tools[0].name}
-            else:
-                warnings.warn(
-                    'Anthropic only supports forcing a single tool. '
-                    f"Falling back to '{fallback_choice['type']}' for multiple output tools."
-                )
-                tool_choice = fallback_choice
-
-        elif isinstance(tool_choice_value, list):
-            if thinking_enabled:
-                raise UserError(
-                    'Anthropic does not support forcing specific tools with thinking mode. '
-                    "Disable thinking or use `tool_choice='auto'`."
-                )
-            if len(tool_choice_value) == 1:
-                tool_choice = {'type': 'tool', 'name': tool_choice_value[0]}
-            else:
-                warnings.warn(
-                    "Anthropic only supports forcing a single tool. Falling back to 'any' for multiple specific tools."
-                )
-                tool_choice = {'type': 'any'}
-
-        else:
-            assert_never(tool_choice_value)
-
-        # Set disable_parallel_tool_use if applicable (not supported by type='none')
-        if disable_parallel is not None and tool_choice.get('type') != 'none':
-            tool_choice['disable_parallel_tool_use'] = disable_parallel  # pyright: ignore[reportGeneralTypeIssues]
+        if 'parallel_tool_calls' in model_settings and tool_choice.get('type') != 'none':
+            tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']  # pyright: ignore[reportGeneralTypeIssues]
 
         return tools, tool_choice
 

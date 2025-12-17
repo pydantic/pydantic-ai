@@ -1,5 +1,7 @@
 from typing import Literal
 
+from typing_extensions import assert_never
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
@@ -14,6 +16,7 @@ def filter_tools_for_choice(
     function_tools: list[ToolDefinition],
     output_tools: list[ToolDefinition],
 ) -> list[ToolDefinition]:
+    # TODO: Remove
     """Filter tools based on the tool_choice value.
 
     This is a helper function for model implementations that need to filter
@@ -51,8 +54,12 @@ def filter_tools_for_choice(
 def validate_tool_choice(
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
-) -> ToolChoiceValue | None:
-    """Validate and normalize tool_choice from model settings.
+) -> (
+    Literal['none', 'auto', 'required'] | tuple[list[str], Literal['auto', 'required']]
+):  # second bool is text_allowed?
+    """TODO: Update docstring.
+
+    Validate and normalize tool_choice from model settings.
 
     This is a public helper for model implementations to validate and normalize
     the user's `tool_choice` setting. Custom model implementations may need
@@ -68,36 +75,62 @@ def validate_tool_choice(
         - 'none', 'auto', or 'required' for mode strings
         - list[str] for specific tool names (validated against available function and output tools)
 
+        # TODO: Second argument is to force a tool list filter
+
     Raises:
         UserError: If tool names in list[str] are not valid tool names.
     """
-    user_tool_choice = (model_settings or {}).get('tool_choice')
+    function_tool_choice = (model_settings or {}).get('tool_choice')
 
-    if user_tool_choice is None:
-        return None
+    # TODO: think about builtin tools
 
-    if user_tool_choice == 'none':
-        return 'none'
+    # TODO: is there a use case for "call a function tool or return text", i.e. "no output"?
 
-    if user_tool_choice in ('auto', 'required'):
-        if user_tool_choice == 'required' and not model_request_parameters.function_tools:
+    if function_tool_choice in (None, 'auto'):
+        if model_request_parameters.allow_text_output:
+            return 'auto'  # text or function tool or output tool
+        else:
+            return 'required'  # function tool or output tool
+    elif function_tool_choice in ('none', []):
+        # call output tools OR (if allowed) return text or image etc
+        # TODO: Do we need to consider allow_image_output as well?
+        output_tool_names = [t.name for t in model_request_parameters.output_tools]
+
+        if model_request_parameters.output_tools:
+            if model_request_parameters.allow_text_output:
+                return (output_tool_names, 'auto')  # text or output tool
+            elif model_request_parameters.function_tools:
+                return (output_tool_names, 'required')
+            else:
+                return 'required'  # only output tools
+        elif model_request_parameters.allow_text_output:  # text allowed, no output tools
+            return 'none'
+        else:  # pragma: no cover
+            assert False, 'Either output_tools or allow_text_output must be set'
+    elif function_tool_choice == 'required':
+        function_tool_names = [t.name for t in model_request_parameters.function_tools]
+
+        if model_request_parameters.function_tools:
+            if model_request_parameters.output_tools:
+                return (function_tool_names, 'required')
+            else:
+                return 'required'
+        else:
             raise UserError(
                 '`tool_choice` was set to "required", but no function tools are defined. '
                 'Please define function tools or change `tool_choice` to "auto" or "none".'
             )
-        return user_tool_choice
+    elif isinstance(function_tool_choice, list):
+        all_tool_names = model_request_parameters.tool_defs.keys()
+        selected_tool_names = set(function_tool_choice)
+        if selected_tool_names == all_tool_names:
+            return 'required'
 
-    if isinstance(user_tool_choice, list):
-        if not user_tool_choice:
-            return 'none'
-        function_tool_names = {t.name for t in model_request_parameters.function_tools}
-        output_tool_names = {t.name for t in model_request_parameters.output_tools}
-        all_tool_names = function_tool_names | output_tool_names
-        invalid_names = set(user_tool_choice) - all_tool_names
+        invalid_names = selected_tool_names - all_tool_names
         if invalid_names:
             raise UserError(
                 f'Invalid tool names in `tool_choice`: {invalid_names}. Available tools: {all_tool_names or "none"}'
             )
-        return list(user_tool_choice)
-
-    return None  # pragma: no cover
+        return (list(selected_tool_names), 'required')
+    else:
+        assert_never(function_tool_choice)

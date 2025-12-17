@@ -58,7 +58,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import filter_tools_for_choice, validate_tool_choice
+from ._tool_choice import ToolChoiceValue, validate_tool_choice
 
 try:
     from google.genai import Client, errors
@@ -414,85 +414,41 @@ class GoogleModel(Model):
         Returns:
             A tuple of (filtered_tools, tool_config, image_config).
         """
-        function_tools = model_request_parameters.function_tools
-        output_tools = model_request_parameters.output_tools
-        all_tools = [*function_tools, *output_tools]
         builtin_tools, image_config = self._get_builtin_tools(model_request_parameters)
 
-        tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
 
-        # When allow_text_output=False with 'none' or list modes, we use allowed_function_names
-        # to restrict which tools can be called, so we send all tools for cache efficiency.
-        # When allow_text_output=True, we can't use allowed_function_names (must use AUTO), so we filter.
-        use_allowed_function_names = not model_request_parameters.allow_text_output and (
-            tool_choice_value == 'none' or isinstance(tool_choice_value, list)
-        )
-        if use_allowed_function_names:
-            tool_defs_to_send = all_tools
+        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+
+        function_calling_config_modes: dict[ToolChoiceValue, FunctionCallingConfigMode] = {
+            'auto': FunctionCallingConfigMode.AUTO,
+            'none': FunctionCallingConfigMode.NONE,
+            'required': FunctionCallingConfigMode.ANY,
+        }
+
+        allowed_function_names: list[str] | None = None
+        if isinstance(validated_tool_choice, tuple):
+            tool_names, tool_choice_mode = validated_tool_choice
+            if tool_choice_mode == 'auto':
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            else:
+                allowed_function_names = tool_names
         else:
-            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+            tool_choice_mode = validated_tool_choice
+
+        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
+        if allowed_function_names is not None:
+            function_calling_config['allowed_function_names'] = allowed_function_names
+        tool_config = ToolConfigDict(function_calling_config=function_calling_config)
 
         tools: list[ToolDict] = [
-            ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs_to_send
+            ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs.values()
         ]
 
         tools.extend(builtin_tools)
 
         if not tools:
             return None, None, image_config
-
-        tool_config: ToolConfigDict | None
-
-        function_calling_mode: FunctionCallingConfigMode | None = None
-        allowed_function_names: list[str] | None = None
-
-        # when text is disallowed, we must force *some* tool
-        force_tool = not model_request_parameters.allow_text_output
-        is_list = isinstance(tool_choice_value, list)
-
-        if tool_choice_value in (None, 'auto'):
-            # None behaves like "auto", except it can become "no config" when text is allowed.
-            if force_tool:
-                function_calling_mode = FunctionCallingConfigMode.ANY
-            else:
-                function_calling_mode = FunctionCallingConfigMode.AUTO if tool_choice_value == 'auto' else None
-
-        elif tool_choice_value == 'required':
-            function_calling_mode = FunctionCallingConfigMode.ANY
-
-        elif tool_choice_value == 'none':
-            if force_tool:
-                assert output_tools, 'Internal error: tool_choice=none with no output tools but text output not allowed'
-                function_calling_mode = FunctionCallingConfigMode.ANY
-                allowed_function_names = [t.name for t in output_tools]
-            else:
-                function_calling_mode = FunctionCallingConfigMode.AUTO
-
-        elif is_list:
-            if force_tool:
-                function_calling_mode = FunctionCallingConfigMode.ANY
-                allowed_function_names = tool_choice_value
-            else:
-                function_calling_mode = FunctionCallingConfigMode.AUTO
-
-        else:
-            assert_never(tool_choice_value)
-
-        if function_calling_mode is None:
-            tool_config = None
-        elif allowed_function_names is None:
-            tool_config = ToolConfigDict(
-                function_calling_config=FunctionCallingConfigDict(
-                    mode=function_calling_mode,
-                )
-            )
-        else:
-            tool_config = ToolConfigDict(
-                function_calling_config=FunctionCallingConfigDict(
-                    mode=function_calling_mode,
-                    allowed_function_names=allowed_function_names,
-                )
-            )
 
         return tools, tool_config, image_config
 
