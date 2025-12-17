@@ -3,14 +3,10 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from textwrap import dedent
-from typing import Any, assert_never
-
-from pydantic_ai import output
-
-from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
+from typing import Any
 
 from ._run_context import RunContext
-
+from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
 
 # Default template strings - used when template field is None
 DEFAULT_FINAL_RESULT_PROCESSED = 'Final result processed.'
