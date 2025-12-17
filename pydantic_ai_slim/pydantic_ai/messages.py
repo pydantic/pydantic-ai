@@ -865,6 +865,16 @@ class BaseToolReturnPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+ReturnKind: TypeAlias = Literal[
+    'final-result-processed',
+    'output-tool-not-executed',
+    'function-tool-not-executed',
+    'tool-executed',
+    'tool-denied',
+    'output-validation-failed',
+]
+
+
 @dataclass(repr=False)
 class ToolReturnPart(BaseToolReturnPart):
     """A tool return message, this encodes the result of running a tool."""
@@ -874,17 +884,7 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    return_kind: (
-        Literal[
-            'final-result-processed',
-            'output-tool-not-executed',
-            'function-tool-not-executed',
-            'tool-executed',
-            'tool-denied',
-            'output-validation-failed',
-        ]
-        | None
-    ) = None
+    return_kind: ReturnKind | None = None
     """How the tool call was resolved, used for disambiguating return parts.
 
     * `tool-executed`: the tool ran successfully and produced a return value
@@ -892,6 +892,7 @@ class ToolReturnPart(BaseToolReturnPart):
     * `output-tool-not-executed`: an output tool was skipped because a final result already existed
     * `function-tool-not-executed`: a function tool was skipped due to early termination after a final result
     * `tool-denied`: the tool call was rejected by an approval handler
+    * `output-validation-failed`: the tool call was rejected by an output validator
 
     """
 
