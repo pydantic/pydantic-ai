@@ -724,7 +724,7 @@ The framework also includes multiple backends (in-memory, filesystem, Docker san
 
 You will need to install the `pydantic-deep` package.
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_deep import create_deep_agent, create_default_deps, DeepAgentDeps
 from pydantic_deep.backends import StateBackend
