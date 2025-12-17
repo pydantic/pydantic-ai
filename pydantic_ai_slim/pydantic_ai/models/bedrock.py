@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import functools
 import typing
-import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -544,7 +543,7 @@ class BedrockConverseModel(Model):
 
         tool_choice: ToolChoiceTypeDef
 
-        if tool_choice_value is None or tool_choice_value == 'auto':
+        if tool_choice_value in (None, 'auto', 'none'):
             # Default behavior: infer from allow_text_output
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'any': {}}
@@ -554,20 +553,12 @@ class BedrockConverseModel(Model):
         elif tool_choice_value == 'required':
             tool_choice = {'any': {}}
 
-        elif tool_choice_value == 'none':
-            # We've filtered to only output tools
-            if not model_request_parameters.allow_text_output:
-                tool_choice = {'any': {}}
-            else:
-                tool_choice = {'auto': {}}
-
         elif isinstance(tool_choice_value, list):
-            # Specific tool names
+            # Specific tool names - filtering already applied, use 'any' to force one of them
             assert tool_choice_value, 'Internal error: tool_choice_value is empty list for specific tool choice.'
             if len(tool_choice_value) == 1:
                 tool_choice = {'tool': {'name': tool_choice_value[0]}}
             else:
-                warnings.warn("Bedrock only supports forcing a single tool. Falling back to 'any'.")
                 tool_choice = {'any': {}}
 
         else:
