@@ -37,7 +37,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import MessagesBuilder, UIAdapter, UIEventStream
-from ._event_stream import PROVIDER_METADATA_KEY, VercelAIEventStream
+from ._event_stream import VercelAIEventStream
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
@@ -132,7 +132,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     if isinstance(part, TextUIPart):
                         builder.add(TextPart(content=part.text))
                     elif isinstance(part, ReasoningUIPart):
-                        pydantic_ai_meta = (part.provider_metadata or {}).get(PROVIDER_METADATA_KEY, {})
+                        pydantic_ai_meta = (part.provider_metadata or {}).get('pydantic_ai', {})
                         builder.add(
                             ThinkingPart(
                                 content=part.text,
@@ -186,9 +186,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = {'error_text': part.error_text, 'is_error': True}
 
                                 provider_name = (
-                                    (part.call_provider_metadata or {})
-                                    .get(PROVIDER_METADATA_KEY, {})
-                                    .get('provider_name')
+                                    (part.call_provider_metadata or {}).get('pydantic_ai', {}).get('provider_name')
                                 )
                                 call_part.provider_name = provider_name
 
@@ -291,7 +289,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if part.provider_details is not None:
                     thinking_metadata['provider_details'] = part.provider_details
 
-                provider_metadata = {PROVIDER_METADATA_KEY: thinking_metadata} if thinking_metadata else None
+                provider_metadata = {'pydantic_ai': thinking_metadata} if thinking_metadata else None
                 ui_parts.append(ReasoningUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
             elif isinstance(part, FilePart):
                 ui_parts.append(
@@ -302,7 +300,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 )
             elif isinstance(part, BuiltinToolCallPart):
                 call_provider_metadata = (
-                    {PROVIDER_METADATA_KEY: {'provider_name': part.provider_name}} if part.provider_name else None
+                    {'pydantic_ai': {'provider_name': part.provider_name}} if part.provider_name else None
                 )
 
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):

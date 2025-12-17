@@ -65,9 +65,6 @@ __all__ = ['VercelAIEventStream']
 # See https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol
 VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
 
-PROVIDER_METADATA_KEY = 'pydantic_ai'
-"""Key used for pydantic-ai specific metadata in provider_metadata dictionaries."""
-
 
 def _json_dumps(obj: Any) -> str:
     """Dump an object to JSON string."""
@@ -157,7 +154,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 metadata['provider_details'] = part.provider_details
             if part.id is not None:
                 metadata['id'] = part.id
-            provider_metadata = {PROVIDER_METADATA_KEY: metadata}
+            provider_metadata = {'pydantic_ai': metadata}
         yield ReasoningEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
@@ -200,7 +197,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_name=part.tool_name,
             input=part.args_as_dict(),
             provider_executed=True,
-            provider_metadata={PROVIDER_METADATA_KEY: {'provider_name': part.provider_name}},
+            provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
         )
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
