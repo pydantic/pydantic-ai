@@ -7,7 +7,6 @@ from typing import Any, Literal
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
@@ -100,16 +99,6 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.get_tools_activity, self.call_tool_activity]
-
-    async def __aenter__(self) -> Self:
-        if not workflow.in_workflow():
-            await self.wrapped.__aenter__()
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        if not workflow.in_workflow():
-            return await self.wrapped.__aexit__(*args)
-        return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not workflow.in_workflow():
