@@ -3,12 +3,11 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
 
-if TYPE_CHECKING:
-    from ._run_context import RunContext as _RunContext
+from ._run_context import RunContext
 
 
 # Default template strings - used when template field is None
@@ -74,44 +73,44 @@ class PromptTemplates:
         ```
     """
 
-    final_result_processed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    final_result_processed: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
     """Confirmation message sent when a final result is successfully processed.
 
     If `None`, uses the default: 'Final result processed.'
     """
 
-    output_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    output_tool_not_executed: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
     """Message sent when an output tool call is skipped because a result was already found.
 
     If `None`, uses the default: 'Output tool not used - a final result was already processed.'
     """
 
-    function_tool_not_executed: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    function_tool_not_executed: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
     """Message sent when a function tool call is skipped because a result was already found.
 
     If `None`, uses the default: 'Tool not executed - a final result was already processed.'
     """
 
-    tool_call_denied: str | Callable[[ToolReturnPart, _RunContext[Any]], str] | None = None
+    tool_call_denied: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
     """Message sent when a tool call is denied by an approval handler.
 
     If `None`, preserves the custom message from `ToolDenied` (or uses the default if none was set).
     Set explicitly to override all denied tool messages.
     """
 
-    validation_errors_retry: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    validation_errors_retry: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
     """Message appended to validation errors when asking the model to retry.
 
     If `None`, uses the default: 'Fix the errors and try again.'
     """
 
-    model_retry_string_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    model_retry_string_tool: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
     """Message sent when a `ModelRetry` exception is raised from a tool.
 
     If `None`, uses the default: 'Fix the errors and try again.'
     """
 
-    model_retry_string_no_tool: str | Callable[[RetryPromptPart, _RunContext[Any]], str] | None = None
+    model_retry_string_no_tool: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
     """Message sent when a `ModelRetry` exception is raised outside of a tool context.
 
     If `None`, uses the default: 'Fix the errors and try again.'
@@ -125,7 +124,7 @@ class PromptTemplates:
     Set explicitly to override the template for all prompted outputs.
     """
 
-    def apply_template(self, message_part: ModelRequestPart, ctx: _RunContext[Any]) -> ModelRequestPart:
+    def apply_template(self, message_part: ModelRequestPart, ctx: RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
             if message_part.return_kind == 'final-result-processed':
                 template = (
@@ -158,7 +157,7 @@ class PromptTemplates:
 
     def _get_template_for_retry(
         self, message_part: RetryPromptPart
-    ) -> str | Callable[[RetryPromptPart, _RunContext[Any]], str]:
+    ) -> str | Callable[[RetryPromptPart, RunContext[Any]], str]:
         # This is based on RetryPromptPart.model_response() implementation
         # We follow the same structure here to populate the correct template
         if isinstance(message_part.content, str):
@@ -177,8 +176,8 @@ class PromptTemplates:
     def _apply_retry_template(
         self,
         message_part: RetryPromptPart,
-        ctx: _RunContext[Any],
-        template: str | Callable[[RetryPromptPart, _RunContext[Any]], str],
+        ctx: RunContext[Any],
+        template: str | Callable[[RetryPromptPart, RunContext[Any]], str],
     ) -> RetryPromptPart:
         if isinstance(template, str):
             message_part = replace(message_part, retry_message=template)
@@ -190,8 +189,8 @@ class PromptTemplates:
     def _apply_tool_template(
         self,
         message_part: ToolReturnPart,
-        ctx: _RunContext[Any],
-        template: str | Callable[[ToolReturnPart, _RunContext[Any]], str],
+        ctx: RunContext[Any],
+        template: str | Callable[[ToolReturnPart, RunContext[Any]], str],
     ) -> ToolReturnPart:
         if isinstance(template, str):
             message_part = replace(message_part, content=template)
