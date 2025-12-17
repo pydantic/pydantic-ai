@@ -1318,6 +1318,11 @@ class MyModel(BaseModel):
     foo: str
 
 
+class MyModelWDictAttrs(BaseModel):
+    foo: str
+    bar: dict[str, str]
+
+
 class MyDc(BaseModel):
     foo: str
 
@@ -3379,3 +3384,63 @@ async def test_warn_on_dict_typed_params_simple_dict(allow_model_requests: None)
         match=r"has `dict`-typed parameters that OpenAI's API will silently ignore",
     ):
         await agent.run('test prompt')
+
+
+async def test_warn_on_dict_typed_params_list_of_dicts(allow_model_requests: None):
+    """Test detection of list[dict[str, str]] type tool arguments."""
+
+    c = completion_message(
+        ChatCompletionMessage(content='test response', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_w_list_of_dicts(data: list[dict[str, int]]):
+        pass
+
+    with pytest.warns(
+        UserWarning,
+        match=r"has `dict`-typed parameters that OpenAI's API will silently ignore",
+    ):
+        await agent.run('test prompt')
+
+
+async def test_warn_on_dict_typed_params_nested(allow_model_requests: None):
+    """Test detection of dict types nested inside a model."""
+
+    c = completion_message(
+        ChatCompletionMessage(content='test response', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_w_nested_dict(data: MyModelWDictAttrs):
+        pass
+
+    with pytest.warns(
+        UserWarning,
+        match=r"has `dict`-typed parameters that OpenAI's API will silently ignore",
+    ):
+        await agent.run('test prompt')
+
+
+async def test_no_warn_on_basemodel_without_dict(allow_model_requests: None):
+    """Test that BaseModel with explicit fields doesn't trigger warning."""
+
+    c = completion_message(
+        ChatCompletionMessage(content='test response', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_w_model(data: MyModel):
+        pass
+
+    # Should not emit a warning
+    await agent.run('test prompt')
