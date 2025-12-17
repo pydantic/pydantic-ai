@@ -286,9 +286,14 @@ Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,re
 Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
 
 # TextOutput with RunContext
-Agent('test', output_type=TextOutput(str_to_regex_with_ctx), deps_type=int)
-Agent('test', output_type=TextOutput(str_to_regex_with_ctx), deps_type=str)  # pyright: ignore[reportArgumentType,reportCallIssue]
-Agent('test', output_type=TextOutput(str_to_regex_with_ctx))  # pyright: ignore[reportArgumentType,reportCallIssue]
+text_output_with_ctx = TextOutput(str_to_regex_with_ctx)
+assert_type(text_output_with_ctx, TextOutput[re.Pattern[str], int])
+Agent('test', output_type=text_output_with_ctx, deps_type=int)
+Agent('test', output_type=text_output_with_ctx, deps_type=bool)  # bool is subclass of int, works with contravariant
+# NOTE: The following don't produce type errors because _OutputSpecItem uses TextOutput[T_co, Any]
+# which erases the deps type constraint.
+Agent('test', output_type=text_output_with_ctx, deps_type=str)
+Agent('test', output_type=text_output_with_ctx)
 
 # prepare example from docs:
 

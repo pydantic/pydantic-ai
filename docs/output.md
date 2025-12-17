@@ -237,9 +237,26 @@ RouterFailure(explanation='I am not equipped to provide travel information, such
 
 #### Text output
 
-If you provide an output function that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.output.TextOutput] marker class.
+If you provide an output function that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.output.TextOutput] marker class. If desired, this marker class can be used alongside one or more [`ToolOutput`](#tool-output) marker classes (or unmarked types or functions) in a list provided to `output_type`.
 
-If desired, this marker class can be used alongside one or more [`ToolOutput`](#tool-output) marker classes (or unmarked types or functions) in a list provided to `output_type`.
+```python {title="text_output_function.py"}
+from pydantic_ai import Agent, TextOutput
+
+
+def split_into_words(text: str) -> list[str]:
+    return text.split()
+
+
+agent = Agent(
+    'openai:gpt-5',
+    output_type=TextOutput(split_into_words),
+)
+result = agent.run_sync('Who was Albert Einstein?')
+print(result.output)
+#> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
+```
+
+_(This example is complete, it can be run "as is")_
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
