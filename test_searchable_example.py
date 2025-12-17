@@ -92,12 +92,12 @@ def list_database_tables() -> list[str]:
 
 
 # Wrap the toolset with SearchableToolset
-searchable_toolset = SearchableToolset(toolset=toolset)
+# searchable_toolset = SearchableToolset(toolset=toolset)
 
 # Create an agent with the searchable toolset
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[searchable_toolset],
+    toolsets=[toolset],
     system_prompt=(
         "You are a helpful assistant."
     ),
