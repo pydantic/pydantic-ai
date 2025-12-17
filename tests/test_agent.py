@@ -4443,6 +4443,7 @@ class TestMultipleToolCalls:
                             content='Output tool not used - output failed validation.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                            return_kind='output-validation-failed',
                         ),
                     ],
                     run_id=IsStr(),
