@@ -1175,9 +1175,8 @@ async def test_dynamic_toolset_outside_workflow():
 
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
-# See https://github.com/pydantic/pydantic-ai/issues/3390
-# See https://github.com/pydantic/pydantic-ai/issues/2818 for MCPServer subprocess issues with Temporal.
 # Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
+# See https://github.com/pydantic/pydantic-ai/issues/2818 for MCPServer subprocess issues with Temporal.
 
 
 mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')

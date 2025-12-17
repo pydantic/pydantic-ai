@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, with_config
+from temporalio import workflow
 from temporalio.workflow import ActivityConfig
-from typing_extensions import assert_never
+from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
@@ -73,6 +74,16 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     ) -> AbstractToolset[AgentDepsT]:
         # Temporalized toolsets cannot be swapped out after the fact.
         return self
+
+    async def __aenter__(self) -> Self:
+        if not workflow.in_workflow():
+            await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        if not workflow.in_workflow():
+            return await self.wrapped.__aexit__(*args)
+        return None
 
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
         try:
