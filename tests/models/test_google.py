@@ -3678,7 +3678,7 @@ async def test_google_image_generation_resolution(google_provider: GoogleProvide
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, _, image_config = model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'image_size': '2K'}
 
@@ -3688,7 +3688,7 @@ async def test_google_image_generation_resolution_with_aspect_ratio(google_provi
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, _, image_config = model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
 
@@ -3699,7 +3699,7 @@ async def test_google_image_generation_unsupported_size_raises_error(google_prov
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='1024x1024')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
@@ -3708,7 +3708,7 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='auto')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_tool_config(params, {})  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
