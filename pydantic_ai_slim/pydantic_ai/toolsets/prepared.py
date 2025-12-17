@@ -41,21 +41,12 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
 @dataclass
 class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that prepares the tools it contains using a ToolConfig.
-
-    See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
-    """
+    """A toolset that prepares the tools it contains using a ToolConfig."""
 
     tool_config: dict[str, ToolConfig]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
-        return await self._get_tools_from_tool_config(original_tools)
-
-    async def _get_tools_from_tool_config(
-        self,
-        original_tools: dict[str, ToolsetTool[AgentDepsT]],
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
         tool_config = self.tool_config
 
         for tool_name in original_tools:
