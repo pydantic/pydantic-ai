@@ -469,6 +469,33 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
+@dataclass(repr=False)
+class TextContent:
+    """A plain text response from a model with optional metadata."""
+
+    content: str
+    """The text content of the response."""
+
+    _: KW_ONLY
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically."""
+
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    kind: Literal['text'] = 'text'
+    """Type identifier, this is available as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the text content is non-empty."""
+        return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(init=False, repr=False)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
@@ -492,6 +519,9 @@ class BinaryContent:
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -506,6 +536,7 @@ class BinaryContent:
         media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: Any = None,
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
@@ -514,6 +545,7 @@ class BinaryContent:
         self.media_type = media_type
         self._identifier = identifier or _identifier
         self.vendor_metadata = vendor_metadata
+        self.metadata = metadata
         self.kind = kind
 
     @staticmethod
@@ -525,6 +557,7 @@ class BinaryContent:
                 media_type=bc.media_type,
                 identifier=bc.identifier,
                 vendor_metadata=bc.vendor_metadata,
+                metadata=bc.metadata,
             )
         else:
             return bc
@@ -633,11 +666,17 @@ class BinaryImage(BinaryContent):
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        metadata: Any = None,
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,
     ):
         super().__init__(
-            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
+            data=data,
+            media_type=media_type,
+            identifier=identifier or _identifier,
+            vendor_metadata=vendor_metadata,
+            metadata=metadata,
+            kind=kind,
         )
 
         if not self.is_image:
@@ -669,7 +708,7 @@ class CachePoint:
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
-UserContent: TypeAlias = str | MultiModalContent | CachePoint
+UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
 @dataclass(repr=False)

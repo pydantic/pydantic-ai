@@ -48,6 +48,7 @@ from ..messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1000,6 +1001,13 @@ class OpenAIChatModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
+                elif isinstance(item, TextContent):
+                    content.append(
+                        ChatCompletionContentPartTextParam(
+                            text=item.content,
+                            type='text',
+                        )
+                    )
                 elif isinstance(item, ImageUrl):
                     image_url: ImageURL = {'url': item.url}
                     if metadata := item.vendor_metadata:
@@ -1879,6 +1887,8 @@ class OpenAIResponsesModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
+                elif isinstance(item, TextContent):
+                    content.append(responses.ResponseInputTextParam(text=item.content, type='input_text'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         detail: Literal['auto', 'low', 'high'] = 'auto'

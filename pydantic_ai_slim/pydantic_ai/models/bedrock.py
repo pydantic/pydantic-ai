@@ -38,6 +38,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
     _utils,
+    messages,
     usage,
 )
 from pydantic_ai._run_context import RunContext
@@ -718,6 +719,8 @@ class BedrockConverseModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
+                elif isinstance(item, messages.TextContent):
+                    content.append({'text': item.content})
                 elif isinstance(item, BinaryContent):
                     format = item.format
                     if item.is_document:

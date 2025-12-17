@@ -4513,6 +4513,7 @@ def test_binary_content_serializable():
                                 'data': 'SGVsbG8=',
                                 'media_type': 'text/plain',
                                 'vendor_metadata': None,
+                                'metadata': None,
                                 'kind': 'binary',
                                 'identifier': 'f7ff9e',
                             },
@@ -4528,7 +4529,13 @@ def test_binary_content_serializable():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'part_kind': 'text',
+                        'metadata': None,
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 56,
@@ -4591,7 +4598,13 @@ def test_image_url_serializable_missing_media_type():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'part_kind': 'text',
+                        'metadata': None,
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 51,
@@ -4661,7 +4674,13 @@ def test_image_url_serializable():
             },
             {
                 'parts': [
-                    {'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text', 'provider_details': None}
+                    {
+                        'content': 'success (no tool calls)',
+                        'id': None,
+                        'part_kind': 'text',
+                        'metadata': None,
+                        'provider_details': None,
+                    }
                 ],
                 'usage': {
                     'input_tokens': 51,
@@ -4709,6 +4728,7 @@ def test_tool_return_part_binary_content_serialization():
             'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
             'media_type': 'image/png',
             'vendor_metadata': None,
+            'metadata': None,
             '_identifier': None,
             'kind': 'binary',
         }
