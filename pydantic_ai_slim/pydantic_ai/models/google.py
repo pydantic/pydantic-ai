@@ -137,6 +137,9 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.NO_IMAGE: 'error',
 }
 
+_GOOGLE_IMAGE_SIZE = Literal['1K', '2K', '4K']
+_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
+
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
@@ -367,8 +370,17 @@ class GoogleModel(Model):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
-                    if tool.aspect_ratio:
-                        image_config = ImageConfigDict(aspect_ratio=tool.aspect_ratio)
+
+                    image_config = ImageConfigDict()
+                    if tool.aspect_ratio is not None:
+                        image_config['aspect_ratio'] = tool.aspect_ratio
+                    if tool.size is not None:
+                        if tool.size not in _GOOGLE_IMAGE_SIZES:
+                            raise UserError(
+                                f'Google image generation only supports `size` values: {_GOOGLE_IMAGE_SIZES}. '
+                                f'Got: {tool.size!r}. Omit `size` to use the default (1K).'
+                            )
+                        image_config['image_size'] = tool.size
                 else:  # pragma: no cover
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'

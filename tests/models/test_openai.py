@@ -37,7 +37,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -79,6 +79,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -101,6 +102,43 @@ def test_init():
     assert m.base_url == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
+
+
+@pytest.mark.parametrize(
+    'aspect_ratio,size,expected',
+    [
+        # aspect_ratio is None, various sizes
+        (None, None, 'auto'),
+        (None, 'auto', 'auto'),
+        (None, '1024x1024', '1024x1024'),
+        (None, '1024x1536', '1024x1536'),
+        (None, '1536x1024', '1536x1024'),
+        # Valid aspect_ratios with no size
+        ('1:1', None, '1024x1024'),
+        ('2:3', None, '1024x1536'),
+        ('3:2', None, '1536x1024'),
+        # Valid aspect_ratios with compatible sizes
+        ('1:1', 'auto', '1024x1024'),
+        ('1:1', '1024x1024', '1024x1024'),
+        ('2:3', '1024x1536', '1024x1536'),
+        ('3:2', '1536x1024', '1536x1024'),
+    ],
+)
+def test_openai_image_generation_size_valid_combinations(
+    aspect_ratio: Literal['1:1', '2:3', '3:2'] | None,
+    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024'] | None,
+    expected: Literal['auto', '1024x1024', '1024x1536', '1536x1024'],
+) -> None:
+    """Test valid combinations of aspect_ratio and size for OpenAI image generation."""
+    tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=size)
+    assert _resolve_openai_image_generation_size(tool) == expected
+
+
+def test_openai_image_generation_tool_aspect_ratio_invalid() -> None:
+    """Test that invalid aspect_ratio raises UserError."""
+    tool = ImageGenerationTool(aspect_ratio='16:9')
+    with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
+        _resolve_openai_image_generation_size(tool)
 
 
 async def test_request_simple_success(allow_model_requests: None):
