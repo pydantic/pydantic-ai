@@ -343,35 +343,26 @@ class MistralModel(Model):
         if not tool_defs_to_send:
             return None, None
 
-        tools = [
-            MistralTool(
-                function=MistralFunction(
-                    name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
-                )
-            )
-            for r in tool_defs_to_send
+        _tool_functions = [
+            MistralFunction(
+                name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
+            ) for r in tool_defs_to_send
         ]
+        tools = [MistralTool(function=f) for f in _tool_functions]
 
-        # Determine tool_choice value
-        if tool_choice_value is None:
-            # Default behavior: infer from allow_text_output
-            if not model_request_parameters.allow_text_output:
-                tool_choice: MistralToolChoiceEnum = 'required'
-            else:
-                tool_choice = 'auto'
-        elif tool_choice_value == 'auto':
-            if not model_request_parameters.allow_text_output:
-                tool_choice = 'required'
-            else:
-                tool_choice = 'auto'
-        elif tool_choice_value == 'required':
-            tool_choice = 'required'
+        allow_text = model_request_parameters.allow_text_output
+
+        if tool_choice_value in (None, 'auto'):
+            tool_choice: MistralToolChoiceEnum = 'auto' if allow_text else 'required'
+
         elif tool_choice_value == 'none':
             # We've filtered to output tools only, use 'required' if there are output tools
             tool_choice = 'required' if output_tools else 'none'
-        elif isinstance(tool_choice_value, list):
-            # Mistral doesn't support specific tool forcing, use 'required'
+
+        elif tool_choice_value == 'required' or isinstance(tool_choice_value, list):
+            # Mistral doesn't support specific tool forcing, treat list as 'required'
             tool_choice = 'required'
+
         else:
             assert_never(tool_choice_value)
 

@@ -453,7 +453,7 @@ class GoogleModel(Model):
         if function_calling_mode is None:
             tool_config = None
         elif allowed_function_names is None:
-             tool_config = ToolConfigDict(
+            tool_config = ToolConfigDict(
                 function_calling_config=FunctionCallingConfigDict(
                     mode=function_calling_mode,
                 )
@@ -465,7 +465,7 @@ class GoogleModel(Model):
                     allowed_function_names=allowed_function_names,
                 )
             )
-        
+
         return tools, tool_config, image_config
 
     @overload
