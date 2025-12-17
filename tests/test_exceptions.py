@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.exceptions import (
@@ -65,8 +66,22 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
     assert d[exc] == 'value'
 
 
-def test_tool_retry_error_str():
-    """Test that ToolRetryError uses provided message."""
-    part = RetryPromptPart(content='some content', tool_name='my_tool')
-    error = ToolRetryError(part, message='custom message')
-    assert str(error) == 'custom message'
+def test_tool_retry_error_str_with_string_content():
+    """Test that ToolRetryError uses string content as message automatically."""
+    part = RetryPromptPart(content='error from tool', tool_name='my_tool')
+    error = ToolRetryError(part)
+    assert str(error) == 'error from tool'
+
+
+def test_tool_retry_error_str_with_error_details():
+    """Test that ToolRetryError formats ErrorDetails automatically."""
+    validation_error = ValidationError.from_exception_data(
+        'Test', [{'type': 'string_type', 'loc': ('name',), 'input': 123}]
+    )
+    part = RetryPromptPart(content=validation_error.errors(include_url=False), tool_name='my_tool')
+    error = ToolRetryError(part)
+
+    # Should contain the full Pydantic error with input value
+    assert 'my_tool' in str(error)
+    assert 'name' in str(error)
+    assert 'input_value=123' in str(error)

@@ -4,12 +4,15 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any
 
-from pydantic_core import core_schema
+import pydantic_core
+from pydantic import ValidationError
+from pydantic_core import InitErrorDetails, core_schema
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+
 
 if TYPE_CHECKING:
     from .messages import RetryPromptPart
@@ -186,12 +189,29 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 class ToolRetryError(Exception):
     """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
-    def __init__(self, tool_retry: RetryPromptPart, message: str | None = None):
+    def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
-        if message:
-            super().__init__(message)
-        else:
-            super().__init__()
+        message = (
+            tool_retry.content
+            if isinstance(tool_retry.content, str)
+            else self._format_error_details(tool_retry.content, tool_retry.tool_name)
+        )
+        super().__init__(message)
+
+    @staticmethod
+    def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
+        """Format ErrorDetails as a human-readable message using Pydantic's formatting."""
+        init_errors: list[InitErrorDetails] = [
+            InitErrorDetails(
+                type=e['type'],
+                loc=e['loc'],
+                input=e['input'],
+                **({'ctx': e['ctx']} if 'ctx' in e else {}),
+            )
+            for e in errors
+        ]
+        title = tool_name or 'ToolRetryError'
+        return str(ValidationError.from_exception_data(title, init_errors))
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):
