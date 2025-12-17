@@ -169,7 +169,7 @@ def test_docstring_google_prompt_config(docstring_format: Literal['google', 'aut
                 tool_args_descriptions={
                     'foo': 'The foo thing from tool config.',
                     'bar': 'The bar thing from tool config.',
-                }
+                },
             )
         }
     )

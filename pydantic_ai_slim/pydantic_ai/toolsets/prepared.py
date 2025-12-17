@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import copy
+from dataclasses import dataclass, replace
+
 from pydantic_ai.prompt_config import ToolConfig
 
 from .._run_context import AgentDepsT, RunContext
