@@ -130,32 +130,16 @@ class PromptTemplates:
     def apply_template(self, message_part: ModelRequestPart, ctx: RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
             if message_part.return_kind == 'final-result-processed':
-                template = (
-                    self.final_result_processed
-                    if self.final_result_processed is not None
-                    else DEFAULT_FINAL_RESULT_PROCESSED
-                )
+                template = self.final_result_processed or DEFAULT_FINAL_RESULT_PROCESSED
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'output-tool-not-executed':
-                template = (
-                    self.output_tool_not_executed
-                    if self.output_tool_not_executed is not None
-                    else DEFAULT_OUTPUT_TOOL_NOT_EXECUTED
-                )
+                template = self.output_tool_not_executed or DEFAULT_OUTPUT_TOOL_NOT_EXECUTED
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'output-validation-failed':
-                template = (
-                    self.output_validation_failed
-                    if self.output_validation_failed is not None
-                    else DEFAULT_OUTPUT_VALIDATION_FAILED
-                )
+                template = self.output_validation_failed or DEFAULT_OUTPUT_VALIDATION_FAILED
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'function-tool-not-executed':
-                template = (
-                    self.function_tool_not_executed
-                    if self.function_tool_not_executed is not None
-                    else DEFAULT_FUNCTION_TOOL_NOT_EXECUTED
-                )
+                template = self.function_tool_not_executed or DEFAULT_FUNCTION_TOOL_NOT_EXECUTED
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'tool-denied':
                 if self.tool_call_denied is not None:
