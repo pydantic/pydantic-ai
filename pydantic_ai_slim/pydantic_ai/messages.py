@@ -960,26 +960,29 @@ class RetryPromptPart:
     retry_message: str | None = None
     """The retry message rendered using the user's prompt template. It is populated after checking the conditions for the retry so that the correct template is used."""
 
+    description_template: Annotated[
+        Callable[[str | list[pydantic_core.ErrorDetails]], str] | None, pydantic.Field(exclude=True)
+    ] = field(default=None, repr=False, compare=False)
+    """The description rendered using the user's prompt template. It is populated after checking the conditions for the retry so that the correct template is used."""
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
+        from .prompt_config import DEFAULT_MODEL_RETRY, DEFAULT_VALIDATION_ERROR, DEFAULT_VALIDATION_FEEDBACK
+
+        description = ''
         if isinstance(self.content, str):
             if self.tool_name is None:
-                description = f'Validation feedback:\n{self.content}'
+                description = (self.description_template and self.description_template(self.content)) or (
+                    DEFAULT_VALIDATION_FEEDBACK(self.content)
+                )
             else:
                 description = self.content
         else:
-            json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
-            plural = isinstance(self.content, list) and len(self.content) != 1
-            description = (
-                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+            description = (self.description_template and self.description_template(self.content)) or (
+                DEFAULT_VALIDATION_ERROR(self.content)
             )
 
-        if self.retry_message is None:
-            from .prompt_config import DEFAULT_MODEL_RETRY
-
-            return f'{description}\n\n{DEFAULT_MODEL_RETRY}'
-
-        return f'{description}\n\n{self.retry_message}'
+        return f'{description}\n\n{self.retry_message or DEFAULT_MODEL_RETRY}'
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:

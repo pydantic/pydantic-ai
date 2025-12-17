@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from textwrap import dedent
 from typing import Any
 
+import pydantic_core
 from typing_extensions import assert_never
 
 from ._run_context import RunContext
@@ -39,6 +40,24 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
     """
 )
 """Default template for prompted output schema instructions."""
+
+
+def DEFAULT_VALIDATION_FEEDBACK(content: str | list[pydantic_core.ErrorDetails]) -> str:
+    """Generate a default validation feedback message."""
+    assert isinstance(content, str)
+    return f'Validation feedback:\n{content}'
+
+
+def DEFAULT_VALIDATION_ERROR(content: str | list[pydantic_core.ErrorDetails]) -> str:
+    """Generate a default validation error message from a list of Pydantic `ErrorDetails`."""
+    from .messages import error_details_ta
+
+    assert isinstance(content, list)
+
+    json_errors = error_details_ta.dump_json(content, exclude={'__all__': {'ctx'}}, indent=2)
+    plural = len(content) != 1
+    return f'{len(content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+
 
 return_kind_to_default_prompt_template: dict[str, str] = {
     'final-result-processed': DEFAULT_FINAL_RESULT_PROCESSED,
@@ -135,6 +154,9 @@ class PromptTemplates:
     Set explicitly to override the template for all prompted outputs.
     """
 
+    description_template: Callable[[str | list[pydantic_core.ErrorDetails]], str] | None = None
+    """Generate a description message prefix while asking the model to retry."""
+
     def apply_template(self, message_part: ModelRequestPart, ctx: RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
             template: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
@@ -165,36 +187,40 @@ class PromptTemplates:
             if template is not None:
                 message_part = self._apply_tool_template(message_part, ctx, template)
         elif isinstance(message_part, RetryPromptPart):
-            message_part = self._apply_retry_template(message_part, ctx, self._get_template_for_retry(message_part))
+            message_part = self._apply_retry_template(message_part, ctx, *self._get_template_for_retry(message_part))
         return message_part
 
     def _get_template_for_retry(
         self, message_part: RetryPromptPart
-    ) -> str | Callable[[RetryPromptPart, RunContext[Any]], str]:
+    ) -> tuple[
+        None | Callable[[str | list[pydantic_core.ErrorDetails]], str],
+        str | Callable[[RetryPromptPart, RunContext[Any]], str],
+    ]:
         # This is based on RetryPromptPart.model_response() implementation
         # We follow the same structure here to populate the correct template
+        description_template: None | Callable[[str | list[pydantic_core.ErrorDetails]], str] = None
         if isinstance(message_part.content, str):
             if message_part.tool_name is None:
                 template = self.model_retry_string_no_tool
+                description_template = self.description_template or DEFAULT_VALIDATION_FEEDBACK
             else:
                 template = self.model_retry_string_tool
         else:
             template = self.validation_errors_retry
+            description_template = self.description_template or DEFAULT_VALIDATION_ERROR
 
-        if template is None:
-            template = DEFAULT_MODEL_RETRY
-
-        return template
+        return (description_template, template or DEFAULT_MODEL_RETRY)
 
     def _apply_retry_template(
         self,
         message_part: RetryPromptPart,
         ctx: RunContext[Any],
+        description_template: None | Callable[[str | list[pydantic_core.ErrorDetails]], str],
         template: str | Callable[[RetryPromptPart, RunContext[Any]], str],
     ) -> RetryPromptPart:
         if not isinstance(template, str):
             template = template(message_part, ctx)
-        return replace(message_part, retry_message=template)
+        return replace(message_part, retry_message=template, description_template=description_template)
 
     def _apply_tool_template(
         self,
@@ -204,7 +230,6 @@ class PromptTemplates:
     ) -> ToolReturnPart:
         if isinstance(template, str):
             message_part = replace(message_part, content=template)
-
         else:
             message_part = replace(message_part, content=template(message_part, ctx))
         return message_part
