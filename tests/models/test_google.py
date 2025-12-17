@@ -3694,6 +3694,110 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_google_image_generation_tool_output_format(google_provider: GoogleProvider) -> None:
+    """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'output_mime_type': 'image/png'}
+
+
+async def test_google_image_generation_tool_unsupported_format_raises_error(google_provider: GoogleProvider) -> None:
+    """Test that unsupported output_format values raise an error."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    # 'gif' is not supported by Google
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
+
+    with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
+        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_image_generation_tool_output_compression(google_provider: GoogleProvider) -> None:
+    """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'output_compression_quality': 85}
+
+
+async def test_google_image_generation_tool_compression_validation(google_provider: GoogleProvider) -> None:
+    """Test compression validation: range and JPEG-only."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+
+    # Invalid range: > 100
+    with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
+        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
+
+    # Invalid range: < 0
+    with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
+        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
+
+    # Non-JPEG format (PNG)
+    with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
+        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
+        )
+
+    # Non-JPEG format (WebP)
+    with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
+        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
+        )
+
+
+async def test_google_image_generation_rejected_by_gemini_api(
+    allow_model_requests: None, google_provider: GoogleProvider
+) -> None:
+    """Test that output_format and compression are rejected by Gemini API (google-gla)."""
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+
+    # Test output_format rejection
+    agent = Agent(model, builtin_tools=[ImageGenerationTool(output_format='png')], output_type=BinaryImage)
+    with pytest.raises(ValueError, match='output_mime_type parameter is not supported in Gemini API'):
+        await agent.run('Generate an image.')
+
+    # Test output_compression rejection (compression only, no format)
+    agent = Agent(model, builtin_tools=[ImageGenerationTool(output_compression=90)], output_type=BinaryImage)
+    with pytest.raises(ValueError, match='output_compression_quality parameter is not supported in Gemini API'):
+        await agent.run('Generate an image.')
+
+
+async def test_google_vertexai_image_generation_with_output_format(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    """Test that output_format works with Vertex AI."""
+    model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
+    agent = Agent(
+        model,
+        builtin_tools=[ImageGenerationTool(output_format='jpeg', output_compression=85)],
+        output_type=BinaryImage,
+    )
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output.media_type == 'image/jpeg'
+
+
+async def test_google_image_generation_tool_all_fields(google_provider: GoogleProvider) -> None:
+    """Test that all ImageGenerationTool fields are mapped correctly."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(
+        builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
+    )
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {
+        'aspect_ratio': '16:9',
+        'image_size': '2K',
+        'output_mime_type': 'image/jpeg',
+        'output_compression_quality': 90,
+    }
+
+
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 

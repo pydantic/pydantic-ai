@@ -301,6 +301,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses. Only supported for 'png' and 'webp' output formats.
+    * Google (Vertex AI only). Only supported for 'jpeg' output format.
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None = None
@@ -309,6 +310,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses. Default: 'png'.
+    * Google (Vertex AI only).
     """
 
     partial_images: int = 0
