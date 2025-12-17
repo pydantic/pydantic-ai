@@ -9,7 +9,7 @@ import pydantic_core
 from typing_extensions import assert_never
 
 from ._run_context import RunContext
-from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
+from .messages import ModelMessage, ModelRequest, ModelRequestPart, RetryPromptPart, ToolReturnPart
 
 # Default template strings - used when template field is None
 DEFAULT_FINAL_RESULT_PROCESSED = 'Final result processed.'
@@ -189,6 +189,17 @@ class PromptTemplates:
         elif isinstance(message_part, RetryPromptPart):
             message_part = self._apply_retry_template(message_part, ctx, *self._get_template_for_retry(message_part))
         return message_part
+
+    def apply_template_message_history(self, _messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+        return [
+            replace(
+                message,
+                parts=[self.apply_template(part, ctx) for part in message.parts],
+            )
+            if isinstance(message, ModelRequest)
+            else message
+            for message in _messages
+        ]
 
     def _get_template_for_retry(
         self, message_part: RetryPromptPart

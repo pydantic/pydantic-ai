@@ -525,12 +525,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         prompt_config = ctx.deps.prompt_config
 
-        # Only apply templates if explicitly configured - when prompt_config or templates is None,
-        # message parts already have default values set at creation time
-        if prompt_config and prompt_config.templates is not None:
-            message_history = _apply_prompt_templates_to_message_history(
-                message_history, prompt_config.templates, run_context
-            )
+        if prompt_config and (templates := prompt_config.templates):
+            message_history = templates.apply_template_message_history(message_history, run_context)
 
         ctx.state.message_history[:] = message_history
 
@@ -815,9 +811,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             if (prompt_config := ctx.deps.prompt_config) and (prompt_templates := prompt_config.templates):
                 run_ctx = build_run_context(ctx)
-                message = _apply_prompt_templates_to_message_history(
-                    [message], prompt_templates=prompt_templates, ctx=run_ctx
-                )[0]
+                message = prompt_templates.apply_template_message_history([message], run_ctx)[0]
 
             messages.append(message)
 
@@ -1436,14 +1430,3 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
     return clean_messages
-
-
-def _apply_prompt_templates_to_message_history(
-    messages: list[_messages.ModelMessage], prompt_templates: _prompt_config.PromptTemplates, ctx: RunContext[Any]
-) -> list[_messages.ModelMessage]:
-    return [
-        replace(msg, parts=[prompt_templates.apply_template(part, ctx) for part in msg.parts])
-        if isinstance(msg, _messages.ModelRequest)
-        else msg
-        for msg in messages
-    ]
