@@ -7,8 +7,8 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import Self
 
 from pydantic_ai import (
