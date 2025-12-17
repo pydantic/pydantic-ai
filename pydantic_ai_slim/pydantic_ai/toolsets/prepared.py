@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass, replace
 
 from pydantic_ai.prompt_config import ToolConfig
@@ -46,7 +45,8 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
     See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
     """
 
-    tool_config: ToolConfig
+    # tool_config: ToolConfig
+    tool_config: dict[str, ToolConfig]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
@@ -56,27 +56,28 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
         self,
         original_tools: dict[str, ToolsetTool[AgentDepsT]],
     ) -> dict[str, ToolsetTool[AgentDepsT]]:
-        tool_descriptions = self.tool_config.tool_descriptions
+        tool_config = self.tool_config
 
-        for tool_name, description in tool_descriptions.items():
-            if tool_name in original_tools:
-                original_tool = original_tools[tool_name]
-                updated_tool_def = replace(original_tool.tool_def, description=description)
-                original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
-
-        for tool_name in list(original_tools.keys()):
-            tool_args = self.tool_config.tool_args_descriptions.get(tool_name, {})
-            if not tool_args:
+        for tool_name in original_tools:
+            if tool_name not in tool_config:
                 continue
+            tool_info = tool_config[tool_name]
+            original_tool_def = original_tools[tool_name].tool_def
 
-            original_tool = original_tools[tool_name]
-            parameter_defs = deepcopy(original_tool.tool_def.parameters_json_schema)
+            updated_tool_def = replace(
+                original_tool_def,
+                **{
+                    k: v
+                    for k, v in {
+                        'name': tool_info.name,
+                        'description': tool_info.tool_description,
+                        'strict': tool_info.strict,
+                    }.items()
+                    if v is not None
+                },
+            )
 
-            for param_name, param_schema in parameter_defs.get('properties', {}).items():
-                if param_name in tool_args:
-                    param_schema['description'] = tool_args[param_name]
-
-            updated_tool_def = replace(original_tool.tool_def, parameters_json_schema=parameter_defs)
-            original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
+            if updated_tool_def:
+                original_tools[tool_name] = replace(original_tools[tool_name], tool_def=updated_tool_def)
 
         return original_tools

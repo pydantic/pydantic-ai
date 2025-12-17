@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from textwrap import dedent
 from typing import Any
 
@@ -251,40 +251,12 @@ class ToolConfig:
     """Configuration for customizing tool descriptions and argument descriptions at runtime.
 
     This allows you to override tool metadata without modifying the original tool definitions.
-
-    Example:
-        ```python {test="skip"}
-        from pydantic_ai import Agent, PromptConfig, ToolConfig
-
-        agent = Agent('openai:gpt-4o')
-
-        @agent.tool_plain(description='Search for items.')
-        def search(query: str, limit: int) -> list[str]:
-            return []
-
-        # Override the description and arg descriptions at runtime
-        result = agent.run_sync(
-            'Find products',
-            prompt_config=PromptConfig(
-                tool_config=ToolConfig(
-                    tool_descriptions={'search': 'Search product catalog by name or SKU.'},
-                    tool_args_descriptions={
-                        'search': {
-                            'query': 'Product name or SKU code.',
-                            'limit': 'Maximum results to return (1-100).',
-                        }
-                    },
-                )
-            ),
-        )
-        ```
     """
 
-    tool_descriptions: dict[str, str] = field(default_factory=lambda: {})
-    """Custom descriptions for tools, keyed by tool name."""
-
-    tool_args_descriptions: dict[str, dict[str, str]] = field(default_factory=lambda: {})
-    """Custom descriptions for tool arguments: `{'tool_name': {'arg_name': 'description'}}`."""
+    name: str | None
+    tool_description: str | None
+    strict: bool | None
+    tool_args_descriptions: dict[str, str] | None
 
 
 @dataclass
@@ -333,8 +305,8 @@ class PromptConfig:
     See [`PromptTemplates`][pydantic_ai.PromptTemplates] for available template options.
     """
 
-    tool_config: ToolConfig | None = None
-    """Configuration for customizing tool descriptions and metadata.
+    tool_config: dict[str, ToolConfig] | None = None
+    """Configuration for customizing tool descriptions and metadata, keyed by tool name.
     See [`ToolConfig`][pydantic_ai.ToolConfig] for available configuration options.
     """
 

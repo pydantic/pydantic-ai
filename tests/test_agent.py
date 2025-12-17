@@ -664,7 +664,7 @@ Custom retry message override""")
 
 
 def test_prompt_config_tool_config_descriptions():
-    """Test that ToolConfig.tool_descriptions updates tool descriptions at the agent level."""
+    """Test that ToolConfig.tool_description updates tool descriptions at the agent level."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Verify the tool description was updated
@@ -676,7 +676,14 @@ def test_prompt_config_tool_config_descriptions():
     agent = Agent(
         FunctionModel(return_model),
         prompt_config=PromptConfig(
-            tool_config=ToolConfig(tool_descriptions={'my_tool': 'Custom tool description from ToolConfig'})
+            tool_config={
+                'my_tool': ToolConfig(
+                    name=None,
+                    tool_description='Custom tool description from ToolConfig',
+                    strict=None,
+                    tool_args_descriptions=None,
+                )
+            }
         ),
     )
 
@@ -690,7 +697,7 @@ def test_prompt_config_tool_config_descriptions():
 
 
 def test_prompt_config_tool_config_descriptions_at_runtime():
-    """Test that ToolConfig.tool_descriptions passed to run_sync() overrides agent-level prompt_config."""
+    """Test that ToolConfig.tool_description passed to run_sync() overrides agent-level prompt_config."""
     observed_descriptions: list[str | None] = []
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -703,12 +710,14 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
     agent = Agent(
         FunctionModel(return_model),
         prompt_config=PromptConfig(
-            tool_config=ToolConfig(
-                tool_descriptions={
-                    'basic_tool': 'Agent-level tool description',
-                    'not_present_basic_tool': 'Should not be used',
-                }
-            )
+            tool_config={
+                'basic_tool': ToolConfig(
+                    name=None, tool_description='Agent-level tool description', strict=None, tool_args_descriptions=None
+                ),
+                'not_present_basic_tool': ToolConfig(
+                    name=None, tool_description='Should not be used', strict=None, tool_args_descriptions=None
+                ),
+            }
         ),
     )
 
@@ -726,7 +735,14 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
     result = agent.run_sync(
         'Hello',
         prompt_config=PromptConfig(
-            tool_config=ToolConfig(tool_descriptions={'basic_tool': 'Runtime custom tool description'})
+            tool_config={
+                'basic_tool': ToolConfig(
+                    name=None,
+                    tool_description='Runtime custom tool description',
+                    strict=None,
+                    tool_args_descriptions=None,
+                )
+            }
         ),
     )
     assert result.output == 'Done'
@@ -734,7 +750,7 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
 
 
 def test_prompt_config_tool_config_output_tool_descriptions():
-    """Test that ToolConfig.tool_descriptions updates output tool descriptions (covers ToolConfigPreparedToolset for output_toolset)."""
+    """Test that ToolConfig.tool_description updates output tool descriptions (covers ToolConfigPreparedToolset for output_toolset)."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Verify the output tool description was updated
@@ -746,6 +762,7 @@ def test_prompt_config_tool_config_output_tool_descriptions():
 
     class OutputModel(BaseModel):
         """Output model for testing."""
+
         a: int
         b: str
 
@@ -753,12 +770,20 @@ def test_prompt_config_tool_config_output_tool_descriptions():
         FunctionModel(return_model),
         output_type=OutputModel,
         prompt_config=PromptConfig(
-            tool_config=ToolConfig(tool_descriptions={'final_result': 'Custom output tool description from ToolConfig'})
+            tool_config={
+                'final_result': ToolConfig(
+                    name=None,
+                    tool_description='Custom output tool description from ToolConfig',
+                    strict=None,
+                    tool_args_descriptions=None,
+                )
+            }
         ),
     )
 
     result = agent.run_sync('Hello')
     assert isinstance(result.output, OutputModel)
+
 
 def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
