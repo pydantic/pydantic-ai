@@ -56,7 +56,9 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
     """A toolset that implements tool search and deferred tool loading."""
 
     toolset: AbstractToolset[AgentDepsT]
-    _active_tool_names: set[str] = field(default_factory=set)
+
+    _active_tool_names: dict[str, set[str]] = field(default_factory=dict)
+    """Tracks activate tool name sets indexed by RunContext.run_id"""
 
     @property
     def id(self) -> str | None:
@@ -88,7 +90,8 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
             assert tool_name != _SEARCH_TOOL_NAME
 
             # Expose the tool unless it defers loading and is not yet active.
-            if not tool.tool_def.defer_loading or tool_name in self._active_tool_names:
+            active_tool_names = self._active_tool_names.get(ctx.run_id, set())
+            if not tool.tool_def.defer_loading or tool_name in active_tool_names:
                 all_tools[tool_name] = tool
 
         logging.debug(f"SearchableToolset.get_tools ==> {[t for t in all_tools]}")
@@ -118,7 +121,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
             if rx.search(tool.tool_def.name) or rx.search(tool.tool_def.description):
                 matching_tool_names.append(tool.tool_def.name)
 
-        self._active_tool_names.update(matching_tool_names)
+        self._active_tool_names.setdefault(ctx.run_id, set()).update(matching_tool_names)
         return matching_tool_names
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
