@@ -119,6 +119,7 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite',
     'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
+    'gemini-3-flash-preview',
     'gemini-3-pro-preview',
     'gemini-3-pro-image-preview',
 ]
