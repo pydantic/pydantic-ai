@@ -127,7 +127,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return cast('dict[str, Any]', state)
 
     @classmethod
-    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]: # noqa: C901
+    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
@@ -154,22 +154,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                             }
                                             media_type_prefix = part.mime_type.split('/', 1)[0]
                                             constructor = media_type_constructors.get(media_type_prefix, DocumentUrl)
-                                            binary_part = constructor(
-                                                url=part.url,
-                                                media_type=part.mime_type,
-                                                identifier=part.id,
-                                            )
+                                            binary_part = constructor(url=part.url, media_type=part.mime_type)
                                     elif part.data:
                                         binary_part = BinaryContent(
-                                            data=b64decode(part.data), kind='binary', media_type=part.mime_type
+                                            data=b64decode(part.data), media_type=part.mime_type
                                         )
                                     else:
                                         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
                                     user_prompt_content.append(binary_part)
-                                case _:
+                                case _:  # pragma: no cover # pyright: ignore[reportUnnecessaryComparison]
                                     raise ValueError(f'Unsupported user message part type: {type(part)}')
 
-                        if user_prompt_content:
+                        if user_prompt_content:  # pragma: no branch
                             content_to_add = (
                                 user_prompt_content[0]
                                 if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
@@ -232,7 +228,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
 
-                case ActivityMessage():
+                case ActivityMessage():  # pragma: no cover
                     raise ValueError(f'Unsupported message type: {type(msg)}')
 
         return builder.messages

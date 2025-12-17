@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from base64 import b64decode
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -20,7 +19,6 @@ from pydantic import BaseModel
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
-    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
@@ -1566,7 +1564,7 @@ async def test_callback_async() -> None:
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
-async def test_messages() -> None:
+async def test_messages(image_content: BinaryContent, document_content: BinaryContent) -> None:
     messages = [
         SystemMessage(
             id='msg_1',
@@ -1586,12 +1584,7 @@ async def test_messages() -> None:
         ),
         UserMessage(
             id='msg_1',
-            content=[
-                BinaryInputContent(
-                    url='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-                    mime_type='image/png',
-                )
-            ],
+            content=[BinaryInputContent(url=image_content.data_uri, mime_type=image_content.media_type)],
         ),
         UserMessage(
             id='msg2',
@@ -1609,7 +1602,9 @@ async def test_messages() -> None:
             id='msg5',
             content=[BinaryInputContent(url='http://example.com/doc.pdf', mime_type='application/pdf', id='doc1')],
         ),
-        UserMessage(id='msg6', content=[BinaryInputContent(data='SGVsbG8gd29ybGQ=', mime_type='text/plain')]),
+        UserMessage(
+            id='msg6', content=[BinaryInputContent(data=document_content.base64, mime_type=document_content.media_type)]
+        ),
         AssistantMessage(
             id='msg_5',
             tool_calls=[
@@ -1696,44 +1691,45 @@ async def test_messages() -> None:
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
+                        content=[image_content],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
                         content=[
-                            BinaryImage(
-                                data=b64decode(
-                                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
-                                ),
-                                media_type='image/png',
+                            ImageUrl(
+                                url='http://example.com/image.png', _media_type='image/png', media_type='image/png'
                             )
                         ],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            ImageUrl(url='http://example.com/image.png', media_type='image/png', identifier='img1')
+                            VideoUrl(
+                                url='http://example.com/video.mp4', _media_type='video/mp4', media_type='video/mp4'
+                            )
                         ],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            VideoUrl(url='http://example.com/video.mp4', media_type='video/mp4', identifier='vid1')
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            AudioUrl(url='http://example.com/audio.mp3', media_type='audio/mpeg', identifier='aud1')
+                            AudioUrl(
+                                url='http://example.com/audio.mp3', _media_type='audio/mpeg', media_type='audio/mpeg'
+                            )
                         ],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
                             DocumentUrl(
-                                url='http://example.com/doc.pdf', media_type='application/pdf', identifier='doc1'
+                                url='http://example.com/doc.pdf',
+                                _media_type='application/pdf',
+                                media_type='application/pdf',
                             )
                         ],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'Hello world', kind='binary', media_type='text/plain')],
+                        content=[document_content],
                         timestamp=IsDatetime(),
                     ),
                 ]
