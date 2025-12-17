@@ -161,14 +161,17 @@ def test_docstring_google_prompt_config(docstring_format: Literal['google', 'aut
     agent = Agent(FunctionModel(get_json_schema))
     agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
     p_config = prompt_config.PromptConfig(
-        tool_config=prompt_config.ToolConfig(
-            tool_args_descriptions={
-                'google_style_docstring': {
+        tool_config={
+            'google_style_docstring': prompt_config.ToolConfig(
+                name=None,
+                tool_description=None,
+                strict=None,
+                tool_args_descriptions={
                     'foo': 'The foo thing from tool config.',
                     'bar': 'The bar thing from tool config.',
                 }
-            }
-        )
+            )
+        }
     )
 
     result = agent.run_sync('Hello', prompt_config=p_config)
