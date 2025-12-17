@@ -3,7 +3,9 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from textwrap import dedent
-from typing import Any, assert_never
+from typing import Any
+
+from typing_extensions import assert_never
 
 from ._run_context import RunContext
 from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
