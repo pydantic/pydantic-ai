@@ -87,7 +87,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -1176,39 +1176,38 @@ async def test_dynamic_toolset_outside_workflow():
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
 # See https://github.com/pydantic/pydantic-ai/issues/3390
-# Uses FastMCPToolset (HTTP-based) rather than MCPServerStdio (subprocess-based) because
-# MCPServerStdio has issues when created dynamically inside Temporal activities.
+# See https://github.com/pydantic/pydantic-ai/issues/2818 for MCPServer subprocess issues with Temporal.
+# Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
 
 
-fastmcp_dynamic_toolset_agent = Agent(model, name='fastmcp_dynamic_toolset_agent')
+mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
 
 
-@fastmcp_dynamic_toolset_agent.toolset(id='fastmcp_toolset', per_run_step=False)
-def my_fastmcp_dynamic_toolset(ctx: RunContext[None]) -> FastMCPToolset:
+@mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
+def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
     """Dynamic toolset that returns an MCP toolset.
 
     This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
-    Uses per_run_step=False so the toolset persists across run steps within an activity.
     """
-    return FastMCPToolset('https://mcp.deepwiki.com/mcp', id='dynamic_deepwiki')
+    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp', id='dynamic_deepwiki')
 
 
-fastmcp_dynamic_toolset_temporal_agent = TemporalAgent(
-    fastmcp_dynamic_toolset_agent,
+mcp_dynamic_toolset_temporal_agent = TemporalAgent(
+    mcp_dynamic_toolset_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 
 
 @workflow.defn
-class FastMCPDynamicToolsetAgentWorkflow:
+class MCPDynamicToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await fastmcp_dynamic_toolset_temporal_agent.run(prompt)
+        result = await mcp_dynamic_toolset_temporal_agent.run(prompt)
         return result.output
 
 
-async def test_fastmcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
-    """Test that @agent.toolset with FastMCPToolset works in a Temporal workflow.
+async def test_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """Test that @agent.toolset with MCPServerStreamableHTTP works in a Temporal workflow.
 
     This demonstrates MCP lifecycle management (entering/exiting the MCP toolset context manager)
     within a DynamicToolset wrapped by TemporalDynamicToolset.
@@ -1216,13 +1215,13 @@ async def test_fastmcp_dynamic_toolset_in_workflow(allow_model_requests: None, c
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[FastMCPDynamicToolsetAgentWorkflow],
-        plugins=[AgentPlugin(fastmcp_dynamic_toolset_temporal_agent)],
+        workflows=[MCPDynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcp_dynamic_toolset_temporal_agent)],
     ):
         output = await client.execute_workflow(
-            FastMCPDynamicToolsetAgentWorkflow.run,
+            MCPDynamicToolsetAgentWorkflow.run,
             args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
-            id='test_fastmcp_dynamic_toolset_workflow',
+            id='test_mcp_dynamic_toolset_workflow',
             task_queue=TASK_QUEUE,
         )
         # The deepwiki MCP server should return info about the pydantic-ai repo
