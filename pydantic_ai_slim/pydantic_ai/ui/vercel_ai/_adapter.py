@@ -207,6 +207,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=part.output,
+                                        return_kind='tool-executed'
                                     )
                                 )
                             elif part.state == 'output-error':

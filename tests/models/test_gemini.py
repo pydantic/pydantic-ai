@@ -63,7 +63,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1240,10 +1240,7 @@ async def test_image_as_binary_content_tool_response(
                     UserPromptPart(
                         content=[
                             'This is file 1c8566:',
-                            BinaryContent(
-                                data=IsBytes(),
-                                media_type='image/png',
-                            ),
+                            image_content,
                         ],
                         timestamp=IsDatetime(),
                     ),
