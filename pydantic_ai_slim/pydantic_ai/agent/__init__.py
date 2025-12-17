@@ -64,7 +64,7 @@ from ..toolsets._dynamic import (
 )
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
-from ..toolsets.prepared import PreparedToolset
+from ..toolsets.prepared import PreparedToolset, ToolConfigPreparedToolset
 from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
@@ -1465,13 +1465,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             else None
         )
 
-        if self._prepare_tools or tool_config:
-            toolset = PreparedToolset(toolset, self._prepare_tools, tool_config=tool_config)
+        if self._prepare_tools:
+            toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        if tool_config:
+            toolset = ToolConfigPreparedToolset(toolset, tool_config)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
-            if self._prepare_output_tools or tool_config:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools, tool_config=tool_config)
+            if self._prepare_output_tools:
+                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            if tool_config:
+                output_toolset = ToolConfigPreparedToolset(output_toolset, tool_config)
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset

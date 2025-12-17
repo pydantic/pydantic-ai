@@ -19,57 +19,10 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
     """
 
-    prepare_func: ToolsPrepareFunc[AgentDepsT] | None
-    tool_config: ToolConfig | None = None
+    prepare_func: ToolsPrepareFunc[AgentDepsT]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
-
-        tools_after_tool_config = await self._get_tools_from_tool_config(original_tools)
-        # If tool config is not present we will get original tools back which we can then pass onto prepare function
-        tools_after_prepare_func = await self.get_tools_from_prepare_func(tools_after_tool_config, ctx)
-        # If prepare function is not present we will get tools_after_tool_config(which could be original tools if tool config was also not present) back which we can then return
-
-        return tools_after_prepare_func
-
-    async def _get_tools_from_tool_config(
-        self,
-        original_tools: dict[str, ToolsetTool[AgentDepsT]],
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if self.tool_config is None:
-            return original_tools
-
-        tool_descriptions = self.tool_config.tool_descriptions
-
-        for tool_name, description in tool_descriptions.items():
-            if tool_name in original_tools:
-                original_tool = original_tools[tool_name]
-                updated_tool_def = replace(original_tool.tool_def, description=description)
-                original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
-
-        for tool_name in list(original_tools.keys()):
-            tool_args = self.tool_config.get_tool_args_for_tool(tool_name)
-            if not tool_args:
-                continue
-
-            original_tool = original_tools[tool_name]
-            parameter_defs = deepcopy(original_tool.tool_def.parameters_json_schema)
-
-            for param_name, param_schema in parameter_defs.get('properties', {}).items():
-                if param_name in tool_args:
-                    param_schema['description'] = tool_args[param_name]
-
-            updated_tool_def = replace(original_tool.tool_def, parameters_json_schema=parameter_defs)
-            original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
-
-        return original_tools
-
-    async def get_tools_from_prepare_func(
-        self, original_tools: dict[str, ToolsetTool[AgentDepsT]], ctx: RunContext[AgentDepsT]
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if self.prepare_func is None:
-            return original_tools
-
         original_tool_defs = [tool.tool_def for tool in original_tools.values()]
         prepared_tool_defs_by_name = {
             tool_def.name: tool_def for tool_def in (await self.prepare_func(ctx, original_tool_defs) or [])
@@ -84,3 +37,46 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             name: replace(original_tools[name], tool_def=tool_def)
             for name, tool_def in prepared_tool_defs_by_name.items()
         }
+
+
+@dataclass
+class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
+    """A toolset that prepares the tools it contains using a ToolConfig.
+
+    See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
+    """
+
+    tool_config: ToolConfig
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        original_tools = await super().get_tools(ctx)
+        return await self._get_tools_from_tool_config(original_tools)
+
+    async def _get_tools_from_tool_config(
+        self,
+        original_tools: dict[str, ToolsetTool[AgentDepsT]],
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tool_descriptions = self.tool_config.tool_descriptions
+
+        for tool_name, description in tool_descriptions.items():
+            if tool_name in original_tools:
+                original_tool = original_tools[tool_name]
+                updated_tool_def = replace(original_tool.tool_def, description=description)
+                original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
+
+        for tool_name in list(original_tools.keys()):
+            tool_args = self.tool_config.tool_args_descriptions.get(tool_name, {})
+            if not tool_args:
+                continue
+
+            original_tool = original_tools[tool_name]
+            parameter_defs = deepcopy(original_tool.tool_def.parameters_json_schema)
+
+            for param_name, param_schema in parameter_defs.get('properties', {}).items():
+                if param_name in tool_args:
+                    param_schema['description'] = tool_args[param_name]
+
+            updated_tool_def = replace(original_tool.tool_def, parameters_json_schema=parameter_defs)
+            original_tools[tool_name] = replace(original_tool, tool_def=updated_tool_def)
+
+        return original_tools

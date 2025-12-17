@@ -733,6 +733,33 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
     assert observed_descriptions[-1] == 'Runtime custom tool description'
 
 
+def test_prompt_config_tool_config_output_tool_descriptions():
+    """Test that ToolConfig.tool_descriptions updates output tool descriptions (covers ToolConfigPreparedToolset for output_toolset)."""
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Verify the output tool description was updated
+        assert info.output_tools is not None
+        output_tool = next(t for t in info.output_tools if t.name == 'final_result')
+        assert output_tool.description == 'Custom output tool description from ToolConfig'
+        assert output_tool.description != 'Output model for testing.'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 42, "b": "bar"}')])
+
+    class OutputModel(BaseModel):
+        """Output model for testing."""
+        a: int
+        b: str
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=OutputModel,
+        prompt_config=PromptConfig(
+            tool_config=ToolConfig(tool_descriptions={'final_result': 'Custom output tool description from ToolConfig'})
+        ),
+    )
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, OutputModel)
+
 def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None

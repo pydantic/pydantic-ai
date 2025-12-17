@@ -286,10 +286,6 @@ class ToolConfig:
     tool_args_descriptions: dict[str, dict[str, str]] = field(default_factory=lambda: {})
     """Custom descriptions for tool arguments: `{'tool_name': {'arg_name': 'description'}}`."""
 
-    def get_tool_args_for_tool(self, tool_name: str) -> dict[str, str] | None:
-        """Get the tool argument descriptions for the given tool name."""
-        return self.tool_args_descriptions.get(tool_name)
-
 
 @dataclass
 class PromptConfig:
