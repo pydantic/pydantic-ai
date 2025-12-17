@@ -138,16 +138,24 @@ class PromptTemplates:
     def apply_template(self, message_part: ModelRequestPart, ctx: RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
             if message_part.return_kind == 'final-result-processed':
-                template = self.final_result_processed or return_kind_to_default_prompt_template[message_part.return_kind]
+                template = (
+                    self.final_result_processed or return_kind_to_default_prompt_template[message_part.return_kind]
+                )
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'output-tool-not-executed':
-                template = self.output_tool_not_executed or return_kind_to_default_prompt_template[message_part.return_kind]
+                template = (
+                    self.output_tool_not_executed or return_kind_to_default_prompt_template[message_part.return_kind]
+                )
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'output-validation-failed':
-                template = self.output_validation_failed or return_kind_to_default_prompt_template[message_part.return_kind]
+                template = (
+                    self.output_validation_failed or return_kind_to_default_prompt_template[message_part.return_kind]
+                )
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'function-tool-not-executed':
-                template = self.function_tool_not_executed or return_kind_to_default_prompt_template[message_part.return_kind]
+                template = (
+                    self.function_tool_not_executed or return_kind_to_default_prompt_template[message_part.return_kind]
+                )
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'tool-denied':
                 if self.tool_call_denied is not None:
