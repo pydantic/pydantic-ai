@@ -815,15 +815,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             messages.append(message)
 
-            # Older imp(keeping for reference, will remove after discussion):
-            # if (prompt_config := ctx.deps.prompt_config) and (prompt_templates := prompt_config.templates):
-            #     run_ctx = build_run_context(ctx)
-            #     tool_responses = [
-            #         prompt_templates.apply_template(part, run_ctx) for part in tool_responses
-            #     ]
-
-            # messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
-
         return End(final_result)
 
     __repr__ = dataclasses_no_defaults_repr
