@@ -1008,6 +1008,7 @@ class OpenAIChatModel(Model):
                 assert_never(part)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
+        profile = OpenAIModelProfile.from_profile(self.profile)
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1041,7 +1042,10 @@ class OpenAIChatModel(Model):
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        audio = InputAudio(data=item.base64, format=item.format)
+                        if profile.openai_chat_audio_input_encoding == 'uri':
+                            audio = InputAudio(data=item.data_uri, format=item.format)
+                        else:
+                            audio = InputAudio(data=item.base64, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
                         content.append(
@@ -1056,7 +1060,8 @@ class OpenAIChatModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    downloaded_item = await download_item(item, data_format='base64', type_format='extension')
+                    data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
+                    downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
                     assert downloaded_item['data_type'] in (
                         'wav',
                         'mp3',
