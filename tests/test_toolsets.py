@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import BaseModel
 from inline_snapshot import snapshot
 from typing_extensions import Self
 
@@ -34,6 +35,11 @@ from pydantic_ai.usage import RunUsage
 pytestmark = pytest.mark.anyio
 
 T = TypeVar('T')
+
+
+class NestedArg(BaseModel):
+    a: str
+    b: str
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
@@ -488,29 +494,51 @@ async def test_comprehensive_toolset_composition():
     partial_args_toolset = FunctionToolset[None]()
 
     @partial_args_toolset.tool
-    def calc(x: int, y: int, z: int) -> int:  # pragma: no cover
+    def calc(x: int, y: int, z: int, arg: NestedArg) -> int:  # pragma: no cover
         """Calculate sum"""
         return x + y + z
 
-    partial_tool_config = ToolConfig(
-        tool_args_descriptions={
-            'calc': {
+    partial_tool_config = {
+        'calc': ToolConfig(
+            tool_args_descriptions={
                 'x': 'First number',
                 'z': 'Third number',
                 # 'y' intentionally missing
+                'arg.b': 'Nested b argument',
             }
-        }
-    )
+        )
+    }
     prepared_partial = ToolConfigPreparedToolset(partial_args_toolset, partial_tool_config)
     partial_context = build_run_context(None)
-    partial_manager = await ToolManager[None](prepared_partial).for_run_step(partial_context)
+    tool_config_prepared_toolset = await ToolManager[None](prepared_partial).for_run_step(partial_context)
 
-    calc_def = partial_manager.tool_defs[0]
-    assert calc_def.name == 'calc'
-    # 'x' and 'z' should have descriptions, 'y' should not
-    assert calc_def.parameters_json_schema['properties']['x'].get('description') == 'First number'
-    assert 'description' not in calc_def.parameters_json_schema['properties']['y']
-    assert calc_def.parameters_json_schema['properties']['z'].get('description') == 'Third number'
+    assert tool_config_prepared_toolset.tool_defs == snapshot(
+        [
+            ToolDefinition(
+                name='calc',
+                parameters_json_schema={
+                    '$defs': {
+                        'NestedArg': {
+                            'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
+                            'required': ['a', 'b'],
+                            'title': 'NestedArg',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'type': 'integer', 'description': 'First number'},
+                        'y': {'type': 'integer'},
+                        'z': {'type': 'integer', 'description': 'Third number'},
+                        'arg': {'$ref': '#/$defs/NestedArg'},
+                    },
+                    'required': ['x', 'y', 'z', 'arg'],
+                    'type': 'object',
+                },
+                description='Calculate sum',
+            )
+        ]
+    )
 
 
 async def test_context_manager():

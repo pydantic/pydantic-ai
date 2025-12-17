@@ -253,10 +253,10 @@ class ToolConfig:
     This allows you to override tool metadata without modifying the original tool definitions.
     """
 
-    name: str | None
-    tool_description: str | None
-    strict: bool | None
-    tool_args_descriptions: dict[str, str] | None
+    name: str | None = None
+    tool_description: str | None = None
+    strict: bool | None = None
+    tool_args_descriptions: dict[str, str] | None = None
 
 
 @dataclass
