@@ -107,7 +107,7 @@ class GroqProvider(Provider[AsyncGroq]):
             groq_client: An existing
                 [`AsyncGroq`](https://github.com/groq/groq-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `AsyncHTTPClient` to use for making HTTP requests.
+            http_client: An existing `AsyncClient` to use for making HTTP requests.
         """
         if groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'

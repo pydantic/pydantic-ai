@@ -37,7 +37,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -79,6 +79,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -101,6 +102,43 @@ def test_init():
     assert m.base_url == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
+
+
+@pytest.mark.parametrize(
+    'aspect_ratio,size,expected',
+    [
+        # aspect_ratio is None, various sizes
+        (None, None, 'auto'),
+        (None, 'auto', 'auto'),
+        (None, '1024x1024', '1024x1024'),
+        (None, '1024x1536', '1024x1536'),
+        (None, '1536x1024', '1536x1024'),
+        # Valid aspect_ratios with no size
+        ('1:1', None, '1024x1024'),
+        ('2:3', None, '1024x1536'),
+        ('3:2', None, '1536x1024'),
+        # Valid aspect_ratios with compatible sizes
+        ('1:1', 'auto', '1024x1024'),
+        ('1:1', '1024x1024', '1024x1024'),
+        ('2:3', '1024x1536', '1024x1536'),
+        ('3:2', '1536x1024', '1536x1024'),
+    ],
+)
+def test_openai_image_generation_size_valid_combinations(
+    aspect_ratio: Literal['1:1', '2:3', '3:2'] | None,
+    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024'] | None,
+    expected: Literal['auto', '1024x1024', '1024x1536', '1536x1024'],
+) -> None:
+    """Test valid combinations of aspect_ratio and size for OpenAI image generation."""
+    tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=size)
+    assert _resolve_openai_image_generation_size(tool) == expected
+
+
+def test_openai_image_generation_tool_aspect_ratio_invalid() -> None:
+    """Test that invalid aspect_ratio raises UserError."""
+    tool = ImageGenerationTool(aspect_ratio='16:9')
+    with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
+        _resolve_openai_image_generation_size(tool)
 
 
 async def test_request_simple_success(allow_model_requests: None):
@@ -878,6 +916,196 @@ async def test_document_url_input(allow_model_requests: None, openai_api_key: st
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
+
+
+async def test_document_url_input_response_api(allow_model_requests: None, openai_api_key: str):
+    """Test DocumentUrl with Responses API sends URL directly (default behavior)."""
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert 'Dummy PDF' in result.output
+
+
+async def test_document_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+    """Test DocumentUrl with force_download=True downloads and sends as file_data."""
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(
+        url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+        force_download=True,
+    )
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert 'Dummy PDF' in result.output
+
+
+async def test_image_url_force_download_chat() -> None:
+    """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+            'content_type': 'image/png',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/image.png'
+
+
+async def test_image_url_no_force_download_chat() -> None:
+    """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_not_called()
+
+
+async def test_document_url_force_download_responses() -> None:
+    """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:application/pdf;base64,JVBERi0xLjQK',
+            'data_type': 'pdf',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test PDF',
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/doc.pdf'
+
+
+async def test_document_url_no_force_download_responses() -> None:
+    """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test document',
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_not_called()
+
+
+async def test_audio_url_force_download_responses() -> None:
+    """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2',
+            'data_type': 'mp3',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test audio',
+                            AudioUrl(
+                                url='https://example.com/audio.mp3',
+                                media_type='audio/mp3',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/audio.mp3'
 
 
 @pytest.mark.vcr()
@@ -2318,7 +2546,10 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
     )
 
-    with pytest.raises(UserError, match=r'WebSearchTool is not supported with `OpenAIChatModel` and model.*'):
+    with pytest.raises(
+        UserError,
+        match=r"WebSearchTool is not supported with `OpenAIChatModel` and model 'gpt-4o'.*OpenAIResponsesModel",
+    ):
         await agent.run('What day is today?')
 
 
