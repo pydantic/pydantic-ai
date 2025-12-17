@@ -811,10 +811,24 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             # Only apply templates if explicitly configured
+            message = _messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id)
+
             if (prompt_config := ctx.deps.prompt_config) and (prompt_templates := prompt_config.templates):
                 run_ctx = build_run_context(ctx)
-                tool_responses = [prompt_templates.apply_template(part, run_ctx) for part in tool_responses]
-            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
+                message = _apply_prompt_templates_to_message_history(
+                    [message], prompt_templates=prompt_templates, ctx=run_ctx
+                )[0]
+
+            messages.append(message)
+
+            # Older imp(keeping for reference, will remove after discussion):
+            # if (prompt_config := ctx.deps.prompt_config) and (prompt_templates := prompt_config.templates):
+            #     run_ctx = build_run_context(ctx)
+            #     tool_responses = [
+            #         prompt_templates.apply_template(part, run_ctx) for part in tool_responses
+            #     ]
+
+            # messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
         return End(final_result)
 
