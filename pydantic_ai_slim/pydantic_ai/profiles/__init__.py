@@ -51,6 +51,8 @@ class ModelProfile:
         """
     )
     """The instructions template to use for prompted structured output. The '{schema}' placeholder will be replaced with the JSON schema for the output."""
+    inject_schema_instructions_in_native_mode: bool = False
+    """Whether to add prompted output template in native structured output mode"""
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
 

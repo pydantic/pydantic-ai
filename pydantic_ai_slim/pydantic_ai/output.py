@@ -164,6 +164,11 @@ class NativeOutput(Generic[OutputDataT]):
     """The description of the structured output that will be passed to the model. If not specified and only one output is provided, the docstring of the output type or function will be used."""
     strict: bool | None
     """Whether to use strict mode for the output, if the model supports it."""
+    template: str | None
+    """Template for the prompt passed to the model.
+    The '{schema}' placeholder will be replaced with the output JSON schema.
+    If not specified, the default template specified on the model's profile will be used.
+    """
 
     def __init__(
         self,
@@ -172,11 +177,13 @@ class NativeOutput(Generic[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        template: str | None = None,
     ):
         self.outputs = outputs
         self.name = name
         self.description = description
         self.strict = strict
+        self.template = template
 
 
 @dataclass(init=False)
