@@ -1278,6 +1278,21 @@ async def test_temporal_agent():
     )
 
 
+def test_temporal_wrapper_visit_and_replace():
+    """Temporal wrapper toolsets should not be replaced by visit_and_replace."""
+    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+
+    toolsets = complex_temporal_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    temporal_function_toolsets = [ts for ts in toolsets if isinstance(ts, TemporalFunctionToolset)]
+    assert len(temporal_function_toolsets) >= 1
+
+    temporal_function_toolset = temporal_function_toolsets[0]
+
+    # visit_and_replace should return self for temporal wrappers
+    result = temporal_function_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is temporal_function_toolset
+
+
 async def test_temporal_agent_run(allow_model_requests: None):
     result = await simple_temporal_agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
