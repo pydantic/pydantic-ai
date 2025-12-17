@@ -708,3 +708,42 @@ toolset = ACIToolset(
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
+
+### Pydantic-Deep {#pydantic-deep}
+
+[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) is a deep agent framework built on Pydantic AI that provides ready-to-use toolsets for building autonomous agents with planning, filesystem operations, and multi-agent capabilities.
+
+Available toolsets:
+
+- `TodoToolset`: Task planning and tracking tools for agent self-organization
+- `FilesystemToolset`: File operations (ls, read, write, edit, glob, grep, execute)
+- `SubAgentToolset`: Spawn and delegate tasks to subagents
+- `SkillsToolset`: Load and use skill definitions from markdown files
+
+The framework also includes multiple backends (in-memory, filesystem, Docker sandbox), automatic conversation summarization, and human-in-the-loop confirmation workflows.
+
+You will need to install the `pydantic-deep` package.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_deep import create_deep_agent, create_default_deps, DeepAgentDeps
+from pydantic_deep.backends import StateBackend
+from pydantic_deep.toolsets import TodoToolset, FilesystemToolset
+
+# Option 1: Use the pre-configured deep agent
+backend = StateBackend()
+deps = create_default_deps(backend)
+agent = create_deep_agent()
+result = await agent.run("Help me organize my tasks", deps=deps)
+
+# Option 2: Use individual toolsets with your own agent
+backend = StateBackend()
+deps = DeepAgentDeps(backend=backend)
+agent = Agent(
+    'openai:gpt-4.1',
+    toolsets=[TodoToolset(), FilesystemToolset()],
+)
+result = await agent.run("Your prompt", deps=deps)
+```
+
+See the [full demo application](https://github.com/vstorm-co/pydantic-deepagents/tree/main/examples/full_app) for a complete example with a chat interface, file uploads, skills, and streaming responses.

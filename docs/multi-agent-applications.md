@@ -327,3 +327,9 @@ See the [graph](graph.md) documentation on when and how to use graphs.
 The following examples demonstrate how to use dependencies in Pydantic AI:
 
 - [Flight booking](examples/flight-booking.md)
+
+## Community Frameworks
+
+For more advanced multi-agent scenarios with built-in toolsets, consider:
+
+- [Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) — A deep agent framework built on Pydantic AI with ready-to-use toolsets for task planning (`TodoToolset`), filesystem operations (`FilesystemToolset`), and subagent delegation (`SubAgentToolset`). See the [toolsets documentation](toolsets.md#pydantic-deep) for usage examples.
