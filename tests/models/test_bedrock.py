@@ -2317,7 +2317,7 @@ async def test_tool_choice_specific_tool_single(bedrock_provider: BedrockProvide
 
 
 async def test_tool_choice_multiple_tools_falls_back_to_any(bedrock_provider: BedrockProvider) -> None:
-    """Multiple tool names fall back to the 'any' configuration."""
+    """Multiple tool names use 'any' with filtering (Bedrock can't force specific multiple tools)."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -2335,8 +2335,7 @@ async def test_tool_choice_multiple_tools_falls_back_to_any(bedrock_provider: Be
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     settings: BedrockModelSettings = {'tool_choice': ['tool_a', 'tool_b']}
 
-    with pytest.warns(UserWarning, match='Bedrock only supports forcing a single tool'):
-        tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
