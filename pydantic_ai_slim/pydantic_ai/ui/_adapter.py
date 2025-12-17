@@ -12,12 +12,12 @@ from typing import (
     ClassVar,
     Generic,
     Protocol,
-    TypeVar,
     cast,
     runtime_checkable,
 )
 
 from pydantic import BaseModel, ValidationError
+from typing_extensions import TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
@@ -58,6 +58,9 @@ StateT = TypeVar('StateT', bound=BaseModel)
 
 DispatchDepsT = TypeVar('DispatchDepsT')
 """TypeVar for deps to avoid awkwardness with unbound classvar deps."""
+
+DispatchOutputDataT = TypeVar('DispatchOutputDataT')
+"""TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
 
 @runtime_checkable
@@ -330,7 +333,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         cls,
         request: Request,
         *,
-        agent: AbstractAgent[DispatchDepsT, OutputDataT],
+        agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
@@ -378,10 +381,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             ) from e
 
         try:
-            # The DepsT comes from `agent`, not from `cls`; the cast is necessary to explain this to pyright
+            # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
             adapter = cast(
-                UIAdapter[RunInputT, MessageT, EventT, DispatchDepsT, OutputDataT],
-                await cls.from_request(request, agent=agent),
+                UIAdapter[RunInputT, MessageT, EventT, DispatchDepsT, DispatchOutputDataT],
+                await cls.from_request(request, agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent)),
             )
         except ValidationError as e:  # pragma: no cover
             return Response(
