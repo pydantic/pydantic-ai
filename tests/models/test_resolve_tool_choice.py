@@ -75,6 +75,17 @@ class TestValidateToolChoiceStringValues:
         result = validate_tool_choice(settings, params)
         assert result == expected
 
+    def test_required_without_function_tools_raises_user_error(self) -> None:
+        """'required' with no function tools raises UserError."""
+        params = ModelRequestParameters(
+            function_tools=[],
+            output_tools=[make_tool('output_tool')],
+        )
+        settings: ModelSettings = {'tool_choice': 'required'}
+
+        with pytest.raises(UserError, match='tool_choice.*required.*no function tools'):
+            validate_tool_choice(settings, params)
+
 
 class TestValidateToolChoiceSpecificTools:
     """List-based tool_choice entries."""

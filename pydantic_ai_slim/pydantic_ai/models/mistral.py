@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -226,9 +226,6 @@ class MistralModel(Model):
         """Make a non-streaming request to the model."""
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
-            raise UserError('Mistral does not support built-in tools')
-
         tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
 
         try:
@@ -267,9 +264,6 @@ class MistralModel(Model):
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.builtin_tools:
-            raise UserError('Mistral does not support built-in tools')
-
         tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
 
         if tools:
