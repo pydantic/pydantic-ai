@@ -23,6 +23,7 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_
 from ..builtin_tools import (
     AbstractBuiltinTool,
     CodeExecutionTool,
+    FileSearchTool,
     ImageAspectRatio,
     ImageGenerationTool,
     MCPServerTool,
@@ -341,6 +342,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Whether to include the web search results in the response.
 
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
+    """
+
+    openai_include_file_search_results: bool
+    """Whether to include the file search results in the response.
+
+    Corresponds to the `file_search_call.results` value of the `include` parameter in the Responses API.
     """
 
 
@@ -1271,7 +1278,7 @@ class OpenAIResponsesModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, ImageGenerationTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
 
     async def request(
         self,
@@ -1387,9 +1394,10 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.response_output_item.LocalShellCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                 pass
-            elif isinstance(item, responses.ResponseFileSearchToolCall):  # pragma: no cover
-                # Pydantic AI doesn't yet support the FileSearch built-in tool
-                pass
+            elif isinstance(item, responses.ResponseFileSearchToolCall):
+                call_part, return_part = _map_file_search_tool_call(item, self.system)
+                items.append(call_part)
+                items.append(return_part)
             elif isinstance(item, responses.response_output_item.McpCall):
                 call_part, return_part = _map_mcp_call(item, self.system)
                 items.append(call_part)
@@ -1517,6 +1525,8 @@ class OpenAIResponsesModel(Model):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')
+        if model_settings.get('openai_include_file_search_results'):
+            include.append('file_search_call.results')
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
 
@@ -1666,6 +1676,12 @@ class OpenAIResponsesModel(Model):
                         type='approximate', **tool.user_location
                     )
                 tools.append(web_search_tool)
+            elif isinstance(tool, FileSearchTool):
+                file_search_tool = cast(
+                    responses.FileSearchToolParam,
+                    {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
+                )
+                tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
@@ -1812,6 +1828,7 @@ class OpenAIResponsesModel(Model):
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
+                file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
@@ -1883,6 +1900,21 @@ class OpenAIResponsesModel(Model):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
+                            elif (  # pragma: no cover
+                                item.tool_name == FileSearchTool.kind
+                                and item.tool_call_id
+                                and (args := item.args_as_dict())
+                            ):
+                                file_search_item = cast(
+                                    responses.ResponseFileSearchToolCallParam,
+                                    {
+                                        'id': item.tool_call_id,
+                                        'queries': args.get('queries', []),
+                                        'status': 'completed',
+                                        'type': 'file_search_call',
+                                    },
+                                )
+                                openai_messages.append(file_search_item)
                             elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:
                                 # The cast is necessary because of https://github.com/openai/openai-python/issues/2648
                                 image_generation_item = cast(
@@ -1942,6 +1974,14 @@ class OpenAIResponsesModel(Model):
                                 and (status := content.get('status'))
                             ):
                                 web_search_item['status'] = status
+                            elif (  # pragma: no cover
+                                item.tool_name == FileSearchTool.kind
+                                and file_search_item is not None
+                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
+                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (status := content.get('status'))
+                            ):
+                                file_search_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
@@ -2334,6 +2374,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
+                elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
+                    call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                    )
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                     call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
@@ -2402,6 +2447,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
+
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        args=call_part.args,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
+
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
+                    call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
@@ -2567,6 +2623,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseFileSearchCallCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseFileSearchCallSearchingEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseFileSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
             else:  # pragma: no cover
@@ -2773,6 +2838,34 @@ def _map_web_search_tool_call(
         ),
         BuiltinToolReturnPart(
             tool_name=WebSearchTool.kind,
+            tool_call_id=item.id,
+            content=result,
+            provider_name=provider_name,
+        ),
+    )
+
+
+def _map_file_search_tool_call(
+    item: responses.ResponseFileSearchToolCall,
+    provider_name: str,
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    args = {'queries': item.queries}
+
+    result: dict[str, Any] = {
+        'status': item.status,
+    }
+    if item.results is not None:
+        result['results'] = [r.model_dump(mode='json') for r in item.results]
+
+    return (
+        BuiltinToolCallPart(
+            tool_name=FileSearchTool.kind,
+            tool_call_id=item.id,
+            args=args,
+            provider_name=provider_name,
+        ),
+        BuiltinToolReturnPart(
+            tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
             content=result,
             provider_name=provider_name,

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -13,7 +14,14 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool, CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -64,6 +72,7 @@ try:
         ExecutableCode,
         ExecutableCodeDict,
         FileDataDict,
+        FileSearchDict,
         FinishReason as GoogleFinishReason,
         FunctionCallDict,
         FunctionCallingConfigDict,
@@ -95,6 +104,10 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+
+_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+
 
 LatestGoogleModelNames = Literal[
     'gemini-flash-latest',
@@ -237,7 +250,7 @@ class GoogleModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, ImageGenerationTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -366,6 +379,9 @@ class GoogleModel(Model):
                     tools.append(ToolDict(url_context=UrlContextDict()))
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+                elif isinstance(tool, FileSearchTool):
+                    file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
+                    tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
@@ -760,9 +776,10 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _file_search_tool_call_id: str | None = field(default=None, init=False)
+    _code_execution_tool_call_id: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        code_execution_tool_call_id: str | None = None
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
@@ -861,19 +878,88 @@ class GeminiStreamedResponse(StreamedResponse):
                         part=FilePart(content=BinaryContent.narrow_type(content), provider_details=provider_details),
                     )
                 elif part.executable_code is not None:
-                    code_execution_tool_call_id = _utils.generate_tool_call_id()
-                    part = _map_executable_code(part.executable_code, self.provider_name, code_execution_tool_call_id)
-                    part.provider_details = provider_details
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+                    part_obj = self._handle_executable_code_streaming(part.executable_code)
+                    part_obj.provider_details = provider_details
+                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
                 elif part.code_execution_result is not None:
-                    assert code_execution_tool_call_id is not None
-                    part = _map_code_execution_result(
-                        part.code_execution_result, self.provider_name, code_execution_tool_call_id
-                    )
+                    part = self._map_code_execution_result(part.code_execution_result)
                     part.provider_details = provider_details
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+
+            # Grounding metadata is attached to the final text chunk, so
+            # we emit the `BuiltinToolReturnPart` after the text delta so
+            # that the delta is properly added to the same `TextPart` as earlier chunks
+            file_search_part = self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata)
+            if file_search_part is not None:
+                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+
+    def _handle_file_search_grounding_metadata_streaming(
+        self, grounding_metadata: GroundingMetadata | None
+    ) -> BuiltinToolReturnPart | None:
+        """Handle file search grounding metadata for streaming responses.
+
+        Returns a BuiltinToolReturnPart if file search results are available in the grounding metadata.
+        """
+        if not self._file_search_tool_call_id or not grounding_metadata:
+            return None
+
+        grounding_chunks = grounding_metadata.grounding_chunks
+        retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
+        if retrieved_contexts:  # pragma: no branch
+            part = BuiltinToolReturnPart(
+                provider_name=self.provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=self._file_search_tool_call_id,
+                content=retrieved_contexts,
+            )
+            self._file_search_tool_call_id = None
+            return part
+        return None  # pragma: no cover
+
+    def _map_code_execution_result(self, code_execution_result: CodeExecutionResult) -> BuiltinToolReturnPart:
+        """Map code execution result to a BuiltinToolReturnPart using instance state."""
+        assert self._code_execution_tool_call_id is not None
+        return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
+
+    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart:
+        """Handle executable code for streaming responses.
+
+        Returns a BuiltinToolCallPart for file search or code execution.
+        Sets self._code_execution_tool_call_id or self._file_search_tool_call_id as appropriate.
+        """
+        code = executable_code.code
+        has_file_search_tool = any(
+            isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.builtin_tools
+        )
+
+        if code and has_file_search_tool and (file_search_query := self._extract_file_search_query(code)):
+            self._file_search_tool_call_id = _utils.generate_tool_call_id()
+            return BuiltinToolCallPart(
+                provider_name=self.provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=self._file_search_tool_call_id,
+                args={'query': file_search_query},
+            )
+
+        self._code_execution_tool_call_id = _utils.generate_tool_call_id()
+        return _map_executable_code(executable_code, self.provider_name, self._code_execution_tool_call_id)
+
+    def _extract_file_search_query(self, code: str) -> str | None:
+        """Extract the query from file_search.query() executable code.
+
+        Handles escaped quotes in the query string.
+
+        Example: 'print(file_search.query(query="what is the capital of France?"))'
+        Returns: 'what is the capital of France?'
+        """
+        match = _FILE_SEARCH_QUERY_PATTERN.search(code)
+        if match:
+            query = match.group(2)
+            query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
+            return query
+        return None  # pragma: no cover
 
     @property
     def model_name(self) -> GoogleModelName:
@@ -982,6 +1068,10 @@ def _process_response_from_parts(
         items.append(web_search_call)
         items.append(web_search_return)
 
+    file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
+    if file_search_call and file_search_return:
+        items.append(file_search_call)
+        items.append(file_search_return)
     web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
     if web_fetch_call and web_fetch_return:
         items.append(web_fetch_call)
@@ -1133,6 +1223,64 @@ def _map_grounding_metadata(
         )
     else:
         return None, None
+
+
+def _extract_file_search_retrieved_contexts(
+    grounding_chunks: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Extract retrieved contexts from grounding chunks for file search.
+
+    Returns an empty list if no retrieved contexts are found.
+    """
+    if not grounding_chunks:  # pragma: no cover
+        return []
+    retrieved_contexts: list[dict[str, Any]] = []
+    for chunk in grounding_chunks:
+        if not chunk.retrieved_context:
+            continue
+        context_dict: dict[str, Any] = chunk.retrieved_context.model_dump(
+            mode='json', exclude_none=True, by_alias=False
+        )
+        # The SDK type may not define file_search_store yet, but model_dump includes it.
+        # Check both snake_case and camelCase since the field name varies.
+        file_search_store = context_dict.get('file_search_store')
+        if file_search_store is None:  # pragma: lax no cover
+            context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
+                mode='json', exclude_none=True, by_alias=True
+            )
+            file_search_store = context_dict_with_aliases.get('fileSearchStore')
+        if file_search_store is not None:  # pragma: lax no cover
+            context_dict['file_search_store'] = file_search_store
+        retrieved_contexts.append(context_dict)
+    return retrieved_contexts
+
+
+def _map_file_search_grounding_metadata(
+    grounding_metadata: GroundingMetadata | None, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    if not grounding_metadata or not (grounding_chunks := grounding_metadata.grounding_chunks):
+        return None, None
+
+    retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
+
+    if not retrieved_contexts:
+        return None, None
+
+    tool_call_id = _utils.generate_tool_call_id()
+    return (
+        BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            args={},
+        ),
+        BuiltinToolReturnPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            content=retrieved_contexts,
+        ),
+    )
 
 
 def _map_url_context_metadata(
