@@ -834,3 +834,16 @@ async def test_unsupported_model(
         _ = await agent.run(
             'Hello, world!', usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True)
         )
+
+
+async def test_count_tokens_invalid_model_raises_value_error(monkeypatch: pytest.MonkeyPatch):
+    """Ensure unsupported models surface a clear ValueError from tiktoken lookup."""
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    responses_model = OpenAIResponsesModel('unsupported-model', provider=OpenAIProvider(api_key='test'))
+    with pytest.raises(ValueError, match="The model 'unsupported-model' is not supported by tiktoken"):
+        await responses_model.count_tokens([], {}, ModelRequestParameters())
+
+    chat_model = OpenAIChatModel('unsupported-model', provider=OpenAIProvider(api_key='test'))
+    with pytest.raises(ValueError, match="The model 'unsupported-model' is not supported by tiktoken"):
+        await chat_model.count_tokens([], {}, ModelRequestParameters())
