@@ -711,16 +711,16 @@ agent = Agent('openai:gpt-5', toolsets=[toolset])
 
 ### Pydantic-Deep {#pydantic-deep}
 
-[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) is a deep agent framework built on Pydantic AI that provides ready-to-use toolsets for building autonomous agents with planning, filesystem operations, and multi-agent capabilities.
+[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) implements the [Deep Agents](https://blog.langchain.com/deep-agents/) architecture pattern for Pydantic AI. Deep agents are production-grade agents with planning, file system operations, task delegation, and sandboxed code execution — patterns documented from production systems like Claude Code and Manus.
 
 Available toolsets:
 
-- `TodoToolset`: Task planning and tracking tools for agent self-organization
+- `TodoToolset`: Task planning and progress tracking for agent self-organization
 - `FilesystemToolset`: File operations (ls, read, write, edit, glob, grep, execute)
-- `SubAgentToolset`: Spawn and delegate tasks to subagents
-- `SkillsToolset`: Load and use skill definitions from markdown files
+- `SubAgentToolset`: Spawn and delegate tasks to specialized subagents
+- `SkillsToolset`: Load and use [agent skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) from markdown files
 
-The framework also includes multiple backends (in-memory, filesystem, Docker sandbox), automatic conversation summarization, and human-in-the-loop confirmation workflows.
+The framework also includes multiple backends (in-memory, filesystem, Docker sandbox), automatic conversation summarization, and human-in-the-loop approval workflows.
 
 You will need to install the `pydantic-deep` package.
 
