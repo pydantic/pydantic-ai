@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, over
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
-from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
@@ -86,15 +86,15 @@ class SystemPromptPart:
     dynamic_ref: str | None = None
     """The ref of the dynamic system prompt function that generated this part.
 
-    Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.Agent.system_prompt] for more information.
+    Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
     """
 
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
-        return Event(
-            'gen_ai.system.message',
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        return LogRecord(
+            attributes={'event.name': 'gen_ai.system.message'},
             body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
         )
 
@@ -474,7 +474,10 @@ class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
     data: bytes
-    """The binary data."""
+    """The binary file data.
+
+    Use `.base64` to get the base64-encoded string.
+    """
 
     _: KW_ONLY
 
@@ -574,7 +577,12 @@ class BinaryContent:
     @property
     def data_uri(self) -> str:
         """Convert the `BinaryContent` to a data URI."""
-        return f'data:{self.media_type};base64,{base64.b64encode(self.data).decode()}'
+        return f'data:{self.media_type};base64,{self.base64}'
+
+    @property
+    def base64(self) -> str:
+        """Return the binary data as a base64-encoded string. Default encoding is UTF-8."""
+        return base64.b64encode(self.data).decode()
 
     @property
     def is_audio(self) -> bool:
@@ -646,6 +654,7 @@ class CachePoint:
     Supported by:
 
     - Anthropic
+    - Amazon Bedrock (Converse API)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
@@ -745,8 +754,8 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
-        content = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        content: Any = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
         for part in content:
             if part['kind'] == 'binary' and 'content' in part:
                 part['binary_content'] = part.pop('content')
@@ -755,7 +764,7 @@ class UserPromptPart:
         ]
         if content in ([{'kind': 'text'}], [self.content]):
             content = content[0]
-        return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
+        return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
@@ -775,7 +784,7 @@ class UserPromptPart:
             elif isinstance(part, BinaryContent):
                 converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
                 if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = base64.b64encode(part.data).decode()
+                    converted_part['content'] = part.base64
                 parts.append(converted_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
@@ -832,9 +841,9 @@ class BaseToolReturnPart:
         else:
             return {'return_value': json_content}
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
-        return Event(
-            'gen_ai.tool.message',
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        return LogRecord(
+            attributes={'event.name': 'gen_ai.tool.message'},
             body={
                 **({'content': self.content} if settings.include_content else {}),
                 'role': 'tool',
@@ -950,12 +959,15 @@ class RetryPromptPart:
             )
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self, settings: InstrumentationSettings) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:
-            return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.user.message'},
+                body={'content': self.model_response(), 'role': 'user'},
+            )
         else:
-            return Event(
-                'gen_ai.tool.message',
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.tool.message'},
                 body={
                     **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
@@ -1249,6 +1261,9 @@ class ModelResponse:
     provider_name: str | None = None
     """The name of the LLM provider that generated the response."""
 
+    provider_url: str | None = None
+    """The base URL of the LLM provider that generated the response."""
+
     provider_details: Annotated[
         dict[str, Any] | None,
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
@@ -1337,6 +1352,17 @@ class ModelResponse:
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """
         assert self.model_name, 'Model name is required to calculate price'
+        # Try matching on provider_api_url first as this is more specific, then fall back to provider_id.
+        if self.provider_url:
+            try:
+                return calc_price(
+                    self.usage,
+                    self.model_name,
+                    provider_api_url=self.provider_url,
+                    genai_request_timestamp=self.timestamp,
+                )
+            except LookupError:
+                pass
         return calc_price(
             self.usage,
             self.model_name,
@@ -1344,13 +1370,13 @@ class ModelResponse:
             genai_request_timestamp=self.timestamp,
         )
 
-    def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
+    def otel_events(self, settings: InstrumentationSettings) -> list[LogRecord]:
         """Return OpenTelemetry events for the response."""
-        result: list[Event] = []
+        result: list[LogRecord] = []
 
         def new_event_body():
             new_body: dict[str, Any] = {'role': 'assistant'}
-            ev = Event('gen_ai.assistant.message', body=new_body)
+            ev = LogRecord(attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body)
             result.append(ev)
             return new_body
 
@@ -1378,7 +1404,7 @@ class ModelResponse:
                         'kind': 'binary',
                         'media_type': part.content.media_type,
                         **(
-                            {'binary_content': base64.b64encode(part.content.data).decode()}
+                            {'binary_content': part.content.base64}
                             if settings.include_content and settings.include_binary_content
                             else {}
                         ),
@@ -1412,7 +1438,7 @@ class ModelResponse:
             elif isinstance(part, FilePart):
                 converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
                 if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = base64.b64encode(part.content.data).decode()
+                    converted_part['content'] = part.content.base64
                 parts.append(converted_part)
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
@@ -1652,7 +1678,12 @@ class ToolCallPartDelta:
         if self.tool_name_delta is None:
             return None
 
-        return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
+        return ToolCallPart(
+            self.tool_name_delta,
+            self.args_delta,
+            self.tool_call_id or _generate_tool_call_id(),
+            provider_details=self.provider_details,
+        )
 
     @overload
     def apply(self, part: ModelResponsePart) -> ToolCallPart | BuiltinToolCallPart: ...
@@ -1712,9 +1743,18 @@ class ToolCallPartDelta:
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
+        if self.provider_details:
+            merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
+            delta = replace(delta, provider_details=merged_provider_details)
+
         # If we now have enough data to create a full ToolCallPart, do so
         if delta.tool_name_delta is not None:
-            return ToolCallPart(delta.tool_name_delta, delta.args_delta, delta.tool_call_id or _generate_tool_call_id())
+            return ToolCallPart(
+                delta.tool_name_delta,
+                delta.args_delta,
+                delta.tool_call_id or _generate_tool_call_id(),
+                provider_details=delta.provider_details,
+            )
 
         return delta
 
@@ -1738,6 +1778,11 @@ class ToolCallPartDelta:
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
+
+        if self.provider_details:
+            merged_provider_details = {**(part.provider_details or {}), **self.provider_details}
+            part = replace(part, provider_details=merged_provider_details)
+
         return part
 
     __repr__ = _utils.dataclasses_no_defaults_repr

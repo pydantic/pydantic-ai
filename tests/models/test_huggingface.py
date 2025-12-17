@@ -80,6 +80,7 @@ class MockHuggingFace:
     stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    model: str = 'https://api-inference.huggingface.co'
 
     @cached_property
     def chat(self) -> Any:
@@ -239,6 +240,7 @@ async def test_request_structured_response(
             model_name='hf-model',
             timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             provider_name='huggingface',
+            provider_url='https://api-inference.huggingface.co',
             provider_details={'finish_reason': 'stop'},
             provider_response_id='123',
             run_id=IsStr(),
@@ -375,6 +377,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -402,6 +405,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -422,6 +426,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -814,6 +819,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -834,6 +840,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 run_id=IsStr(),
