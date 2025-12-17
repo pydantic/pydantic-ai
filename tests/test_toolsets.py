@@ -26,7 +26,7 @@ from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset, _RunState  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -705,8 +705,6 @@ async def test_tool_manager_sequential_tool_call():
 
 
 async def test_visit_and_replace():
-    from pydantic_ai.toolsets._dynamic import _RunState  # pyright: ignore[reportPrivateUsage]
-
     toolset1 = FunctionToolset(id='toolset1')
     toolset2 = FunctionToolset(id='toolset2')
 
