@@ -887,6 +887,196 @@ async def test_document_url_input(allow_model_requests: None, openai_api_key: st
     assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
 
 
+async def test_document_url_input_response_api(allow_model_requests: None, openai_api_key: str):
+    """Test DocumentUrl with Responses API sends URL directly (default behavior)."""
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert 'Dummy PDF' in result.output
+
+
+async def test_document_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+    """Test DocumentUrl with force_download=True downloads and sends as file_data."""
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    document_url = DocumentUrl(
+        url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+        force_download=True,
+    )
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert 'Dummy PDF' in result.output
+
+
+async def test_image_url_force_download_chat() -> None:
+    """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+            'content_type': 'image/png',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/image.png'
+
+
+async def test_image_url_no_force_download_chat() -> None:
+    """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test image',
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+        mock_download.assert_not_called()
+
+
+async def test_document_url_force_download_responses() -> None:
+    """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:application/pdf;base64,JVBERi0xLjQK',
+            'data_type': 'pdf',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test PDF',
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/doc.pdf'
+
+
+async def test_document_url_no_force_download_responses() -> None:
+    """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test document',
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                force_download=False,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_not_called()
+
+
+async def test_audio_url_force_download_responses() -> None:
+    """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
+    from unittest.mock import AsyncMock, patch
+
+    m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2',
+            'data_type': 'mp3',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Test audio',
+                            AudioUrl(
+                                url='https://example.com/audio.mp3',
+                                media_type='audio/mp3',
+                                force_download=True,
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0].url == 'https://example.com/audio.mp3'
+
+
 @pytest.mark.vcr()
 async def test_image_url_tool_response(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
@@ -2325,7 +2515,10 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
     )
 
-    with pytest.raises(UserError, match=r'WebSearchTool is not supported with `OpenAIChatModel` and model.*'):
+    with pytest.raises(
+        UserError,
+        match=r"WebSearchTool is not supported with `OpenAIChatModel` and model 'gpt-4o'.*OpenAIResponsesModel",
+    ):
         await agent.run('What day is today?')
 
 
@@ -3331,4 +3524,34 @@ reasoning
 response\
 """,
         }
+    )
+
+
+async def test_openai_chat_instructions_after_system_prompts(allow_model_requests: None):
+    """Test that instructions are inserted after all system prompts in mapped messages."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+                UserPromptPart(content='Hello'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Verify order: system1, system2, instructions, user
+    assert len(openai_messages) == 4
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'content': 'Instructions content', 'role': 'system'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
     )

@@ -14,6 +14,7 @@ from typing_extensions import assert_never, overload
 from .. import _utils, usage
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
+from ..builtin_tools import AbstractBuiltinTool
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -200,6 +201,13 @@ class FunctionModel(Model):
         """The system / model provider."""
         return self._system
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """FunctionModel supports all builtin tools for testing flexibility."""
+        from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+
+        return SUPPORTED_BUILTIN_TOOLS
+
 
 @dataclass(frozen=True, kw_only=True)
 class AgentInfo:
@@ -211,8 +219,8 @@ class AgentInfo:
     function_tools: list[ToolDefinition]
     """The function tools available on this agent.
 
-    These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
-    [`tool_plain`][pydantic_ai.Agent.tool_plain] decorators.
+    These are the tools registered via the [`tool`][pydantic_ai.agent.Agent.tool] and
+    [`tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorators.
     """
     allow_text_output: bool
     """Whether a plain text output is allowed."""
