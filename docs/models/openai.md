@@ -309,7 +309,7 @@ agent = Agent(model)
 
 ### Alibaba Cloud Model Studio (DashScope)
 
-To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `DASHSCOPE_API_KEY` environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
+To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `ALIBABA_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
 
 ```python
 from pydantic_ai import Agent
@@ -327,7 +327,7 @@ from pydantic_ai.providers.alibaba import AlibabaProvider
 
 model = OpenAIChatModel(
     'qwen-max',
-    provider=AlibabaProvider(api_key='your-dashscope-api-key'),
+    provider=AlibabaProvider(api_key='your-api-key'),
 )
 agent = Agent(model)
 ...
@@ -343,7 +343,7 @@ from pydantic_ai.providers.alibaba import AlibabaProvider
 model = OpenAIChatModel(
     'qwen-max',
     provider=AlibabaProvider(
-        api_key='your-dashscope-api-key',
+        api_key='your-api-key',
         base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',  # China region
     ),
 )

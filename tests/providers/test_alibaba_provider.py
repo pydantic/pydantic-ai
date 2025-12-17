@@ -24,20 +24,36 @@ def test_alibaba_provider_init():
 
 
 def test_alibaba_provider_env_key(env: TestEnv):
-    env.set('DASHSCOPE_API_KEY', 'env-key')
+    env.set('ALIBABA_API_KEY', 'env-key')
     provider = AlibabaProvider()
     assert provider.client.api_key == 'env-key'
 
 
+def test_alibaba_provider_dashscope_env_key(env: TestEnv):
+    env.remove('ALIBABA_API_KEY')
+    env.set('DASHSCOPE_API_KEY', 'dashscope-key')
+    provider = AlibabaProvider()
+    assert provider.client.api_key == 'dashscope-key'
+
+
+def test_alibaba_provider_env_key_precedence(env: TestEnv):
+    # ALIBABA_API_KEY takes precedence over DASHSCOPE_API_KEY
+    env.set('ALIBABA_API_KEY', 'alibaba-key')
+    env.set('DASHSCOPE_API_KEY', 'dashscope-key')
+    provider = AlibabaProvider()
+    assert provider.client.api_key == 'alibaba-key'
+
+
 def test_alibaba_provider_missing_key(env: TestEnv):
+    env.remove('ALIBABA_API_KEY')
     env.remove('DASHSCOPE_API_KEY')
-    with pytest.raises(UserError, match='Set the `DASHSCOPE_API_KEY`'):
+    with pytest.raises(UserError, match='Set the `ALIBABA_API_KEY`'):
         AlibabaProvider()
 
 
 def test_infer_provider(env: TestEnv):
     # infer_provider instantiates the class, so we need an env var or it raises UserError
-    env.set('DASHSCOPE_API_KEY', 'key')
+    env.set('ALIBABA_API_KEY', 'key')
     provider = infer_provider('alibaba')
     assert isinstance(provider, AlibabaProvider)
 

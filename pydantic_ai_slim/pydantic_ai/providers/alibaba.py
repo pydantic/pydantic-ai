@@ -73,10 +73,11 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
             self._client = openai_client
             self._base_url = str(openai_client.base_url)
         else:
-            api_key = api_key or os.getenv('DASHSCOPE_API_KEY')
+            # NOTE: We support DASHSCOPE_API_KEY for compatibility with Alibaba's official docs.
+            api_key = api_key or os.getenv('ALIBABA_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
             if not api_key:
                 raise UserError(
-                    'Set the `DASHSCOPE_API_KEY` environment variable or pass it via '
+                    'Set the `ALIBABA_API_KEY` environment variable or pass it via '
                     '`AlibabaProvider(api_key=...)` to use the Alibaba provider.'
                 )
 
