@@ -3,7 +3,9 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from textwrap import dedent
-from typing import Any
+from typing import Any, assert_never
+
+from pydantic_ai import output
 
 from .messages import ModelRequestPart, RetryPromptPart, ToolReturnPart
 
@@ -18,7 +20,7 @@ DEFAULT_OUTPUT_TOOL_NOT_EXECUTED = 'Output tool not used - a final result was al
 """Default message when an output tool call is skipped because a result was already found."""
 
 DEFAULT_OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
-"""Default message when an output tool fails validation but another output tool already succeeded."""
+"""Default message when an output tool fails validation."""
 
 DEFAULT_FUNCTION_TOOL_NOT_EXECUTED = 'Tool not executed - a final result was already processed.'
 """Default message when a function tool call is skipped because a result was already found."""
@@ -85,6 +87,9 @@ class PromptTemplates:
     If `None`, uses the default: 'Output tool not used - a final result was already processed.'
     """
 
+    output_validation_failed: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
+    """Message sent when an output tool fails validation."""
+
     function_tool_not_executed: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
     """Message sent when a function tool call is skipped because a result was already found.
 
@@ -138,6 +143,13 @@ class PromptTemplates:
                     self.output_tool_not_executed
                     if self.output_tool_not_executed is not None
                     else DEFAULT_OUTPUT_TOOL_NOT_EXECUTED
+                )
+                message_part = self._apply_tool_template(message_part, ctx, template)
+            elif message_part.return_kind == 'output-validation-failed':
+                template = (
+                    self.output_validation_failed
+                    if self.output_validation_failed is not None
+                    else DEFAULT_OUTPUT_VALIDATION_FAILED
                 )
                 message_part = self._apply_tool_template(message_part, ctx, template)
             elif message_part.return_kind == 'function-tool-not-executed':
