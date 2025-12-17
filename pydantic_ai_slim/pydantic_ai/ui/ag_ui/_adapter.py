@@ -162,7 +162,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     else:
                                         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
                                     user_prompt_content.append(binary_part)
-                                case _:  # pragma: no cover # pyright: ignore[reportUnnecessaryComparison]
+                                case _:  # pragma: no cover
                                     raise ValueError(f'Unsupported user message part type: {type(part)}')
 
                         if user_prompt_content:  # pragma: no branch
