@@ -193,12 +193,9 @@ class PromptTemplates:
         ctx: RunContext[Any],
         template: str | Callable[[RetryPromptPart, RunContext[Any]], str],
     ) -> RetryPromptPart:
-        if isinstance(template, str):
-            message_part = replace(message_part, retry_message=template)
-        else:
-            message_part = replace(message_part, retry_message=template(message_part, ctx))
-
-        return message_part
+        if not isinstance(template, str):
+            template = template(message_part, ctx)
+        return replace(message_part, retry_message=template)
 
     def _apply_tool_template(
         self,
