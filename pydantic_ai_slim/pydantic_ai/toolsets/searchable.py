@@ -113,7 +113,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         toolset_tools = await self.toolset.get_tools(ctx)
         matching_tool_names: list[str] = []
 
-        for tool_name, tool in toolset_tools.items():
+        for _, tool in toolset_tools.items():
             rx = re.compile(args['regex'])
             if rx.search(tool.tool_def.name) or rx.search(tool.tool_def.description):
                 matching_tool_names.append(tool.tool_def.name)
