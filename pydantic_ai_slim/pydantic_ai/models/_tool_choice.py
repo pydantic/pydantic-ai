@@ -80,6 +80,11 @@ def validate_tool_choice(
         return 'none'
 
     if user_tool_choice in ('auto', 'required'):
+        if user_tool_choice == 'required' and not model_request_parameters.function_tools:
+            raise UserError(
+                '`tool_choice` was set to "required", but no function tools are defined. '
+                'Please define function tools or change `tool_choice` to "auto" or "none".'
+            )
         return user_tool_choice
 
     if isinstance(user_tool_choice, list):

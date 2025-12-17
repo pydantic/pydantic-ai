@@ -291,6 +291,8 @@ class MistralModel(Model):
             )
 
         elif model_request_parameters.output_tools:  # pragma: no cover
+            # this branch is dead code (output tool is being handled above)
+            # leaving it in for the TODO (support NativeOutput properly)
             # TODO: Port to native "manual JSON" mode
             # Json Mode (only output tools, no function tools filtered in)
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
