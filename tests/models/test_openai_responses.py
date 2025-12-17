@@ -8260,3 +8260,19 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
             {'role': 'user', 'content': 'Hello'},
         ]
     )
+
+
+async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions='You are a helpful coding assistant.')
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='auto')
+
+    result = await agent.run(
+        'Write a Python function that calculates the factorial of a number. Think step by step.',
+        model_settings=settings,
+    )
+    assert result.response.thinking == snapshot("""\
+**Generating factorial function**
+
+I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
+""")

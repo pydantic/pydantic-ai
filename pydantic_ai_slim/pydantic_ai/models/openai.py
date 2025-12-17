@@ -267,11 +267,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     openai_reasoning_generate_summary: Literal['detailed', 'concise']
     """Deprecated alias for `openai_reasoning_summary`."""
 
-    openai_reasoning_summary: Literal['detailed', 'concise']
+    openai_reasoning_summary: Literal['detailed', 'concise', 'auto']
     """A summary of the reasoning performed by the model.
 
     This can be useful for debugging and understanding the model's reasoning process.
-    One of `concise` or `detailed`.
+    One of `concise`, `detailed`, or `auto`.
 
     Check the [OpenAI Reasoning documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries)
     for more details.
@@ -1505,9 +1505,12 @@ class OpenAIResponsesModel(Model):
             )
             reasoning_summary = reasoning_generate_summary
 
-        if reasoning_effort is None and reasoning_summary is None:
-            return OMIT
-        return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
+        reasoning: Reasoning = {}
+        if reasoning_effort:
+            reasoning['effort'] = reasoning_effort
+        if reasoning_summary:
+            reasoning['summary'] = reasoning_summary
+        return reasoning or OMIT
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
