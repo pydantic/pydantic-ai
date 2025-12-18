@@ -2825,17 +2825,9 @@ async def test_adapter_dump_load_roundtrip():
 
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
 
-    def sync_timestamps(original: list[ModelRequest | ModelResponse], new: list[ModelRequest | ModelResponse]) -> None:
-        for orig_msg, new_msg in zip(original, new):
-            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
-                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
-                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):  # pragma: no branch
-                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
-
     # Load back to Pydantic AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    sync_timestamps(original_messages, reloaded_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
 
     assert reloaded_messages == original_messages
 
@@ -3407,17 +3399,7 @@ async def test_adapter_tool_call_roundtrip_with_provider_details():
 
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-
-    # Sync timestamps for comparison (only ModelResponse and parts have timestamps)
-    def sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
-        for orig_msg, new_msg in zip(original, new):
-            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
-                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
-                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-
-    sync_timestamps(original_messages, reloaded_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
 
     assert reloaded_messages == original_messages
 
@@ -3972,3 +3954,13 @@ async def test_form_provider_metadata_filters_none_values():
             'provider_details': {'detail': 1},
         }
     }
+
+
+def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
+    """Sync timestamps between original and new messages."""
+    for orig_msg, new_msg in zip(original, new):
+        for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
+            if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
+                new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
+            new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
