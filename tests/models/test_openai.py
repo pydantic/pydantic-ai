@@ -3640,42 +3640,86 @@ async def test_openai_response_filter_with_partial_content(allow_model_requests:
     assert result.output == 'Partial'
 
 
-def test_openai_400_non_content_filter(allow_model_requests: None) -> None:
-    """Test a 400 error that is NOT a content filter (different code)."""
+def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
+    """Test a 400 error from Azure that is NOT a content filter (different code)."""
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://api.openai.com/v1')),
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
         )
     )
-    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
     agent = Agent(m)
 
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
 
-    # Should be ModelHTTPError, NOT ContentFilterError
-    assert not isinstance(exc_info.value, ContentFilterError)
     assert exc_info.value.status_code == 400
+    assert not isinstance(exc_info.value, ContentFilterError)
 
 
-def test_openai_400_non_dict_body(allow_model_requests: None) -> None:
-    """Test a 400 error where the body is not a dictionary."""
+def test_azure_400_non_dict_body(allow_model_requests: None) -> None:
+    """Test a 400 error from Azure where the body is not a dictionary."""
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://api.openai.com/v1')),
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
             body='Raw string body',
         )
     )
-    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
     agent = Agent(m)
 
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
 
     assert exc_info.value.status_code == 400
+
+
+def test_azure_400_malformed_error(allow_model_requests: None) -> None:
+    """Test a 400 error from Azure where body matches dict but error structure is wrong."""
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'Bad Request',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            body={'something_else': 'foo'},  # No 'error' key
+        )
+    )
+    m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+    agent = Agent(m)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert exc_info.value.status_code == 400
+
+
+def test_azure_prompt_filter_no_inner_error(allow_model_requests: None) -> None:
+    """Test Azure content filter that lacks the innererror details."""
+    # Valid content filter code, but missing 'innererror'
+    body = {
+        'error': {
+            'code': 'content_filter',
+            'message': 'The content was filtered.',
+            # No innererror
+        }
+    }
+
+    mock_client = MockOpenAI.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            body=body,
+        )
+    )
+
+    m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+    agent = Agent(m)
+
+    # Should still raise ContentFilterError
+    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
+        agent.run_sync('bad prompt')
 
 
 async def test_openai_chat_instructions_after_system_prompts(allow_model_requests: None):
