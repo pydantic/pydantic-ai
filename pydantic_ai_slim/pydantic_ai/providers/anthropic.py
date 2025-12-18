@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias, overload
+from typing import TypeAlias, overload
 
 import httpx
 
@@ -23,8 +23,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-if TYPE_CHECKING:
-    AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicVertex
+AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicVertex
 
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
