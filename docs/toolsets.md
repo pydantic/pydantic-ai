@@ -711,7 +711,7 @@ agent = Agent('openai:gpt-5', toolsets=[toolset])
 
 ### Pydantic-Deep {#pydantic-deep}
 
-[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) implements the [Deep Agents](https://blog.langchain.com/deep-agents/) architecture pattern for Pydantic AI. Deep agents are production-grade agents with planning, file system operations, task delegation, and sandboxed code execution — patterns documented from production systems like Claude Code and Manus.
+[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents), built by [Vstorm](https://vstorm.co/), brings deep agent patterns to Pydantic AI. Deep agents are production-grade agents with planning, file system operations, task delegation, and sandboxed code execution — patterns derived from production systems like Claude Code and Manus.
 
 Available toolsets:
 
