@@ -252,12 +252,38 @@ class PromptTemplates:
         self,
         message_part: RetryPromptPart,
         ctx: RunContext[Any],
-        description_template: None | Callable[[str | list[pydantic_core.ErrorDetails]], str],
-        template: str | Callable[[RetryPromptPart, RunContext[Any]], str],
+        description_template: Callable[[str | list[pydantic_core.ErrorDetails]], str] | None,
+        retry_message_template: str | Callable[[RetryPromptPart, RunContext[Any]], str],
     ) -> RetryPromptPart:
-        if not isinstance(template, str):
-            template = template(message_part, ctx)
-        return replace(message_part, retry_message=template, description_template=description_template)
+        """Render the full retry response and store it on the message part.
+
+        This pre-renders everything so model_response() can just return the result.
+        """
+        # Render the description
+        if isinstance(message_part.content, str):
+            if message_part.tool_name is None and description_template:
+                # String content without tool context - use description template
+                description = description_template(message_part.content)
+            else:
+                # String content from a tool - use content directly
+                description = message_part.content
+        elif description_template:
+            # List of ErrorDetails - use description template
+            description = description_template(message_part.content)
+        else:
+            # Fallback (shouldn't happen with proper template info)
+            description = str(message_part.content)
+
+        # Render the retry message
+        if isinstance(retry_message_template, str):
+            retry_message = retry_message_template
+        else:
+            retry_message = retry_message_template(message_part, ctx)
+
+        # Combine into the full retry message
+        full_retry_message = f'{description}\n\n{retry_message}'
+
+        return replace(message_part, retry_message=full_retry_message)
 
     def _apply_tool_template(
         self,

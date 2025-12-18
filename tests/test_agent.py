@@ -327,7 +327,23 @@ Please fix these validation errors and try again.\
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Please fix these validation errors and try again.',
+                        retry_message="""\
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "a"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer",
+    "input": "wrong"
+  }
+]
+```
+
+Please fix these validation errors and try again.\
+""",
                     )
                 ],
                 run_id=IsStr(),
@@ -379,7 +395,7 @@ Please fix these validation errors and try again.\
     retry_part_for_default = RetryPromptPart(content='error', tool_name='some_tool')
     result_part = templates.apply_template(retry_part_for_default, None)  # type: ignore[arg-type]
     assert isinstance(result_part, RetryPromptPart)
-    assert result_part.retry_message == DEFAULT_MODEL_RETRY
+    assert result_part.retry_message == f'error\n\n{DEFAULT_MODEL_RETRY}'
 
 
 def test_prompt_config_string_and_override_prompt_config():
@@ -470,7 +486,23 @@ Custom retry message""")
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
-                        retry_message='Custom retry message',
+                        retry_message="""\
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "a"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer",
+    "input": "wrong"
+  }
+]
+```
+
+Custom retry message\
+""",
                     )
                 ],
                 run_id=IsStr(),
@@ -587,7 +619,11 @@ Custom retry message override""")
                         tool_name='retry_tool',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        retry_message='Custom tool retry message',
+                        retry_message="""\
+Tool failed
+
+Custom tool retry message\
+""",
                     )
                 ],
                 run_id=IsStr(),
@@ -647,7 +683,12 @@ Custom retry message override""")
                         content='Output is invalid',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                        retry_message='Custom no-tool retry',
+                        retry_message="""\
+Validation feedback:
+Output is invalid
+
+Custom no-tool retry\
+""",
                     )
                 ],
                 run_id=IsStr(),
