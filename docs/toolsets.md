@@ -722,28 +722,4 @@ Available toolsets:
 
 The framework also includes multiple backends (in-memory, filesystem, Docker sandbox), automatic conversation summarization, and human-in-the-loop approval workflows.
 
-You will need to install the `pydantic-deep` package.
-
-```python {test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_deep import create_deep_agent, create_default_deps, DeepAgentDeps
-from pydantic_deep.backends import StateBackend
-from pydantic_deep.toolsets import TodoToolset, FilesystemToolset
-
-# Option 1: Use the pre-configured deep agent
-backend = StateBackend()
-deps = create_default_deps(backend)
-agent = create_deep_agent()
-result = await agent.run("Help me organize my tasks", deps=deps)
-
-# Option 2: Use individual toolsets with your own agent
-backend = StateBackend()
-deps = DeepAgentDeps(backend=backend)
-agent = Agent(
-    'openai:gpt-4.1',
-    toolsets=[TodoToolset(), FilesystemToolset()],
-)
-result = await agent.run("Your prompt", deps=deps)
-```
-
-See the [full demo application](https://github.com/vstorm-co/pydantic-deepagents/tree/main/examples/full_app) for a complete example with a chat interface, file uploads, skills, and streaming responses.
+See the [documentation](https://vstorm-co.github.io/pydantic-deepagents/) for installation and usage, or explore the [full demo application](https://github.com/vstorm-co/pydantic-deepagents/tree/main/examples/full_app) for a complete example with a chat interface, file uploads, skills, and streaming responses.
