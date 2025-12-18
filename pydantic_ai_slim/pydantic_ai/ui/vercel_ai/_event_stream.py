@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
 from pydantic_core import to_json
 
@@ -16,7 +15,6 @@ from ...messages import (
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
-    ModelResponse,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -27,7 +25,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...run import AgentRunResultEvent
-from ...tools import AgentDepsT, DeferredToolRequests
+from ...tools import AgentDepsT
 from .. import UIEventStream
 from .request_types import RequestData
 from .response_types import (
@@ -46,7 +44,6 @@ from .response_types import (
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
-    ToolApprovalRequestChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
     ToolInputStartChunk,
@@ -105,22 +102,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield DoneChunk()
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
-        messages = event.result.all_messages()
-        if messages and isinstance(messages[-1], ModelResponse):
-            pydantic_reason = messages[-1].finish_reason
-            if pydantic_reason:
-                self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason)
-
-        # Emit tool approval requests for deferred approvals
-        output = event.result.output
-        if isinstance(output, DeferredToolRequests):
-            for tool_call in output.approvals:
-                yield ToolApprovalRequestChunk(
-                    approval_id=str(uuid4()),
-                    tool_call_id=tool_call.tool_call_id,
-                )
+        pydantic_reason = event.result.response.finish_reason
+        if pydantic_reason:
+            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason)
+        return
+        yield
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:

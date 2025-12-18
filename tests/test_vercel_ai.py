@@ -1488,7 +1488,7 @@ Fix the errors and try again.\
             {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
             {'type': 'error', 'errorText': 'Exceeded maximum retries (1) for output validation'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1531,7 +1531,7 @@ async def test_run_stream_request_error():
             },
             {'type': 'error', 'errorText': 'Unknown tool'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1572,7 +1572,7 @@ async def test_run_stream_on_complete_error():
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'error', 'errorText': 'Faulty on_complete'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1649,56 +1649,6 @@ async def test_data_chunk_with_id_and_transient():
     # Verify the data chunks are present in the events with correct fields
     assert {'type': 'data-task', 'id': 'task-123', 'data': {'status': 'complete'}} in events
     assert {'type': 'data-progress', 'data': {'percent': 100}, 'transient': True} in events
-
-
-async def test_tool_approval_request_emission():
-    """Test that ToolApprovalRequestChunk is emitted when tools require approval."""
-    from pydantic_ai.tools import DeferredToolRequests
-
-    async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        yield {
-            0: DeltaToolCall(
-                name='delete_file',
-                json_args='{"path": "test.txt"}',
-                tool_call_id='delete_1',
-            )
-        }
-
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
-        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
-    )
-
-    @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
-        return f'Deleted {path}'
-
-    request = SubmitMessage(
-        id='foo',
-        messages=[
-            UIMessage(
-                id='bar',
-                role='user',
-                parts=[TextUIPart(text='Delete test.txt')],
-            ),
-        ],
-    )
-
-    adapter = VercelAIAdapter(agent, request)
-    events: list[str | dict[str, Any]] = [
-        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
-        async for event in adapter.encode_stream(adapter.run_stream())
-    ]
-
-    # Verify tool-approval-request chunk is emitted with UUID approval_id
-    approval_event: dict[str, Any] | None = next(
-        (e for e in events if isinstance(e, dict) and e.get('type') == 'tool-approval-request'),
-        None,
-    )
-    assert approval_event is not None
-    assert approval_event['toolCallId'] == 'delete_1'
-    assert 'approvalId' in approval_event
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
