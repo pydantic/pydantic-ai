@@ -239,7 +239,7 @@ class PromptTemplates:
             retry_template = self.validation_errors_retry or DEFAULT_MODEL_RETRY
 
         # Resolve callable if needed
-        if not isinstance(retry_template, str):
+        if callable(retry_template):
             retry_template = retry_template(message_part, ctx)
 
         return replace(message_part, retry_message=f'{description}\n\n{retry_template}')
@@ -250,11 +250,8 @@ class PromptTemplates:
         ctx: RunContext[Any],
         template: str | Callable[[ToolReturnPart, RunContext[Any]], str],
     ) -> ToolReturnPart:
-        if isinstance(template, str):
-            message_part = replace(message_part, content=template)
-        else:
-            message_part = replace(message_part, content=template(message_part, ctx))
-        return message_part
+        content = template(message_part, ctx) if callable(template) else template
+        return replace(message_part, content=content)
 
 
 @dataclass
@@ -341,18 +338,24 @@ class PromptConfig:
 
         run_ctx = RunContext(deps=None, model=model, usage=RunUsage())
 
-        toolsets = agent.toolsets
-        for toolset in toolsets:
-            tools = await toolset.get_tools(run_ctx)
-            for tool_name, toolset_tool in tools.items():
-                tool_def = toolset_tool.tool_def
-                config = ToolConfig(
-                    name=tool_name,
-                    tool_description=tool_def.description,
-                    strict=tool_def.strict,
-                    tool_args_descriptions=_extract_descriptions_from_json_schema(tool_def.parameters_json_schema),
-                )
-                tool_config[tool_name] = config
+        # Include both regular and output tools
+        from .toolsets import CombinedToolset
+
+        all_toolsets = [*agent.toolsets]
+        if output_toolset := getattr(agent, '_output_toolset', None):
+            all_toolsets.append(output_toolset)
+
+        toolset = CombinedToolset(all_toolsets)
+        tools = await toolset.get_tools(run_ctx)
+
+        for tool_name, toolset_tool in tools.items():
+            tool_def = toolset_tool.tool_def
+            tool_config[tool_name] = ToolConfig(
+                name=tool_name,
+                tool_description=tool_def.description,
+                strict=tool_def.strict,
+                tool_args_descriptions=_extract_descriptions_from_json_schema(tool_def.parameters_json_schema),
+            )
 
         return PromptConfig(
             tool_config=tool_config,
@@ -374,28 +377,6 @@ def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any
     Recursively traverses the schema's properties to build a flat dictionary mapping
     dot-notation paths to their descriptions. This is useful for prompt optimizers
     that need to modify tool argument descriptions.
-
-    Handles two types of nested structures:
-    - Inline nested properties (e.g., `{'type': 'object', 'properties': {...}}`)
-    - `$ref` references to `$defs` (e.g., `{'$ref': '#/$defs/NestedModel'}`)
-
-    Example:
-        Given a schema for a tool with nested BaseModel arguments::
-
-            schema = {
-                '$defs': {'Config': {'properties': {'level': {'description': 'Log level'}}}},
-                'properties': {
-                    'name': {'description': 'User name'},
-                    'config': {'$ref': '#/$defs/Config'}
-                }
-            }
-            # Result: {'name': 'User name', 'config.level': 'Log level'}
-
-    Args:
-        parameters_json_schema: The JSON schema containing properties and optional $defs.
-
-    Returns:
-        A dict mapping dot-notation paths (e.g., 'user.profile.address') to descriptions.
     """
     properties = parameters_json_schema.get(_PROPERTIES, {})
     if not properties:
@@ -410,21 +391,18 @@ def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any
         for key, value in props.items():
             full_path = f'{path}.{key}' if path else key
 
-            if _DESCRIPTION in value:
-                result[full_path] = value[_DESCRIPTION]
+            if description := value.get(_DESCRIPTION):
+                result[full_path] = description
 
-            if _PROPERTIES in value:
-                extract_from_properties(full_path, value[_PROPERTIES])
-
-            elif _REF in value and value[_REF].startswith(_REF_PREFIX):
-                def_name = value[_REF][len(_REF_PREFIX) :]
-                # Guard against circular references to prevent infinite recursion
-                if def_name in visited:
-                    continue
-                visited.add(def_name)
-                referenced_def = defs.get(def_name, {})
-                if _PROPERTIES in referenced_def:
-                    extract_from_properties(full_path, referenced_def[_PROPERTIES])
+            if nested_props := value.get(_PROPERTIES):
+                extract_from_properties(full_path, nested_props)
+            elif (ref := value.get(_REF)) and ref.startswith(_REF_PREFIX):
+                def_name = ref[len(_REF_PREFIX) :]
+                if def_name not in visited:
+                    visited.add(def_name)
+                    if nested_props := defs.get(def_name, {}).get(_PROPERTIES):
+                        extract_from_properties(full_path, nested_props)
+                    visited.remove(def_name)
 
     extract_from_properties('', properties)
     return result

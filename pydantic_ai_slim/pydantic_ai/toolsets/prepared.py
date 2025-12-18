@@ -96,32 +96,37 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
         tool_name: str,
     ) -> None:
         """Update descriptions for argument paths in the JSON schema (modifies schema in place)."""
-        defs = schema.get('$defs', {})
+        defs = schema.get(_DEFS, {})
 
         for arg_path, description in arg_descriptions.items():
-            parts = arg_path.split('.')
             current = schema
+            parts = arg_path.split('.')
 
             for i, part in enumerate(parts):
                 # Resolve $ref if present
-                if '$ref' in current:
-                    ref = current['$ref']
-                    if isinstance(ref, str) and ref.startswith('#/$defs/'):
-                        def_name = ref[len('#/$defs/') :]
-                        if def_name not in defs:
-                            raise UserError(
-                                f"Invalid path '{arg_path}' for tool '{tool_name}': undefined $ref '{ref}'."
-                            )
-                        current = defs[def_name]
+                if (ref := current.get(_REF)) and isinstance(ref, str) and ref.startswith(_REF_PREFIX):
+                    def_name = ref[len(_REF_PREFIX) :]
+                    if def_name not in defs:
+                        raise UserError(f"Invalid path '{arg_path}' for tool '{tool_name}': undefined $ref '{ref}'.")
+                    current = defs[def_name]
 
-                props = current.get('properties', {})
+                props = current.get(_PROPERTIES, {})
                 if part not in props:
+                    available = ', '.join(f"'{p}'" for p in props)
                     raise UserError(
                         f"Invalid path '{arg_path}' for tool '{tool_name}': "
-                        f"'{part}' not found. Available: {list(props.keys())}"
+                        f"'{part}' not found. Available properties: {available}"
                     )
 
                 if i == len(parts) - 1:
-                    props[part]['description'] = description
+                    props[part][_DESCRIPTION] = description
                 else:
                     current = props[part]
+
+
+# JSON Schema keys used for traversal
+_PROPERTIES = 'properties'
+_DEFS = '$defs'
+_REF = '$ref'
+_REF_PREFIX = '#/$defs/'
+_DESCRIPTION = 'description'
