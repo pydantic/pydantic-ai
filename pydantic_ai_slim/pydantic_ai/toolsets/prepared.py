@@ -47,32 +47,34 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
-        tool_config = self.tool_config
 
         for tool_name in original_tools:
-            if tool_name not in tool_config:
+            if tool_name not in self.tool_config:
                 continue
-            tool_info = tool_config[tool_name]
+
+            current_tool_config = self.tool_config[tool_name]
             original_tool_def = original_tools[tool_name].tool_def
 
             parameters_json_schema = copy.deepcopy(original_tool_def.parameters_json_schema)
 
-            if tool_arg_descriptions := tool_info.tool_args_descriptions:
+            if tool_arg_descriptions := current_tool_config.tool_args_descriptions:
                 for arg_name, description in tool_arg_descriptions.items():
-                    nodes = arg_name.split('.')
-                    total_nodes = len(nodes)
+                    args = arg_name.split('.')
+                    total_args = len(args)
 
                     current_schema = parameters_json_schema
 
-                    for index_of_node, node in enumerate(nodes):
+                    for index_of_arg, node in enumerate(args):
                         if 'properties' not in current_schema or node not in current_schema['properties']:
                             ref = current_schema.get('$ref', None)
                             if ref:
+                                # Picking off the arg name from #/$defs/bar
+                                # We will navigate $defs to find this arg
                                 current_schema = parameters_json_schema['$defs'][ref.split('/')[-1]]
                             else:  # Nothing to do here we have to bail out
                                 break
-                        if index_of_node == total_nodes - 1:
-                            # Last node - update the description
+                        if index_of_arg == total_args - 1:
+                            # Target node - update the description
                             current_schema['properties'][node]['description'] = description
                         else:
                             # Navigate deeper into nested structure
@@ -84,9 +86,9 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
                 **{
                     k: v
                     for k, v in {
-                        'name': tool_info.name,
-                        'description': tool_info.tool_description,
-                        'strict': tool_info.strict,
+                        'name': current_tool_config.name,
+                        'description': current_tool_config.tool_description,
+                        'strict': current_tool_config.strict,
                     }.items()
                     if v is not None
                 },
