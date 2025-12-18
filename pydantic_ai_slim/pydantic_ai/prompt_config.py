@@ -16,6 +16,21 @@ if TYPE_CHECKING:
     from pydantic_ai.agent import Agent
     from pydantic_ai.models import Model
 
+__all__ = (
+    # templates & configuration
+    'PromptConfig',
+    'PromptTemplates',
+    'ToolConfig',
+    # defaults
+    'DEFAULT_FINAL_RESULT_PROCESSED',
+    'DEFAULT_OUTPUT_TOOL_NOT_EXECUTED',
+    'DEFAULT_OUTPUT_VALIDATION_FAILED',
+    'DEFAULT_FUNCTION_TOOL_NOT_EXECUTED',
+    'DEFAULT_TOOL_CALL_DENIED',
+    'DEFAULT_MODEL_RETRY',
+    'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
+)
+
 # Default template strings - used when template field is None
 DEFAULT_FINAL_RESULT_PROCESSED = 'Final result processed.'
 """Default confirmation message when a final result is successfully processed."""
@@ -78,7 +93,7 @@ class PromptTemplates:
     """Templates for customizing system-generated messages that Pydantic AI sends to models.
 
     Each template can be either:
-    - `None` to use the default message (or preserve existing content for `tool_call_denied`)
+    - `None` to use the default message (or preserve existing content for `tool_denied`)
     - A static string that replaces the default message
     - A callable that receives the message part and [`RunContext`][pydantic_ai.RunContext]
       and returns a dynamically generated string
@@ -154,9 +169,11 @@ class PromptTemplates:
     prompted_output_template: str | None = None
     """Template for prompted output schema instructions.
 
-    If `None`, uses the template from `PromptedOutput` if set, otherwise the model's
-    profile-specific default template is used.
-    Set explicitly to override the template for all prompted outputs.
+    If set, this overrides the template used for [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+
+    If `None`, the template from `PromptedOutput` is used if set, otherwise the model profile default
+    ([`ModelProfile.prompted_output_template`][pydantic_ai.profiles.ModelProfile.prompted_output_template])
+    is used.
     """
 
     description_template: Callable[[str | list[pydantic_core.ErrorDetails]], str] | None = None
@@ -243,6 +260,10 @@ class ToolConfig:
     """Configuration for customizing tool descriptions and argument descriptions at runtime.
 
     This allows you to override tool metadata without modifying the original tool definitions.
+
+    This is applied via [`PromptConfig`][pydantic_ai.PromptConfig] and can be used to rename tools,
+    override descriptions, enable strict schema behavior for supported models, and override argument
+    descriptions.
     """
 
     name: str | None = None
@@ -302,7 +323,8 @@ class PromptConfig:
     async def generate_prompt_config_from_agent(agent: Agent, model: Model) -> PromptConfig:
         """Generate a PromptConfig instance based on an Agent instance.
 
-        The information we can find we will fill in, everything else can be None or defaults if any.
+        This fills in per-tool metadata and default templates, producing a `PromptConfig` that can be
+        used as a starting point for prompt optimizers.
 
         """
         tool_config: dict[str, ToolConfig] = {}

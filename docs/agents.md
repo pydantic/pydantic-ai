@@ -783,8 +783,8 @@ and the [`RunContext`][pydantic_ai.RunContext]:
 
 ```python {title="prompt_templates_dynamic.py"}
 from pydantic_ai import Agent, PromptConfig, PromptTemplates
+from pydantic_ai import RunContext
 from pydantic_ai.messages import RetryPromptPart
-from pydantic_ai.tools import RunContext
 
 
 def custom_retry_message(part: RetryPromptPart, ctx: RunContext) -> str:
@@ -806,8 +806,9 @@ The available template fields in [`PromptTemplates`][pydantic_ai.PromptTemplates
 |----------------|-------------|
 | `final_result_processed` | Confirmation message when a final result is successfully processed |
 | `output_tool_not_executed` | Message when an output tool call is skipped because a result was already found |
+| `output_validation_failed` | Message when an output tool call is skipped because the output failed validation |
 | `function_tool_not_executed` | Message when a function tool call is skipped because a result was already found |
-| `tool_call_denied` | Message when a tool call is denied by an approval handler |
+| `tool_denied` | Message when a tool call is denied by an approval handler |
 | `validation_errors_retry` | Message appended to validation errors when asking the model to retry |
 | `model_retry_string_tool` | Message when a `ModelRetry` exception is raised from a tool |
 | `model_retry_string_no_tool` | Message when a `ModelRetry` exception is raised outside of a tool context |
