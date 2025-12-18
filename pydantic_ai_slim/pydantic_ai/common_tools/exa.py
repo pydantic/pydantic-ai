@@ -244,20 +244,32 @@ class ExaAnswerTool:
         )
 
 
-def exa_search_tool(api_key: str, num_results: int = 5, max_characters: int | None = None):
+def exa_search_tool(
+    api_key: str | None = None,
+    *,
+    client: AsyncExa | None = None,
+    num_results: int = 5,
+    max_characters: int | None = None,
+) -> Tool[Any]:
     """Creates an Exa search tool.
 
     Args:
-        api_key: The Exa API key.
+        api_key: The Exa API key. Required if `client` is not provided.
 
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
+        client: An existing AsyncExa client. If provided, `api_key` is ignored.
+            This is useful for sharing a client across multiple tools.
         num_results: The number of results to return. Defaults to 5.
         max_characters: Maximum characters of text content per result. Use this to limit
             token usage. Defaults to None (no limit).
     """
+    if client is None:
+        if api_key is None:
+            raise ValueError('Either api_key or client must be provided')
+        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
     return Tool[Any](  # type: ignore[reportUnknownArgumentType]
         ExaSearchTool(
-            client=AsyncExa(api_key=api_key),  # type: ignore[reportUnknownArgumentType]
+            client=client,
             num_results=num_results,
             max_characters=max_characters,
         ).__call__,
@@ -266,47 +278,78 @@ def exa_search_tool(api_key: str, num_results: int = 5, max_characters: int | No
     )
 
 
-def exa_find_similar_tool(api_key: str, num_results: int = 5):
+def exa_find_similar_tool(
+    api_key: str | None = None,
+    *,
+    client: AsyncExa | None = None,
+    num_results: int = 5,
+) -> Tool[Any]:
     """Creates an Exa find similar tool.
 
     Args:
-        api_key: The Exa API key.
+        api_key: The Exa API key. Required if `client` is not provided.
 
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
+        client: An existing AsyncExa client. If provided, `api_key` is ignored.
+            This is useful for sharing a client across multiple tools.
         num_results: The number of similar results to return. Defaults to 5.
     """
+    if client is None:
+        if api_key is None:
+            raise ValueError('Either api_key or client must be provided')
+        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
     return Tool[Any](  # type: ignore[reportUnknownArgumentType]
-        ExaFindSimilarTool(client=AsyncExa(api_key=api_key), num_results=num_results).__call__,  # type: ignore[reportUnknownArgumentType]
+        ExaFindSimilarTool(client=client, num_results=num_results).__call__,
         name='exa_find_similar',
         description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
     )
 
 
-def exa_get_contents_tool(api_key: str):
+def exa_get_contents_tool(
+    api_key: str | None = None,
+    *,
+    client: AsyncExa | None = None,
+) -> Tool[Any]:
     """Creates an Exa get contents tool.
 
     Args:
-        api_key: The Exa API key.
+        api_key: The Exa API key. Required if `client` is not provided.
 
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
+        client: An existing AsyncExa client. If provided, `api_key` is ignored.
+            This is useful for sharing a client across multiple tools.
     """
+    if client is None:
+        if api_key is None:
+            raise ValueError('Either api_key or client must be provided')
+        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
     return Tool[Any](  # type: ignore[reportUnknownArgumentType]
-        ExaGetContentsTool(client=AsyncExa(api_key=api_key)).__call__,  # type: ignore[reportUnknownArgumentType]
+        ExaGetContentsTool(client=client).__call__,
         name='exa_get_contents',
         description='Gets the full text content of specified URLs. Useful for reading articles, documentation, or any web page when you have the exact URL.',
     )
 
 
-def exa_answer_tool(api_key: str):
+def exa_answer_tool(
+    api_key: str | None = None,
+    *,
+    client: AsyncExa | None = None,
+) -> Tool[Any]:
     """Creates an Exa answer tool.
 
     Args:
-        api_key: The Exa API key.
+        api_key: The Exa API key. Required if `client` is not provided.
 
             You can get one by signing up at [https://dashboard.exa.ai](https://dashboard.exa.ai).
+        client: An existing AsyncExa client. If provided, `api_key` is ignored.
+            This is useful for sharing a client across multiple tools.
     """
+    if client is None:
+        if api_key is None:
+            raise ValueError('Either api_key or client must be provided')
+        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
     return Tool[Any](  # type: ignore[reportUnknownArgumentType]
-        ExaAnswerTool(client=AsyncExa(api_key=api_key)).__call__,  # type: ignore[reportUnknownArgumentType]
+        ExaAnswerTool(client=client).__call__,
         name='exa_answer',
         description='Generates an AI-powered answer to a question with citations from web sources. Returns a comprehensive answer backed by real sources.',
     )
@@ -359,39 +402,15 @@ class ExaToolset(FunctionToolset):
         tools: list[Tool[Any]] = []
 
         if include_search:
-            tools.append(
-                Tool[Any](  # type: ignore[reportUnknownArgumentType]
-                    ExaSearchTool(client=client, num_results=num_results, max_characters=max_characters).__call__,
-                    name='exa_search',
-                    description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
-                )
-            )
+            tools.append(exa_search_tool(client=client, num_results=num_results, max_characters=max_characters))
 
         if include_find_similar:
-            tools.append(
-                Tool[Any](  # type: ignore[reportUnknownArgumentType]
-                    ExaFindSimilarTool(client=client, num_results=num_results).__call__,
-                    name='exa_find_similar',
-                    description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
-                )
-            )
+            tools.append(exa_find_similar_tool(client=client, num_results=num_results))
 
         if include_get_contents:
-            tools.append(
-                Tool[Any](  # type: ignore[reportUnknownArgumentType]
-                    ExaGetContentsTool(client=client).__call__,
-                    name='exa_get_contents',
-                    description='Gets the full text content of specified URLs. Useful for reading articles, documentation, or any web page when you have the exact URL.',
-                )
-            )
+            tools.append(exa_get_contents_tool(client=client))
 
         if include_answer:
-            tools.append(
-                Tool[Any](  # type: ignore[reportUnknownArgumentType]
-                    ExaAnswerTool(client=client).__call__,
-                    name='exa_answer',
-                    description='Generates an AI-powered answer to a question with citations from web sources. Returns a comprehensive answer backed by real sources.',
-                )
-            )
+            tools.append(exa_answer_tool(client=client))
 
         super().__init__(tools, id=id)
