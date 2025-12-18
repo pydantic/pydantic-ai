@@ -357,9 +357,7 @@ class PromptConfig:
                     name=tool_name,
                     tool_description=tool_def.description,
                     strict=tool_def.strict,
-                    tool_args_descriptions=_convert_parameters_json_schema_to_dot_notation(
-                        tool_def.parameters_json_schema
-                    ),
+                    tool_args_descriptions=_extract_descriptions_from_json_schema(tool_def.parameters_json_schema),
                 )
                 tool_config[tool_name] = config
 
@@ -369,64 +367,66 @@ class PromptConfig:
         )
 
 
-def _convert_parameters_json_schema_to_dot_notation(parameters_json_schema: dict[str, Any]) -> dict[str, str]:
-    """Convert a JSON schema's properties to dot notation with descriptions.
+# JSON Schema keys
+_PROPERTIES = 'properties'
+_DEFS = '$defs'
+_REF = '$ref'
+_REF_PREFIX = '#/$defs/'
+_DESCRIPTION = 'description'
 
-    Handles both inline nested properties and `$ref` references to `$defs`.
+
+def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any]) -> dict[str, str]:
+    """Extract field descriptions from a JSON schema into dot notation format.
+
+    Recursively traverses the schema's properties to build a flat dictionary mapping
+    dot-notation paths to their descriptions. This is useful for prompt optimizers
+    that need to modify tool argument descriptions.
+
+    Handles two types of nested structures:
+    - Inline nested properties (e.g., `{'type': 'object', 'properties': {...}}`)
+    - `$ref` references to `$defs` (e.g., `{'$ref': '#/$defs/NestedModel'}`)
+
+    Example:
+        Given a schema for a tool with nested BaseModel arguments::
+
+            schema = {
+                '$defs': {'Config': {'properties': {'level': {'description': 'Log level'}}}},
+                'properties': {
+                    'name': {'description': 'User name'},
+                    'config': {'$ref': '#/$defs/Config'}
+                }
+            }
+            # Result: {'name': 'User name', 'config.level': 'Log level'}
 
     Args:
-        parameters_json_schema: The JSON schema containing properties.
+        parameters_json_schema: The JSON schema containing properties and optional $defs.
 
     Returns:
-        A dict mapping dot-notation paths (e.g., 'user.profile.address') to their descriptions.
+        A dict mapping dot-notation paths (e.g., 'user.profile.address') to descriptions.
     """
-    dot_notation_structure: dict[str, str] = {}
-    properties = parameters_json_schema.get('properties', {})
-    defs = parameters_json_schema.get('$defs', {})
-    _dfs('', properties, dot_notation_structure, defs)
-    return dot_notation_structure
+    properties = parameters_json_schema.get(_PROPERTIES, {})
+    if not properties:
+        return {}
 
+    result: dict[str, str] = {}
+    defs = parameters_json_schema.get(_DEFS, {})
 
-def _resolve_ref(ref: str, defs: dict[str, Any]) -> dict[str, Any] | None:
-    """Resolve a $ref path to its definition.
+    def extract_from_properties(path: str, props: dict[str, Any]) -> None:
+        """Recursively extract descriptions from properties."""
+        for key, value in props.items():
+            full_path = f'{path}.{key}' if path else key
 
-    Args:
-        ref: The $ref string (e.g., '#/$defs/NestedArg').
-        defs: The $defs dictionary from the schema.
+            if _DESCRIPTION in value:
+                result[full_path] = value[_DESCRIPTION]
 
-    Returns:
-        The resolved definition dict, or None if not found.
-    """
-    # Expected format: '#/$defs/DefinitionName'
-    if ref.startswith('#/$defs/'):
-        def_name = ref[len('#/$defs/') :]
-        return defs.get(def_name)
-    return None
+            if _PROPERTIES in value:
+                extract_from_properties(full_path, value[_PROPERTIES])
 
+            elif _REF in value and value[_REF].startswith(_REF_PREFIX):
+                def_name = value[_REF][len(_REF_PREFIX) :]
+                referenced_def = defs.get(def_name, {})
+                if _PROPERTIES in referenced_def:
+                    extract_from_properties(full_path, referenced_def[_PROPERTIES])
 
-def _dfs(
-    path: str,
-    properties: dict[str, Any],
-    dot_notation_structure: dict[str, str],
-    defs: dict[str, Any],
-) -> None:
-    """Recursively traverse properties and extract descriptions.
-
-    Handles both inline 'properties' and '$ref' references to '$defs'.
-    """
-    for key, value in properties.items():
-        new_path = f'{path}.{key}' if path else key
-
-        # Add the description if present
-        if 'description' in value:
-            dot_notation_structure[new_path] = value['description']
-
-        # Handle inline nested properties
-        if 'properties' in value:
-            _dfs(new_path, value['properties'], dot_notation_structure, defs)
-
-        # Handle $ref to $defs
-        elif '$ref' in value:
-            resolved_def = _resolve_ref(value['$ref'], defs)
-            if resolved_def and 'properties' in resolved_def:
-                _dfs(new_path, resolved_def['properties'], dot_notation_structure, defs)
+    extract_from_properties('', properties)
+    return result
