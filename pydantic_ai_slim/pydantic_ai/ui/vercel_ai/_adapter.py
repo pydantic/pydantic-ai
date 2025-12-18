@@ -35,7 +35,7 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolResults, ToolApproved, ToolDenied
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from .request_types import (
@@ -51,6 +51,7 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
+    ToolApprovalResponded,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
@@ -86,6 +87,56 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Extract deferred tool results from tool parts with approval responses.
+
+        When the Vercel AI SDK client responds to a tool-approval-request, it sends
+        the approval decision in the tool part's `approval` field. This method extracts
+        those responses and converts them to Pydantic AI's `DeferredToolResults` format.
+
+        Returns:
+            DeferredToolResults if any tool parts have approval responses, None otherwise.
+        """
+        return self.extract_deferred_tool_results(self.run_input.messages)
+
+    @classmethod
+    def extract_deferred_tool_results(cls, messages: Sequence[UIMessage]) -> DeferredToolResults | None:
+        """Extract deferred tool results from UI messages.
+
+        Args:
+            messages: The UI messages to scan for approval responses.
+
+        Returns:
+            DeferredToolResults if any tool parts have approval responses, None otherwise.
+        """
+        approvals: dict[str, bool | ToolApproved | ToolDenied] = {}
+
+        for msg in messages:
+            if msg.role != 'assistant':
+                continue
+
+            for part in msg.parts:
+                if not isinstance(part, ToolUIPart | DynamicToolUIPart):
+                    continue
+
+                approval = part.approval
+                if approval is None or not isinstance(approval, ToolApprovalResponded):
+                    continue
+
+                tool_call_id = part.tool_call_id
+                if approval.approved:
+                    approvals[tool_call_id] = ToolApproved()
+                else:
+                    approvals[tool_call_id] = ToolDenied(
+                        message=approval.reason or 'The tool call was denied.'
+                    )
+
+        if not approvals:
+            return None
+
+        return DeferredToolResults(approvals=approvals)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
