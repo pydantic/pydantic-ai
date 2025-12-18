@@ -857,6 +857,44 @@ def send_notification(user_id: str, message: str) -> bool:
     return True
 ```
 
+For nested tool arguments, `tool_args_descriptions` uses dot-separated paths based on the tool's parameters and
+their nested fields. This works even if the tool argument schema uses `$defs`/`$ref` internally.
+
+```python {title="tool_config_nested_example.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, PromptConfig, ToolConfig
+
+
+class SearchFilters(BaseModel):
+    language: str = Field(description='Language code, e.g. "en".')
+
+
+class SearchConfig(BaseModel):
+    filters: SearchFilters = Field(description='Filtering options for the search.')
+
+
+agent = Agent(
+    'openai:gpt-5',
+    prompt_config=PromptConfig(
+        tool_config={
+            'search': ToolConfig(
+                tool_args_descriptions={
+                    'query': 'Search query text.',
+                    'config.filters.language': 'ISO 639-1 language code to filter results by.',
+                }
+            )
+        }
+    ),
+)
+
+
+@agent.tool_plain
+def search(query: str, config: SearchConfig) -> list[str]:
+    """Search for documents."""
+    return []
+```
+
 You can also override `prompt_config` at runtime using the `prompt_config` parameter in the run methods,
 or temporarily using [`agent.override()`][pydantic_ai.Agent.override]:
 
