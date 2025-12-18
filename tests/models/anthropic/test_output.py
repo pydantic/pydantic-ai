@@ -12,7 +12,7 @@ Test organization:
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import httpx
 import pytest
@@ -34,6 +34,9 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 from ..test_anthropic import completion_message
+
+if TYPE_CHECKING:
+    ANTHROPIC_MODEL_FIXTURE = Callable[..., 'AnthropicModel']
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -229,9 +232,6 @@ def create_header_verification_hook(expect_beta: bool, test_name: str):
 
     verify_headers.errors = errors  # type: ignore[attr-defined]
     return verify_headers
-
-
-ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
 
 
 # =============================================================================

@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from functools import cache
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -18,7 +19,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-AnthropicModelFactory = Callable[..., AnthropicModel]
+if TYPE_CHECKING:
+    AnthropicModelFactory = Callable[..., AnthropicModel]
 
 
 # Model factory fixture for live API tests
@@ -27,10 +29,7 @@ def anthropic_model(anthropic_api_key: str) -> AnthropicModelFactory:
     """Factory to create Anthropic models with custom configuration."""
 
     @cache
-    def _create_model(
-        model_name: str,
-        api_key: str | None = None,
-    ) -> AnthropicModel:
+    def _create_model(model_name: str, api_key: str | None = None) -> AnthropicModel:
         """Create an AnthropicModel with the specified configuration.
 
         Args:

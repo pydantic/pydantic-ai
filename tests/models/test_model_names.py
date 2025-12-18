@@ -51,8 +51,6 @@ def vcr_config():  # pragma: lax no cover
     }
 
 
-
-
 def test_known_model_names():  # pragma: lax no cover
     _PROVIDER_TO_MODEL_NAMES = {
         'anthropic': AnthropicModelName,
