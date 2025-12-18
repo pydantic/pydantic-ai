@@ -11,7 +11,7 @@ repos:
       - id: check-added-large-files
         args:
           - --maxkb=1024 # 1MB
-          - --enforce-all
+          - --enforce-all # Allow to run in the whole source code, instead of only the changed files.
         # TODO(Marcelo): We should replace the kiwi.png file with a smaller one.
         exclude: |
           (?x)^(
