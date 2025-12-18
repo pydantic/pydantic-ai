@@ -48,13 +48,13 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
 """Default template for prompted output schema instructions."""
 
 
-def DEFAULT_VALIDATION_FEEDBACK(content: str | list[pydantic_core.ErrorDetails]) -> str:
+def default_validation_feedback(content: str | list[pydantic_core.ErrorDetails]) -> str:
     """Generate a default validation feedback message."""
     assert isinstance(content, str)
     return f'Validation feedback:\n{content}'
 
 
-def DEFAULT_VALIDATION_ERROR(content: str | list[pydantic_core.ErrorDetails]) -> str:
+def default_validation_error(content: str | list[pydantic_core.ErrorDetails]) -> str:
     """Generate a default validation error message from a list of Pydantic `ErrorDetails`."""
     from .messages import error_details_ta
 

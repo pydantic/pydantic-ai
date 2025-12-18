@@ -976,15 +976,15 @@ class RetryPromptPart:
             return self.retry_message
 
         # Default fallback when no template was applied
-        from .prompt_config import DEFAULT_MODEL_RETRY, DEFAULT_VALIDATION_ERROR, DEFAULT_VALIDATION_FEEDBACK
+        from .prompt_config import DEFAULT_MODEL_RETRY, default_validation_error, default_validation_feedback
 
         if isinstance(self.content, str):
             if self.tool_name is None:
-                description = DEFAULT_VALIDATION_FEEDBACK(self.content)
+                description = default_validation_feedback(self.content)
             else:
                 description = self.content
         else:
-            description = DEFAULT_VALIDATION_ERROR(self.content)
+            description = default_validation_error(self.content)
 
         return f'{description}\n\n{DEFAULT_MODEL_RETRY}'
 
