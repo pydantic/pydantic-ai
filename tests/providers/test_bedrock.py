@@ -17,8 +17,14 @@ with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
 
     from pydantic_ai.models.bedrock import LatestBedrockModelNames
-    from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES, BedrockModelProfile, BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
 
+if not imports_successful():
+    bedrock_geo_prefixes = ()
+else:
+    from pydantic_ai.providers.bedrock import BEDROCK_GEO_PREFIXES
+
+    bedrock_geo_prefixes = BEDROCK_GEO_PREFIXES
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
 
@@ -108,7 +114,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert unknown_model is None
 
 
-@pytest.mark.parametrize('prefix', BEDROCK_GEO_PREFIXES)
+@pytest.mark.parametrize('prefix', bedrock_geo_prefixes)
 def test_bedrock_provider_model_profile_all_geo_prefixes(env: TestEnv, prefix: str):
     """Test that all cross-region inference geo prefixes are correctly handled."""
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
