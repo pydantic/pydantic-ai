@@ -111,9 +111,7 @@ class ExaSearchTool:
         Returns:
             The search results with text content.
         """
-        text_config: bool | dict[str, int] = (
-            {'maxCharacters': self.max_characters} if self.max_characters else True
-        )
+        text_config: bool | dict[str, int] = {'maxCharacters': self.max_characters} if self.max_characters else True
         response = await self.client.search(  # pyright: ignore[reportUnknownMemberType]
             query,
             num_results=self.num_results,
