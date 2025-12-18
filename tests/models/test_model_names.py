@@ -51,24 +51,24 @@ def vcr_config():  # pragma: lax no cover
     }
 
 
-_PROVIDER_TO_MODEL_NAMES = {
-    'anthropic': AnthropicModelName,
-    'bedrock': BedrockModelName,
-    'cohere': CohereModelName,
-    'deepseek': DeepSeekModelName,
-    'google-gla': GoogleModelName,
-    'google-vertex': GoogleModelName,
-    'grok': GrokModelName,
-    'groq': GroqModelName,
-    'huggingface': HuggingFaceModelName,
-    'mistral': MistralModelName,
-    'moonshotai': MoonshotAIModelName,
-    'openai': OpenAIModelName,
-}
 
 
 def test_known_model_names():  # pragma: lax no cover
-    # Coverage seems to be misbehaving..?
+    _PROVIDER_TO_MODEL_NAMES = {
+        'anthropic': AnthropicModelName,
+        'bedrock': BedrockModelName,
+        'cohere': CohereModelName,
+        'deepseek': DeepSeekModelName,
+        'google-gla': GoogleModelName,
+        'google-vertex': GoogleModelName,
+        'grok': GrokModelName,
+        'groq': GroqModelName,
+        'huggingface': HuggingFaceModelName,
+        'mistral': MistralModelName,
+        'moonshotai': MoonshotAIModelName,
+        'openai': OpenAIModelName,
+    }
+
     def get_model_names(model_name_type: Any) -> Iterator[str]:
         for arg in get_args(model_name_type):
             if isinstance(arg, str):
