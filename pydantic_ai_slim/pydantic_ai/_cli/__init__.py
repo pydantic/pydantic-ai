@@ -122,12 +122,12 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
-def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
+def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     """Run the CLI and exit."""
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5') -> int:
+def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
@@ -180,8 +180,8 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
-
-    argcomplete.autocomplete(parser)
+    if 'pytest' not in sys.modules:
+        argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
     from .web import run_web_command
@@ -201,7 +201,14 @@ def _cli_chat(args_list: list[str], prog_name: str, default_model: str, qualifie
     """Handle the chat command (default)."""
     parser = argparse.ArgumentParser(
         prog=prog_name,
-        description=f'Pydantic AI CLI v{__version__}',
+        description=f"""\
+Pydantic AI CLI v{__version__}
+
+Commands:
+  web         Start a web-based chat interface for an agent
+
+Use "{prog_name} web --help" for more information on the web command.
+""",
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -237,8 +244,8 @@ def _cli_chat(args_list: list[str], prog_name: str, default_model: str, qualifie
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
-
-    argcomplete.autocomplete(parser)
+    if 'pytest' not in sys.modules:
+        argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
     console = Console()

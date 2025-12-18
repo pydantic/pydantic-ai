@@ -31,7 +31,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli ex
 
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
-    assert capfd.readouterr().out.startswith('pai - Pydantic AI CLI')
+    assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
@@ -141,7 +141,7 @@ def test_no_command_defaults_to_chat(mocker: MockerFixture):
 def test_list_models(capfd: CaptureFixture[str]):
     assert cli(['--list-models']) == 0
     output = capfd.readouterr().out.splitlines()
-    assert output[:3] == snapshot([IsStr(regex='pai - Pydantic AI CLI .*'), '', 'Available models:'])
+    assert output[:3] == snapshot([IsStr(regex='clai - Pydantic AI CLI .*'), '', 'Available models:'])
 
     providers = (
         'openai',
@@ -274,21 +274,21 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai')
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'pai')
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'clai')
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai')
 
 
 def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
