@@ -6,7 +6,6 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
 import pydantic_core
-from typing_extensions import assert_never
 
 from pydantic_ai.usage import RunUsage
 
@@ -127,7 +126,7 @@ class PromptTemplates:
     If `None`, uses the default: 'Tool not executed - a final result was already processed.'
     """
 
-    tool_call_denied: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
+    tool_denied: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
     """Message sent when a tool call is denied by an approval handler.
 
     If `None`, preserves the custom message from `ToolDenied` (or uses the default if none was set).
@@ -165,38 +164,23 @@ class PromptTemplates:
 
     def apply_template(self, message_part: ModelRequestPart, ctx: RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
-            template: str | Callable[[ToolReturnPart, RunContext[Any]], str] | None = None
-            if message_part.return_kind is None or message_part.return_kind == 'tool-executed':
-                # No template applied for normal tool execution or when return_kind is None
-                pass
-            elif message_part.return_kind == 'final-result-processed':
-                template = (
-                    self.final_result_processed or return_kind_to_default_prompt_template[message_part.return_kind]
-                )
-            elif message_part.return_kind == 'output-tool-not-executed':
-                template = (
-                    self.output_tool_not_executed or return_kind_to_default_prompt_template[message_part.return_kind]
-                )
-            elif message_part.return_kind == 'output-validation-failed':
-                template = (
-                    self.output_validation_failed or return_kind_to_default_prompt_template[message_part.return_kind]
-                )
-            elif message_part.return_kind == 'function-tool-not-executed':
-                template = (
-                    self.function_tool_not_executed or return_kind_to_default_prompt_template[message_part.return_kind]
-                )
-            elif message_part.return_kind == 'tool-denied':
-                if self.tool_call_denied is not None:
-                    message_part = self._apply_tool_template(message_part, ctx, self.tool_call_denied)
-            else:
-                assert_never(message_part.return_kind)
+            if message_part.return_kind in (None, 'tool-executed'):
+                return message_part
 
-            if template is not None:
-                message_part = self._apply_tool_template(message_part, ctx, template)
+            field_name = message_part.return_kind.replace('-', '_')
+            template = getattr(self, field_name, None)
+            # Map return_kind directly to template attribute name (e.g. 'final-result-processed' -> 'final_result_processed')
+
+            # Special case for tool-denied: only apply if template is explicitly set
+            if message_part.return_kind == 'tool-denied':
+                return self._apply_tool_template(message_part, ctx, template) if template else message_part
+
+            if template := template or return_kind_to_default_prompt_template.get(message_part.return_kind):
+                return self._apply_tool_template(message_part, ctx, template)
+
         elif isinstance(message_part, RetryPromptPart):
-            message_part = self._apply_retry_template(message_part, ctx)
-        # Other part types (UserPromptPart, SystemPromptPart, etc.) are returned unchanged
-        # as they don't have system-generated content that needs templating.
+            return self._apply_retry_template(message_part, ctx)
+
         return message_part
 
     def apply_template_message_history(self, _messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
@@ -328,7 +312,7 @@ class PromptConfig:
             output_tool_not_executed=DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
             output_validation_failed=DEFAULT_OUTPUT_VALIDATION_FAILED,
             function_tool_not_executed=DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
-            tool_call_denied=DEFAULT_TOOL_CALL_DENIED,
+            tool_denied=DEFAULT_TOOL_CALL_DENIED,
             validation_errors_retry=DEFAULT_MODEL_RETRY,
             model_retry_string_tool=DEFAULT_MODEL_RETRY,
             model_retry_string_no_tool=DEFAULT_MODEL_RETRY,

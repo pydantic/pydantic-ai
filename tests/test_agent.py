@@ -6779,7 +6779,7 @@ async def test_hitl_tool_approval():
     agent = Agent(
         model,
         output_type=[str, DeferredToolRequests],
-        prompt_config=PromptConfig(templates=PromptTemplates(tool_call_denied='Tool call denied custom message.')),
+        prompt_config=PromptConfig(templates=PromptTemplates(tool_denied='Tool call denied custom message.')),
     )
 
     @agent.tool_plain(requires_approval=True)
