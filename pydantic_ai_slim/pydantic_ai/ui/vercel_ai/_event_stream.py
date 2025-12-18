@@ -15,6 +15,7 @@ from ...messages import (
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
+    ProviderDetailsDelta,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -36,6 +37,7 @@ from .response_types import (
     FinishChunk,
     FinishReason,
     FinishStepChunk,
+    ProviderMetadata,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
     ReasoningStartChunk,
@@ -113,48 +115,60 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield ErrorChunk(error_text=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
+        provider_metadata = form_provider_metadata(id=part.id, provider_details=part.provider_details)
         if follows_text:
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
-            yield TextStartChunk(id=message_id)
+            yield TextStartChunk(id=message_id, provider_metadata=provider_metadata)
 
         if part.content:
-            yield TextDeltaChunk(id=message_id, delta=part.content)
+            yield TextDeltaChunk(id=message_id, delta=part.content, provider_metadata=provider_metadata)
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseChunk]:
         if delta.content_delta:  # pragma: no branch
-            yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta)
+            provider_metadata = form_provider_metadata(provider_details=delta.provider_details)
+            yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
         if not followed_by_text:
-            yield TextEndChunk(id=self.message_id)
+            provider_metadata = form_provider_metadata(id=part.id, provider_details=part.provider_details)
+            yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
         message_id = self.new_message_id()
-        yield ReasoningStartChunk(id=message_id)
+        provider_metadata = form_provider_metadata(
+            signature=part.signature,
+            provider_name=part.provider_name,
+            id=part.id,
+            provider_details=part.provider_details,
+        )
+        yield ReasoningStartChunk(id=message_id, provider_metadata=provider_metadata)
         if part.content:
-            yield ReasoningDeltaChunk(id=message_id, delta=part.content)
+            yield ReasoningDeltaChunk(id=message_id, delta=part.content, provider_metadata=provider_metadata)
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseChunk]:
         if delta.content_delta:  # pragma: no branch
-            yield ReasoningDeltaChunk(id=self.message_id, delta=delta.content_delta)
+            provider_metadata = form_provider_metadata(
+                provider_name=delta.provider_name,
+                signature=delta.signature_delta,
+                provider_details=delta.provider_details,
+            )
+            yield ReasoningDeltaChunk(
+                id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata
+            )
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
-        provider_metadata: dict[str, dict[str, Any]] | None = None
-        if part.signature is not None:
-            metadata: dict[str, Any] = {'signature': part.signature}
-            if part.provider_name is not None:
-                metadata['provider_name'] = part.provider_name
-            if part.provider_details is not None:
-                metadata['provider_details'] = part.provider_details
-            if part.id is not None:
-                metadata['id'] = part.id
-            provider_metadata = {'pydantic_ai': metadata}
+        provider_metadata = form_provider_metadata(
+            signature=part.signature,
+            provider_name=part.provider_name,
+            id=part.id,
+            provider_details=part.provider_details,
+        )
         yield ReasoningEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
@@ -188,7 +202,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(
-            tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args_as_dict()
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            input=part.args_as_dict(),
+            provider_metadata=form_provider_metadata(id=part.id, provider_details=part.provider_details),
         )
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
@@ -197,7 +214,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_name=part.tool_name,
             input=part.args_as_dict(),
             provider_executed=True,
-            provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
+            provider_metadata=form_provider_metadata(provider_name=part.provider_name),
         )
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
@@ -224,3 +241,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         output = part.model_response_object()
         # Unwrap the return value from the output dictionary if it exists
         return output.get('return_value', output)
+
+
+def form_provider_metadata(**kwargs: ProviderDetailsDelta | str) -> ProviderMetadata | None:
+    """Form provider metadata from keyword arguments."""
+    filtered = {k: v for k, v in kwargs.items() if v is not None}
+    return {'pydantic_ai': filtered} if filtered else None
