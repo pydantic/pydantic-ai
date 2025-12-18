@@ -74,6 +74,15 @@ def test_const_preserves_existing_type():
     assert transformed == snapshot({'enum': ['hello'], 'type': 'string'})
 
 
+def test_const_array_does_not_infer_type():
+    """When const is an array, type cannot be inferred and should not be added."""
+    schema = {'const': [1, 2, 3]}
+    transformer = GoogleJsonSchemaTransformer(schema)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot({'enum': [[1, 2, 3]]})
+
+
 def test_const_in_nested_object():
     """const should be properly converted in nested object properties."""
 
