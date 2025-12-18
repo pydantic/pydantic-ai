@@ -534,18 +534,26 @@ async def test_comprehensive_toolset_composition():
                 parameters_json_schema={
                     '$defs': {
                         'DoubleNestedArg': {
-                            'properties': {'c': {'type': 'string'}, 'd': {'type': 'string'}},
+                            'description': 'Deeply nested configuration.',
+                            'properties': {
+                                'c': {'description': 'The C parameter for deep config.', 'type': 'string'},
+                                'd': {'description': 'The D parameter for deep config.', 'type': 'string'},
+                            },
                             'required': ['c', 'd'],
                             'title': 'DoubleNestedArg',
                             'type': 'object',
                         },
                         'NestedArg': {
+                            'description': 'Nested configuration for a tool.',
                             'properties': {
-                                'a': {'type': 'string'},
+                                'a': {'description': 'The A parameter.', 'type': 'string'},
                                 'b': {'type': 'string', 'description': 'Nested b argument'},
-                                'arg': {'$ref': '#/$defs/DoubleNestedArg'},
+                                'nested': {
+                                    '$ref': '#/$defs/DoubleNestedArg',
+                                    'description': 'Nested deep configuration.',
+                                },
                             },
-                            'required': ['a', 'b', 'arg'],
+                            'required': ['a', 'b', 'nested'],
                             'title': 'NestedArg',
                             'type': 'object',
                         },

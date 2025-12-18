@@ -1766,14 +1766,12 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         content='Tool message',
                         tool_call_id='tool_call_1',
                         timestamp=IsDatetime(),
-                        return_kind='tool-executed',
                     ),
                     ToolReturnPart(
                         tool_name='tool_call_2',
                         content='Tool message',
                         tool_call_id='tool_call_2',
                         timestamp=IsDatetime(),
-                        return_kind='tool-executed',
                     ),
                     UserPromptPart(
                         content='User message',

@@ -825,21 +825,21 @@ from pydantic_ai import Agent, PromptConfig, ToolConfig
 agent = Agent(
     'openai:gpt-5',
     prompt_config=PromptConfig(
-        tool_config=ToolConfig(
-            tool_descriptions={
-                'search_database': 'Search the customer database for user records by name or email.',
-                'send_notification': 'Send an urgent notification to the user via their preferred channel.',
-            },
-            tool_args_descriptions={
-                'search_database': {
+        tool_config={
+            'search_database': ToolConfig(
+                tool_description='Search the customer database for user records by name or email.',
+                tool_args_descriptions={
                     'query': 'Search term to match against user names or email addresses.',
                 },
-                'send_notification': {
+            ),
+            'send_notification': ToolConfig(
+                tool_description='Send an urgent notification to the user via their preferred channel.',
+                tool_args_descriptions={
                     'user_id': 'The unique identifier of the user to notify.',
                     'message': 'The notification message content (max 500 characters).',
                 },
-            },
-        ),
+            ),
+        },
     ),
 )
 
