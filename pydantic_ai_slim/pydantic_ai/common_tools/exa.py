@@ -14,7 +14,7 @@ from pydantic_ai import FunctionToolset
 from pydantic_ai.tools import Tool
 
 try:
-    from exa_py import AsyncExa  # type: ignore[reportMissingImports]
+    from exa_py import AsyncExa
 except ImportError as _import_error:
     raise ImportError(
         'Please install `exa-py` to use the Exa tools, '
@@ -114,7 +114,7 @@ class ExaSearchTool:
         text_config: bool | dict[str, int] = (
             {'maxCharacters': self.max_characters} if self.max_characters else True
         )
-        response = await self.client.search(  # type: ignore[reportUnknownMemberType]
+        response = await self.client.search(  # pyright: ignore[reportUnknownMemberType]
             query,
             num_results=self.num_results,
             type=search_type,
@@ -123,13 +123,13 @@ class ExaSearchTool:
 
         return [
             ExaSearchResult(
-                title=result.title or '',  # type: ignore[reportUnknownMemberType]
-                url=result.url,  # type: ignore[reportUnknownMemberType]
-                published_date=result.published_date,  # type: ignore[reportUnknownMemberType]
-                author=result.author,  # type: ignore[reportUnknownMemberType]
-                text=result.text or '',  # type: ignore[reportUnknownMemberType]
+                title=result.title or '',
+                url=result.url,
+                published_date=result.published_date,
+                author=result.author,
+                text=result.text or '',
             )
-            for result in response.results  # type: ignore[reportUnknownMemberType]
+            for result in response.results
         ]
 
 
@@ -158,7 +158,7 @@ class ExaFindSimilarTool:
         Returns:
             Similar pages with text content.
         """
-        response = await self.client.find_similar(  # type: ignore[reportUnknownMemberType]
+        response = await self.client.find_similar(  # pyright: ignore[reportUnknownMemberType]
             url,
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
@@ -167,13 +167,13 @@ class ExaFindSimilarTool:
 
         return [
             ExaSearchResult(
-                title=result.title or '',  # type: ignore[reportUnknownMemberType]
-                url=result.url,  # type: ignore[reportUnknownMemberType]
-                published_date=result.published_date,  # type: ignore[reportUnknownMemberType]
-                author=result.author,  # type: ignore[reportUnknownMemberType]
-                text=result.text or '',  # type: ignore[reportUnknownMemberType]
+                title=result.title or '',
+                url=result.url,
+                published_date=result.published_date,
+                author=result.author,
+                text=result.text or '',
             )
-            for result in response.results  # type: ignore[reportUnknownMemberType]
+            for result in response.results
         ]
 
 
@@ -196,17 +196,17 @@ class ExaGetContentsTool:
         Returns:
             The content of each URL.
         """
-        response = await self.client.get_contents(urls, text=True)  # type: ignore[reportUnknownMemberType]
+        response = await self.client.get_contents(urls, text=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
 
         return [
             ExaContentResult(
-                url=result.url,  # type: ignore[reportUnknownMemberType]
-                title=result.title or '',  # type: ignore[reportUnknownMemberType]
-                text=result.text or '',  # type: ignore[reportUnknownMemberType]
-                author=result.author,  # type: ignore[reportUnknownMemberType]
-                published_date=result.published_date,  # type: ignore[reportUnknownMemberType]
+                url=result.url,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                title=result.title or '',  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                text=result.text or '',  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                author=result.author,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                published_date=result.published_date,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
             )
-            for result in response.results  # type: ignore[reportUnknownMemberType]
+            for result in response.results  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
         ]
 
 
@@ -229,17 +229,17 @@ class ExaAnswerTool:
         Returns:
             An answer with supporting citations from web sources.
         """
-        response = await self.client.answer(query, text=True)  # type: ignore[reportUnknownMemberType]
+        response = await self.client.answer(query, text=True)
 
         return ExaAnswerResult(
-            answer=response.answer,  # type: ignore[reportUnknownMemberType]
+            answer=response.answer,  # pyright: ignore[reportUnknownMemberType,reportArgumentType,reportAttributeAccessIssue]
             citations=[
                 {
-                    'url': citation.url,  # type: ignore[reportUnknownMemberType]
-                    'title': citation.title or '',  # type: ignore[reportUnknownMemberType]
-                    'text': citation.text or '',  # type: ignore[reportUnknownMemberType]
+                    'url': citation.url,  # pyright: ignore[reportUnknownMemberType]
+                    'title': citation.title or '',  # pyright: ignore[reportUnknownMemberType]
+                    'text': citation.text or '',  # pyright: ignore[reportUnknownMemberType]
                 }
-                for citation in response.citations  # type: ignore[reportUnknownMemberType]
+                for citation in response.citations  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType,reportAttributeAccessIssue]
             ],
         )
 
@@ -266,8 +266,8 @@ def exa_search_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
-    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
+        client = AsyncExa(api_key=api_key)
+    return Tool[Any](
         ExaSearchTool(
             client=client,
             num_results=num_results,
@@ -297,8 +297,8 @@ def exa_find_similar_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
-    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
+        client = AsyncExa(api_key=api_key)
+    return Tool[Any](
         ExaFindSimilarTool(client=client, num_results=num_results).__call__,
         name='exa_find_similar',
         description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
@@ -322,8 +322,8 @@ def exa_get_contents_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
-    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
+        client = AsyncExa(api_key=api_key)
+    return Tool[Any](
         ExaGetContentsTool(client=client).__call__,
         name='exa_get_contents',
         description='Gets the full text content of specified URLs. Useful for reading articles, documentation, or any web page when you have the exact URL.',
@@ -347,8 +347,8 @@ def exa_answer_tool(
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
-        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
-    return Tool[Any](  # type: ignore[reportUnknownArgumentType]
+        client = AsyncExa(api_key=api_key)
+    return Tool[Any](
         ExaAnswerTool(client=client).__call__,
         name='exa_answer',
         description='Generates an AI-powered answer to a question with citations from web sources. Returns a comprehensive answer backed by real sources.',
@@ -398,7 +398,7 @@ class ExaToolset(FunctionToolset):
             include_answer: Whether to include the answer tool. Defaults to True.
             id: Optional ID for the toolset, used for durable execution environments.
         """
-        client = AsyncExa(api_key=api_key)  # type: ignore[reportUnknownVariableType]
+        client = AsyncExa(api_key=api_key)
         tools: list[Tool[Any]] = []
 
         if include_search:
