@@ -121,12 +121,7 @@ def create_web_app(
                 status_code=502,
             )
 
-        return HTMLResponse(
-            content=content,
-            headers={
-                'Cache-Control': 'public, max-age=3600',
-            },
-        )
+        return HTMLResponse(content=content, headers={'Cache-Control': 'public, max-age=3600'})
 
     app.router.add_route('/', index, methods=['GET'])
     app.router.add_route('/{id}', index, methods=['GET'])
