@@ -5029,3 +5029,58 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
         }
     )
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
+
+
+async def test_google_stream_empty_chunk(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that empty chunks in the stream are ignored."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    # Chunk with NO content
+    empty_candidate = mocker.Mock(finish_reason=None, content=None)
+    empty_candidate.grounding_metadata = None
+    empty_candidate.url_context_metadata = None
+
+    chunk_empty = mocker.Mock(
+        candidates=[empty_candidate], model_version=model_name, usage_metadata=None, create_time=datetime.datetime.now()
+    )
+    chunk_empty.model_dump_json.return_value = '{}'
+
+    # Chunk WITH content (valid)
+    part_mock = mocker.Mock(
+        text='Hello',
+        thought=False,
+        function_call=None,
+        inline_data=None,
+        executable_code=None,
+        code_execution_result=None,
+    )
+    part_mock.thought_signature = None
+
+    valid_candidate = mocker.Mock(
+        finish_reason=GoogleFinishReason.STOP,
+        content=mocker.Mock(parts=[part_mock]),
+        grounding_metadata=None,
+        url_context_metadata=None,
+    )
+
+    chunk_valid = mocker.Mock(
+        candidates=[valid_candidate], model_version=model_name, usage_metadata=None, create_time=datetime.datetime.now()
+    )
+    chunk_valid.model_dump_json.return_value = '{"content": "Hello"}'
+
+    async def stream_iterator():
+        yield chunk_empty
+        yield chunk_valid
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    # Use run_stream to hit the mocked method
+    async with agent.run_stream('hello') as result:
+        output = await result.get_output()
+
+    assert output == 'Hello'

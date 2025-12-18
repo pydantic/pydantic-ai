@@ -3563,19 +3563,35 @@ response\
 
 
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
+    body = {
+        'error': {
+            'code': 'content_filter',
+            'message': 'The content was filtered.',
+            'innererror': {
+                'code': 'ResponsibleAIPolicyViolation',
+                'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+            },
+        }
+    }
+
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'content filter',
             response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
-            body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
+            body=body,
         )
     )
 
     m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
     agent = Agent(m)
 
-    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
+    try:
         agent.run_sync('bad prompt')
+    except ContentFilterError as e:
+        # Check that the exception was raised
+        assert "Content filter triggered. Finish reason: 'content_filter'" in str(e)
+        # Verify body contains the inner error details (serialized)
+        assert 'ResponsibleAIPolicyViolation' in str(e.body)
 
 
 def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None:
