@@ -1095,7 +1095,7 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match='An agent needs to have a `model` or `additional_models` in order to be used with Temporal, it cannot be set at agent run time.',
+        match="The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time.",
     ):
         TemporalAgent(Agent(name='test_agent'))
 
@@ -1408,7 +1408,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by ID.'
+                'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by ID.'
             ),
         ):
             await client.execute_workflow(
@@ -2446,7 +2446,7 @@ agent_selection = Agent(test_model_selection_1, name='multi_model_workflow_test'
 multi_model_selection_test_agent = TemporalAgent(
     agent_selection,
     name='multi_model_workflow_test',
-    additional_models={
+    models={
         'model_2': test_model_selection_2,
         'model_3': test_model_selection_3,
     },
@@ -2457,7 +2457,7 @@ agent_error = Agent(test_model_error_1, name='error_test')
 multi_model_error_test_agent = TemporalAgent(
     agent_error,
     name='error_test',
-    additional_models={'other': test_model_error_2},
+    models={'other': test_model_error_2},
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 
@@ -2489,12 +2489,12 @@ async def test_temporal_agent_multi_model_reserved_id():
         TemporalAgent(
             agent,
             name='reserved_id_test',
-            additional_models={'default': test_model2},
+            models={'default': test_model2},
         )
 
 
 async def test_temporal_agent_multi_model_duplicate_id():
-    """Test that duplicate model IDs in additional_models raise helpful errors."""
+    """Test that duplicate model IDs in models raise helpful errors."""
     from collections.abc import Mapping as MappingABC
 
     test_model1 = TestModel(custom_output_text='Model 1')
@@ -2527,7 +2527,7 @@ async def test_temporal_agent_multi_model_duplicate_id():
         TemporalAgent(
             agent,
             name='duplicate_id_test',
-            additional_models=DuplicateKeyMapping([('model_2', test_model2), ('model_2', test_model3)]),
+            models=DuplicateKeyMapping([('model_2', test_model2), ('model_2', test_model3)]),
         )
 
 
@@ -2577,7 +2577,7 @@ async def test_temporal_agent_multi_model_unregistered_error(allow_model_request
     ):
         with workflow_raises(
             UserError,
-            'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `additional_models` or reference a registered model by ID.',
+            'Unregistered model instances cannot be selected at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by ID.',
         ):
             await client.execute_workflow(
                 MultiModelWorkflowUnregistered.run,
@@ -2600,7 +2600,7 @@ async def test_temporal_agent_multi_model_outside_workflow():
     temporal_agent = TemporalAgent(
         agent,
         name='outside_workflow_test',
-        additional_models={'secondary': test_model2},
+        models={'secondary': test_model2},
     )
 
     # Outside workflow, should use default model
@@ -2617,7 +2617,7 @@ async def test_temporal_agent_multi_model_outside_workflow():
 
 
 async def test_temporal_agent_without_default_model():
-    """Test that a TemporalAgent can be created without a default model if additional_models is provided."""
+    """Test that a TemporalAgent can be created without a default model if models is provided."""
     test_model1 = TestModel(custom_output_text='Model 1 response')
     test_model2 = TestModel(custom_output_text='Model 2 response')
 
@@ -2626,7 +2626,7 @@ async def test_temporal_agent_without_default_model():
     temporal_agent = TemporalAgent(
         agent,
         name='no_default_model_test',
-        additional_models={
+        models={
             'primary': test_model1,
             'secondary': test_model2,
         },

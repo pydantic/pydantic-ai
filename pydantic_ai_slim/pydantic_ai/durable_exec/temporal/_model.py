@@ -83,7 +83,7 @@ class TemporalModel(WrapperModel):
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         event_stream_handler: EventStreamHandler[Any] | None = None,
-        model_instances: Mapping[str, Model] | None = None,
+        models_by_id: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
     ):
         super().__init__(model)
@@ -91,12 +91,13 @@ class TemporalModel(WrapperModel):
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
         self._model_id_var: ContextVar[str | None] = ContextVar('_temporal_model_id', default=None)
-        self._model_instances = dict(model_instances or {})
+        self._models_by_id = dict(models_by_id or {})
         self._provider_factory = provider_factory
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            model_for_request = self._resolve_model(params, deps)
+            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            model_for_request = self._resolve_model(params.model_id, run_context)
             return await model_for_request.request(
                 params.messages,
                 cast(ModelSettings | None, params.model_settings),
@@ -111,7 +112,7 @@ class TemporalModel(WrapperModel):
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-            model_for_request = self._resolve_model(params, deps)
+            model_for_request = self._resolve_model(params.model_id, run_context)
             async with model_for_request.request_stream(
                 params.messages,
                 cast(ModelSettings | None, params.model_settings),
@@ -231,20 +232,18 @@ class TemporalModel(WrapperModel):
     def _current_model_id(self) -> str | None:
         return self._model_id_var.get()
 
-    def _resolve_model(self, params: _RequestParams, deps: Any | None) -> Model:
-        model_id = params.model_id
+    def _resolve_model(self, model_id: str | None, run_context: RunContext[Any]) -> Model:
         if model_id is None:
             return self.wrapped
 
-        if model_id in self._model_instances:
-            return self._model_instances[model_id]
+        if model_id in self._models_by_id:
+            return self._models_by_id[model_id]
 
-        return self._infer_model(model_id, params, deps)  # pragma: lax no cover
+        return self._infer_model(model_id, run_context)  # pragma: lax no cover
 
-    def _infer_model(self, model_name: str, params: _RequestParams, deps: Any | None) -> Model:  # pragma: lax no cover
+    def _infer_model(self, model_name: str, run_context: RunContext[Any]) -> Model:  # pragma: lax no cover
         provider_factory = self._provider_factory
         if provider_factory is None:
             return models.infer_model(model_name)
 
-        run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
         return models.infer_model(model_name, provider_factory=functools.partial(provider_factory, run_context))

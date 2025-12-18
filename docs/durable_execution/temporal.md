@@ -163,11 +163,20 @@ Other than that, any agent and toolset will just work!
 
 ### Model Selection at Runtime
 
-By default, a `TemporalAgent` uses the model that was set on the wrapped agent. However, you can register additional models and select between them at runtime inside workflows using the `additional_models` parameter:
+By default, a `TemporalAgent` uses the model that was set on the wrapped agent. However, you can register additional models and select between them at runtime inside workflows using the `models` parameter.
+
+Inside workflows, you can reference models in four ways:
+
+1. **By registered name**: Pass the string key used in `models` (e.g., `model='fast'`)
+2. **By registered instance**: Pass a model instance that was registered via `models` or as the agent's default model
+3. **By provider string**: Pass a model string like `'openai:gpt-4.1'` which will be instantiated at runtime
+4. **By provider string with factory**: When a `provider_factory` is configured, provider strings are instantiated using your custom factory, allowing you to inject API keys or other configuration from deps
+
+Unregistered model instances cannot be used inside workflows because they cannot be serialized for Temporal's replay mechanism. If you need to use a specific model configuration, register it via `models` first.
+
+Here's a simple example showing how to register and use multiple models:
 
 ```python {title="multi_model_temporal.py" test="skip"}
-from typing import Any
-
 from temporalio import workflow
 
 from pydantic_ai import Agent
@@ -175,18 +184,60 @@ from pydantic_ai.durable_exec.temporal import TemporalAgent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers import Provider
-from pydantic_ai.tools import RunContext
 
 # Create models from different providers
-default_model = OpenAIChatModel('gpt-4o')
-fast_model = AnthropicModel('claude-3-5-haiku-latest')
-reasoning_model = GoogleModel('gemini-2.0-flash-thinking-exp')
+default_model = OpenAIResponsesModel('gpt-5.2')
+fast_model = AnthropicModel('claude-sonnet-4-5')
+reasoning_model = GoogleModel('gemini-3.0-pro')
 
 agent = Agent(default_model, name='multi_model_agent')
 
+temporal_agent = TemporalAgent(
+    agent,
+    models={
+        'fast': fast_model,
+        'reasoning': reasoning_model,
+    },
+)
 
-# Optional: provider factory for dynamic model configuration
+
+@workflow.defn
+class MultiModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, use_reasoning: bool, use_fast: bool) -> str:
+        if use_reasoning:
+            # Select by registered name
+            result = await temporal_agent.run(prompt, model='reasoning')
+        elif use_fast:
+            # Or pass the registered instance directly
+            result = await temporal_agent.run(prompt, model=fast_model)
+        else:
+            # Or pass a model string
+            result = await temporal_agent.run(prompt, model='openai:gpt-4.1-mini')
+        return result.output
+```
+
+#### Dynamic Model Configuration with Provider Factory
+
+For more advanced use cases where you need to configure models dynamically based on runtime context (e.g., injecting API keys from dependencies), you can use a `provider_factory`. This is particularly useful when you need to:
+
+- Use different API keys for different workflows
+- Configure model settings based on workflow parameters
+- Manage provider credentials centrally through dependencies
+
+Here's an example showing how to use a provider factory:
+
+```python {title="provider_factory_temporal.py" test="skip"}
+from typing import Any
+
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalAgent
+from pydantic_ai.providers import Provider
+from pydantic_ai.tools import RunContext
+
+
 def my_provider_factory(run_context: RunContext[dict[str, str]], provider_name: str) -> Provider[Any]:
     """Create providers with custom configuration based on run context."""
     api_key = run_context.deps.get(f'{provider_name}_api_key')
@@ -202,40 +253,22 @@ def my_provider_factory(run_context: RunContext[dict[str, str]], provider_name: 
         raise ValueError(f'Unknown provider: {provider_name}')
 
 
+agent = Agent('openai:gpt-4.1', name='dynamic_config_agent')
+
 temporal_agent = TemporalAgent(
     agent,
-    additional_models={
-        'fast': fast_model,
-        'reasoning': reasoning_model,
-    },
-    provider_factory=my_provider_factory,  # Optional: for dynamic model configuration
+    provider_factory=my_provider_factory,
 )
 
 
 @workflow.defn
-class MultiModelWorkflow:
+class DynamicConfigWorkflow:
     @workflow.run
-    async def run(self, prompt: str, use_reasoning: bool, use_fast: bool) -> str:
-        if use_reasoning:
-            # Select by registered name
-            result = await temporal_agent.run(prompt, model='reasoning')
-        elif use_fast:
-            # Or pass the registered instance directly
-            result = await temporal_agent.run(prompt, model=fast_model)
-        else:
-            # Or pass a model string with provider factory for dynamic configuration
-            result = await temporal_agent.run(prompt, model='openai:gpt-4o-mini')
+    async def run(self, prompt: str, model_string: str) -> str:
+        # Provider factory will be used to instantiate the model with custom config
+        result = await temporal_agent.run(prompt, model=model_string)
         return result.output
 ```
-
-Inside workflows, you can reference models in four ways:
-
-1. **By registered name**: Pass the string key used in `additional_models` (e.g., `model='fast'`)
-2. **By registered instance**: Pass a model instance that was registered via `additional_models` or as the agent's default model
-3. **By provider string**: Pass a model string like `'openai:gpt-4o'` which will be instantiated at runtime
-4. **By provider string with factory**: When a `provider_factory` is configured, provider strings are instantiated using your custom factory, allowing you to inject API keys or other configuration from deps
-
-Unregistered model instances cannot be used inside workflows because they cannot be serialized for Temporal's replay mechanism. If you need to use a specific model configuration, register it via `additional_models` first.
 
 ### Instructions Functions, Output Functions, and History Processors
 
