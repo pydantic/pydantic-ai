@@ -36,7 +36,7 @@ with try_import() as imports_successful:
 from ..test_anthropic import completion_message
 
 if TYPE_CHECKING:
-    ANTHROPIC_MODEL_FIXTURE = Callable[..., 'AnthropicModel']
+    ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
