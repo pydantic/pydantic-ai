@@ -293,7 +293,8 @@ assert_type(text_output_with_ctx, TextOutput[re.Pattern[str], int])
 Agent('test', output_type=text_output_with_ctx, deps_type=int)
 Agent('test', output_type=text_output_with_ctx, deps_type=bool)  # bool is subclass of int, works with contravariant
 # NOTE: The following don't produce type errors because _OutputSpecItem uses TextOutput[T_co, Any]
-# which erases the deps type constraint.
+# which erases the deps type constraint. This is a known limitation.
+# https://github.com/pydantic/pydantic-ai/pull/3732#discussion_r2628741424
 Agent('test', output_type=text_output_with_ctx, deps_type=str)
 Agent('test', output_type=text_output_with_ctx)
 
