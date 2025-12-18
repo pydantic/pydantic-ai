@@ -167,7 +167,8 @@ class NativeOutput(Generic[OutputDataT]):
     template: str | None
     """Template for the prompt passed to the model.
     The '{schema}' placeholder will be replaced with the output JSON schema.
-    If not specified, the default template specified on the model's profile will be used.
+    If not specified, the default template specified on the model's profile will be used only if `native_output_requires_schema_in_instructions` on the profile is True.
+    If explicitly provided, it's used regardless of `native_output_requires_schema_in_instructions`.
     """
 
     def __init__(

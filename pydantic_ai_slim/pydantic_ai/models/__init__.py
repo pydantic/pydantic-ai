@@ -685,7 +685,7 @@ class Model(ABC):
         # Set default prompted output template
         if (
             params.output_mode == 'prompted'
-            or (params.output_mode == 'native' and self.profile.inject_schema_instructions_in_native_mode)
+            or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
         ) and not params.prompted_output_template:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 

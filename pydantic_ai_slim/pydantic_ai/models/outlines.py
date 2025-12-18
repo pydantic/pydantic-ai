@@ -525,14 +525,6 @@ class OutlinesModel(Model):
             _provider_name='outlines',
         )
 
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        """Customize the model request parameters for the model."""
-        if model_request_parameters.output_mode in ('auto', 'native'):
-            # This way the JSON schema will be included in the instructions.
-            return replace(model_request_parameters, output_mode='prompted')
-        else:
-            return model_request_parameters
-
 
 @dataclass
 class OutlinesStreamedResponse(StreamedResponse):
