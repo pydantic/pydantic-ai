@@ -230,7 +230,7 @@ dataset = Dataset(
 
 ## Case-specific evaluators
 
-Case-specific evaluators are one of the most powerful features for building comprehensive evaluation suites. You can attach evaluators to individual [`Case`][pydantic_evals.Case] objects that only run for those specific cases:
+Case-specific evaluators are one of the most powerful features for building comprehensive evaluation suites. You can attach evaluators to individual [`Case`][pydantic_evals.dataset.Case] objects that only run for those specific cases:
 
 ```python
 from pydantic_evals import Case, Dataset

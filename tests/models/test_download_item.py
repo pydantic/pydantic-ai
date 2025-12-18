@@ -24,6 +24,22 @@ async def test_download_item_raises_user_error_with_gs_uri(
         _ = await download_item(url, data_format='bytes')
 
 
+@pytest.mark.parametrize(
+    'url',
+    (
+        pytest.param(AudioUrl(url='s3://my-bucket/audio.wav')),
+        pytest.param(DocumentUrl(url='s3://my-bucket/document.pdf')),
+        pytest.param(ImageUrl(url='s3://my-bucket/image.png')),
+        pytest.param(VideoUrl(url='s3://my-bucket/video.mp4')),
+    ),
+)
+async def test_download_item_raises_user_error_with_s3_uri(
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
+) -> None:
+    with pytest.raises(UserError, match='Downloading from protocol "s3://" is not supported.'):
+        _ = await download_item(url, data_format='bytes')
+
+
 async def test_download_item_raises_user_error_with_youtube_url() -> None:
     with pytest.raises(UserError, match='Downloading YouTube videos is not supported.'):
         _ = await download_item(VideoUrl(url='https://youtu.be/lCdaVNyHtjU'), data_format='bytes')
