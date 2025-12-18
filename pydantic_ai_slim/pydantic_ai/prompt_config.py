@@ -320,7 +320,7 @@ class PromptConfig:
     """
 
     @staticmethod
-    async def generate_prompt_config_from_agent(agent: Agent, model: Model) -> PromptConfig:
+    async def generate_prompt_config_from_agent(agent: Agent[Any, Any], model: Model) -> PromptConfig:
         """Generate a PromptConfig instance based on an Agent instance.
 
         This fills in per-tool metadata and default templates, producing a `PromptConfig` that can be
@@ -339,7 +339,7 @@ class PromptConfig:
             model_retry_string_tool=DEFAULT_MODEL_RETRY,
             model_retry_string_no_tool=DEFAULT_MODEL_RETRY,
             prompted_output_template=DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
-            description_template=None,  # No default description template should be picked as per the constraints of the model
+            description_template=None,
         )
 
         run_ctx = RunContext(deps=None, model=model, usage=RunUsage())

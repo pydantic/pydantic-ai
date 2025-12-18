@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Generic, Literal, TypeVar, Union
+from typing import Any, Generic, Literal, TypeVar, Union, cast
 
 import httpx
 import pytest
@@ -65,6 +65,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.messages import ReturnKind
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -391,9 +392,11 @@ Please fix these validation errors and try again.\
     # Covering the branch where retry prompt falls to the default template
     from pydantic_ai.prompt_config import DEFAULT_MODEL_RETRY
 
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
     templates = PromptTemplates(final_result_processed='test')  # Only set non-retry template
     retry_part_for_default = RetryPromptPart(content='error', tool_name='some_tool')
-    result_part = templates.apply_template(retry_part_for_default, None)  # type: ignore[arg-type]
+    result_part = templates.apply_template(retry_part_for_default, ctx)
     assert isinstance(result_part, RetryPromptPart)
     assert result_part.retry_message == f'error\n\n{DEFAULT_MODEL_RETRY}'
 
@@ -405,12 +408,16 @@ Please fix these validation errors and try again.\
         content='ignored',
         return_kind='final-result-processed',
     )
-    tool_result_part = PromptTemplates().apply_template(tool_return_part_for_default, None)  # type: ignore[arg-type]
+    tool_result_part = PromptTemplates().apply_template(tool_return_part_for_default, ctx)
     assert isinstance(tool_result_part, ToolReturnPart)
     assert tool_result_part.content == DEFAULT_FINAL_RESULT_PROCESSED
 
-    tool_return_part_no_template = ToolReturnPart(tool_name='final_result', content='unchanged', return_kind='custom')
-    assert PromptTemplates().apply_template(tool_return_part_no_template, None) is tool_return_part_no_template  # type: ignore[arg-type]
+    tool_return_part_no_template = ToolReturnPart(
+        tool_name='final_result',
+        content='unchanged',
+        return_kind=cast(ReturnKind, 'custom'),
+    )
+    assert PromptTemplates().apply_template(tool_return_part_no_template, ctx) is tool_return_part_no_template
 
 
 def test_prompt_config_string_and_override_prompt_config():
