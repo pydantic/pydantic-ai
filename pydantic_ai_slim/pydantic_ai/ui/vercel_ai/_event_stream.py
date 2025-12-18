@@ -103,8 +103,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield FinishChunk(finish_reason=self._finish_reason)
         yield DoneChunk()
 
-    async def handle_run_result(self, event: AgentRunResultEvent[OutputDataT]) -> AsyncIterator[BaseChunk]:
-        messages = event.result._state.message_history
+    async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
+        messages = event.result.all_messages()
         if messages and isinstance(messages[-1], ModelResponse):
             pydantic_reason = messages[-1].finish_reason
             if pydantic_reason:

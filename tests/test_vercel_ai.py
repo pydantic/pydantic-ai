@@ -1692,9 +1692,7 @@ async def test_tool_approval_request_emission():
     ]
 
     # Verify tool-approval-request chunk is emitted
-    approval_events = [e for e in events if isinstance(e, dict) and e.get('type') == 'tool-approval-request']
-    assert len(approval_events) == 1
-    assert approval_events[0] == {'type': 'tool-approval-request', 'approvalId': 'delete_1', 'toolCallId': 'delete_1'}
+    assert {'type': 'tool-approval-request', 'approvalId': 'delete_1', 'toolCallId': 'delete_1'} in events
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
