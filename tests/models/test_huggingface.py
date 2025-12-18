@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
-from huggingface_hub.errors import HfHubHTTPError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -60,6 +59,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputFunction,
         ChatCompletionStreamOutputUsage,
     )
+    from huggingface_hub.errors import HfHubHTTPError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -105,9 +105,9 @@ class MockHuggingFace:
         if stream or self.stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockStreamEvent], self.stream[self.index])))
+                response = MockAsyncStream(iter(cast(list['MockStreamEvent'], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[MockStreamEvent], self.stream)))
+                response = MockAsyncStream(iter(cast(list['MockStreamEvent'], self.stream)))
         else:
             assert self.completions is not None, 'you can only use `stream=False` if `completions` are provided'
             if isinstance(self.completions, Sequence):
