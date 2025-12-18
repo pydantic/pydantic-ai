@@ -1686,13 +1686,19 @@ async def test_tool_approval_request_emission():
     )
 
     adapter = VercelAIAdapter(agent, request)
-    events = [
+    events: list[str | dict[str, Any]] = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in adapter.encode_stream(adapter.run_stream())
     ]
 
-    # Verify tool-approval-request chunk is emitted
-    assert {'type': 'tool-approval-request', 'approvalId': 'delete_1', 'toolCallId': 'delete_1'} in events
+    # Verify tool-approval-request chunk is emitted with UUID approval_id
+    approval_event: dict[str, Any] | None = next(
+        (e for e in events if isinstance(e, dict) and e.get('type') == 'tool-approval-request'),
+        None,
+    )
+    assert approval_event is not None
+    assert approval_event['toolCallId'] == 'delete_1'
+    assert 'approvalId' in approval_event
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
