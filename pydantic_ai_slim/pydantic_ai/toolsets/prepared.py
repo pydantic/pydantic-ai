@@ -55,24 +55,22 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
             tool_info = tool_config[tool_name]
             original_tool_def = original_tools[tool_name].tool_def
 
-            # Deep copy the schema to avoid mutating the original
             parameters_json_schema = copy.deepcopy(original_tool_def.parameters_json_schema)
 
-            # Add support for tool_arg_descriptions
             if tool_arg_descriptions := tool_info.tool_args_descriptions:
                 for arg_name, description in tool_arg_descriptions.items():
                     nodes = arg_name.split('.')
-                    # If it is a top level parameter, nodes will be of length 1
                     total_nodes = len(nodes)
 
-                    # Reset to root for each arg_name
                     current_schema = parameters_json_schema
 
                     for index_of_node, node in enumerate(nodes):
                         if 'properties' not in current_schema or node not in current_schema['properties']:
-                            # If at any point the node is not in properties, we can't navigate further
-                            # Breaking rn, might need to raise error?
-                            break
+                            ref = current_schema.get('$ref', None)
+                            if ref:
+                                current_schema = parameters_json_schema['$defs'][ref.split('/')[-1]]
+                            else:  # Nothing to do here we have to bail out
+                                break
                         if index_of_node == total_nodes - 1:
                             # Last node - update the description
                             current_schema['properties'][node]['description'] = description

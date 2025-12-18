@@ -37,9 +37,15 @@ pytestmark = pytest.mark.anyio
 T = TypeVar('T')
 
 
+class DoubleNestedArg(BaseModel):
+    c: str
+    d: str
+
+
 class NestedArg(BaseModel):
     a: str
     b: str
+    arg: DoubleNestedArg
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
@@ -518,12 +524,22 @@ async def test_comprehensive_toolset_composition():
                 name='calc',
                 parameters_json_schema={
                     '$defs': {
+                        'DoubleNestedArg': {
+                            'properties': {'c': {'type': 'string'}, 'd': {'type': 'string'}},
+                            'required': ['c', 'd'],
+                            'title': 'DoubleNestedArg',
+                            'type': 'object',
+                        },
                         'NestedArg': {
-                            'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
-                            'required': ['a', 'b'],
+                            'properties': {
+                                'a': {'type': 'string'},
+                                'b': {'type': 'string', 'description': 'Nested b argument'},
+                                'arg': {'$ref': '#/$defs/DoubleNestedArg'},
+                            },
+                            'required': ['a', 'b', 'arg'],
                             'title': 'NestedArg',
                             'type': 'object',
-                        }
+                        },
                     },
                     'additionalProperties': False,
                     'properties': {
