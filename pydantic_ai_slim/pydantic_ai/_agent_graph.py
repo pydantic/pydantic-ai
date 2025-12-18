@@ -605,8 +605,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     # Check for content filter on empty response
                     if self.model_response.finish_reason == 'content_filter':
+                        details = self.model_response.provider_details or {}
+                        reason = details.get('finish_reason', 'content_filter')
+
+                        try:
+                            body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
+                        except Exception:
+                            body = str(self.model_response)
+
                         raise exceptions.ContentFilterError(
-                            f'Content filter triggered for model {self.model_response.model_name}'
+                            f"Content filter triggered. Finish reason: '{reason}'", body=body
                         )
 
                     # we got an empty response.

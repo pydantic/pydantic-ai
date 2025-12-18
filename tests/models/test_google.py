@@ -1002,7 +1002,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(
         ContentFilterError,
-        match='Content filter triggered for model gemini-1.5-flash',
+        match="Content filter triggered. Finish reason: 'SAFETY'",
     ):
         await agent.run('Tell me a joke about a Brazilians.')
 

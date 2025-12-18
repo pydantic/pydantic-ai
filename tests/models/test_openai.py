@@ -58,7 +58,7 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+    from openai import APIConnectionError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
@@ -82,6 +82,7 @@ with try_import() as imports_successful:
         OpenAISystemPromptRole,
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.ollama import OllamaProvider
@@ -3337,10 +3338,10 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
         )
     )
 
-    m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
     agent = Agent(m)
 
-    with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
+    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
         agent.run_sync('bad prompt')
 
 
@@ -3352,15 +3353,15 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
             body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
         )
     )
-    m = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    m = OpenAIResponsesModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
     agent = Agent(m)
 
-    with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
+    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
         agent.run_sync('bad prompt')
 
 
 async def test_openai_response_filter_error_sync(allow_model_requests: None):
-    """Test that ContentFilterError is raised when response is empty and finish_reason is content_filter."""
     c = completion_message(
         ChatCompletionMessage(content=None, role='assistant'),
     )
@@ -3371,14 +3372,14 @@ async def test_openai_response_filter_error_sync(allow_model_requests: None):
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ContentFilterError, match=r'Content filter triggered for model gpt-5-mini'):
+    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
         await agent.run('hello')
 
 
 async def test_openai_response_filter_with_partial_content(allow_model_requests: None):
     """Test that NO exception is raised if content is returned, even if finish_reason is content_filter."""
     c = completion_message(
-        ChatCompletionMessage(content='Partial content', role='assistant'),
+        ChatCompletionMessage(content='Partial', role='assistant'),
     )
     c.choices[0].finish_reason = 'content_filter'
 
@@ -3386,9 +3387,8 @@ async def test_openai_response_filter_with_partial_content(allow_model_requests:
     m = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    # Should NOT raise ContentFilterError
     result = await agent.run('hello')
-    assert result.output == 'Partial content'
+    assert result.output == 'Partial'
 
 
 def test_openai_400_non_content_filter(allow_model_requests: None) -> None:

@@ -558,7 +558,7 @@ async def test_central_content_filter_handling():
     model = FunctionModel(function=filtered_response, model_name='test-model')
     agent = Agent(model)
 
-    with pytest.raises(ContentFilterError, match='Content filter triggered for model test-model'):
+    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
         await agent.run('Trigger filter')
 
 

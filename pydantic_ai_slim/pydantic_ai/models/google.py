@@ -500,6 +500,9 @@ class GoogleModel(Model):
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
+            # Add safety ratings to provider details
+            if candidate.safety_ratings:
+                vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         if candidate.content is None or candidate.content.parts is None:

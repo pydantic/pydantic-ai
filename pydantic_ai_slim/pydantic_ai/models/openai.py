@@ -176,18 +176,17 @@ def _resolve_openai_image_generation_size(
     return mapped_size
 
 
-def _check_azure_content_filter(e: APIStatusError) -> bool:
-    """Check if the error is an Azure content filter error."""
-    if e.status_code == 400:
+def _check_azure_content_filter(e: APIStatusError, system: str) -> dict[str, Any] | None:
+    """Check if the error is an Azure content filter error. Returns inner error dict if match."""
+    if system == 'azure' and e.status_code == 400:
         body_any: Any = e.body
-
         if isinstance(body_any, dict):
             body_dict = cast(dict[str, Any], body_any)
-
             if (error := body_dict.get('error')) and isinstance(error, dict):
                 error_dict = cast(dict[str, Any], error)
-                return error_dict.get('code') == 'content_filter'
-    return False
+                if error_dict.get('code') == 'content_filter':
+                    return error_dict
+    return None
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -598,8 +597,8 @@ class OpenAIChatModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
-            if _check_azure_content_filter(e):
-                return chat.ChatCompletion(
+            if azure_error := _check_azure_content_filter(e, self.system):
+                resp = chat.ChatCompletion(
                     id='content_filter',
                     choices=[
                         chat.chat_completion.Choice(
@@ -612,6 +611,10 @@ class OpenAIChatModel(Model):
                     model=self.model_name,
                     object='chat.completion',
                 )
+                # Attach inner error details for _process_provider_details to pick up
+                if inner_error := azure_error.get('innererror'):
+                    setattr(resp, 'azure_content_filter_result', inner_error)
+                return resp
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -630,7 +633,11 @@ class OpenAIChatModel(Model):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        return _map_provider_details(response.choices[0])
+        details = _map_provider_details(response.choices[0])
+
+        if hasattr(response, 'azure_content_filter_result'):
+            details['content_filter_result'] = getattr(response, 'azure_content_filter_result')
+        return details
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -1460,7 +1467,7 @@ class OpenAIResponsesModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
-            if _check_azure_content_filter(e):
+            if _check_azure_content_filter(e, self.system):
                 return responses.Response(
                     id='content_filter',
                     model=self.model_name,
