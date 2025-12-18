@@ -1,11 +1,12 @@
 # Multi-agent Applications
 
-There are roughly four levels of complexity when building applications with Pydantic AI:
+There are roughly five levels of complexity when building applications with Pydantic AI:
 
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
 2. [Agent delegation](#agent-delegation) — agents using another agent via tools
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
 4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
+5. [Deep Agents](#deep-agents) — production-grade agents with planning, file operations, task delegation, and sandboxed code execution
 
 Of course, you can combine multiple strategies in a single application.
 
@@ -322,14 +323,23 @@ graph TB
 
 See the [graph](graph.md) documentation on when and how to use graphs.
 
+## Deep Agents
+
+Deep agents are production-grade autonomous agents that go beyond simple tool use. They combine multiple architectural patterns to handle complex, multi-step tasks reliably:
+
+- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on
+- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers
+- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues
+- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents
+- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits
+- **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion
+
+These patterns emerged from teams building production agents (like [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) and [Manus](https://manus.im/)) and discovering what actually works at scale.
+
+[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) implements these deep agent patterns for Pydantic AI. See the [toolsets documentation](toolsets.md#pydantic-deep) for usage examples and the [full demo application](https://github.com/vstorm-co/pydantic-deepagents/tree/main/examples/full_app) for a complete example with a chat interface, file uploads, skills, and streaming responses.
+
 ## Examples
 
-The following examples demonstrate how to use dependencies in Pydantic AI:
+The following examples demonstrate how to use multi-agent patterns in Pydantic AI:
 
 - [Flight booking](examples/flight-booking.md)
-
-## Community Frameworks
-
-For more advanced multi-agent scenarios with built-in toolsets, consider:
-
-- [Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) — A deep agent framework built on Pydantic AI with ready-to-use toolsets for task planning (`TodoToolset`), filesystem operations (`FilesystemToolset`), and subagent delegation (`SubAgentToolset`). See the [toolsets documentation](toolsets.md#pydantic-deep) for usage examples.
