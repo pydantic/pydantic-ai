@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing_extensions import Self
 
 from pydantic_ai import (
     AbstractToolset,
+    Agent,
     CombinedToolset,
     FilteredToolset,
     FunctionToolset,
@@ -26,7 +27,11 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.prompt_config import ToolConfig
+from pydantic_ai.prompt_config import (
+    DEFAULT_FINAL_RESULT_PROCESSED,
+    PromptConfig,
+    ToolConfig,
+)
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.prepared import ToolConfigPreparedToolset
@@ -38,14 +43,18 @@ T = TypeVar('T')
 
 
 class DoubleNestedArg(BaseModel):
-    c: str
-    d: str
+    """Deeply nested configuration."""
+
+    c: str = Field(description='The C parameter for deep config.')
+    d: str = Field(description='The D parameter for deep config.')
 
 
 class NestedArg(BaseModel):
-    a: str
-    b: str
-    arg: DoubleNestedArg
+    """Nested configuration for a tool."""
+
+    a: str = Field(description='The A parameter.')
+    b: str = Field(description='The B parameter.')
+    nested: DoubleNestedArg = Field(description='Nested deep configuration.')
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
@@ -895,3 +904,65 @@ async def test_dynamic_toolset_empty():
         assert tools == {}
 
         assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_generate_prompt_config_from_agent():
+    """Test generating a PromptConfig from an Agent - demonstrates optimizer workflow.
+
+    This test shows how an optimizer would:
+    1. Create an agent with tools (including nested BaseModel arguments)
+    2. Generate a complete PromptConfig with all defaults filled in
+    3. Use the generated config as a starting point for prompt optimization
+    """
+    # Create an agent with tools that have nested BaseModel arguments
+    agent: Agent[None, str] = Agent('test')
+
+    @agent.tool_plain
+    def calculate(
+        x: int,
+        y: int,
+        config: NestedArg,
+    ) -> str:
+        """Perform a calculation with configuration.
+
+        Args:
+            x: The first operand.
+            y: The second operand.
+            config: Configuration for the calculation.
+        """
+        return f'{x} + {y} with config {config}'  # pragma: no cover
+
+    @agent.tool_plain
+    def simple_tool(name: str) -> str:
+        """A simple tool with no nested args.
+
+        Args:
+            name: The name to greet.
+        """
+        return f'Hello {name}'  # pragma: no cover
+
+    model = TestModel()
+    generated_config = await PromptConfig.generate_prompt_config_from_agent(agent, model)
+
+    assert generated_config.templates is not None
+    templates = generated_config.templates
+
+    assert templates.final_result_processed == DEFAULT_FINAL_RESULT_PROCESSED
+
+    assert generated_config.tool_config is not None
+    tool_config = generated_config.tool_config
+
+    calc_config = tool_config['calculate']
+
+    assert calc_config.tool_args_descriptions == snapshot(
+        {
+            'x': 'The first operand.',
+            'y': 'The second operand.',
+            'config': 'Configuration for the calculation.',
+            'config.a': 'The A parameter.',
+            'config.b': 'The B parameter.',
+            'config.nested': 'Nested deep configuration.',
+            'config.nested.c': 'The C parameter for deep config.',
+            'config.nested.d': 'The D parameter for deep config.',
+        }
+    )

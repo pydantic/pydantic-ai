@@ -3,13 +3,19 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from textwrap import dedent
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pydantic_core
 from typing_extensions import assert_never
 
+from pydantic_ai.usage import RunUsage
+
 from ._run_context import RunContext
 from .messages import ModelMessage, ModelRequest, ModelRequestPart, RetryPromptPart, ToolReturnPart
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent import Agent
+    from pydantic_ai.models import Model
 
 # Default template strings - used when template field is None
 DEFAULT_FINAL_RESULT_PROCESSED = 'Final result processed.'
@@ -317,3 +323,110 @@ class PromptConfig:
                 'Use PromptConfig(templates=PromptTemplates()) for default template behavior, '
                 'or PromptConfig(tool_config=ToolConfig(...)) for tool customization.'
             )
+
+    @staticmethod
+    async def generate_prompt_config_from_agent(agent: Agent, model: Model) -> PromptConfig:
+        """Generate a PromptConfig instance based on an Agent instance.
+
+        The information we can find we will fill in, everything else can be None or defaults if any.
+
+        """
+        tool_config: dict[str, ToolConfig] = {}
+
+        prompt_templates: PromptTemplates = PromptTemplates(
+            final_result_processed=DEFAULT_FINAL_RESULT_PROCESSED,
+            output_tool_not_executed=DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
+            output_validation_failed=DEFAULT_OUTPUT_VALIDATION_FAILED,
+            function_tool_not_executed=DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
+            tool_call_denied=DEFAULT_TOOL_CALL_DENIED,
+            validation_errors_retry=DEFAULT_MODEL_RETRY,
+            model_retry_string_tool=DEFAULT_MODEL_RETRY,
+            model_retry_string_no_tool=DEFAULT_MODEL_RETRY,
+            prompted_output_template=DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
+            description_template=DEFAULT_VALIDATION_FEEDBACK,
+        )
+
+        run_ctx = RunContext(deps=None, model=model, usage=RunUsage())
+
+        toolsets = agent.toolsets
+        for toolset in toolsets:
+            tools = await toolset.get_tools(run_ctx)
+            for tool_name, toolset_tool in tools.items():
+                tool_def = toolset_tool.tool_def
+                config = ToolConfig(
+                    name=tool_name,
+                    tool_description=tool_def.description,
+                    strict=tool_def.strict,
+                    tool_args_descriptions=_convert_parameters_json_schema_to_dot_notation(
+                        tool_def.parameters_json_schema
+                    ),
+                )
+                tool_config[tool_name] = config
+
+        return PromptConfig(
+            tool_config=tool_config,
+            templates=prompt_templates,
+        )
+
+
+def _convert_parameters_json_schema_to_dot_notation(parameters_json_schema: dict[str, Any]) -> dict[str, str]:
+    """Convert a JSON schema's properties to dot notation with descriptions.
+
+    Handles both inline nested properties and `$ref` references to `$defs`.
+
+    Args:
+        parameters_json_schema: The JSON schema containing properties.
+
+    Returns:
+        A dict mapping dot-notation paths (e.g., 'user.profile.address') to their descriptions.
+    """
+    dot_notation_structure: dict[str, str] = {}
+    properties = parameters_json_schema.get('properties', {})
+    defs = parameters_json_schema.get('$defs', {})
+    _dfs('', properties, dot_notation_structure, defs)
+    return dot_notation_structure
+
+
+def _resolve_ref(ref: str, defs: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve a $ref path to its definition.
+
+    Args:
+        ref: The $ref string (e.g., '#/$defs/NestedArg').
+        defs: The $defs dictionary from the schema.
+
+    Returns:
+        The resolved definition dict, or None if not found.
+    """
+    # Expected format: '#/$defs/DefinitionName'
+    if ref.startswith('#/$defs/'):
+        def_name = ref[len('#/$defs/') :]
+        return defs.get(def_name)
+    return None
+
+
+def _dfs(
+    path: str,
+    properties: dict[str, Any],
+    dot_notation_structure: dict[str, str],
+    defs: dict[str, Any],
+) -> None:
+    """Recursively traverse properties and extract descriptions.
+
+    Handles both inline 'properties' and '$ref' references to '$defs'.
+    """
+    for key, value in properties.items():
+        new_path = f'{path}.{key}' if path else key
+
+        # Add the description if present
+        if 'description' in value:
+            dot_notation_structure[new_path] = value['description']
+
+        # Handle inline nested properties
+        if 'properties' in value:
+            _dfs(new_path, value['properties'], dot_notation_structure, defs)
+
+        # Handle $ref to $defs
+        elif '$ref' in value:
+            resolved_def = _resolve_ref(value['$ref'], defs)
+            if resolved_def and 'properties' in resolved_def:
+                _dfs(new_path, resolved_def['properties'], dot_notation_structure, defs)
