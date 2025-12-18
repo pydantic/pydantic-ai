@@ -103,12 +103,32 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
             parts = arg_path.split('.')
 
             for i, part in enumerate(parts):
-                # Resolve $ref if present
-                if (ref := current.get(_REF)) and isinstance(ref, str) and ref.startswith(_REF_PREFIX):
+                # Resolve $ref if present.
+                # We inline the definition to avoid modifying shared definitions in $defs
+                # and to handle chained references (A -> B -> C).
+                visited_refs: set[str] = set()
+                while (ref := current.get(_REF)) and isinstance(ref, str) and ref.startswith(_REF_PREFIX):
+                    if ref in visited_refs:
+                        raise UserError(f"Circular reference detected in schema at '{arg_path}': {ref}")
+                    visited_refs.add(ref)
+
                     def_name = ref[len(_REF_PREFIX) :]
                     if def_name not in defs:
                         raise UserError(f"Invalid path '{arg_path}' for tool '{tool_name}': undefined $ref '{ref}'.")
-                    current = defs[def_name]
+
+                    # Inline the definition: replace 'current' contents with the definition's contents
+                    # This ensures we don't mutate the shared definition in $defs
+                    # "sender": { "$ref": "#/$defs/User" }
+                    # "receiver": { "$ref": "#/$defs/User" }
+                    # We write to the 'sender' key itself and not the $defs key because we don't want to mutate the shared definition which is also used by receiver.
+                    #   "sender": {
+                    #     "description": "I CHANGED THIS!",
+                    #     # ... copy of other User fields ...
+                    # }
+
+                    target_def = defs[def_name]
+                    current.pop(_REF)
+                    current.update(copy.deepcopy(target_def))
 
                 props = current.get(_PROPERTIES, {})
                 if part not in props:
