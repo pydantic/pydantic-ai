@@ -232,7 +232,7 @@ class PromptTemplates:
             if message_part.tool_name is None:
                 # String content without tool context (e.g., output validator raising ModelRetry)
                 return _RetryTemplateInfo(
-                    description_template=self.description_template or DEFAULT_VALIDATION_FEEDBACK,
+                    description_template=self.description_template or default_validation_feedback,
                     retry_message_template=self.model_retry_string_no_tool or DEFAULT_MODEL_RETRY,
                 )
             else:
@@ -244,7 +244,7 @@ class PromptTemplates:
         else:
             # List of ErrorDetails (validation errors)
             return _RetryTemplateInfo(
-                description_template=self.description_template or DEFAULT_VALIDATION_ERROR,
+                description_template=self.description_template or default_validation_error,
                 retry_message_template=self.validation_errors_retry or DEFAULT_MODEL_RETRY,
             )
 
@@ -273,12 +273,10 @@ class PromptTemplates:
         else:
             # Fallback (shouldn't happen with proper template info)
             description = str(message_part.content)
+        if not isinstance(retry_message_template, str):
+            retry_message_template = retry_message_template(message_part, ctx)
 
-        # Render the retry message
-        if isinstance(retry_message_template, str):
-            retry_message = retry_message_template
-        else:
-            retry_message = retry_message_template(message_part, ctx)
+        retry_message = retry_message_template
 
         # Combine into the full retry message
         full_retry_message = f'{description}\n\n{retry_message}'
@@ -377,7 +375,7 @@ class PromptConfig:
             model_retry_string_tool=DEFAULT_MODEL_RETRY,
             model_retry_string_no_tool=DEFAULT_MODEL_RETRY,
             prompted_output_template=DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
-            description_template=DEFAULT_VALIDATION_FEEDBACK,
+            description_template=None,  # No default description template should be picked as per the constraints of the model
         )
 
         run_ctx = RunContext(deps=None, model=model, usage=RunUsage())
