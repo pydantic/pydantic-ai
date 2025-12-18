@@ -194,6 +194,8 @@ class PromptTemplates:
                 message_part = self._apply_tool_template(message_part, ctx, template)
         elif isinstance(message_part, RetryPromptPart):
             message_part = self._apply_retry_template(message_part, ctx, *self._get_template_for_retry(message_part))
+        # Other part types (UserPromptPart, SystemPromptPart, etc.) are returned unchanged
+        # as they don't have system-generated content that needs templating.
         return message_part
 
     def apply_template_message_history(self, _messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
@@ -280,10 +282,6 @@ class PromptConfig:
     This allows you to fully customize how your agent communicates with the model
     without modifying the underlying tool or agent code.
 
-    Note:
-        At least one of `templates` or `tool_config` must be provided. Creating a
-        `PromptConfig()` with no arguments will raise a `ValueError`.
-
     Example:
         ```python
         from pydantic_ai import Agent, PromptConfig, PromptTemplates
@@ -315,14 +313,6 @@ class PromptConfig:
     """Configuration for customizing tool descriptions and metadata, keyed by tool name.
     See [`ToolConfig`][pydantic_ai.ToolConfig] for available configuration options.
     """
-
-    def __post_init__(self):  # pragma: no cover
-        if self.templates is None and self.tool_config is None:
-            raise ValueError(
-                "PromptConfig requires at least 'templates' or 'tool_config' to be provided. "
-                'Use PromptConfig(templates=PromptTemplates()) for default template behavior, '
-                'or PromptConfig(tool_config=ToolConfig(...)) for tool customization.'
-            )
 
     @staticmethod
     async def generate_prompt_config_from_agent(agent: Agent, model: Model) -> PromptConfig:
@@ -410,6 +400,7 @@ def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any
 
     result: dict[str, str] = {}
     defs = parameters_json_schema.get(_DEFS, {})
+    visited: set[str] = set()
 
     def extract_from_properties(path: str, props: dict[str, Any]) -> None:
         """Recursively extract descriptions from properties."""
@@ -424,6 +415,10 @@ def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any
 
             elif _REF in value and value[_REF].startswith(_REF_PREFIX):
                 def_name = value[_REF][len(_REF_PREFIX) :]
+                # Guard against circular references to prevent infinite recursion
+                if def_name in visited:
+                    continue
+                visited.add(def_name)
                 referenced_def = defs.get(def_name, {})
                 if _PROPERTIES in referenced_def:
                     extract_from_properties(full_path, referenced_def[_PROPERTIES])

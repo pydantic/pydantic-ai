@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, replace
+from typing import Any
 
 from pydantic_ai.prompt_config import ToolConfig
 
@@ -48,37 +49,21 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
 
-        for tool_name in original_tools:
-            if tool_name not in self.tool_config:
+        # Start with a shallow copy to avoid mutating the parent's dict
+        result_tools = dict(original_tools)
+
+        # Iterate tool_config - skip tools that don't exist in this toolset
+        # (tool_config may be shared across multiple toolsets, e.g. function tools + output tools)
+        for tool_name, config in self.tool_config.items():
+            if tool_name not in original_tools:
                 continue
 
-            current_tool_config = self.tool_config[tool_name]
-            original_tool_def = original_tools[tool_name].tool_def
-
+            tool = original_tools[tool_name]
+            original_tool_def = tool.tool_def
             parameters_json_schema = copy.deepcopy(original_tool_def.parameters_json_schema)
 
-            if tool_arg_descriptions := current_tool_config.tool_args_descriptions:
-                for arg_name, description in tool_arg_descriptions.items():
-                    args = arg_name.split('.')
-                    total_args = len(args)
-
-                    current_schema = parameters_json_schema
-
-                    for index_of_arg, node in enumerate(args):
-                        if 'properties' not in current_schema or node not in current_schema['properties']:
-                            ref = current_schema.get('$ref', None)
-                            if ref:
-                                # Picking off the arg name from #/$defs/bar
-                                # We will navigate $defs to find this arg
-                                current_schema = parameters_json_schema['$defs'][ref.split('/')[-1]]
-                            else:  # Nothing to do here we have to bail out
-                                break
-                        if index_of_arg == total_args - 1:
-                            # Target node - update the description
-                            current_schema['properties'][node]['description'] = description
-                        else:
-                            # Navigate deeper into nested structure
-                            current_schema = current_schema['properties'][node]
+            if config.tool_args_descriptions:
+                self._update_arg_descriptions(parameters_json_schema, config.tool_args_descriptions, tool_name)
 
             updated_tool_def = replace(
                 original_tool_def,
@@ -86,14 +71,57 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
                 **{
                     k: v
                     for k, v in {
-                        'name': current_tool_config.name,
-                        'description': current_tool_config.tool_description,
-                        'strict': current_tool_config.strict,
+                        'name': config.name,
+                        'description': config.tool_description,
+                        'strict': config.strict,
                     }.items()
                     if v is not None
                 },
             )
 
-            original_tools[tool_name] = replace(original_tools[tool_name], tool_def=updated_tool_def)
+            updated_tool = replace(tool, tool_def=updated_tool_def)
 
-        return original_tools
+            # Handle renaming: remove old key if renamed, then add with final name
+            final_tool_name = config.name if config.name is not None else tool_name
+            if final_tool_name != tool_name:
+                del result_tools[tool_name]
+            result_tools[final_tool_name] = updated_tool
+
+        return result_tools
+
+    def _update_arg_descriptions(
+        self,
+        schema: dict[str, Any],
+        arg_descriptions: dict[str, str],
+        tool_name: str,
+    ) -> None:
+        """Update descriptions for argument paths in the JSON schema (modifies schema in place)."""
+        defs = schema.get('$defs', {})
+
+        for arg_path, description in arg_descriptions.items():
+            parts = arg_path.split('.')
+            current = schema
+
+            for i, part in enumerate(parts):
+                # Resolve $ref if present
+                if '$ref' in current:
+                    ref = current['$ref']
+                    if isinstance(ref, str) and ref.startswith('#/$defs/'):
+                        def_name = ref[len('#/$defs/') :]
+                        if def_name not in defs:
+                            raise UserError(
+                                f"Invalid path '{arg_path}' for tool '{tool_name}': undefined $ref '{ref}'."
+                            )
+                        current = defs[def_name]
+
+                props = current.get('properties', {})
+                if part not in props:
+                    raise UserError(
+                        f"Invalid path '{arg_path}' for tool '{tool_name}': "
+                        f"'{part}' not found. Available: {list(props.keys())}"
+                    )
+
+                if i == len(parts) - 1:
+                    props[part]['description'] = description
+                else:
+                    current = props[part]
