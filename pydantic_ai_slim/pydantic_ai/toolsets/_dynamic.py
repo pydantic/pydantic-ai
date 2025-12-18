@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Generic, TypeAlias
@@ -27,11 +26,7 @@ class _RunState(Generic[AgentDepsT]):
 
 
 class DynamicToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that dynamically builds a toolset using a function that takes the run context.
-
-    State is isolated per run using `ctx.run_id` as a key, allowing the same instance
-    to be safely reused across multiple agent runs.
-    """
+    """A toolset that dynamically builds a toolset using a function that takes the run context."""
 
     def __init__(
         self,
@@ -50,7 +45,7 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         self.toolset_func = toolset_func
         self.per_run_step = per_run_step
         self._id = id
-        self._run_state: dict[str, _RunState[AgentDepsT]] = defaultdict(_RunState)
+        self._run_state: _RunState[AgentDepsT] | None = None
 
     @property
     def id(self) -> str | None:
@@ -64,22 +59,31 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             and self._id == other._id
         )
 
+    def copy(self) -> DynamicToolset[AgentDepsT]:
+        """Create a copy of this toolset for use in a new agent run."""
+        return DynamicToolset(
+            self.toolset_func,
+            per_run_step=self.per_run_step,
+            id=self._id,
+        )
+
     async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         try:
             result = None
-            for run_state in self._run_state.values():
-                if run_state.toolset is not None:
-                    result = await run_state.toolset.__aexit__(*args)
+            if self._run_state is not None and self._run_state.toolset is not None:
+                result = await self._run_state.toolset.__aexit__(*args)
         finally:
-            self._run_state.clear()
+            self._run_state = None
         return result
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        assert ctx.run_id is not None
-        run_state = self._run_state[ctx.run_id]
+        if self._run_state is None:
+            self._run_state = _RunState()
+
+        run_state = self._run_state
 
         if run_state.toolset is None or (self.per_run_step and ctx.run_step != run_state.run_step):
             if run_state.toolset is not None:
@@ -103,37 +107,24 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        assert ctx.run_id is not None
-        run_state = self._run_state.get(ctx.run_id)
-        assert run_state is not None and run_state.toolset is not None
-        return await run_state.toolset.call_tool(name, tool_args, ctx, tool)
+        assert self._run_state is not None and self._run_state.toolset is not None
+        return await self._run_state.toolset.call_tool(name, tool_args, ctx, tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        wrapped_toolsets = [rs.toolset for rs in self._run_state.values() if rs.toolset is not None]
-        if not wrapped_toolsets:
+        if self._run_state is None or self._run_state.toolset is None:
             super().apply(visitor)
         else:
-            for toolset in wrapped_toolsets:
-                toolset.apply(visitor)
+            self._run_state.toolset.apply(visitor)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
-        wrapped_items = {run_id: rs for run_id, rs in self._run_state.items() if rs.toolset is not None}
-        if not wrapped_items:
+        if self._run_state is None or self._run_state.toolset is None:
             return super().visit_and_replace(visitor)
         else:
-            new_run_state: dict[str, _RunState[AgentDepsT]] = defaultdict(_RunState)
-            for run_id, run_state in wrapped_items.items():
-                assert run_state.toolset is not None
-                new_run_state[run_id] = _RunState(
-                    toolset=run_state.toolset.visit_and_replace(visitor),
-                    run_step=run_state.run_step,
-                )
-            new_toolset = DynamicToolset(
-                toolset_func=self.toolset_func,
-                per_run_step=self.per_run_step,
-                id=self._id,
+            new_toolset = self.copy()
+            new_toolset._run_state = _RunState(
+                toolset=self._run_state.toolset.visit_and_replace(visitor),
+                run_step=self._run_state.run_step,
             )
-            new_toolset._run_state = new_run_state
             return new_toolset

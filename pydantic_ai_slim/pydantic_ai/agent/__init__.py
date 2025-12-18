@@ -1408,6 +1408,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = CombinedToolset(toolsets)
 
+        def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            if isinstance(toolset, DynamicToolset):
+                return toolset.copy()
+            else:
+                return toolset
+
+        toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
+
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
