@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pydantic_core
 from typing_extensions import assert_never
@@ -72,6 +72,16 @@ return_kind_to_default_prompt_template: dict[str, str] = {
     'function-tool-not-executed': DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
     'tool-denied': DEFAULT_TOOL_CALL_DENIED,
 }
+
+
+class _RetryTemplateInfo(NamedTuple):
+    """Result of determining which templates to use for a retry prompt."""
+
+    description_template: Callable[[str | list[pydantic_core.ErrorDetails]], str] | None
+    """Template for formatting the description/error content."""
+
+    retry_message_template: str | Callable[[RetryPromptPart, RunContext[Any]], str]
+    """Template for the retry message appended after the description."""
 
 
 @dataclass
@@ -193,7 +203,10 @@ class PromptTemplates:
             if template is not None:
                 message_part = self._apply_tool_template(message_part, ctx, template)
         elif isinstance(message_part, RetryPromptPart):
-            message_part = self._apply_retry_template(message_part, ctx, *self._get_template_for_retry(message_part))
+            template_info = self._get_template_for_retry(message_part)
+            message_part = self._apply_retry_template(
+                message_part, ctx, template_info.description_template, template_info.retry_message_template
+            )
         # Other part types (UserPromptPart, SystemPromptPart, etc.) are returned unchanged
         # as they don't have system-generated content that needs templating.
         return message_part
@@ -209,26 +222,31 @@ class PromptTemplates:
             for message in _messages
         ]
 
-    def _get_template_for_retry(
-        self, message_part: RetryPromptPart
-    ) -> tuple[
-        None | Callable[[str | list[pydantic_core.ErrorDetails]], str],
-        str | Callable[[RetryPromptPart, RunContext[Any]], str],
-    ]:
-        # This is based on RetryPromptPart.model_response() implementation
-        # We follow the same structure here to populate the correct template
-        description_template: None | Callable[[str | list[pydantic_core.ErrorDetails]], str] = None
+    def _get_template_for_retry(self, message_part: RetryPromptPart) -> _RetryTemplateInfo:
+        """Determine which templates to use for a retry prompt.
+
+        This follows the same logic as RetryPromptPart.model_response() to select
+        the appropriate description and retry message templates based on content type.
+        """
         if isinstance(message_part.content, str):
             if message_part.tool_name is None:
-                template = self.model_retry_string_no_tool
-                description_template = self.description_template or DEFAULT_VALIDATION_FEEDBACK
+                # String content without tool context (e.g., output validator raising ModelRetry)
+                return _RetryTemplateInfo(
+                    description_template=self.description_template or DEFAULT_VALIDATION_FEEDBACK,
+                    retry_message_template=self.model_retry_string_no_tool or DEFAULT_MODEL_RETRY,
+                )
             else:
-                template = self.model_retry_string_tool
+                # String content from a tool (e.g., tool raising ModelRetry)
+                return _RetryTemplateInfo(
+                    description_template=None,
+                    retry_message_template=self.model_retry_string_tool or DEFAULT_MODEL_RETRY,
+                )
         else:
-            template = self.validation_errors_retry
-            description_template = self.description_template or DEFAULT_VALIDATION_ERROR
-
-        return (description_template, template or DEFAULT_MODEL_RETRY)
+            # List of ErrorDetails (validation errors)
+            return _RetryTemplateInfo(
+                description_template=self.description_template or DEFAULT_VALIDATION_ERROR,
+                retry_message_template=self.validation_errors_retry or DEFAULT_MODEL_RETRY,
+            )
 
     def _apply_retry_template(
         self,
