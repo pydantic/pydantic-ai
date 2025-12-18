@@ -782,8 +782,7 @@ You can also use callable functions for dynamic messages that have access to the
 and the [`RunContext`][pydantic_ai.RunContext]:
 
 ```python {title="prompt_templates_dynamic.py"}
-from pydantic_ai import Agent, PromptConfig, PromptTemplates
-from pydantic_ai import RunContext
+from pydantic_ai import Agent, PromptConfig, PromptTemplates, RunContext
 from pydantic_ai.messages import RetryPromptPart
 
 
@@ -826,8 +825,9 @@ This does not change the retry description when a tool raises `ModelRetry`: in t
 used directly as the description, and `tool_retry_prompt` controls the appended "retry" string.
 
 ```python {title="prompt_templates_description_template.py"}
-from pydantic_ai import Agent, PromptConfig, PromptTemplates
 from pydantic_core import ErrorDetails
+
+from pydantic_ai import Agent, PromptConfig, PromptTemplates
 
 
 def my_description_template(content: str | list[ErrorDetails]) -> str:
