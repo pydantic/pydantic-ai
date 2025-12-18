@@ -180,7 +180,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
-    if 'pytest' not in sys.modules:
+    if 'pytest' not in sys.modules:  # pragma: no cover
         argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
@@ -244,7 +244,7 @@ Use "{prog_name} web --help" for more information on the web command.
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
-    if 'pytest' not in sys.modules:
+    if 'pytest' not in sys.modules:  # pragma: no cover
         argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
