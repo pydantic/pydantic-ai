@@ -1,7 +1,7 @@
 """Minimal example to test SearchableToolset functionality.
 
 Run with: uv run python test_searchable_example.py
-Make sure you have ANTHROPIC_API_KEY set in your environment.
+Make sure you have OPENAI_API_KEY set in your environment.
 """
 
 import asyncio
@@ -20,7 +20,7 @@ logging.getLogger('asyncio').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore.connection').setLevel(logging.WARNING)
 logging.getLogger('httpcore.http11').setLevel(logging.WARNING)
-logging.getLogger('anthropic._base_client').setLevel(logging.WARNING)
+logging.getLogger('openai._base_client').setLevel(logging.WARNING)
 
 from pydantic_ai import Agent
 from pydantic_ai.toolsets import FunctionToolset
@@ -96,7 +96,7 @@ def list_database_tables() -> list[str]:
 
 # Create an agent with the searchable toolset
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'openai:gpt-4o',
     toolsets=[toolset],
     system_prompt=(
         "You are a helpful assistant."
