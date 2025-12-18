@@ -39,9 +39,8 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -3661,6 +3660,8 @@ def test_openai_400_non_dict_body(allow_model_requests: None) -> None:
         agent.run_sync('hello')
 
     assert exc_info.value.status_code == 400
+
+
 async def test_openai_chat_instructions_after_system_prompts(allow_model_requests: None):
     """Test that instructions are inserted after all system prompts in mapped messages."""
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
