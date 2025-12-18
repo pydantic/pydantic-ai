@@ -3466,6 +3466,46 @@ async def test_adapter_dump_messages_file_part_with_metadata():
     )
 
 
+async def test_adapter_load_messages_file_with_provider_metadata():
+    """Test loading FileUIPart with provider_metadata preserves id, provider_name, and provider_details."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                FileUIPart(
+                    url='data:image/png;base64,ZmlsZV9kYXRh',
+                    media_type='image/png',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'id': 'file_456',
+                            'provider_name': 'anthropic',
+                            'provider_details': {'source': 'generated'},
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    FilePart(
+                        content=BinaryImage(data=b'file_data', media_type='image/png', _identifier='cdd967'),
+                        id='file_456',
+                        provider_name='anthropic',
+                        provider_details={'source': 'generated'},
+                    )
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 async def test_adapter_dump_messages_builtin_tool_with_full_metadata():
     """Test dumping BuiltinToolCallPart with id, provider_name, and provider_details."""
     messages = [
@@ -3560,7 +3600,11 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='web_search', args={'query': 'test'}, tool_call_id='bt_load', provider_name='openai'
+                        tool_name='web_search',
+                        args={'query': 'test'},
+                        tool_call_id='bt_load',
+                        provider_details={'execution_time': 100},
+                        provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
