@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, TypeAlias
 
+from starlette.requests import Request
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
 MYPY = False
@@ -310,3 +312,12 @@ if not MYPY:
 partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
 assert_type(partial_agent, Agent[MyDeps, str])
 assert_type(partial_agent, Agent[MyDeps])
+
+req = Request({})
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test'))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test', deps_type=MyDeps), deps=MyDeps(foo=1, bar=2))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test', output_type=Foo))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test'), output_type=Foo)
+coro = VercelAIAdapter.dispatch_request(
+    req, agent=Agent('test', deps_type=MyDeps, output_type=Foo), deps=MyDeps(foo=1, bar=2)
+)
