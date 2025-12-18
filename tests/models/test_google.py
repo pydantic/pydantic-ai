@@ -4640,17 +4640,17 @@ async def test_thinking_with_tool_calls_from_other_model(
     'error_class,error_response,expected_status',
     [
         (
-            errors.ServerError,
+            'ServerError',
             {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}},
             503,
         ),
         (
-            errors.ClientError,
+            'ClientError',
             {'error': {'code': 400, 'message': 'Invalid request parameters', 'status': 'INVALID_ARGUMENT'}},
             400,
         ),
         (
-            errors.ClientError,
+            'ClientError',
             {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}},
             429,
         ),
@@ -4660,12 +4660,12 @@ async def test_google_api_errors_are_handled(
     allow_model_requests: None,
     google_provider: GoogleProvider,
     mocker: MockerFixture,
-    error_class: type[errors.APIError],
+    error_class: str,
     error_response: dict[str, Any],
     expected_status: int,
 ):
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    mocked_error = error_class(expected_status, error_response)
+    mocked_error = getattr(errors, error_class)(expected_status, error_response)
     mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
 
     agent = Agent(model=model)

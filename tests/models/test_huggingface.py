@@ -5,27 +5,10 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import Mock
 
-import aiohttp
 import pytest
-from huggingface_hub import (
-    AsyncInferenceClient,
-    ChatCompletionInputMessage,
-    ChatCompletionOutput,
-    ChatCompletionOutputComplete,
-    ChatCompletionOutputFunctionDefinition,
-    ChatCompletionOutputMessage,
-    ChatCompletionOutputToolCall,
-    ChatCompletionOutputUsage,
-    ChatCompletionStreamOutput,
-    ChatCompletionStreamOutputChoice,
-    ChatCompletionStreamOutputDelta,
-    ChatCompletionStreamOutputDeltaToolCall,
-    ChatCompletionStreamOutputFunction,
-    ChatCompletionStreamOutputUsage,
-)
 from huggingface_hub.errors import HfHubHTTPError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
@@ -50,8 +33,6 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models.huggingface import HuggingFaceModel
-from pydantic_ai.providers.huggingface import HuggingFaceProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -62,10 +43,30 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    pass
+    import aiohttp
+    from huggingface_hub import (
+        AsyncInferenceClient,
+        ChatCompletionInputMessage,
+        ChatCompletionOutput,
+        ChatCompletionOutputComplete,
+        ChatCompletionOutputFunctionDefinition,
+        ChatCompletionOutputMessage,
+        ChatCompletionOutputToolCall,
+        ChatCompletionOutputUsage,
+        ChatCompletionStreamOutput,
+        ChatCompletionStreamOutputChoice,
+        ChatCompletionStreamOutputDelta,
+        ChatCompletionStreamOutputDeltaToolCall,
+        ChatCompletionStreamOutputFunction,
+        ChatCompletionStreamOutputUsage,
+    )
 
-MockChatCompletion = ChatCompletionOutput | Exception
-MockStreamEvent = ChatCompletionStreamOutput | Exception
+    from pydantic_ai.models.huggingface import HuggingFaceModel
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+if TYPE_CHECKING:
+    MockChatCompletion = ChatCompletionOutput | Exception
+    MockStreamEvent = ChatCompletionStreamOutput | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),
