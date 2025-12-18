@@ -205,6 +205,7 @@ jobs:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
       RUN_LLAMA_CPP_TESTS: false
+      UV_FROZEN: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -220,9 +221,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --group dev
+      - run: uv sync --group dev --resolution lowest-direct --all-extras
 
-      - run: uv run mcp-run-python example --deps=numpy
+      - run: uv run --no-sync mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -232,9 +233,7 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: unset UV_FROZEN
-
-      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run --no-sync coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
