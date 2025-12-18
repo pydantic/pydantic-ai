@@ -218,7 +218,7 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --group dev --resolution lowest-direct --all-extras
+      - run: uv sync --resolution lowest-direct --all-extras
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
