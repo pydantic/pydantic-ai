@@ -152,7 +152,7 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
         parts = model_name.split('.')
         if len(parts) >= 3:
             geo_prefix = parts[0]
-            if geo_prefix not in BEDROCK_GEO_PREFIXES:  # pragma: no cover
+            if geo_prefix not in bedrock_geo_prefixes:  # pragma: no cover
                 missing_prefixes.add(geo_prefix)
 
     if missing_prefixes:  # pragma: no cover
