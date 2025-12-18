@@ -397,6 +397,21 @@ Please fix these validation errors and try again.\
     assert isinstance(result_part, RetryPromptPart)
     assert result_part.retry_message == f'error\n\n{DEFAULT_MODEL_RETRY}'
 
+    # Cover default template lookup for tool return parts + fall-through behavior
+    from pydantic_ai.prompt_config import DEFAULT_FINAL_RESULT_PROCESSED
+
+    tool_return_part_for_default = ToolReturnPart(
+        tool_name='final_result',
+        content='ignored',
+        return_kind='final-result-processed',
+    )
+    tool_result_part = PromptTemplates().apply_template(tool_return_part_for_default, None)  # type: ignore[arg-type]
+    assert isinstance(tool_result_part, ToolReturnPart)
+    assert tool_result_part.content == DEFAULT_FINAL_RESULT_PROCESSED
+
+    tool_return_part_no_template = ToolReturnPart(tool_name='final_result', content='unchanged', return_kind='custom')
+    assert PromptTemplates().apply_template(tool_return_part_no_template, None) is tool_return_part_no_template  # type: ignore[arg-type]
+
 
 def test_prompt_config_string_and_override_prompt_config():
     """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
@@ -2402,6 +2417,7 @@ def test_prompted_output():
 
 def test_prompted_output_with_template():
     def return_foo(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        assert _info.model_request_parameters.prompted_output_template == 'Prompt config template: {schema}'
         text = Foo(bar='baz').model_dump_json()
         return ModelResponse(parts=[TextPart(content=text)])
 
@@ -2410,7 +2426,13 @@ def test_prompted_output_with_template():
     class Foo(BaseModel):
         bar: str
 
-    agent = Agent(m, output_type=PromptedOutput(Foo, template='Gimme some JSON:'))
+    agent = Agent(
+        m,
+        output_type=PromptedOutput(Foo, template='Gimmeee some JSON:'),
+        prompt_config=PromptConfig(
+            templates=PromptTemplates(prompted_output_template='Prompt config template: {schema}')
+        ),
+    )
 
     result = agent.run_sync('What is the capital of Mexico?')
     assert result.output == snapshot(Foo(bar='baz'))

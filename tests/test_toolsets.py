@@ -15,6 +15,7 @@ from pydantic_ai import (
     AbstractToolset,
     Agent,
     CombinedToolset,
+    ExternalToolset,
     FilteredToolset,
     FunctionToolset,
     PrefixedToolset,
@@ -586,6 +587,78 @@ async def test_comprehensive_toolset_composition():
         ]
     )
 
+    partial_tool_config_with_incorrect_paths = {
+        'calc': ToolConfig(
+            tool_args_descriptions={
+                'x': 'First number',
+                'nonexistent': 'This path does not exist',
+            }
+        )
+    }
+
+    prepared_partial_incorrect = ToolConfigPreparedToolset(
+        partial_args_toolset, partial_tool_config_with_incorrect_paths
+    )
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Invalid path 'nonexistent' for tool 'calc': 'nonexistent' not found. Available properties: 'x', 'y', 'z', 'arg'"
+        ),
+    ):
+        await ToolManager[None](prepared_partial_incorrect).for_run_step(partial_context)
+
+    renamed_tool_config = {'calc': ToolConfig(name='calc_renamed')}
+    prepared_renamed = ToolConfigPreparedToolset(partial_args_toolset, renamed_tool_config)
+    toolset_renamed = await ToolManager[None](prepared_renamed).for_run_step(partial_context)
+    assert [t.name for t in toolset_renamed.tool_defs] == ['calc_renamed']
+
+    async def prepare_missing_ref(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        [tool_def] = tool_defs
+        return [
+            replace(
+                tool_def,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'arg': {'$ref': '#/$defs/Missing'}},
+                    '$defs': {},
+                },
+            )
+        ]
+
+    missing_ref_toolset = PreparedToolset(partial_args_toolset, prepare_missing_ref)
+    missing_ref_config = {'calc': ToolConfig(tool_args_descriptions={'arg.b': 'never applied'})}
+    with pytest.raises(
+        UserError,
+        match=re.escape("Invalid path 'arg.b' for tool 'calc': undefined $ref '#/$defs/Missing'."),
+    ):
+        await ToolManager[None](ToolConfigPreparedToolset(missing_ref_toolset, missing_ref_config)).for_run_step(
+            partial_context
+        )
+
+    async def prepare_circular_ref(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        [tool_def] = tool_defs
+        return [
+            replace(
+                tool_def,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'arg': {'$ref': '#/$defs/A'}},
+                    '$defs': {'A': {'$ref': '#/$defs/A'}},
+                },
+            )
+        ]
+
+    circular_ref_toolset = PreparedToolset(partial_args_toolset, prepare_circular_ref)
+    circular_ref_config = {'calc': ToolConfig(tool_args_descriptions={'arg.b': 'never applied'})}
+    with pytest.raises(
+        UserError,
+        match=re.escape("Circular reference detected in schema at 'arg.b': #/$defs/A"),
+    ):
+        await ToolManager[None](ToolConfigPreparedToolset(circular_ref_toolset, circular_ref_config)).for_run_step(
+            partial_context
+        )
+
 
 async def test_context_manager():
     try:
@@ -935,8 +1008,53 @@ async def test_generate_prompt_config_from_agent():
     2. Generate a complete PromptConfig with all defaults filled in
     3. Use the generated config as a starting point for prompt optimization
     """
+
+    class OutputModel(BaseModel):
+        result: str
+
     # Create an agent with tools that have nested BaseModel arguments
-    agent: Agent[None, str] = Agent('test')
+    schema_tool_def = ToolDefinition(
+        name='schema_tool',
+        description='Tool with custom schema for description extraction.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'inline': {
+                    'description': 'Inline root.',
+                    'properties': {'a': {'description': 'Inline child.'}},
+                },
+                'node': {
+                    'description': 'Node root.',
+                    '$ref': '#/$defs/Node',
+                },
+                'no_props': {
+                    '$ref': '#/$defs/NoProps',
+                },
+            },
+            '$defs': {
+                'Node': {
+                    'properties': {
+                        'child': {
+                            'description': 'Recursive child.',
+                            '$ref': '#/$defs/Node',
+                        }
+                    }
+                },
+                'NoProps': {'type': 'object'},
+            },
+        },
+    )
+    empty_schema_tool_def = ToolDefinition(
+        name='empty_schema_tool',
+        description='Tool with an empty schema.',
+        parameters_json_schema={'type': 'object'},
+    )
+
+    agent: Agent[None, OutputModel] = Agent(
+        'test',
+        output_type=OutputModel,
+        toolsets=[ExternalToolset(tool_defs=[schema_tool_def, empty_schema_tool_def])],
+    )
 
     @agent.tool_plain
     def calculate(
@@ -972,6 +1090,18 @@ async def test_generate_prompt_config_from_agent():
 
     assert generated_config.tool_config is not None
     tool_config = generated_config.tool_config
+    assert 'final_result' in tool_config
+
+    schema_tool_config = tool_config['schema_tool']
+    assert schema_tool_config.tool_args_descriptions == snapshot(
+        {
+            'inline': 'Inline root.',
+            'inline.a': 'Inline child.',
+            'node': 'Node root.',
+            'node.child': 'Recursive child.',
+        }
+    )
+    assert tool_config['empty_schema_tool'].tool_args_descriptions == {}
 
     calc_config = tool_config['calculate']
 
@@ -987,3 +1117,8 @@ async def test_generate_prompt_config_from_agent():
             'config.nested.d': 'The D parameter for deep config.',
         }
     )
+
+    # Cover the branch where the agent has no output toolset
+    agent_no_output: Agent[None, str] = Agent('test')
+    generated_config_no_output = await PromptConfig.generate_prompt_config_from_agent(agent_no_output, model)
+    assert generated_config_no_output.tool_config == {}
