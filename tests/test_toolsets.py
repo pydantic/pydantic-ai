@@ -547,7 +547,7 @@ async def test_comprehensive_toolset_composition():
                             'description': 'Nested configuration for a tool.',
                             'properties': {
                                 'a': {'description': 'The A parameter.', 'type': 'string'},
-                                'b': {'type': 'string', 'description': 'Nested b argument'},
+                                'b': {'type': 'string', 'description': 'The B parameter.'},
                                 'nested': {
                                     '$ref': '#/$defs/DoubleNestedArg',
                                     'description': 'Nested deep configuration.',
@@ -563,7 +563,20 @@ async def test_comprehensive_toolset_composition():
                         'x': {'type': 'integer', 'description': 'First number'},
                         'y': {'type': 'integer'},
                         'z': {'type': 'integer', 'description': 'Third number'},
-                        'arg': {'$ref': '#/$defs/NestedArg'},
+                        'arg': {
+                            'description': 'Nested configuration for a tool.',
+                            'properties': {
+                                'a': {'description': 'The A parameter.', 'type': 'string'},
+                                'b': {'description': 'Nested b argument', 'type': 'string'},
+                                'nested': {
+                                    '$ref': '#/$defs/DoubleNestedArg',
+                                    'description': 'Nested deep configuration.',
+                                },
+                            },
+                            'required': ['a', 'b', 'nested'],
+                            'title': 'NestedArg',
+                            'type': 'object',
+                        },
                     },
                     'required': ['x', 'y', 'z', 'arg'],
                     'type': 'object',
