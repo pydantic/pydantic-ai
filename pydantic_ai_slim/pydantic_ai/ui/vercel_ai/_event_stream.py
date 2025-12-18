@@ -13,7 +13,9 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
+    FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
+    ModelResponse,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -23,7 +25,8 @@ from ...messages import (
     ToolCallPartDelta,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...run import AgentRunResultEvent
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
 from .request_types import RequestData
 from .response_types import (
@@ -32,6 +35,7 @@ from .response_types import (
     ErrorChunk,
     FileChunk,
     FinishChunk,
+    FinishReason,
     FinishStepChunk,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
@@ -41,12 +45,22 @@ from .response_types import (
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
+    ToolApprovalRequestChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
     ToolInputStartChunk,
     ToolOutputAvailableChunk,
     ToolOutputErrorChunk,
 )
+
+# Map Pydantic AI finish reasons to Vercel AI format
+_FINISH_REASON_MAP: dict[PydanticFinishReason, FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'content_filter': 'content-filter',
+    'tool_call': 'tool-calls',
+    'error': 'error',
+}
 
 __all__ = ['VercelAIEventStream']
 
@@ -64,6 +78,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     """UI event stream transformer for the Vercel AI protocol."""
 
     _step_started: bool = False
+    _finish_reason: FinishReason = None
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -85,8 +100,24 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         yield FinishStepChunk()
 
-        yield FinishChunk()
+        yield FinishChunk(finish_reason=self._finish_reason)
         yield DoneChunk()
+
+    async def handle_run_result(self, event: AgentRunResultEvent[OutputDataT]) -> AsyncIterator[BaseChunk]:
+        messages = event.result._state.message_history
+        if messages and isinstance(messages[-1], ModelResponse):
+            pydantic_reason = messages[-1].finish_reason
+            if pydantic_reason:
+                self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason)
+
+        # Emit tool approval requests for deferred approvals
+        output = event.result.output
+        if isinstance(output, DeferredToolRequests):
+            for tool_call in output.approvals:
+                yield ToolApprovalRequestChunk(
+                    approval_id=tool_call.tool_call_id,
+                    tool_call_id=tool_call.tool_call_id,
+                )
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
         yield ErrorChunk(error_text=str(error))

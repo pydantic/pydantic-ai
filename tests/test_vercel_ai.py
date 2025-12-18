@@ -1039,7 +1039,7 @@ Want me to tailor\
             {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'stop'},
             '[DONE]',
         ]
     )
@@ -1649,6 +1649,52 @@ async def test_data_chunk_with_id_and_transient():
     # Verify the data chunks are present in the events with correct fields
     assert {'type': 'data-task', 'id': 'task-123', 'data': {'status': 'complete'}} in events
     assert {'type': 'data-progress', 'data': {'percent': 100}, 'transient': True} in events
+
+
+async def test_tool_approval_request_emission():
+    """Test that ToolApprovalRequestChunk is emitted when tools require approval."""
+    from pydantic_ai.tools import DeferredToolRequests
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='delete_file',
+                json_args='{"path": "test.txt"}',
+                tool_call_id='delete_1',
+            )
+        }
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return f'Deleted {path}'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Delete test.txt')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Verify tool-approval-request chunk is emitted
+    approval_events = [e for e in events if isinstance(e, dict) and e.get('type') == 'tool-approval-request']
+    assert len(approval_events) == 1
+    assert approval_events[0] == {'type': 'tool-approval-request', 'approvalId': 'delete_1', 'toolCallId': 'delete_1'}
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
