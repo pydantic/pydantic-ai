@@ -107,13 +107,13 @@ class PromptTemplates:
 
         # Using static strings
         templates = PromptTemplates(
-            validation_errors_retry='Please fix the validation errors.',
+            validation_errors_retry_prompt='Please fix the validation errors.',
             final_result_processed='Done!',
         )
 
         # Using callable for dynamic messages
         templates = PromptTemplates(
-            validation_errors_retry=lambda part, ctx: f'Retry #{ctx.retry}: Fix the errors.',
+            validation_errors_retry_prompt=lambda part, ctx: f'Retry #{ctx.retry}: Fix the errors.',
         )
 
         agent = Agent('openai:gpt-4o', prompt_config=PromptConfig(templates=templates))
@@ -148,20 +148,20 @@ class PromptTemplates:
     Set explicitly to override all denied tool messages.
     """
 
-    validation_errors_retry: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
+    validation_errors_retry_prompt: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
     """Message appended to validation errors when asking the model to retry.
 
     If `None`, uses the default: 'Fix the errors and try again.'
     """
 
-    model_retry_string_tool: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
-    """Message sent when a `ModelRetry` exception is raised from a tool.
+    tool_retry_prompt: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
+    """Message appended when a `ModelRetry` exception is raised from a tool.
 
     If `None`, uses the default: 'Fix the errors and try again.'
     """
 
-    model_retry_string_no_tool: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
-    """Message sent when a `ModelRetry` exception is raised outside of a tool context.
+    no_tool_retry_prompt: str | Callable[[RetryPromptPart, RunContext[Any]], str] | None = None
+    """Message appended when a `ModelRetry` exception is raised outside of a tool context.
 
     If `None`, uses the default: 'Fix the errors and try again.'
     """
@@ -228,16 +228,16 @@ class PromptTemplates:
                 # String without tool context (e.g., output validator raising ModelRetry)
                 description_template = self.description_template or default_validation_feedback
                 description = description_template(content)
-                retry_template = self.model_retry_string_no_tool or DEFAULT_MODEL_RETRY
+                retry_template = self.no_tool_retry_prompt or DEFAULT_MODEL_RETRY
             else:
                 # String from a tool - use content directly
                 description = content
-                retry_template = self.model_retry_string_tool or DEFAULT_MODEL_RETRY
+                retry_template = self.tool_retry_prompt or DEFAULT_MODEL_RETRY
         else:
             # List of ErrorDetails (validation errors)
             description_template = self.description_template or default_validation_error
             description = description_template(content)
-            retry_template = self.validation_errors_retry or DEFAULT_MODEL_RETRY
+            retry_template = self.validation_errors_retry_prompt or DEFAULT_MODEL_RETRY
 
         # Resolve callable if needed
         if callable(retry_template):
@@ -292,14 +292,14 @@ class PromptConfig:
         from pydantic_ai import Agent, PromptConfig, PromptTemplates
 
         agent = Agent(
-            'openai:gpt-4o',
-            prompt_config=PromptConfig(
-                templates=PromptTemplates(
-                    validation_errors_retry='Please correct the errors and try again.',
-                    final_result_processed='Result received successfully.',
-                ),
-            ),
-        )
+                    'openai:gpt-4o',
+                    prompt_config=PromptConfig(
+                        templates=PromptTemplates(
+                            validation_errors_retry_prompt='Please correct the errors and try again.',
+                            final_result_processed='Result received successfully.',
+                        ),
+                    ),
+                )
         ```
 
     Attributes:
@@ -335,9 +335,9 @@ class PromptConfig:
             output_validation_failed=DEFAULT_OUTPUT_VALIDATION_FAILED,
             function_tool_not_executed=DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
             tool_denied=DEFAULT_TOOL_CALL_DENIED,
-            validation_errors_retry=DEFAULT_MODEL_RETRY,
-            model_retry_string_tool=DEFAULT_MODEL_RETRY,
-            model_retry_string_no_tool=DEFAULT_MODEL_RETRY,
+            validation_errors_retry_prompt=DEFAULT_MODEL_RETRY,
+            tool_retry_prompt=DEFAULT_MODEL_RETRY,
+            no_tool_retry_prompt=DEFAULT_MODEL_RETRY,
             prompted_output_template=DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
             description_template=None,
         )

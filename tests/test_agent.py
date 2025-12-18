@@ -239,7 +239,7 @@ def test_result_pydantic_model_retry():
 
 
 def test_prompt_config_callable():
-    """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
+    """Test all prompt templates: validation_errors_retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
     def my_function_tool() -> str:  # pragma: no cover
         return 'function executed'
@@ -265,7 +265,7 @@ def test_prompt_config_callable():
         output_type=Foo,
         prompt_config=PromptConfig(
             templates=PromptTemplates(
-                validation_errors_retry=lambda part, ctx: 'Please fix these validation errors and try again.',
+                validation_errors_retry_prompt=lambda part, ctx: 'Please fix these validation errors and try again.',
                 final_result_processed=lambda part, ctx: f'Custom final result {part.content}',
                 output_tool_not_executed=lambda part, ctx: f'Custom output not executed: {part.tool_name}',
                 function_tool_not_executed=lambda part, ctx: f'Custom function not executed: {part.tool_name}',
@@ -421,7 +421,7 @@ Please fix these validation errors and try again.\
 
 
 def test_prompt_config_string_and_override_prompt_config():
-    """Test all prompt templates: validation_errors_retry, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
+    """Test all prompt templates: validation_errors_retry_prompt, final_result_processed, output_tool_not_executed, and function_tool_not_executed."""
 
     def my_function_tool() -> str:  # pragma: no cover
         return 'function executed'
@@ -447,7 +447,7 @@ def test_prompt_config_string_and_override_prompt_config():
         output_type=Foo,
         prompt_config=PromptConfig(
             templates=PromptTemplates(
-                validation_errors_retry='Custom retry message',
+                validation_errors_retry_prompt='Custom retry message',
                 final_result_processed='Custom final result',
                 output_tool_not_executed='Custom output not executed:',
                 function_tool_not_executed='Custom function not executed',
@@ -571,7 +571,9 @@ Custom retry message\
 
     # Verify prompt_config can be overridden
     with agent.override(
-        prompt_config=PromptConfig(templates=PromptTemplates(validation_errors_retry='Custom retry message override'))
+        prompt_config=PromptConfig(
+            templates=PromptTemplates(validation_errors_retry_prompt='Custom retry message override')
+        )
     ):
         result = agent.run_sync('Hello')
         assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
@@ -607,7 +609,7 @@ Custom retry message override""")
     agent_tool_retry = Agent(
         FunctionModel(model_with_tool_retry),
         output_type=str,
-        prompt_config=PromptConfig(templates=PromptTemplates(model_retry_string_tool='Custom tool retry message')),
+        prompt_config=PromptConfig(templates=PromptTemplates(tool_retry_prompt='Custom tool retry message')),
     )
 
     @agent_tool_retry.tool_plain
@@ -660,7 +662,7 @@ Custom tool retry message\
         ]
     )
 
-    # Test model_retry_string_no_tool template (RetryPromptPart with string content, no tool)
+    # Test no_tool_retry_prompt template (RetryPromptPart with string content, no tool)
     def model_with_no_tool_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('invalid')])
@@ -670,7 +672,7 @@ Custom tool retry message\
     agent_no_tool_retry = Agent(
         FunctionModel(model_with_no_tool_retry),
         output_type=str,
-        prompt_config=PromptConfig(templates=PromptTemplates(model_retry_string_no_tool='Custom no-tool retry')),
+        prompt_config=PromptConfig(templates=PromptTemplates(no_tool_retry_prompt='Custom no-tool retry')),
     )
 
     @agent_no_tool_retry.output_validator

@@ -1459,10 +1459,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
-        # Resolve tool_config from the prompt_config precedence chain:
-        # 1. Context override (agent.override(prompt_config=...))
-        # 2. Per-call parameter (agent.run(..., prompt_config=...))
-        # 3. Agent-level default (Agent(..., prompt_config=...))
         tool_config = (
             effective_prompt_config.tool_config
             if (effective_prompt_config := self._get_prompt_config(prompt_config))

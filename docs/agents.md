@@ -771,7 +771,7 @@ agent = Agent(
     'openai:gpt-5',
     prompt_config=PromptConfig(
         templates=PromptTemplates(
-            validation_errors_retry='Please correct the validation errors and try again.',
+            validation_errors_retry_prompt='Please correct the validation errors and try again.',
             final_result_processed='Result received successfully.',
         ),
     ),
@@ -794,7 +794,7 @@ agent = Agent(
     'openai:gpt-5',
     prompt_config=PromptConfig(
         templates=PromptTemplates(
-            validation_errors_retry=custom_retry_message,
+            validation_errors_retry_prompt=custom_retry_message,
         ),
     ),
 )
@@ -809,10 +809,39 @@ The available template fields in [`PromptTemplates`][pydantic_ai.PromptTemplates
 | `output_validation_failed` | Message when an output tool call is skipped because the output failed validation |
 | `function_tool_not_executed` | Message when a function tool call is skipped because a result was already found |
 | `tool_denied` | Message when a tool call is denied by an approval handler |
-| `validation_errors_retry` | Message appended to validation errors when asking the model to retry |
-| `model_retry_string_tool` | Message when a `ModelRetry` exception is raised from a tool |
-| `model_retry_string_no_tool` | Message when a `ModelRetry` exception is raised outside of a tool context |
+| `validation_errors_retry_prompt` | Message appended to validation errors when asking the model to retry |
+| `tool_retry_prompt` | Message appended when a `ModelRetry` exception is raised from a tool |
+| `no_tool_retry_prompt` | Message appended when a `ModelRetry` exception is raised outside of a tool context |
 | `prompted_output_template` | Template for prompted output schema instructions (uses `{schema}` placeholder) |
+| `description_template` | Template for the *description* portion of retry prompts |
+
+The [`PromptTemplates.description_template`][pydantic_ai.PromptTemplates] callable lets you customize the first part of
+the retry message (the "description"), for cases where Pydantic AI is generating validation feedback:
+
+- Validation errors (`list[pydantic_core.ErrorDetails]`) when asking the model to retry after a tool argument or output
+  validation failure.
+- A plain string when a `ModelRetry` is raised outside of a tool context (e.g. from an output validator).
+
+This does not change the retry description when a tool raises `ModelRetry`: in that case the tool's exception message is
+used directly as the description, and `tool_retry_prompt` controls the appended "retry" string.
+
+```python {title="prompt_templates_description_template.py"}
+from pydantic_ai import Agent, PromptConfig, PromptTemplates
+from pydantic_core import ErrorDetails
+
+
+def my_description_template(content: str | list[ErrorDetails]) -> str:
+    if isinstance(content, str):
+        return f'Please address this issue:\n{content}'
+    else:
+        return f'{len(content)} validation error(s); please fix them.'
+
+
+agent = Agent(
+    'openai:gpt-5',
+    prompt_config=PromptConfig(templates=PromptTemplates(description_template=my_description_template)),
+)
+```
 
 #### Customizing Tool Descriptions with ToolConfig
 
@@ -907,14 +936,14 @@ agent = Agent('openai:gpt-5')
 result = agent.run_sync(
     'Hello',
     prompt_config=PromptConfig(
-        templates=PromptTemplates(validation_errors_retry='Custom retry message for this run.')
+        templates=PromptTemplates(validation_errors_retry_prompt='Custom retry message for this run.')
     ),
 )
 
 # Or use agent.override() context manager
 with agent.override(
     prompt_config=PromptConfig(
-        templates=PromptTemplates(validation_errors_retry='Another custom message.')
+        templates=PromptTemplates(validation_errors_retry_prompt='Another custom message.')
     )
 ):
     result = agent.run_sync('Hello')
