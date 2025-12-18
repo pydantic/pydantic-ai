@@ -24,6 +24,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -44,16 +45,20 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import _resolve_openai_image_generation_size  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.models.openai import (
+    OpenAIResponsesModelSettings,
+    _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsFloat, IsInt, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
+    from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
@@ -78,6 +83,15 @@ pytestmark = [
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
+
+
+async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover
+    """Helper function to clean up OpenAI file search resources if they exist."""
+    if file is not None:
+        await async_client.files.delete(file.id)
+    if vector_store is not None:
+        await async_client.vector_stores.delete(vector_store.id)
+    await async_client.close()
 
 
 def test_openai_responses_model(env: TestEnv):
@@ -158,6 +172,12 @@ def test_openai_responses_image_generation_tool_aspect_ratio_conflicts_with_size
     tool = ImageGenerationTool(aspect_ratio='1:1', size='1536x1024')
 
     with pytest.raises(UserError, match='cannot combine `aspect_ratio` with a conflicting `size`'):
+        _resolve_openai_image_generation_size(tool)
+
+
+def test_openai_responses_image_generation_tool_unsupported_size_raises_error() -> None:
+    tool = ImageGenerationTool(size='2K')
+    with pytest.raises(UserError, match='OpenAI image generation only supports `size` values'):
         _resolve_openai_image_generation_size(tool)
 
 
@@ -1068,7 +1088,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content={
-                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'sources': [{'type': 'api', 'name': 'oai-weather'}],
                             'status': 'completed',
                         },
                         tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
@@ -1155,7 +1175,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'status': 'completed', 'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}]},
+                    content={'status': 'completed', 'sources': [{'type': 'api', 'name': 'oai-weather'}]},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -1249,7 +1269,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}], 'status': 'completed'},
+                    content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -1288,7 +1308,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content={
-                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'sources': [{'type': 'api', 'name': 'oai-weather'}],
                             'status': 'completed',
                         },
                         tool_call_id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
@@ -8122,6 +8142,471 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
 
 
 @pytest.mark.vcr()
+async def test_openai_responses_model_file_search_tool(allow_model_requests: None, openai_api_key: str):
+    import asyncio
+    import os
+    import tempfile
+
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.builtin_tools import FileSearchTool
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
+        test_file_path = f.name
+
+    file = None
+    vector_store = None
+    try:
+        with open(test_file_path, 'rb') as f:
+            file = await async_client.files.create(file=f, purpose='assistants')
+
+        vector_store = await async_client.vector_stores.create(name='test-file-search')
+        await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
+
+        await asyncio.sleep(2)
+
+        m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            m,
+            instructions='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+        )
+
+        result = await agent.run('What is the capital of France?')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['What is the capital of France?']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={'status': 'completed'},
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content='The capital of France is Paris.',
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=870, output_tokens=30, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        messages = result.all_messages()
+        result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
+        assert result.new_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Tell me about the Eiffel Tower.',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['Eiffel Tower']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={'status': 'completed'},
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content='The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves as an iconic symbol of the city.',
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=1188, output_tokens=55, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    finally:
+        os.unlink(test_file_path)
+        await _cleanup_openai_resources(file, vector_store, async_client)
+
+
+def test_map_file_search_tool_call():
+    from openai.types.responses.response_file_search_tool_call import ResponseFileSearchToolCall
+
+    from pydantic_ai.models.openai import _map_file_search_tool_call  # pyright: ignore[reportPrivateUsage]
+
+    item = ResponseFileSearchToolCall.model_validate(
+        {
+            'id': 'test-id',
+            'queries': ['test query'],
+            'status': 'completed',
+            'results': [
+                {
+                    'id': 'result-1',
+                    'title': 'Test Result',
+                    'url': 'https://example.com',
+                    'score': 0.9,
+                }
+            ],
+            'type': 'file_search_call',
+        }
+    )
+
+    call_part, return_part = _map_file_search_tool_call(item, 'openai')
+    assert (call_part, return_part) == snapshot(
+        (
+            BuiltinToolCallPart(
+                tool_name='file_search',
+                args={'queries': ['test query']},
+                tool_call_id='test-id',
+                provider_name='openai',
+            ),
+            BuiltinToolReturnPart(
+                tool_name='file_search',
+                content={
+                    'status': 'completed',
+                    'results': [
+                        {
+                            'attributes': None,
+                            'file_id': None,
+                            'filename': None,
+                            'id': 'result-1',
+                            'text': None,
+                            'title': 'Test Result',
+                            'url': 'https://example.com',
+                            'score': 0.9,
+                        }
+                    ],
+                },
+                tool_call_id='test-id',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+            ),
+        )
+    )
+
+
+@pytest.mark.vcr()
+async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
+    import asyncio
+    import os
+    import tempfile
+    from typing import Any
+
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.builtin_tools import FileSearchTool
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
+        test_file_path = f.name
+
+    file = None
+    vector_store = None
+    try:
+        with open(test_file_path, 'rb') as f:
+            file = await async_client.files.create(file=f, purpose='assistants')
+
+        vector_store = await async_client.vector_stores.create(name='test-file-search-stream')
+        await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
+
+        await asyncio.sleep(2)
+
+        m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            m,
+            instructions='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+        )
+
+        event_parts: list[Any] = []
+        async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            event_parts.append(event)
+
+        assert agent_run.result is not None
+        messages = agent_run.result.all_messages()
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['What is the capital of France?']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={'status': 'completed'},
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content='The capital of France is Paris.',
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=1177, output_tokens=37, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        assert event_parts == snapshot(
+            [
+                PartStartEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ),
+                PartDeltaEvent(
+                    index=0,
+                    delta=ToolCallPartDelta(
+                        args_delta={'queries': ['What is the capital of France?']},
+                        tool_call_id=IsStr(),
+                    ),
+                ),
+                PartEndEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'queries': ['What is the capital of France?']},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    ),
+                    next_part_kind='builtin-tool-return',
+                ),
+                PartStartEvent(
+                    index=1,
+                    part=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    previous_part_kind='builtin-tool-call',
+                ),
+                PartStartEvent(
+                    index=2,
+                    part=TextPart(content='The', id=IsStr()),
+                    previous_part_kind='builtin-tool-return',
+                ),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' capital')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' of')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' France')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' is')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' Paris')),
+                PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='.')),
+                PartEndEvent(
+                    index=2,
+                    part=TextPart(
+                        content='The capital of France is Paris.',
+                        id=IsStr(),
+                    ),
+                ),
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'queries': ['What is the capital of France?']},
+                        tool_call_id=IsStr(),
+                        provider_name='openai',
+                    )
+                ),
+                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                    result=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content={'status': 'completed'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    )
+                ),
+            ]
+        )
+
+    finally:
+        os.unlink(test_file_path)
+        await _cleanup_openai_resources(file, vector_store, async_client)
+
+
+@pytest.mark.vcr()
+async def test_openai_responses_model_file_search_tool_with_results(allow_model_requests: None, openai_api_key: str):
+    """Test that openai_include_file_search_results setting includes file search results in the response."""
+    import asyncio
+    import os
+    import tempfile
+
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.builtin_tools import FileSearchTool
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
+        test_file_path = f.name
+
+    file = None
+    vector_store = None
+    try:
+        with open(test_file_path, 'rb') as f:
+            file = await async_client.files.create(file=f, purpose='assistants')
+
+        vector_store = await async_client.vector_stores.create(name='test-file-search-with-results')
+        await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
+
+        await asyncio.sleep(2)
+
+        m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            m,
+            instructions='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+        )
+
+        # Use the openai_include_file_search_results setting to include search results
+        result = await agent.run(
+            'What is the capital of France?',
+            model_settings=OpenAIResponsesModelSettings(openai_include_file_search_results=True),
+        )
+
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='You are a helpful assistant.',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'queries': ['What is the capital of France?']},
+                            tool_call_id=IsStr(),
+                            provider_name='openai',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={
+                                'status': 'completed',
+                                'results': [
+                                    {
+                                        'attributes': {},
+                                        'file_id': IsStr(),
+                                        'filename': IsStr(),
+                                        'score': IsFloat(),
+                                        'text': 'Paris is the capital of France. It is known for the Eiffel Tower.',
+                                        'vector_store_id': IsStr(),
+                                    }
+                                ],
+                            },
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='openai',
+                        ),
+                        TextPart(
+                            content=IsStr(),
+                            id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt(), details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'completed'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    finally:
+        os.unlink(test_file_path)
+        await _cleanup_openai_resources(file, vector_store, async_client)
+
+
 async def test_openai_responses_runs_with_instructions_only(
     allow_model_requests: None,
     openai_api_key: str,
@@ -8136,3 +8621,135 @@ async def test_openai_responses_runs_with_instructions_only(
     assert result.output
     assert isinstance(result.output, str)
     assert len(result.output) > 0
+
+
+async def test_web_search_call_action_find_in_page(allow_model_requests: None):
+    """Test for https://github.com/pydantic/pydantic-ai/issues/3653"""
+    c1 = response_message(
+        [
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={
+                    'type': 'find_in_page',
+                    'pattern': 'test',
+                    'url': 'https://example.com',
+                },
+                status='completed',
+                type='web_search_call',
+            ),
+        ]
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('test')
+
+    assert result.all_messages()[1] == snapshot(
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'type': 'find_in_page', 'pattern': 'test', 'url': 'https://example.com'},
+                    tool_call_id='web-search-1',
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'status': 'completed'},
+                    tool_call_id='web-search-1',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ],
+            model_name='gpt-4o-123',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1',
+            provider_response_id='123',
+            run_id=IsStr(),
+        )
+    )
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[1]['input'][1] == snapshot(
+        {
+            'id': 'web-search-1',
+            'action': {'type': 'find_in_page', 'pattern': 'test', 'url': 'https://example.com'},
+            'status': 'completed',
+            'type': 'web_search_call',
+        }
+    )
+
+
+async def test_openai_responses_system_prompts_ordering(allow_model_requests: None):
+    """Test that system prompts are correctly ordered in mapped messages."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+                UserPromptPart(content='Hello'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    instructions, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # Verify instructions are returned separately
+    assert instructions == 'Instructions content'
+
+    # Verify system prompts are in order, followed by user message
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
+    )
+
+
+async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions='You are a helpful coding assistant.')
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='auto')
+
+    result = await agent.run(
+        'Write a Python function that calculates the factorial of a number. Think step by step.',
+        model_settings=settings,
+    )
+    assert result.response.thinking == snapshot("""\
+**Generating factorial function**
+
+I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
+""")

@@ -63,7 +63,13 @@ try:
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        LogfirePlugin,
+        PydanticAIPlugin,
+        PydanticAIWorkflow,
+        TemporalAgent,
+    )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -1249,6 +1255,91 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
             )
 
 
+def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
+    return msgs[1:] if len(msgs) > 1 else msgs
+
+
+agent_with_sync_history_processor = Agent(
+    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message]
+)
+temporal_agent_with_sync_history_processor = TemporalAgent(
+    agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncHistoryProcessorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_history_processor.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_history_processor(allow_model_requests: None, client: Client):
+    """Test that sync history processors work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync history processors to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncHistoryProcessorWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_history_processor)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncHistoryProcessorWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncHistoryProcessorWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+agent_with_sync_instructions = Agent(model, name='agent_with_sync_instructions')
+
+
+@agent_with_sync_instructions.instructions
+def sync_instructions_fn() -> str:
+    return 'You are a helpful assistant.'
+
+
+temporal_agent_with_sync_instructions = TemporalAgent(
+    agent_with_sync_instructions, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_instructions.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_instructions(allow_model_requests: None, client: Client):
+    """Test that sync instructions functions work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync instructions functions to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncInstructionsWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_instructions)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncInstructionsWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
 @workflow.defn
 class SimpleAgentWorkflowWithRunStream:
     @workflow.run
@@ -2361,3 +2452,53 @@ async def test_beta_graph_parallel_execution_in_workflow(client: Client):
         # Results can be in any order due to parallel execution
         # 10 * 2 = 20, 10 * 3 = 30, 10 * 4 = 40
         assert sorted(output) == [20, 30, 40]
+
+
+@workflow.defn
+class WorkflowWithAgents(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class WorkflowWithAgentsWithoutPydanticAIWorkflow:
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_passing_agents_through_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgents],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgents.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgents.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_passing_agents_through_workflow_without_pydantic_ai_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgentsWithoutPydanticAIWorkflow],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgentsWithoutPydanticAIWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgentsWithoutPydanticAIWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')

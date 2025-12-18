@@ -17,10 +17,14 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
+    AudioUrl,
+    BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -35,6 +39,7 @@ from pydantic_ai import (
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
@@ -52,12 +57,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsDatetime, IsSameStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
         AssistantMessage,
         BaseEvent,
+        BinaryInputContent,
         CustomEvent,
         DeveloperMessage,
         EventType,
@@ -66,6 +72,7 @@ with try_import() as imports_successful:
         RunAgentInput,
         StateSnapshotEvent,
         SystemMessage,
+        TextInputContent,
         Tool,
         ToolCall,
         ToolMessage,
@@ -103,19 +110,27 @@ def simple_result() -> Any:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'success '},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': '(no tool calls)',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -284,10 +299,15 @@ async def test_empty_messages() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': IsStr(),
                 'runId': IsStr(),
             },
-            {'type': 'RUN_ERROR', 'message': 'No message history, user prompt, or instructions provided'},
+            {
+                'type': 'RUN_ERROR',
+                'timestamp': IsInt(),
+                'message': 'No message history, user prompt, or instructions provided',
+            },
         ]
     )
 
@@ -410,41 +430,53 @@ async def test_tool_ag_ui() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather',
                 'parentMessageId': IsStr(),
             },
             {
                 'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
                 'toolCallId': tool_call_id,
                 'delta': '{"location": ',
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '"Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': '"Paris"}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': '{"get_weather": "Tool result"}',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -541,53 +573,67 @@ async def test_tool_ag_ui_multiple() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather',
                 'parentMessageId': (parent_message_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
                 'toolCallId': tool_call_id,
                 'delta': '{"location": "Paris"}',
             },
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather_parts',
                 'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
                 'toolCallId': tool_call_id,
                 'delta': '{"location": "',
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': '{"get_weather": "Tool result", "get_weather_parts": "Tool result"}',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -655,24 +701,28 @@ async def test_tool_ag_ui_parts() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather',
                 'parentMessageId': IsStr(),
             },
             {
                 'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
                 'toolCallId': tool_call_id,
                 'delta': '{"location":"',
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
                 'content': """\
@@ -682,32 +732,47 @@ Fix the errors and try again.\
 """,
                 'role': 'tool',
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': '{"get_weather": "Tool result"}',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': '{"get_weather": "Tool result"}',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -748,37 +813,47 @@ async def test_tool_local_single_event() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'send_snapshot',
                 'parentMessageId': IsStr(),
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
                 'content': '{"type":"STATE_SNAPSHOT","timestamp":null,"raw_event":null,"snapshot":{"key":"value"}}',
                 'role': 'tool',
             },
-            {'type': 'STATE_SNAPSHOT', 'snapshot': {'key': 'value'}},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'STATE_SNAPSHOT', 'timestamp': IsInt(), 'snapshot': {'key': 'value'}},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': """\
 data: {"type":"STATE_SNAPSHOT","snapshot":{"key":"value"}}
 
 """,
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -817,35 +892,45 @@ async def test_tool_local_multiple_events() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'send_custom',
                 'parentMessageId': IsStr(),
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
                 'content': 'Done',
                 'role': 'tool',
             },
-            {'type': 'CUSTOM', 'name': 'custom_event1', 'value': {'key1': 'value1'}},
-            {'type': 'CUSTOM', 'name': 'custom_event2', 'value': {'key2': 'value2'}},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'custom_event1', 'value': {'key1': 'value1'}},
+            {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'custom_event2', 'value': {'key2': 'value2'}},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': 'success send_custom called',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -885,33 +970,43 @@ async def test_tool_local_parts() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'current_time',
                 'parentMessageId': IsStr(),
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
                 'content': '2023-06-21T12:08:45.485981+00:00',
                 'role': 'tool',
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': 'success current_time called',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -951,37 +1046,54 @@ async def test_thinking() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'THINKING_START'},
-            {'type': 'THINKING_END'},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': "Let's do some thinking",
             },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': ' and some more',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
-            {'type': 'THINKING_START'},
-            {'type': 'THINKING_TEXT_MESSAGE_START'},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking '},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'about the weather'},
-            {'type': 'THINKING_TEXT_MESSAGE_END'},
-            {'type': 'THINKING_TEXT_MESSAGE_START'},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking about the meaning of life'},
-            {'type': 'THINKING_TEXT_MESSAGE_END'},
-            {'type': 'THINKING_TEXT_MESSAGE_START'},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking about the universe'},
-            {'type': 'THINKING_TEXT_MESSAGE_END'},
-            {'type': 'THINKING_END'},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking '},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'about the weather'},
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {
+                'type': 'THINKING_TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'delta': 'Thinking about the meaning of life',
+            },
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {
+                'type': 'THINKING_TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'delta': 'Thinking about the universe',
+            },
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -1074,31 +1186,36 @@ async def test_tool_local_then_ag_ui() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (first_tool_call_id := IsSameStr()),
                 'toolCallName': 'current_time',
                 'parentMessageId': (parent_message_id := IsSameStr()),
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': first_tool_call_id, 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': first_tool_call_id},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': first_tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': first_tool_call_id},
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (second_tool_call_id := IsSameStr()),
                 'toolCallName': 'get_weather',
                 'parentMessageId': parent_message_id,
             },
             {
                 'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
                 'toolCallId': second_tool_call_id,
                 'delta': '{"location": "Paris"}',
             },
-            {'type': 'TOOL_CALL_END', 'toolCallId': second_tool_call_id},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': second_tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': first_tool_call_id,
                 'content': '2023-06-21T12:08:45.485981+00:00',
@@ -1106,23 +1223,32 @@ async def test_tool_local_then_ag_ui() -> None:
             },
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': 'current time is 2023-06-21T12:08:45.485981+00:00 and the weather in Paris is bright and sunny',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -1298,26 +1424,43 @@ async def test_concurrent_runs() -> None:
     # Verify all runs completed successfully
     for i, events in enumerate(results):
         assert events == [
-            {'type': 'RUN_STARTED', 'threadId': f'test_thread_{i}', 'runId': (run_id := IsSameStr())},
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': f'test_thread_{i}',
+                'runId': (run_id := IsSameStr()),
+            },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': (tool_call_id := IsSameStr()),
                 'toolCallName': 'get_state',
                 'parentMessageId': IsStr(),
             },
-            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
                 'content': str(i),
                 'role': 'tool',
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': '{"get_s'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'tate":' + str(i) + '}'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
-            {'type': 'RUN_FINISHED', 'threadId': f'test_thread_{i}', 'runId': run_id},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': '{"get_s'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'tate":' + str(i) + '}',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': f'test_thread_{i}', 'runId': run_id},
         ]
 
 
@@ -1422,7 +1565,7 @@ async def test_callback_async() -> None:
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
-async def test_messages() -> None:
+async def test_messages(image_content: BinaryContent, document_content: BinaryContent) -> None:
     messages = [
         SystemMessage(
             id='msg_1',
@@ -1439,6 +1582,32 @@ async def test_messages() -> None:
         UserMessage(
             id='msg_4',
             content='User message',
+        ),
+        UserMessage(
+            id='msg_1',
+            content=[
+                TextInputContent(text='this is an image:'),
+                BinaryInputContent(url=image_content.data_uri, mime_type=image_content.media_type),
+            ],
+        ),
+        UserMessage(
+            id='msg2',
+            content=[BinaryInputContent(url='http://example.com/image.png', mime_type='image/png')],
+        ),
+        UserMessage(
+            id='msg3',
+            content=[BinaryInputContent(url='http://example.com/video.mp4', mime_type='video/mp4')],
+        ),
+        UserMessage(
+            id='msg4',
+            content=[BinaryInputContent(url='http://example.com/audio.mp3', mime_type='audio/mpeg')],
+        ),
+        UserMessage(
+            id='msg5',
+            content=[BinaryInputContent(url='http://example.com/doc.pdf', mime_type='application/pdf')],
+        ),
+        UserMessage(
+            id='msg6', content=[BinaryInputContent(data=document_content.base64, mime_type=document_content.media_type)]
         ),
         AssistantMessage(
             id='msg_5',
@@ -1523,6 +1692,48 @@ async def test_messages() -> None:
                     ),
                     UserPromptPart(
                         content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=['this is an image:', image_content],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='http://example.com/image.png', _media_type='image/png', media_type='image/png'
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            VideoUrl(
+                                url='http://example.com/video.mp4', _media_type='video/mp4', media_type='video/mp4'
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            AudioUrl(
+                                url='http://example.com/audio.mp3', _media_type='audio/mpeg', media_type='audio/mpeg'
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            DocumentUrl(
+                                url='http://example.com/doc.pdf',
+                                _media_type='application/pdf',
+                                media_type='application/pdf',
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[document_content],
                         timestamp=IsDatetime(),
                     ),
                 ]
@@ -1627,34 +1838,54 @@ async def test_builtin_tool_call() -> None:
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': 'pyd_ai_builtin|function|search_1',
                 'toolCallName': 'web_search',
                 'parentMessageId': IsStr(),
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '{"query":'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '"Hello world"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': 'pyd_ai_builtin|function|search_1'},
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'delta': '{"query":',
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'delta': '"Hello world"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'pyd_ai_builtin|function|search_1'},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'pyd_ai_builtin|function|search_1',
                 'content': '{"results":[{"title":"\\"Hello, World!\\" program","url":"https://en.wikipedia.org/wiki/%22Hello,_World!%22_program"}]}',
                 'role': 'tool',
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
                 'messageId': message_id,
                 'delta': 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". ',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -1687,17 +1918,24 @@ async def test_event_stream_back_to_back_text():
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Hello'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Goodbye'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Goodbye'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -1811,33 +2049,52 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         [
             {
                 'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Hello'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': 'tool_call_1',
                 'toolCallName': 'tool_call_1',
                 'parentMessageId': message_id,
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_1', 'delta': '{}'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_1', 'delta': '{"query": "Hello world"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_1'},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'tool_call_1', 'delta': '{}'},
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'tool_call_1',
+                'delta': '{"query": "Hello world"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'tool_call_1'},
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': 'tool_call_2',
                 'toolCallName': 'tool_call_2',
                 'parentMessageId': message_id,
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_2', 'delta': '{}'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_2', 'delta': '{"query": "Goodbye world"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_2'},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'tool_call_2', 'delta': '{}'},
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'tool_call_2',
+                'delta': '{"query": "Goodbye world"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'tool_call_2'},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'tool_call_1',
                 'content': 'Hi!',
@@ -1845,6 +2102,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
             },
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': (result_message_id := IsSameStr()),
                 'toolCallId': 'tool_call_2',
                 'content': 'Bye!',
@@ -1852,24 +2110,37 @@ async def test_event_stream_multiple_responses_with_tool_calls():
             },
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': 'tool_call_3',
                 'toolCallName': 'tool_call_3',
                 'parentMessageId': (new_message_id := IsSameStr()),
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_3', 'delta': '{}'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_3', 'delta': '{"query": "Hello world"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_3'},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'tool_call_3', 'delta': '{}'},
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'tool_call_3',
+                'delta': '{"query": "Hello world"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'tool_call_3'},
             {
                 'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
                 'toolCallId': 'tool_call_4',
                 'toolCallName': 'tool_call_4',
                 'parentMessageId': new_message_id,
             },
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_4', 'delta': '{}'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'tool_call_4', 'delta': '{"query": "Goodbye world"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': 'tool_call_4'},
+            {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'tool_call_4', 'delta': '{}'},
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'tool_call_4',
+                'delta': '{"query": "Goodbye world"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'tool_call_4'},
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'tool_call_3',
                 'content': 'Hi!',
@@ -1877,6 +2148,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
             },
             {
                 'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'tool_call_4',
                 'content': 'Bye!',
@@ -1884,6 +2156,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
             },
             {
                 'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
@@ -1891,6 +2164,56 @@ async def test_event_stream_multiple_responses_with_tool_calls():
     )
 
     assert result_message_id != new_message_id
+
+
+async def test_timestamps_are_set():
+    """Test that all AG-UI events have timestamps set."""
+    agent = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        )
+    )
+
+    events = await run_and_collect_events(agent, run_input)
+
+    # All events should have timestamps
+    for event in events:
+        assert 'timestamp' in event, f'Event {event["type"]} missing timestamp'
+        assert isinstance(event['timestamp'], int), (
+            f'Event {event["type"]} timestamp should be int, got {type(event["timestamp"])}'
+        )
+        assert event['timestamp'] > 0, f'Event {event["type"]} timestamp should be positive'
+
+
+async def test_tool_returns_event_with_timestamp_preserved():
+    """Test that tools can return BaseEvents with pre-set timestamps that are preserved."""
+    custom_timestamp = 1234567890000
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='get_status',
+                content='Status retrieved',
+                tool_call_id='call_1',
+                metadata=CustomEvent(name='status_update', value={'status': 'ok'}, timestamp=custom_timestamp),
+            )
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Check status'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    custom_event = next((e for e in events if e.get('type') == 'CUSTOM'), None)
+    assert custom_event is not None
+    assert custom_event['timestamp'] == custom_timestamp
 
 
 async def test_handle_ag_ui_request():
@@ -1940,6 +2263,7 @@ async def test_handle_ag_ui_request():
                 'type': 'http.response.body',
                 'body': {
                     'type': 'RUN_STARTED',
+                    'timestamp': IsInt(),
                     'threadId': (thread_id := IsSameStr()),
                     'runId': (run_id := IsSameStr()),
                 },
@@ -1949,6 +2273,7 @@ async def test_handle_ag_ui_request():
                 'type': 'http.response.body',
                 'body': {
                     'type': 'TEXT_MESSAGE_START',
+                    'timestamp': IsInt(),
                     'messageId': (message_id := IsSameStr()),
                     'role': 'assistant',
                 },
@@ -1958,6 +2283,7 @@ async def test_handle_ag_ui_request():
                 'type': 'http.response.body',
                 'body': {
                     'type': 'TEXT_MESSAGE_CONTENT',
+                    'timestamp': IsInt(),
                     'messageId': message_id,
                     'delta': 'success ',
                 },
@@ -1967,6 +2293,7 @@ async def test_handle_ag_ui_request():
                 'type': 'http.response.body',
                 'body': {
                     'type': 'TEXT_MESSAGE_CONTENT',
+                    'timestamp': IsInt(),
                     'messageId': message_id,
                     'delta': '(no ',
                 },
@@ -1976,6 +2303,7 @@ async def test_handle_ag_ui_request():
                 'type': 'http.response.body',
                 'body': {
                     'type': 'TEXT_MESSAGE_CONTENT',
+                    'timestamp': IsInt(),
                     'messageId': message_id,
                     'delta': 'tool ',
                 },
@@ -1985,6 +2313,7 @@ async def test_handle_ag_ui_request():
                 'type': 'http.response.body',
                 'body': {
                     'type': 'TEXT_MESSAGE_CONTENT',
+                    'timestamp': IsInt(),
                     'messageId': message_id,
                     'delta': 'calls)',
                 },
@@ -1992,13 +2321,14 @@ async def test_handle_ag_ui_request():
             },
             {
                 'type': 'http.response.body',
-                'body': {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+                'body': {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
                 'more_body': True,
             },
             {
                 'type': 'http.response.body',
                 'body': {
                     'type': 'RUN_FINISHED',
+                    'timestamp': IsInt(),
                     'threadId': thread_id,
                     'runId': run_id,
                 },

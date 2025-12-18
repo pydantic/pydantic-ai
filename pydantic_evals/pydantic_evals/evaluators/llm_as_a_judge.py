@@ -55,7 +55,7 @@ _judge_output_agent = Agent(
 async def judge_output(
     output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on a rubric.
@@ -96,7 +96,7 @@ async def judge_input_output(
     inputs: Any,
     output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
@@ -141,7 +141,7 @@ async def judge_input_output_expected(
     output: Any,
     expected_output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
@@ -185,7 +185,7 @@ async def judge_output_expected(
     output: Any,
     expected_output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on the expected output, output, and a rubric.

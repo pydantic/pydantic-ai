@@ -15,7 +15,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..builtin_tools import WebSearchTool
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -178,6 +178,11 @@ class GroqModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool})
 
     async def request(
         self,
@@ -387,7 +392,7 @@ class GroqModel(Model):
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
-            else:
+            else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
                 )
@@ -431,7 +436,10 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            groq_messages.insert(
+                system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
+            )
         return groq_messages
 
     @staticmethod
