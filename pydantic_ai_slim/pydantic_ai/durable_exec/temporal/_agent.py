@@ -401,26 +401,25 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     event_stream_handler=event_stream_handler or self.event_stream_handler,
                     **_deprecated_kwargs,
                 )
-        else:
-            # Outside workflow: resolve registered model IDs to actual model instances
-            resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
-            return await super().run(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                model=resolved_model,
-                instructions=instructions,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                builtin_tools=builtin_tools,
-                event_stream_handler=event_stream_handler or self.event_stream_handler,
-                **_deprecated_kwargs,
-            )
+
+        resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
+        return await super().run(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=resolved_model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+            event_stream_handler=event_stream_handler or self.event_stream_handler,
+            **_deprecated_kwargs,
+        )
 
     @overload
     def run_sync(
@@ -935,22 +934,39 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                 )
 
-            if model is not None:
-                raise UserError(
-                    'Model cannot be provided to iter inside a Temporal workflow, it must be set at agent run time or agent creation time.'
-                )
+            assert model is None, 'Temporal overrides must set the model before `agent.iter()` is invoked'
 
             if toolsets is not None:
                 raise UserError(
                     'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
 
+            async with super().iter(
+                user_prompt=user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=None,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                **_deprecated_kwargs,
+            ) as run:
+                yield run
+            return
+
+        resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
         async with super().iter(
             user_prompt=user_prompt,
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
-            model=model,
+            model=resolved_model,
             instructions=instructions,
             deps=deps,
             model_settings=model_settings,
