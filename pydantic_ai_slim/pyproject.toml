@@ -53,7 +53,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "griffe>=1.3.2",
+    "griffe>=1.14.0",
     "httpx>=0.27",
     "pydantic>=2.10",
     "pydantic-graph=={{ version }}",
@@ -65,12 +65,12 @@ dependencies = [
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
-logfire = ["logfire[httpx]>=3.14.1"]
+logfire = ["logfire[httpx]>=4.16.0"]
 # Models
 openai = ["openai>=2.11.0"]
 cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
-google = ["google-genai>=1.51.0"]
+google = ["google-genai>=1.55.0"]
 anthropic = ["anthropic>=0.75.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.8.0"]
@@ -103,7 +103,9 @@ ui = ["starlette>=0.45.3"]
 # A2A
 a2a = ["fasta2a>=0.4.1"]
 # AG-UI
-ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
+ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.45.3"]
+# Web
+web = ["starlette>=0.45.3", "httpx>=0.27.0", "uvicorn>=0.38.0"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal

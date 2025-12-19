@@ -68,7 +68,11 @@ from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutput
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
+    from starlette.applications import Starlette
+
+    from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..ui._web import ModelsParam
 
 __all__ = (
     'Agent',
@@ -116,7 +120,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _name: str | None
     end_strategy: EndStrategy
-    """Strategy for handling tool calls when a final result is found."""
+    """The strategy for handling multiple tool calls when a final result is found.
+
+    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+    - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+    """
 
     model_settings: ModelSettings | None
     """Optional model request settings to use for this agents's runs, by default.
@@ -148,6 +156,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
+    _tool_timeout: float | None = dataclasses.field(repr=False)
     _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -180,6 +189,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
     ) -> None: ...
 
     @overload
@@ -207,6 +217,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
     ) -> None: ...
 
     def __init__(
@@ -232,6 +243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -242,9 +254,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
             instructions: Instructions to use for this agent, you can also register instructions via a function with
-                [`instructions`][pydantic_ai.Agent.instructions] or pass additional, temporary, instructions when executing a run.
+                [`instructions`][pydantic_ai.agent.Agent.instructions] or pass additional, temporary, instructions when executing a run.
             system_prompt: Static system prompts to use for this agent, you can also register system
-                prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
+                prompts via a function with [`system_prompt`][pydantic_ai.agent.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
@@ -257,7 +269,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
-                [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+                [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
             builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
                 support certain tools. If the model doesn't support the builtin tools, an error will be raised.
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
@@ -272,20 +284,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
                 to defer the evaluation until the first run. Useful if you want to
-                [override the model][pydantic_ai.Agent.override] for testing.
+                [override the model][pydantic_ai.agent.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
             instrument: Set to True to automatically instrument with OpenTelemetry,
                 which will use Logfire if it's configured.
                 Set to an instance of [`InstrumentationSettings`][pydantic_ai.agent.InstrumentationSettings] to customize.
                 If this isn't set, then the last value set by
-                [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
+                [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
+            tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
+                the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
+                Individual tools can override this with their own timeout. Defaults to None (no timeout).
         """
         if model is None or defer_model_check:
             self._model = model
@@ -319,6 +334,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
+        self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
 
@@ -332,7 +348,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = _AgentFunctionToolset(
-            tools, max_retries=self._max_tool_retries, output_schema=self._output_schema
+            tools,
+            max_retries=self._max_tool_retries,
+            timeout=self._tool_timeout,
+            output_schema=self._output_schema,
         )
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
@@ -1032,6 +1051,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1050,6 +1070,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1099,6 +1120,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
 
         def tool_decorator(
@@ -1119,6 +1142,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                timeout=timeout,
             )
             return func_
 
@@ -1143,6 +1167,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1161,6 +1186,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1210,6 +1236,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1228,6 +1256,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                timeout=timeout,
             )
             return func_
 
@@ -1405,7 +1434,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if some_tools := self._override_tools.get():
             function_toolset = _AgentFunctionToolset(
-                some_tools.value, max_retries=self._max_tool_retries, output_schema=self._output_schema
+                some_tools.value,
+                max_retries=self._max_tool_retries,
+                timeout=self._tool_timeout,
+                output_schema=self._output_schema,
             )
         else:
             function_toolset = self._function_toolset
@@ -1479,6 +1511,71 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._get_toolset().apply(_set_sampling_model)
 
+    def to_web(
+        self,
+        *,
+        models: ModelsParam = None,
+        builtin_tools: list[AbstractBuiltinTool] | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
+    ) -> Starlette:
+        """Create a Starlette app that serves a web chat UI for this agent.
+
+        This method returns a pre-configured Starlette application that provides a web-based
+        chat interface for interacting with the agent. The UI is downloaded and cached on
+        first use, and includes support for model selection and builtin tool configuration.
+
+        The returned Starlette application can be mounted into a FastAPI app or run directly
+        with any ASGI server (uvicorn, hypercorn, etc.).
+
+        Note that the `deps` and `model_settings` will be the same for each request.
+        To provide different `deps` for each request use the lower-level adapters directly.
+
+        Args:
+            models: Additional models to make available in the UI. Can be:
+                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
+                - A dict mapping display labels to model names/instances
+                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                The agent's model is always included. Builtin tool support is automatically
+                determined from each model's profile.
+            builtin_tools: Additional builtin tools to make available in the UI.
+                The agent's configured builtin tools are always included. Tool labels
+                in the UI are derived from the tool's `label` property.
+            deps: Optional dependencies to use for all requests.
+            model_settings: Optional settings to use for all model requests.
+            instructions: Optional extra instructions to pass to each agent run.
+
+        Returns:
+            A configured Starlette application ready to be served (e.g., with uvicorn)
+
+        Example:
+            ```python
+            from pydantic_ai import Agent
+            from pydantic_ai.builtin_tools import WebSearchTool
+
+            agent = Agent('openai:gpt-5', builtin_tools=[WebSearchTool()])
+
+            # Simple usage - uses agent's model and builtin tools
+            app = agent.to_web()
+
+            # Or provide additional models for UI selection
+            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+
+            # Then run with: uvicorn app:app --reload
+            ```
+        """
+        from ..ui._web import create_web_app
+
+        return create_web_app(
+            self,
+            models=models,
+            builtin_tools=builtin_tools,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+        )
+
     @asynccontextmanager
     @deprecated(
         '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
@@ -1512,11 +1609,12 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,
+        timeout: float | None = None,
         id: str | None = None,
         output_schema: _output.OutputSchema[Any],
     ):
         self.output_schema = output_schema
-        super().__init__(tools, max_retries=max_retries, id=id)
+        super().__init__(tools, max_retries=max_retries, timeout=timeout, id=id)
 
     @property
     def id(self) -> str:
