@@ -1,0 +1,74 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '400'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's the weather in Rome?
+          type: text
+        role: user
+      model: claude-sonnet-4-20250514
+      stream: false
+      tool_choice:
+        type: none
+      tools:
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '452'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll check the current weather in Rome for you.
+        type: text
+      id: msg_01SeiSYVEpY5JmufuJcv7c8h
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 389
+        output_tokens: 20
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

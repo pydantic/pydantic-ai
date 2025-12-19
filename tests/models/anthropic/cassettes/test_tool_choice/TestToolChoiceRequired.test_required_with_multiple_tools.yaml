@@ -1,0 +1,90 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '521'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Give me any information
+          type: text
+        role: user
+      model: claude-sonnet-4-20250514
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: Get weather for a city
+        input_schema:
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: Get current time in a timezone
+        input_schema:
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        name: get_time
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '589'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01Cic7FT22GXi95knH2Ck33D
+        input:
+          city: New York
+        name: get_weather
+        type: tool_use
+      - id: toolu_01MLA3JnFVxix421rMVzKjLC
+        input:
+          timezone: UTC
+        name: get_time
+        type: tool_use
+      id: msg_019x8MSyXMSeDTHVDhnPqfqG
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 433
+        output_tokens: 75
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

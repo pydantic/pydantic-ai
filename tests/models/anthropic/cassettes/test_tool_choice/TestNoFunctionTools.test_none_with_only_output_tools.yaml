@@ -1,0 +1,87 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '392'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Tell me about Boston
+          type: text
+        role: user
+      model: claude-sonnet-4-20250514
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: Information about a city.
+        input_schema:
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1384'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01U6EvJNNJqGCETfejUatr82
+        input:
+          city: Boston
+          summary: Boston is the capital and largest city of Massachusetts, located in the northeastern United States. Founded
+            in 1630, it's one of America's oldest cities and played a crucial role in the American Revolution, with historic
+            sites like the Freedom Trail, Boston Tea Party Ships, and Paul Revere's House. The city is renowned for its world-class
+            educational institutions including Harvard University and MIT in nearby Cambridge. Boston has a rich cultural
+            scene with the Boston Symphony Orchestra, numerous museums, and is famous for its sports teams including the Red
+            Sox, Celtics, Bruins, and Patriots. The city features distinct neighborhoods like Back Bay, North End, and Beacon
+            Hill, and is known for its seafood, particularly clam chowder and lobster rolls. Boston's economy centers on finance,
+            technology, healthcare, and education, making it a major hub for innovation and research.
+        name: final_result
+        type: tool_use
+      id: msg_01SncZRQFPXD7Pgr569Jc2dU
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 391
+        output_tokens: 233
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
