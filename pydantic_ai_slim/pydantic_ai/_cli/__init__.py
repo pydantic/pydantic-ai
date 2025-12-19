@@ -204,10 +204,9 @@ def _cli_chat(args_list: list[str], prog_name: str, default_model: str, qualifie
         description=f"""\
 Pydantic AI CLI v{__version__}
 
-Commands:
-  web         Start a web-based chat interface for an agent
-
-Use "{prog_name} web --help" for more information on the web command.
+subcommands:
+  web           Start a web-based chat interface for an agent
+                Run "clai web --help" for more information
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )

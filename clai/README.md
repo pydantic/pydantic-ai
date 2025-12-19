@@ -58,10 +58,9 @@ usage: clai [-h] [-l] [--version] [-m MODEL] [-a AGENT] [-t CODE_THEME] [--no-st
 
 Pydantic AI CLI v...
 
-Commands:
-  web         Start a web-based chat interface for an agent
-
-Use "clai web --help" for more information on the web command.
+subcommands:
+  web           Start a web-based chat interface for an agent
+                Run "clai web --help" for more information
 
 positional arguments:
   prompt                AI prompt for one-shot mode. If omitted, starts interactive mode.
