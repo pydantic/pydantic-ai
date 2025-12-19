@@ -1,0 +1,278 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '404'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What's the weather in Paris?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3265'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2030'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174059
+      created_at: 1766174057
+      error: null
+      id: resp_0098495564d87959006945ad6953ac819586d5cb744edcd065
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa1rgqM-6eFKT4ZrmTJCCO_uzbJ01y667ybC7JKmefEKU7lxIYMFNurVQ6Vtb3_w2Qw_BEDzVmaJba6PWguLc0ocVXjz2DpznW9ZKEROso2fnFSGWWPa7G7VDSMfx84U-78vUk-t_dPzaadIARY7kx00fM5W1w39SguSFjTcqyXIKpOimYngtXhqdQN4hxBf66gnNIJtUTlXlKYwbK35UdQJ_F50Nz1MRMhrFtr8lLeNh2K5loN2E3q_A-UK7X3q85VEQ5Bgkfna_WIdkKISh2cm6DzJL45tul8wkOrHec4xFUOHxWiHnQeAd2Mjri9DizNuZoQSjLhBH7mlmeVdSuUaPeI4nrDAgORGQnNH1Nqlg6Sp74P6zoS1stXU2v43QVwhgrq6HdAizo-3kmVLfkFEKxtn1DuMD0tzMvtOkYcbZxuFeCsHWaqRgQRKTrHa-wXthkCRmBw5cXK6cw8WdzbQUY2s226inuMAjmL67IA00nz1puFb58oofRDRfiOaFoeekAhwA_S-TcP8GY5rpwwCvgLMjsSH5TaMt2_t1M0WpreJdSDzPCs_OQAo5Gtbvow57BUaeBy_UcWTSWvWyNyXclXYQxAN2EKoUNRrdZtNyzDOTpsD5VM-2TAOJYis02tBnn86o28-Sv98VQ8dnm2sTqHuR0eIPFQiMKIQlvTFAdYMNh5wRLPp8ixHx1wKh5GOqwNrMokr6mrUj0PGNZVcuV13y5cDOshj260fPPu-xf2k5AOVms5HrLZUb1QSGS4Z2OEctc2FvXoY_VKH6-UzG-6aIBck6Mbcjw6PIaoJZGA1SIhBTUKRrhGnAtBRKtI83WDzuyCwESpMYKxuJhhXHqWt4BOdVkFu2EBUhj-qx0gpRzvsNKHyHQrBSir7Gz1aIO6ndf8ijE5hu2Y0oQTZZVRNCxiZ7HzBo8Xcdog_RdLyOnUgKbJ81JhhPC38xN1IX3CFcrszrp2NmHA6UgcVWvohQPWSq8PUKE64MxiIUxQWvvFP0w9p6R5eh7myGYq1IkMj4gh1VmJKSl6jGHy7GR-Nm6Swpxm3c4YTAaKV4N7fGP9zgqkmUJ-PQANaNUPeqS_aIOGe_MfGOg09Uwp46T9C73wtwEkNHsLPaxHbBUfnsrQAtphyXRztjftfYvnHRrZW7lEvbPhEJjyLGE_-xHxakBj9IAdnkDzaE2lArQM1PB3qO9t09Qqnu3fy4uITvl-jGv7k7MnweirpaifMEY_DdNTsxOTqNXqmS4OA1zxjau-55WEZsWS3w1Nm00pa
+        id: rs_0098495564d87959006945ad69e2788195a88242375e92e1dd
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris"}'
+        call_id: call_xPQM0uDwo0Vtqsu6P38OJgX6
+        id: fc_0098495564d87959006945ad6adb9c819589ca1aa682b00807
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 50
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 84
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 134
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2103'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=aWzJXEo.XDo35ExDh4B76UDHxq2yjv5BL_13fbykEic-1766174059-1.0.1.1-VwZHVoeo32rPI2CQ1oAnqsqbsJvDHIekmHooTg700YbQoBAHjIA0JJ03hzvTE6MeVepQ1qtn_lezCha3YwJ3ytzzrdjyTmSnavRa06XA2E8;
+        _cfuvid=jnqRu._JTOMaMunEk_jzQRVYti.s82eYsY21ID6KxK4-1766174059384-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What's the weather in Paris?
+        role: user
+      - encrypted_content: gAAAAABpRa1rgqM-6eFKT4ZrmTJCCO_uzbJ01y667ybC7JKmefEKU7lxIYMFNurVQ6Vtb3_w2Qw_BEDzVmaJba6PWguLc0ocVXjz2DpznW9ZKEROso2fnFSGWWPa7G7VDSMfx84U-78vUk-t_dPzaadIARY7kx00fM5W1w39SguSFjTcqyXIKpOimYngtXhqdQN4hxBf66gnNIJtUTlXlKYwbK35UdQJ_F50Nz1MRMhrFtr8lLeNh2K5loN2E3q_A-UK7X3q85VEQ5Bgkfna_WIdkKISh2cm6DzJL45tul8wkOrHec4xFUOHxWiHnQeAd2Mjri9DizNuZoQSjLhBH7mlmeVdSuUaPeI4nrDAgORGQnNH1Nqlg6Sp74P6zoS1stXU2v43QVwhgrq6HdAizo-3kmVLfkFEKxtn1DuMD0tzMvtOkYcbZxuFeCsHWaqRgQRKTrHa-wXthkCRmBw5cXK6cw8WdzbQUY2s226inuMAjmL67IA00nz1puFb58oofRDRfiOaFoeekAhwA_S-TcP8GY5rpwwCvgLMjsSH5TaMt2_t1M0WpreJdSDzPCs_OQAo5Gtbvow57BUaeBy_UcWTSWvWyNyXclXYQxAN2EKoUNRrdZtNyzDOTpsD5VM-2TAOJYis02tBnn86o28-Sv98VQ8dnm2sTqHuR0eIPFQiMKIQlvTFAdYMNh5wRLPp8ixHx1wKh5GOqwNrMokr6mrUj0PGNZVcuV13y5cDOshj260fPPu-xf2k5AOVms5HrLZUb1QSGS4Z2OEctc2FvXoY_VKH6-UzG-6aIBck6Mbcjw6PIaoJZGA1SIhBTUKRrhGnAtBRKtI83WDzuyCwESpMYKxuJhhXHqWt4BOdVkFu2EBUhj-qx0gpRzvsNKHyHQrBSir7Gz1aIO6ndf8ijE5hu2Y0oQTZZVRNCxiZ7HzBo8Xcdog_RdLyOnUgKbJ81JhhPC38xN1IX3CFcrszrp2NmHA6UgcVWvohQPWSq8PUKE64MxiIUxQWvvFP0w9p6R5eh7myGYq1IkMj4gh1VmJKSl6jGHy7GR-Nm6Swpxm3c4YTAaKV4N7fGP9zgqkmUJ-PQANaNUPeqS_aIOGe_MfGOg09Uwp46T9C73wtwEkNHsLPaxHbBUfnsrQAtphyXRztjftfYvnHRrZW7lEvbPhEJjyLGE_-xHxakBj9IAdnkDzaE2lArQM1PB3qO9t09Qqnu3fy4uITvl-jGv7k7MnweirpaifMEY_DdNTsxOTqNXqmS4OA1zxjau-55WEZsWS3w1Nm00pa
+        id: rs_0098495564d87959006945ad69e2788195a88242375e92e1dd
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris"}'
+        call_id: call_xPQM0uDwo0Vtqsu6P38OJgX6
+        id: fc_0098495564d87959006945ad6adb9c819589ca1aa682b00807
+        name: get_weather
+        type: function_call
+      - call_id: call_xPQM0uDwo0Vtqsu6P38OJgX6
+        output: Sunny, 22C in Paris
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1922'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1031'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174060
+      created_at: 1766174059
+      error: null
+      id: resp_0098495564d87959006945ad6b96c481958c457fe976f58d9a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: It's sunny in Paris with a temperature of 22°C.
+          type: output_text
+        id: msg_0098495564d87959006945ad6c14108195979a0f5cc2f73449
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 155
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 16
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 171
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,191 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '925'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Give me some info about Paris
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get current time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get population of a city
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4737'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3313'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174131
+      created_at: 1766174128
+      error: null
+      id: resp_00ee39221530168b006945adb0aecc81958875478c0f9c6bdc
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa2zcVTXyhVh2yUSPiRReb688yunfYzpsA_8hV3D7Bc_iZiLymkbxCNC_uyd2Mqcwj090t6TnB0moqWsjj5HasgFmPSKIpc4el9vMDgb5m-liyqc_NQA1B3r46ZLYbks5ehsOMr5oTWzMSichAeXSydz3cKvAacVCszDv5YASPZYlqw2v-vrlSzOeEkeemXP9CPLhtF-KenAoa-lr7kUOL6JkvDGhvfH1pwg5Cvj1cT7iPlRePlGIsKh70LWV1EygHl4zlGWx19ZktWapCE2d_0Q7NhjlItW-7UKJnoRU0VAUjA5QeIrHAu45unD7dj2EJoIIL2k2pgF3-o4q-k8LEBeXmvkrB6I8xlLXl6LHyfHfoR0fMOWAb3VHcECLye2HHqbN7KAJUW1v_GziVQ3htLebK4whE9oT171sH_5YOvOJvvGnSOh0izSkFQNESUvpsDMxLDESpcvQi1aiUQJTXFGENyVfxgzI0-ywRxCKhxdRAY-Jy5MwqTuC3fTGQasFiLzbhZXLpoVeLnhW66GZIi0WTN4Hzk64Xzgi-yyS5rq4H3E7Phb8ToTbh4o5GqB07zW6oZobO9jXVfQX1cBLSy2XZww509s1rMYJPYH2vD8S478_qC1EuPAsUZqW-9g9Pib-NGdAKt9pvRl8Ra2oC7QmFr6F0lKpz-Pi1hn6WT3RGFlVNe7o5514JiLVVwBVWkvkdFXbI2V6BmLfpVIJQ9kk8raeQR20neRU5GFjI3PmT_FI5mzsT038Wc1QwLHIXY8gZoZIIJokqTwbkGykMEu8QcOr4ETbbo6jUXfG-Bgt7iZwC_oz50tU0EjHa7-7GJ2TLaG4oxPRRFLolVhM4NThabXGXqqQ_dbjR5teTtcoNiWuzfzp1wQri9JX9wzX0l57nsLQMXESL4oMwvkh80Cu2e2yHMVOXTUFFCdjGTWftO94L1AbidivAqxsZoJpgXnHgAmPJLYKZNfKltadJYTdCrVfiHOVpAuPzi84c7PnFfe0wc1TjMx3g5x_sbvpyM_KKe-boex9LaCrT6vpTuf4d8n2yySkEwjXw6W7Z5mJ3p-VEIGRipZZI_0lTpSiSGQg4sDs5xb0vO406rPvbDrHCx5Jsklqdaj-Qr1bCxNKnD8gOjUBuZ3qKdQX_Acq5sv57ropjCZH4RZB2Xe7nwQ05g9oIVkB9n8cFxHK1XKzvRTc0x46W-N_pU9HzEphzVbUdwbuRwAz45V9P6opNIT_leon99dNMvZEy50YBeM2kt5Q_0vgG9pmDq6alXmS0sU9D_MgNwrqhhaU44mTwT84hfq7Y1TlFDXEtxmLK_bol7WoD1uMdVJt9Lp8GreF3ooCLtKRfqOtKu7x712LTgyG7tEAjjcH0TpopSbx4i6biwlHvE83LTPW8-D-vJ-_jzvTPEuNYMblO8hLQ31hmXPxHsFMSKP5Te3QAotF8Tq0sLLh11F0bENkd73VBNKzq2ymsBMhNx2kJ_p2aCpgJwffcPBtSnQxghsUV_MSxihTpqGelesys-BfoYPJgJonb6OJo9FgSWi5_1kivZmW1vKsa7t8iqB_gWluOpyB6nxNnFgeFuli8TtPyefRK1ZioT2SHomRD5Va0beMH1tKftagLhEMMoUDiqPEMaolUxQujHtYseNnUWLeR01NESyBvjuZPvCWYPMjLwKwuUi80wgXdk9vJuWvo0TEY-8T_DZlO1xePz4sIB9xZWTQVU2-GO8MwilDc-27nXlztjsHPlETQIDkq0pNJmHfhrOj5lxCBGn2tRgpBBZ4iHaMedI5WlsPHyUGWTJgmU_x4P1IAApbwcZxiAGGYYD4el8sUZLS3Y=
+        id: rs_00ee39221530168b006945adb11fac81958e2abf8faeaaaa44
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Paris, France"}'
+        call_id: call_uvLqbR8iSddLL7gmBEff7JM4
+        id: fc_00ee39221530168b006945adb37b748195b5aad06091b60df6
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get current time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get population of a city
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 89
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 150
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 239
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

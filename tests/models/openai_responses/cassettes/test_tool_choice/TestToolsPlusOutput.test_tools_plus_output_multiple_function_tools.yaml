@@ -1,0 +1,725 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1299'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather and population for Chicago
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_population
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '7148'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '10023'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174162
+      created_at: 1766174152
+      error: null
+      id: resp_048b20bcdb65249e006945adc8388c81a2952779bea5ccd478
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa3SesFJPWsmOlY6Ci_ijunRL24IqPcY1YNVt5OGTzo9eUjLfdClmUea-Cno5dHbm5zmDOC5EgJBPKmyoyBlDd7-JS8RGYt3VFchlFv1DhRvpANMogOqfpHfh8Q4uFbiA4upICbHt021xBqk2yPsxLchJWB8E3-pB60maZd4phAU9dO7kGJUaC51rT979nfSDZnVyHCiYwquFf9HNlftk-TEiIBrQxez6x6pXt1c1cHnvRyb-s2OPcqv13nBP0IY7PudVHPNn4HEY65LlvPJ2EgNSe5rME0Rh9L82TOBsD8pdyzA3WLoUDisTXxYyqjBucEB-VLJi_KOG-MdT1PdJ84Z46AavAfNn6lLQaH-LJjRP0Xj-V6P9K0zE1P2NwWc-HQvgvPtdeJPgo5RZdQpgYRXnO1iRUtTG95NgMjftD9AV5vqPoOn62qgWrG9yoWH1sqH586YfDK4zFowQDSsn-tx-rN87Ub3PHlFAnBJumEFlYtSRd4qMO4rqrgO2P5_qPJCix2xOxKElYK8HQYQJ9yHTCrB5vLtexDXfuFbTH8eOF-6SZhcSM_JCRhvJccwsPEwlNBzjIEzwuJkxyEou0VQhS8xjrdFRgNL8ZpyPsalTI6Pd81aqlt43Jiv8-OOHcVAWcYV9QXxbxXHV_MOIpeKNL1uAFNpQAj4BeeoNGl5Ev29r3AX70eoLTBVwUIsfTHTakmuIjZiU5Pkn9y1gN8ZtD2A_1FBV5FCbxD1hoWdsSDP2LLONGeoyTdr18PRusJG4Wi48UlE27L06zS_cv-6YvjLck0hmHFNaz9IB0gJ-eMFD0BidgffKULaX_--HIjt1EaJ3rkBauT-NS7OA5iRGlEUfLify3ZpDgLnsFNFe0josM6wgDtkehAQQc6PPQ8ZOO14NulJ0Wcs4guJB5k4otpmYsrWOdZxc_wLbUTvqPjYd5VVsj1RZTFGSOxlex2p9nE92vkVETDtWoFcgET_T3BDXpHfYvXNPs1Km8nsNnHXKPrquj5tAYWIdbKmRVt7CZyEMTO2ttHrv9fuyInd-XSj-VUVK1DULB8pVkMeZB_ERKnJGpvPvwwsmeEiE9HUqiTqoBun3ZLiZsWyHFmOdHUQxB0vEePrABqiev6Px7ZO24xWb0D8XRhwC7GQ4aoy_K4Acle-jxVpl7BbDDQ0usM-iUE3dbae5xX8PjrB-h8U-sEojOHxIOYxJeyCoI2VDksV0LrU0V-p3xlH13zbMVHgqCC-kJOO6i4NrrgKeT48pNYhLRrlVqTillEg6MwYGPR9-zzVTaTgYXC2tCI31V6f4GA7z2gT8goq6dy6so6ViI2vYR3ZGgDN_oq4iyry30TTCd__OJ1hymAZFnZR1zyvzSr2KivDo0xZa2-_AYIGMf3myHQQJtkRTXi9TfD4WUb6wKnH1XTU6_LXGUG6CuncqtqbkIdkids170Gh_FZ3lny9_B8xpm_x2g-bUpx6FSZH-xPyH9oIVyI51zkCuuGZKfswnf7HnQaWEEN-rRyCKY-gv7s7E71NwZ8er8_NxPTTp0hLzyiF-X8MX0tAp8PvKuTiMqE9tczMLyQ77RhubQ85jOzjk6GvMSwGEjNqAeDhVWm50_tm3PVQGgnp3j01VB1-pQ8nFB8_e9Gg8mlMXDfunNsW8yaSF3mPPKFAxa-sj2pZSpqS3imKsyTHEnG_6WrUbHR9QeQ0UbSUZ4AguG6u9GjAKFOyuCC8BLRp1UCwGgr4OMBEIgV6GnrwNODNdYd2-JwgNnIsFqpuS8Jffg9RgEAm7vXUq6nK64vFVrPxXvuIoHcy4J0r8boyDbO9nY7BNkyB4IY4nv1vncVDXff8gC8dR_4rqBSJCIxRvEiZIOXPhv7Dzt2_cI1c88zM4PSv3oQ1e64fulXfyLdQFVPkPgvs2yefCajqBkCoOAZFHHG35H88MbWgtGA_76jXHGkYl8k2-VL5-GrjWq6N7aEFe4vY79uA3JhT8eQAvzU1hLQoS5G63lgwdrycmU87KfvgYe3gzhLEJW45A24g5gMjwiykyVll6x4_zF3cdErUmcVTRIditqZjqJc8SwfP0R3WhSsVfaxHjJh1H88PQWjj8ztPCsI6Hu5BU8BI6xHLKX-AlWRAJeW59Ccb2xGdtUYdsOzc-Os7b0FDSibz-g6_ad2F_tGvBZVGF9RiTYtVOiPdaC-1Yawx_BZ5nH1-a3r4Xkd2vxNO51z14tR5wnDZoKUWPMW0krsQlY2lZvCWwZkGd6tkZNOSvpE7AaRyUqALx-P-a5QjD0nJCioaN2B6mxaQQmkuaqEO9EUNtre4RYIYtVEZqTxUP2Tk3UzcCpnliz5LS-H6ddQI1akekoc_Va90hvXzICzIn1yyrRs0m3pBkRRai_3npRIMCi-fDk1WLK40QqI8KWKr7Irurx3TWWNdmfphw1VOxoJS8pJltP0tcckygcQBVPY3e-3qDBUHmmuR1K-q6z7OnnrsTMc3vzN5tcyS6QmFumRUQG5m3-OPzAtyF82wErvzOxjiFlJxSXhMjhXD3qFd3gZSJZ1N7pegtUIZEZRI4JWhH3zadugYARNldrG8JHLNh07sQunGqpVU8SFvpB4TL3T1dgyYPN9_yho6LQv3dbzUQDg1gdevRrscDEFS9C-XLkNJcqLobGACLwv_E-wV9tvy6RQv6mbyd6lxl1hGtLPUF9I7BQ6ukEYILTLJSa9u1b40NtKC64N3KR4zz9VHtRexisRQJjf6oyryqBkvTFxBbXkQH3WlrPOmimMqLV7wNvSBD6KxXcnMhmZAuwxgOCTbgsS2l1xfF2arDiIQDv2GA8YIIohns-MwOy0rm8o-zIQTZTjcTEg32Qg2U9SA7yAoZUkMe5l6H744-ay-fbL-zqdWK7Mcmrwr9XsyAQcKJM0_9aSfirnNpBCR7ai-_sZrY_8VnOTpwSAMdH8JXNAjZypoH6lV8HyB7SRffpbhO3x5UhzuYih_cQ6KRdWb-vJD_NXiExHOnQn9kMR0aaPeKIekVoy81VrPqrfmfgJC_dmxYRIG-00nyuHSJRPTr9CI71F2X4zX_uZv-PTWJAwV3W5N8ADytJorMhL4Ja3Hm9knKZTEveMLwpO8kAZgpc7xChLVUxEEkFL6c-6elBfOFMhJGj_NS_tePVq1xpw05IaZjMKWilUfFveGj2VLyBzW-6mjm0XQWy9wB4eLe3Jx6V-5TtRy_GTiFQjhhP931yijy8aWNwsP690FHaNFEe5EoSvEFxUcpo8b-XBNEUhX4m9gM36VLWj1TmBXzM74TPL1Vj6DEjAvM0z__b5cKjuMnHnOVvofu1bi0_fUZ-NNCaYCNUjAziIHZouYJoLIG1L2KR3JH8waMzBeMJGF0heQuGHjRfM3hVnLOaCxQphCadzYISOe7-v1mzf3nbFUyyfhuaPQ-_AG7jCHUBcwB2SP7HNZH3SFISjRNlFMHAC4FGBdA9itfIbC6hvtYpMBWtUgtjG4WMe25au2TMkFv9NND1VAvlzSnfTK0M1f8F8YIUXBRUp7RZoT8lpRoKwUzqNfp2N4BB6a0qTtW0urs_8OA6c3cp194oTHMcg9l1RYzCKL7XROGHd_QhgmAjsDNA==
+        id: rs_048b20bcdb65249e006945adc8820881a2acfaaa6407b139f0
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Chicago"}'
+        call_id: call_SLfTLXh0mXdyO00yhf7HrzOh
+        id: fc_048b20bcdb65249e006945add14e1081a2b307ee869796c949
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_population
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 116
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 404
+        output_tokens_details:
+          reasoning_tokens: 384
+        total_tokens: 520
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '5330'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=p3eKe2Ipy8xkuc_4l2YZOaNwg.kwwru2jFHcX_y71Ko-1766174162-1.0.1.1-lBrH7YofzmK0VrYh1AW7ZgIXNpnbsH08Q7MyO4WcVEC8TIyhX3LsCV0j56RpbytFS4wAzoIcXAn4OJ88KvNSjQ7u9ADvjkzwcPqPBajtChI;
+        _cfuvid=ma8wB56E_l9Hox0GJB4hqOW4Aqd.5.pSSZ_juvH.6iU-1766174162264-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather and population for Chicago
+        role: user
+      - encrypted_content: gAAAAABpRa3SesFJPWsmOlY6Ci_ijunRL24IqPcY1YNVt5OGTzo9eUjLfdClmUea-Cno5dHbm5zmDOC5EgJBPKmyoyBlDd7-JS8RGYt3VFchlFv1DhRvpANMogOqfpHfh8Q4uFbiA4upICbHt021xBqk2yPsxLchJWB8E3-pB60maZd4phAU9dO7kGJUaC51rT979nfSDZnVyHCiYwquFf9HNlftk-TEiIBrQxez6x6pXt1c1cHnvRyb-s2OPcqv13nBP0IY7PudVHPNn4HEY65LlvPJ2EgNSe5rME0Rh9L82TOBsD8pdyzA3WLoUDisTXxYyqjBucEB-VLJi_KOG-MdT1PdJ84Z46AavAfNn6lLQaH-LJjRP0Xj-V6P9K0zE1P2NwWc-HQvgvPtdeJPgo5RZdQpgYRXnO1iRUtTG95NgMjftD9AV5vqPoOn62qgWrG9yoWH1sqH586YfDK4zFowQDSsn-tx-rN87Ub3PHlFAnBJumEFlYtSRd4qMO4rqrgO2P5_qPJCix2xOxKElYK8HQYQJ9yHTCrB5vLtexDXfuFbTH8eOF-6SZhcSM_JCRhvJccwsPEwlNBzjIEzwuJkxyEou0VQhS8xjrdFRgNL8ZpyPsalTI6Pd81aqlt43Jiv8-OOHcVAWcYV9QXxbxXHV_MOIpeKNL1uAFNpQAj4BeeoNGl5Ev29r3AX70eoLTBVwUIsfTHTakmuIjZiU5Pkn9y1gN8ZtD2A_1FBV5FCbxD1hoWdsSDP2LLONGeoyTdr18PRusJG4Wi48UlE27L06zS_cv-6YvjLck0hmHFNaz9IB0gJ-eMFD0BidgffKULaX_--HIjt1EaJ3rkBauT-NS7OA5iRGlEUfLify3ZpDgLnsFNFe0josM6wgDtkehAQQc6PPQ8ZOO14NulJ0Wcs4guJB5k4otpmYsrWOdZxc_wLbUTvqPjYd5VVsj1RZTFGSOxlex2p9nE92vkVETDtWoFcgET_T3BDXpHfYvXNPs1Km8nsNnHXKPrquj5tAYWIdbKmRVt7CZyEMTO2ttHrv9fuyInd-XSj-VUVK1DULB8pVkMeZB_ERKnJGpvPvwwsmeEiE9HUqiTqoBun3ZLiZsWyHFmOdHUQxB0vEePrABqiev6Px7ZO24xWb0D8XRhwC7GQ4aoy_K4Acle-jxVpl7BbDDQ0usM-iUE3dbae5xX8PjrB-h8U-sEojOHxIOYxJeyCoI2VDksV0LrU0V-p3xlH13zbMVHgqCC-kJOO6i4NrrgKeT48pNYhLRrlVqTillEg6MwYGPR9-zzVTaTgYXC2tCI31V6f4GA7z2gT8goq6dy6so6ViI2vYR3ZGgDN_oq4iyry30TTCd__OJ1hymAZFnZR1zyvzSr2KivDo0xZa2-_AYIGMf3myHQQJtkRTXi9TfD4WUb6wKnH1XTU6_LXGUG6CuncqtqbkIdkids170Gh_FZ3lny9_B8xpm_x2g-bUpx6FSZH-xPyH9oIVyI51zkCuuGZKfswnf7HnQaWEEN-rRyCKY-gv7s7E71NwZ8er8_NxPTTp0hLzyiF-X8MX0tAp8PvKuTiMqE9tczMLyQ77RhubQ85jOzjk6GvMSwGEjNqAeDhVWm50_tm3PVQGgnp3j01VB1-pQ8nFB8_e9Gg8mlMXDfunNsW8yaSF3mPPKFAxa-sj2pZSpqS3imKsyTHEnG_6WrUbHR9QeQ0UbSUZ4AguG6u9GjAKFOyuCC8BLRp1UCwGgr4OMBEIgV6GnrwNODNdYd2-JwgNnIsFqpuS8Jffg9RgEAm7vXUq6nK64vFVrPxXvuIoHcy4J0r8boyDbO9nY7BNkyB4IY4nv1vncVDXff8gC8dR_4rqBSJCIxRvEiZIOXPhv7Dzt2_cI1c88zM4PSv3oQ1e64fulXfyLdQFVPkPgvs2yefCajqBkCoOAZFHHG35H88MbWgtGA_76jXHGkYl8k2-VL5-GrjWq6N7aEFe4vY79uA3JhT8eQAvzU1hLQoS5G63lgwdrycmU87KfvgYe3gzhLEJW45A24g5gMjwiykyVll6x4_zF3cdErUmcVTRIditqZjqJc8SwfP0R3WhSsVfaxHjJh1H88PQWjj8ztPCsI6Hu5BU8BI6xHLKX-AlWRAJeW59Ccb2xGdtUYdsOzc-Os7b0FDSibz-g6_ad2F_tGvBZVGF9RiTYtVOiPdaC-1Yawx_BZ5nH1-a3r4Xkd2vxNO51z14tR5wnDZoKUWPMW0krsQlY2lZvCWwZkGd6tkZNOSvpE7AaRyUqALx-P-a5QjD0nJCioaN2B6mxaQQmkuaqEO9EUNtre4RYIYtVEZqTxUP2Tk3UzcCpnliz5LS-H6ddQI1akekoc_Va90hvXzICzIn1yyrRs0m3pBkRRai_3npRIMCi-fDk1WLK40QqI8KWKr7Irurx3TWWNdmfphw1VOxoJS8pJltP0tcckygcQBVPY3e-3qDBUHmmuR1K-q6z7OnnrsTMc3vzN5tcyS6QmFumRUQG5m3-OPzAtyF82wErvzOxjiFlJxSXhMjhXD3qFd3gZSJZ1N7pegtUIZEZRI4JWhH3zadugYARNldrG8JHLNh07sQunGqpVU8SFvpB4TL3T1dgyYPN9_yho6LQv3dbzUQDg1gdevRrscDEFS9C-XLkNJcqLobGACLwv_E-wV9tvy6RQv6mbyd6lxl1hGtLPUF9I7BQ6ukEYILTLJSa9u1b40NtKC64N3KR4zz9VHtRexisRQJjf6oyryqBkvTFxBbXkQH3WlrPOmimMqLV7wNvSBD6KxXcnMhmZAuwxgOCTbgsS2l1xfF2arDiIQDv2GA8YIIohns-MwOy0rm8o-zIQTZTjcTEg32Qg2U9SA7yAoZUkMe5l6H744-ay-fbL-zqdWK7Mcmrwr9XsyAQcKJM0_9aSfirnNpBCR7ai-_sZrY_8VnOTpwSAMdH8JXNAjZypoH6lV8HyB7SRffpbhO3x5UhzuYih_cQ6KRdWb-vJD_NXiExHOnQn9kMR0aaPeKIekVoy81VrPqrfmfgJC_dmxYRIG-00nyuHSJRPTr9CI71F2X4zX_uZv-PTWJAwV3W5N8ADytJorMhL4Ja3Hm9knKZTEveMLwpO8kAZgpc7xChLVUxEEkFL6c-6elBfOFMhJGj_NS_tePVq1xpw05IaZjMKWilUfFveGj2VLyBzW-6mjm0XQWy9wB4eLe3Jx6V-5TtRy_GTiFQjhhP931yijy8aWNwsP690FHaNFEe5EoSvEFxUcpo8b-XBNEUhX4m9gM36VLWj1TmBXzM74TPL1Vj6DEjAvM0z__b5cKjuMnHnOVvofu1bi0_fUZ-NNCaYCNUjAziIHZouYJoLIG1L2KR3JH8waMzBeMJGF0heQuGHjRfM3hVnLOaCxQphCadzYISOe7-v1mzf3nbFUyyfhuaPQ-_AG7jCHUBcwB2SP7HNZH3SFISjRNlFMHAC4FGBdA9itfIbC6hvtYpMBWtUgtjG4WMe25au2TMkFv9NND1VAvlzSnfTK0M1f8F8YIUXBRUp7RZoT8lpRoKwUzqNfp2N4BB6a0qTtW0urs_8OA6c3cp194oTHMcg9l1RYzCKL7XROGHd_QhgmAjsDNA==
+        id: rs_048b20bcdb65249e006945adc8820881a2acfaaa6407b139f0
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Chicago"}'
+        call_id: call_SLfTLXh0mXdyO00yhf7HrzOh
+        id: fc_048b20bcdb65249e006945add14e1081a2b307ee869796c949
+        name: get_weather
+        type: function_call
+      - call_id: call_SLfTLXh0mXdyO00yhf7HrzOh
+        output: Sunny, 22C in Chicago
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_population
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4628'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2454'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174164
+      created_at: 1766174162
+      error: null
+      id: resp_048b20bcdb65249e006945add26da081a2b4e1506d98f2a740
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa3U8izC0dAFRVLQ_RZLWCfpZcWmdMoyBFdJedKbmBADxneagC9pSENyUnAtmIv2HWvnHwMxz15qtH2j5um02H02rsspkZfyE1ankXqHk1Xy6iHGyl2s4W4l7k5bOttrVK0hUUykeTFBApeO5NkWxD2bHacbmOaxmv-M5uaSXqsihcwhffI-e3mIMQ-3H-yzoK7mYsoiunc-YBXCubp0AsbnayJk3WIin4cGSHFkv0CPED0qnckT3UeTNmuW3QY1eqYTdN2TTo3ZO6Gj8i5S2qLE7yZo8UUkKnTmV8wg_YZ-13QyvEfpsJB5gW5_zgejtb4pbvcDsMN0H8UhXlvD4xUckFlZpgfPP_BxsbNMx026GrjbJvTOcIP13q7iQ6Ep2GfQD4haXhqfo9cg-c_4dC4AYKzu9JjUgfpDjTmx9iacMag3IbrMsqwT1UnKkVyvfVcoNTXkwe4lNoJRul9sdJEXKnLHhpxAunTwCLt2nr65BD8ebzxLeJM0Yi7rO_jOImCPm-WwtnreA2NWirdO4haBfHv27mD7V9JZZryXn7MSdLLwZR4dWPGnMupWVERuR0AoFZOnhvQpA-m2axEg3AsQ3O37xmAe_Oxpn5VKo_5kCoFnhWQ6hFet5ier_MirP6PrYMvuhXSp5YPLtMJfXCHXCaMYz-uz3phxpp7CD06w75gaVT5gWl1H2EHmUfhdiKEq7UhfVXozXUK1HHBIv0yDaJSgNcSsb2bCamcQpSmo8DQYMTTVIMvGo_Z2dW1GTDE8z03-KhdjDjzaI_oYOKHsdFT-IZBqwyC7pkZd-CADM9oe6Cj9wEGWasdTyz8I_W7MigeuaahS52m-cJFDXvkUO-ntpcwEa3fqzU22lMKVXnzL8IENG-mQfpOqfZKInAvtiP6GVB3xwnamJvxxRaS3YlY78ExQAFQwqNedPlrPpIP4JvWq0HayaIReSHCjFf_lWspEKFv8yvSzrl7SF0J1-h0NKtMfcLVLkfrVXdfJj0fJt86Gduo44Rr9l61d26NDaGRLB7S_Q09nhB4v8CoI8mw4DSEeOvMa5mDpOOiFNFwX1rwcEkshIX3w4rbAMoPP
+        id: rs_048b20bcdb65249e006945add2de4481a2b2fe03b588cbbc9d
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Chicago"}'
+        call_id: call_4et2CYELlIo2iwfr6uyPz1rw
+        id: fc_048b20bcdb65249e006945add3c19881a2b3dcef2c3656d282
+        name: get_population
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_population
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 539
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 20
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 559
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '6851'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=p3eKe2Ipy8xkuc_4l2YZOaNwg.kwwru2jFHcX_y71Ko-1766174162-1.0.1.1-lBrH7YofzmK0VrYh1AW7ZgIXNpnbsH08Q7MyO4WcVEC8TIyhX3LsCV0j56RpbytFS4wAzoIcXAn4OJ88KvNSjQ7u9ADvjkzwcPqPBajtChI;
+        _cfuvid=ma8wB56E_l9Hox0GJB4hqOW4Aqd.5.pSSZ_juvH.6iU-1766174162264-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather and population for Chicago
+        role: user
+      - encrypted_content: gAAAAABpRa3SesFJPWsmOlY6Ci_ijunRL24IqPcY1YNVt5OGTzo9eUjLfdClmUea-Cno5dHbm5zmDOC5EgJBPKmyoyBlDd7-JS8RGYt3VFchlFv1DhRvpANMogOqfpHfh8Q4uFbiA4upICbHt021xBqk2yPsxLchJWB8E3-pB60maZd4phAU9dO7kGJUaC51rT979nfSDZnVyHCiYwquFf9HNlftk-TEiIBrQxez6x6pXt1c1cHnvRyb-s2OPcqv13nBP0IY7PudVHPNn4HEY65LlvPJ2EgNSe5rME0Rh9L82TOBsD8pdyzA3WLoUDisTXxYyqjBucEB-VLJi_KOG-MdT1PdJ84Z46AavAfNn6lLQaH-LJjRP0Xj-V6P9K0zE1P2NwWc-HQvgvPtdeJPgo5RZdQpgYRXnO1iRUtTG95NgMjftD9AV5vqPoOn62qgWrG9yoWH1sqH586YfDK4zFowQDSsn-tx-rN87Ub3PHlFAnBJumEFlYtSRd4qMO4rqrgO2P5_qPJCix2xOxKElYK8HQYQJ9yHTCrB5vLtexDXfuFbTH8eOF-6SZhcSM_JCRhvJccwsPEwlNBzjIEzwuJkxyEou0VQhS8xjrdFRgNL8ZpyPsalTI6Pd81aqlt43Jiv8-OOHcVAWcYV9QXxbxXHV_MOIpeKNL1uAFNpQAj4BeeoNGl5Ev29r3AX70eoLTBVwUIsfTHTakmuIjZiU5Pkn9y1gN8ZtD2A_1FBV5FCbxD1hoWdsSDP2LLONGeoyTdr18PRusJG4Wi48UlE27L06zS_cv-6YvjLck0hmHFNaz9IB0gJ-eMFD0BidgffKULaX_--HIjt1EaJ3rkBauT-NS7OA5iRGlEUfLify3ZpDgLnsFNFe0josM6wgDtkehAQQc6PPQ8ZOO14NulJ0Wcs4guJB5k4otpmYsrWOdZxc_wLbUTvqPjYd5VVsj1RZTFGSOxlex2p9nE92vkVETDtWoFcgET_T3BDXpHfYvXNPs1Km8nsNnHXKPrquj5tAYWIdbKmRVt7CZyEMTO2ttHrv9fuyInd-XSj-VUVK1DULB8pVkMeZB_ERKnJGpvPvwwsmeEiE9HUqiTqoBun3ZLiZsWyHFmOdHUQxB0vEePrABqiev6Px7ZO24xWb0D8XRhwC7GQ4aoy_K4Acle-jxVpl7BbDDQ0usM-iUE3dbae5xX8PjrB-h8U-sEojOHxIOYxJeyCoI2VDksV0LrU0V-p3xlH13zbMVHgqCC-kJOO6i4NrrgKeT48pNYhLRrlVqTillEg6MwYGPR9-zzVTaTgYXC2tCI31V6f4GA7z2gT8goq6dy6so6ViI2vYR3ZGgDN_oq4iyry30TTCd__OJ1hymAZFnZR1zyvzSr2KivDo0xZa2-_AYIGMf3myHQQJtkRTXi9TfD4WUb6wKnH1XTU6_LXGUG6CuncqtqbkIdkids170Gh_FZ3lny9_B8xpm_x2g-bUpx6FSZH-xPyH9oIVyI51zkCuuGZKfswnf7HnQaWEEN-rRyCKY-gv7s7E71NwZ8er8_NxPTTp0hLzyiF-X8MX0tAp8PvKuTiMqE9tczMLyQ77RhubQ85jOzjk6GvMSwGEjNqAeDhVWm50_tm3PVQGgnp3j01VB1-pQ8nFB8_e9Gg8mlMXDfunNsW8yaSF3mPPKFAxa-sj2pZSpqS3imKsyTHEnG_6WrUbHR9QeQ0UbSUZ4AguG6u9GjAKFOyuCC8BLRp1UCwGgr4OMBEIgV6GnrwNODNdYd2-JwgNnIsFqpuS8Jffg9RgEAm7vXUq6nK64vFVrPxXvuIoHcy4J0r8boyDbO9nY7BNkyB4IY4nv1vncVDXff8gC8dR_4rqBSJCIxRvEiZIOXPhv7Dzt2_cI1c88zM4PSv3oQ1e64fulXfyLdQFVPkPgvs2yefCajqBkCoOAZFHHG35H88MbWgtGA_76jXHGkYl8k2-VL5-GrjWq6N7aEFe4vY79uA3JhT8eQAvzU1hLQoS5G63lgwdrycmU87KfvgYe3gzhLEJW45A24g5gMjwiykyVll6x4_zF3cdErUmcVTRIditqZjqJc8SwfP0R3WhSsVfaxHjJh1H88PQWjj8ztPCsI6Hu5BU8BI6xHLKX-AlWRAJeW59Ccb2xGdtUYdsOzc-Os7b0FDSibz-g6_ad2F_tGvBZVGF9RiTYtVOiPdaC-1Yawx_BZ5nH1-a3r4Xkd2vxNO51z14tR5wnDZoKUWPMW0krsQlY2lZvCWwZkGd6tkZNOSvpE7AaRyUqALx-P-a5QjD0nJCioaN2B6mxaQQmkuaqEO9EUNtre4RYIYtVEZqTxUP2Tk3UzcCpnliz5LS-H6ddQI1akekoc_Va90hvXzICzIn1yyrRs0m3pBkRRai_3npRIMCi-fDk1WLK40QqI8KWKr7Irurx3TWWNdmfphw1VOxoJS8pJltP0tcckygcQBVPY3e-3qDBUHmmuR1K-q6z7OnnrsTMc3vzN5tcyS6QmFumRUQG5m3-OPzAtyF82wErvzOxjiFlJxSXhMjhXD3qFd3gZSJZ1N7pegtUIZEZRI4JWhH3zadugYARNldrG8JHLNh07sQunGqpVU8SFvpB4TL3T1dgyYPN9_yho6LQv3dbzUQDg1gdevRrscDEFS9C-XLkNJcqLobGACLwv_E-wV9tvy6RQv6mbyd6lxl1hGtLPUF9I7BQ6ukEYILTLJSa9u1b40NtKC64N3KR4zz9VHtRexisRQJjf6oyryqBkvTFxBbXkQH3WlrPOmimMqLV7wNvSBD6KxXcnMhmZAuwxgOCTbgsS2l1xfF2arDiIQDv2GA8YIIohns-MwOy0rm8o-zIQTZTjcTEg32Qg2U9SA7yAoZUkMe5l6H744-ay-fbL-zqdWK7Mcmrwr9XsyAQcKJM0_9aSfirnNpBCR7ai-_sZrY_8VnOTpwSAMdH8JXNAjZypoH6lV8HyB7SRffpbhO3x5UhzuYih_cQ6KRdWb-vJD_NXiExHOnQn9kMR0aaPeKIekVoy81VrPqrfmfgJC_dmxYRIG-00nyuHSJRPTr9CI71F2X4zX_uZv-PTWJAwV3W5N8ADytJorMhL4Ja3Hm9knKZTEveMLwpO8kAZgpc7xChLVUxEEkFL6c-6elBfOFMhJGj_NS_tePVq1xpw05IaZjMKWilUfFveGj2VLyBzW-6mjm0XQWy9wB4eLe3Jx6V-5TtRy_GTiFQjhhP931yijy8aWNwsP690FHaNFEe5EoSvEFxUcpo8b-XBNEUhX4m9gM36VLWj1TmBXzM74TPL1Vj6DEjAvM0z__b5cKjuMnHnOVvofu1bi0_fUZ-NNCaYCNUjAziIHZouYJoLIG1L2KR3JH8waMzBeMJGF0heQuGHjRfM3hVnLOaCxQphCadzYISOe7-v1mzf3nbFUyyfhuaPQ-_AG7jCHUBcwB2SP7HNZH3SFISjRNlFMHAC4FGBdA9itfIbC6hvtYpMBWtUgtjG4WMe25au2TMkFv9NND1VAvlzSnfTK0M1f8F8YIUXBRUp7RZoT8lpRoKwUzqNfp2N4BB6a0qTtW0urs_8OA6c3cp194oTHMcg9l1RYzCKL7XROGHd_QhgmAjsDNA==
+        id: rs_048b20bcdb65249e006945adc8820881a2acfaaa6407b139f0
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Chicago"}'
+        call_id: call_SLfTLXh0mXdyO00yhf7HrzOh
+        id: fc_048b20bcdb65249e006945add14e1081a2b307ee869796c949
+        name: get_weather
+        type: function_call
+      - call_id: call_SLfTLXh0mXdyO00yhf7HrzOh
+        output: Sunny, 22C in Chicago
+        type: function_call_output
+      - encrypted_content: gAAAAABpRa3U8izC0dAFRVLQ_RZLWCfpZcWmdMoyBFdJedKbmBADxneagC9pSENyUnAtmIv2HWvnHwMxz15qtH2j5um02H02rsspkZfyE1ankXqHk1Xy6iHGyl2s4W4l7k5bOttrVK0hUUykeTFBApeO5NkWxD2bHacbmOaxmv-M5uaSXqsihcwhffI-e3mIMQ-3H-yzoK7mYsoiunc-YBXCubp0AsbnayJk3WIin4cGSHFkv0CPED0qnckT3UeTNmuW3QY1eqYTdN2TTo3ZO6Gj8i5S2qLE7yZo8UUkKnTmV8wg_YZ-13QyvEfpsJB5gW5_zgejtb4pbvcDsMN0H8UhXlvD4xUckFlZpgfPP_BxsbNMx026GrjbJvTOcIP13q7iQ6Ep2GfQD4haXhqfo9cg-c_4dC4AYKzu9JjUgfpDjTmx9iacMag3IbrMsqwT1UnKkVyvfVcoNTXkwe4lNoJRul9sdJEXKnLHhpxAunTwCLt2nr65BD8ebzxLeJM0Yi7rO_jOImCPm-WwtnreA2NWirdO4haBfHv27mD7V9JZZryXn7MSdLLwZR4dWPGnMupWVERuR0AoFZOnhvQpA-m2axEg3AsQ3O37xmAe_Oxpn5VKo_5kCoFnhWQ6hFet5ier_MirP6PrYMvuhXSp5YPLtMJfXCHXCaMYz-uz3phxpp7CD06w75gaVT5gWl1H2EHmUfhdiKEq7UhfVXozXUK1HHBIv0yDaJSgNcSsb2bCamcQpSmo8DQYMTTVIMvGo_Z2dW1GTDE8z03-KhdjDjzaI_oYOKHsdFT-IZBqwyC7pkZd-CADM9oe6Cj9wEGWasdTyz8I_W7MigeuaahS52m-cJFDXvkUO-ntpcwEa3fqzU22lMKVXnzL8IENG-mQfpOqfZKInAvtiP6GVB3xwnamJvxxRaS3YlY78ExQAFQwqNedPlrPpIP4JvWq0HayaIReSHCjFf_lWspEKFv8yvSzrl7SF0J1-h0NKtMfcLVLkfrVXdfJj0fJt86Gduo44Rr9l61d26NDaGRLB7S_Q09nhB4v8CoI8mw4DSEeOvMa5mDpOOiFNFwX1rwcEkshIX3w4rbAMoPP
+        id: rs_048b20bcdb65249e006945add2de4481a2b2fe03b588cbbc9d
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Chicago"}'
+        call_id: call_4et2CYELlIo2iwfr6uyPz1rw
+        id: fc_048b20bcdb65249e006945add3c19881a2b3dcef2c3656d282
+        name: get_population
+        type: function_call
+      - call_id: call_4et2CYELlIo2iwfr6uyPz1rw
+        output: Chicago has 1 million people
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_population
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5719'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '4392'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174169
+      created_at: 1766174165
+      error: null
+      id: resp_048b20bcdb65249e006945add5176481a2acd101abbc4ef0aa
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa3Zq5mpySGzhsOH3onu7FPNKOmE3cZKG-wmNnCoCgXDc2ly5gtq9HSWaTdjszQ654G7_OUDJouTr-S8hPNQmnn5Kj87hMibSJsdKDRfRYRREn_g4X4JK6JYcl3BBCI1mPHD4wfntlTIi-n7M9PDkgtAGZX72MvBu4dMby40jTZ_kODM7gcCGUbTSerPneGzpG3FNIkGFatbllv2fG3X1Y4dqocrg_FeXxxqHcWOYlRqGD8f5ZL0kI-j9Fkv-k9f9gYSUIjg4Pyen6m-IEUUXFKyjHuFMGZDBNDrik3AD56dD8GweaT7Efde8I1Kc2BSQ1DV9k_eo1cS5KMoEyaEndVCJ_e7L5f8UYTjIR0IQ_lX4osO82_y_6RbOqqie3BYuJbY5qMrGwkcfFeerb0Bqz7iNM1_ZUYIVwyzcoGOnbp3Zpc9_uE5I9njDVB8hdH6Mr7Rk74IxGrV2XNEdrRrpN3GGViIFi3vNLW1BxjIm8Ki7p6GH5AofONYgzpCv_rad4czarK4kmELQzPAdAOtNxcmmGE6HgnW219erCLYmWW_NHyjkNrownSJLC6yQc-XudeIvOsXCUK3uXWpnRWfIRJCcK9zvU9zAYa2Ww3eRZFmYB0kKdbYCs7aP8t8hjgeH9ZRaWBiH9qaHmDmct3ZKc7_saWBENgduuEZ5mqS9MkFdpkZDlgDWEXi0_b56Z3ICRiSTvM1k53-MZaLg5J0C5wH6mLH8elnqDLECN2lJvuCl7RrgcUt0gpLXIZpKLi7YnzYRfv5N77wFvGUT5I5tCWW8ItcS9wi2Y3BygNPPhgnaMuhDhrcQxUMK5ATtJhogi5oI6jv8VxbiU8mio49RZJdetokrU9sTZqyTKffn76ququumu6nsvl04dk9KSprRm-HdjJCJ0AIfLU_6rhb7slmtBGUhjMxAJp_M71FMPW1lkVZweLHYkQrCPtr850sG1px3hhbvmdFaZQNoWnc8uRAg7JQf9aWOh2S4uxx36r6ZuFD1ZJgRRA7bga_xQ9waTkyT2BAUJc2vLF0AxtHs9iz171x7WmOB0cMHmF7qzCm7dBhYrnxrSOzsnBpfRb94qC32whNjjqgtkm012zF_E5HAucjIskiB2uZlYN__or1ZYvCA50JnV6nz3Q3Lq27fECROnBlinQp81CxFLB9yvyp2pqkD_UAZaXRavWW5ClLUj6Mo_zr_QJYKo66zrwnvNB7id9GcavJm58fXS8arjIIxGwsozrHG8eFoh2AbVSSLZztU5xTfhda1ewP5PR4Ntg__uf-YhyM-3qW27FTEfkqLuHsLI9LHiw5qCHJGbRrBTlDcmg7i3DImHFNQ3YtF94YQ94ePkHNIlCuVam3K4foCOqgKKyJgLsl2XQNsXcHsTSVnhO9UcNqCdJ22Q71AXFRF5ywHaIH1J6QkoYH-Dh5Sklht0yURbxqwBz0TDLNNZQde3fJMjB7HAgtMGmhb11HGXavBZ3dnwaPMZIklslE-5KDxwUmxK3RsrvZDVC0pcQ_-YMwo0IC5AnfRFQowwMaRieVTKHAAlkUuZH1EpEEV-KEki_OyJYfiyV93ZT_4xlJy6cfGPewwnARB5G74NOhPoQmhZw_NamXorYnpsnvcA_wK0gw0wqsNo-tpQGOwKWWmuvc-MwSd6XNc1zM2ss0JkNWVjupdCujVWknt6eSmdtI5_qr9F6D2BJF_6hOC-1wOvp8U3A1GOApr63wBpTx0UY9tOYFGvRbVLD1DCWq1k8xnese-Rx-MJZagJroJeBrhCMKrowENKCJpBMreqP7KYBhQTCCkV8mfJxfJPMiZoxtv1anmyD8Xdt7YaHXaWmIhqB0_jCAOwhXC3FT_eBi-Q1OIbGpexBJaqm_M9qAcvMOZglCQjQ89_d0GcBGr3Rg9bgHKA9mHqAxxdl--Nar3VZxfQ9ydaliUKkhhf_U7B_mM0da_YFCeE9UL0PF4QMmbKUBtSbq2lbgHl4AgCrpVwpRxyYRU-VdYY3vkKz-07l56vua7o-LfVM0oA54yPszQ3Nial2uqn0YcuR7SHlWqgUkQtxg7jsHA3zc9vRqcmEViA1mNGnc_fHme8ubb1w=
+        id: rs_048b20bcdb65249e006945add56db881a2aba434418ef6cc56
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Chicago","summary":"Current weather in Chicago: Sunny, 22C. Population: 1 million people."}'
+        call_id: call_IjvuT2OKlKY4fdSdZU7EZjG2
+        id: fc_048b20bcdb65249e006945add8a91881a29aa0e8519736ba6e
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_population
+          type: function
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get the current time in a timezone.
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get the population of a city.
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 617
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 169
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 786
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

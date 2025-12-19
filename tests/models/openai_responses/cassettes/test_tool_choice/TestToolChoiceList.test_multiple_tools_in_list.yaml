@@ -1,0 +1,195 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '959'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What time is it in Tokyo?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_time
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get current time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get population of a city
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4377'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2303'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174134
+      created_at: 1766174132
+      error: null
+      id: resp_08ac1b945ca54380006945adb45fd481a388dd15d45f85683a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa22eKGTAbHa7qOBygeZQiCgMq8M9q4h_j7TMUNw4oO9Wj9VPsZoyuE_Yg_ZunvBST-6ksTRfDQKzZuX7yEcmYunjMzD8IgCp9O3ghz4O1HQzyvJndw77M34SW7IbOszElEnmntLPgtgbkwYSoz4OHIu7jQDFehq-UDbZ6kN_Pvu9MFCoqsLVTxJs8dKoT9myC8r3a2qmExJ93I9veDz7ndV736UBkLJS04CmjHIjg3QdW2xnvk6FtBiUuOEu_s26ng6I48dIlJHjLLwD0HBdPDsClcDPWAdOKDfADZARbmABCjN8YtscRPe-GS44bkLdygxyd21i6X7mg8X7P4W_ZON2cjjhjMNBZXaPBcrWAltDmpqc0GSnQ-4QB0V9Hg5oXyAyJ7E0R4RwOZceGVBpqh_-Dw2_TfvXDz1Yqf0zVLtxxmhgSDPI5TIBNmJNJzVgEJFJFpjeDmO1X6kzfW9463XDnhKJRYIbQ6AOZ9x8BEolsNnbiVf-tMNaXI8HbXe3W3duUJP27BDhSLIt5GPyROJpKUruOa4T1EWBZH0NBnooGbO0AJJSfnJRh8T0OIn3uU8kTgg1lqhNQEmCZzeLHhAsCUaZ_W2Rw5T4YSniX1nlrI8YCr6NmqbcftiOK8pV3j1yIuDvibqIKNHS0RiDiCvbxVO-fHpoibeCnFJ5Kerlw05iEqmXwUVxy3Qtd6qlsrUOFGf6ATpp4rKVBPmSP7KXrvPd8gdNzyUJIovMjJYcOFLmSVmsvqFu-imolZ477excP1ZCpTMg8kIOOKs3zLPo5BcF-MQC7jwgc5fC_D-YpxqcsiScSHMYB1_k-GjS3Mwoa-yHHZpU2HQy_YGqKARAQ5RN9dApwTT8Neb6qFyA3pAx09JKvsUK7clQV3QOSOPxaoc0Mxy9HTiNcMRQNffEP7buTL1_vXCtcIDYucGo6A0POsXvAHOmvjtFvmeGudzry_jRumS5QF6jazzIJE5c4mMSUvzMIvBFlDu6KYlzEWR9gWS5kNRtboH2nqUZTpxpA1ZE-r62THbpPTF0WjSOM4lPJo8O_yFhkTTRwUlWPSttUDFAv6wALtJsb8ZkQTBcbFboB24dJnD3OcbsjmSJLbukSOEb7UUreWdh9kP80KZEMeKO-rqWHH4KEdoE98P_dflZVJ8gPGN23H0QnE_LeIBA_DH4QQNdW7g9EqQDZLNnDsRQaFTZX8fQkCLyYKlMdcdlLuz6u1Fcro3lcWYfO8sH8pNr5EYcpq8-P6hhHty5jxEE8_yrL-qv5uy-SSzwHXwX24l9TAEDnI8fPXEqxqcSx56JrY1CzcMX5_yyaCP9IW6SerBcFV3sxjeMYKa2m9-sbVBLPTpEhDke2hp9ejkO8tJVZWrGn5vc7nHi6zIUDkw4jtCHDzV-BMX_-ky
+        id: rs_08ac1b945ca54380006945adb4f78481a385c65812c2058dce
+        summary: []
+        type: reasoning
+      - arguments: '{"timezone":"Asia/Tokyo"}'
+        call_id: call_18iOaNrHTxQiS2WUrtwpFn3L
+        id: fc_08ac1b945ca54380006945adb6481081a3a7b6fcb63318393f
+        name: get_time
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: get_weather
+          type: function
+        - name: get_time
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get weather for a city
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Get current time in a timezone
+        name: get_time
+        parameters:
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+          required:
+          - timezone
+          type: object
+        strict: true
+        type: function
+      - description: Get population of a city
+        name: get_population
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 90
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 87
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 177
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

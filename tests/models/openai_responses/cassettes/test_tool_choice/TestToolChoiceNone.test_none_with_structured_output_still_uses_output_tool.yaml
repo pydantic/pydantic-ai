@@ -1,0 +1,176 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '740'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Tell me about Madrid
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: required
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '7023'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '11750'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174118
+      created_at: 1766174106
+      error: null
+      id: resp_0f49e2c2e5f4f700006945ad9ae4608193bfc109a07362027e
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa2mMxGK3tawIijrznKCmIcLmTMxDYNTAnUfp4eNf5hqtTjviEdOqCAL8FDErcS4s0sORbtYVV2ZBmMKfQm_xmIFR5GrOe7aiBSi1rPFupdH983N5YtCa5LSEUufcpIWjo-laRpAFpt8f69PrMDXx1FUw_GynN1kEFSAhgXC6RyKjUirI9XMSrACxDo145OHiYAwE9V5VfYd09AsCpMEaXi6I34gCaWVVjC_XLsa-krAuCI-MGUgiyLEGSnnear5DFmYXf7VLvTLlYXVpT3jzXMKAOOG1Tb5QqLrgXAGlRrkwwDSBM_MtGdUu161I9uYzK5n9VbKWSiw7aDt4Bmmhcevx1wP4dU8461Ln0__TEZst9UT0iBJ0JU8Uz9xMUte6oSmNGVGw1tDnRoQhmio-umQYdF8WfELdI1D6DRNUAOee2caYM6L9wmAPTJdjLqgGZ_93hqo-8RtTKUkjz19xUWXtxNuRJm4GGCditteDOGx7jqneRDcbnyGK9aZ3vpUHc5UG0QzHNCWqElHzJ1eYcRtCFJmQnLuhSUKGuaWEfrfh0IoXSuccIfh0CoxAuuzKEhgwEnoyf88ABYDMotcLvNyZAdCA9dglIw2rQz_emvBljdONEwjGaC8JX_-Rk0GWEYO4qDt_f7ZMVcHkuSI19zm2U3z8zFhrEWvS_axjivKdNz5Sk66AeuucxYqNgWzIwUeeARU_Vlbzbl-jV3f0PtHbC8QV3TJaihoeX-7ZsP1MjdDHLo0CSvGTnzdxKa6rFpSYiSsupgm04pPnIY-JuKoE7KdO-KfQHURFvpozsrhhRcO525D8vSCXyr47gJLkeHseuBVz4YMZKKRtUNBBse-brGZ80TXWbue3r6gds_hlMjCs04US7TVqIEcqfRrFcNZYbo2E8491CKMmbIHbysQ3Oi_CkpnM1uyeMnpcQE2BXObMlL-zxLEPDiJE_3yw0nGsE3zWwLxq45Kz7VyBHPcz6PsHv_fPOtrLcgQ430cRBGwGISHy6y22GX41o5V5GRb8n7HteE2XHc1UhxCwCLODoB7CGF0ZUAxA1JpEIPAcYwX2ohmUToVzQpVIcoqGBDz7Re_F1EbAHyexIzAFZTxHoDCPobTJKooaVQrakDjaKx4DYGUbNIQiQxh4jPm50j0oSUT9L5KgBF0hhbTJr02hrbJu83WPufdY01sxyH6znaUnrOjUXYGyEV6HklL_patQnSxjGh3L5SwOWz0lYUXsB0r-J9SBCmZvDiQjb2OFR_rjMgoS70jEorD4uND5Jo_AGH3kWtsyffyg_qn2gkaOTugCnam5dW1i9dCaXiTqZExTGml23CfEIeUclBDG-2XiddjqN8fpf8YYgNovsSIAFd2EEFUeCT0uY-IDkJAdoLTO7cRNtLWfVXnLsz1SKw5juSW9acdSutUMkTwBEz9ckngEJI63-lvhuFAqfFd8XE5_LTdFQTGsJH4HUqx4cX-FUp0joNqCdJUg0GdszhtpfUOelCF5UJisyAK1Zi7mAiRlK92MVAn656b9tiXT_BQCsrkzxyfEtahCw-DOf0QkZRgWSi40Rud1ATYi1soiWvKb9DBnHTo2Hz7wIxKQWNwKBiLFnJZprXHKLlJ_MShZESSOg2bUwjSEnOsbDhD_nfoo2hvmTF9aHtzOpZ_ib1R05oY9TEBHoIXY0nVs7CBgIjn7e85SCVmpJ47_4B2sb2zuZkMUDVhJvYQn2NKHIGrP9B8Wdcf3icske-5nyXcxQXB2-wfePKY9bWfvu4-K5MKS7h_AtmMLVmhZWkzB2Nlt_EQbMcW8DPHuVShroAWVpSt7RrakIE1DYt1iouxt20cQJtP50lfT-6QtBUlrfEDDzT3aasEtlGY3OlfCTdbZHi1w25NnyVEYGyYoyZrO2AFUJzh507h1Th1Rp7yTVxuxsBLT6YXnKZDMcmqTpJ2xa5qSihQWH4UkXRfHh04o7RD0ADgUHnooDGpfTw2RC_Syc16N3tS21ZSQK4j8XmKabdAt45y-wUGh_3ucBHg_0lk0eVcOnX6k1zIZXH1xw__-4dSk6NEdoviu-N8AGmaWMaHwJXxCQhQBKqs-EDc89LIsXu-G9TP9bE1SBDdDm809FAGzn4flcntCS9W4VoPIFXwg7aA44gDZ1ZOcMtzbL9MCOYiQ8TH0OCD4lxhw-IiG_B1kCtmcEhSGkJTFxQAHY3bXmOHzrumzjgiMhRS1v3nCJLLmrFyoMqysGyJhZ73C2RA2C1wX5mDC4QGgi5gG35fE7tGJPqvv8tbDKaYy4MEUAMj1QVRwHI2oxdm80XSW-WYo1ZnfRiqtDJR5GNG7DbyJgv9jRtxxTC2LrhQdh4hPvN-2wtStGPSX59nKNHA2Xc945I34J-O4dop--xLgclLuoVLgceT8ngvISN4YyNSMz6qagaC7iecUsKFz5gcre-XVeexLK3v-vGwdo1pn-Q8_GoaAKh8ZaDh3wXPlrJscFrAvi3kWHD-WBfHSRhTzI4vYFsQVvZJqjsgwKpMIGtjiWdWZ6hMSGn4QOMdOwgwtuaz9RitUJWrlUiX6Hss3nfshIImyX2fVBNmBLwwerHS_YmnSk71ZlexxOVJ74uLESohvG454OhgV48TwQ8RNXbc9de8aQNNBYMhjn4dlrPhwMMDQgh0XvZRK4vaRScHMrair6Kxwqf43gaABZkp_LsyMULpQEUZxfY9-pszDgSoZpai0WirVhzXiCEwyoDmJ1_i1Hx5EyZhIT0SfRZk6MEJX91M1vU_ovk9Oft8DXgy1QLWdN3ERLA8XomdVN7NcTBFZceaxvllqIPwepVD8TMkf7LSb5K72AAD7uchYbXmjh2gwe1NDBtwLDkt1SRqzW1mI8oqCchXg8HAOnrp0WN5mqSjuhJo8MjOZzjqe8vJnPL7NhJXhJayy915Psy7-Gc82D2rBNeUFrcZDxVu3-WRtapfiDuS1NPLsv-xSTdJ6pSJGTNFHl48-3pRbDN-sMJ1gOZQgIm9AqITFcP8wdJhR5kfhrzeFTBn4gNPwKrWQ_f3OGobGbAaQkLOQM1SdMNQi9GK4h55awpHGgG9sZs7Q-s3ZWlActTwBd0IqVxeJVIiOLD0OixL-ZDGrR2zesygUetf8lrdyP8SdSDJZEfBxRio89DnAY_d50YUWKTzcMzIXGcas49kmBW933A0OH_o8y3qCoodApoViqBsnqm26qWsvj-tOsZztdcUplqls9shD4CpahIXhCPhwUtA5kIl90Gg3WqrCcCj3aQDRBwoBqmP-dR80pesXRFTKhcw_G75Tbb6uKSHzn99ooAIvKvl-gZ0977P2eorLxVHxSoz7-Q8TQo1vHmO8Ld7vJ-c7pJU184xrkv3qhAauCLfY0qBVodC_bzk2AgxftVZL4DsZWWOG1HVQnh9t4cIhl7lPvK1mxZNGuJ2F4Ldrn1oqPO8L_v-hVcdP7_r5zy3oR38hVjShC04m_TEXPbQgbcyzL4z60kiajQdUkU9e0oOxZvazmFChENgVfvVe8AsdO-2qELSLUSPJizf2wONNqxfRgbEl6WLPuAsjx9KfsEuHGqrxZIgqVxmEsoNeg95k2QNvJS2XdNZxqQ0U3O_H_-sEC01EEkVB1GcnO7DahjNPBK9TrSCPtE5nac3HvOKEG-N9FNrdC_VaJp3BQd-KEARw4NurSTVAgLAeohp94pWGTQCH9V9XDAjUm9YZnlI1tIFWBG7tQNW2a-Ejz_bteyCMbZuGoiofor7mH3gxiiQMjHXtt15iy9QZYXZjnLKOaN6ynqezRvPb4OQGFvo4Vd-i7SsvQTOsJZ9WuTui1ZuikMKYxw3xqpTAWcJlXH-ze36u0bMVc6gLtDLLToMmhYGTeicYp9d0wUjqoT_OdfHFzzkAs682yh7Ai_ARSYmQzwIRu-wTqT1roUvfDfYzGm3X0E3uLZqFUa22EK0ZV4nwus_xTIemeZ4hqct38_t
+        id: rs_0f49e2c2e5f4f700006945ad9b7e608193907cfc65989f5e82
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Madrid","summary":"Madrid is Spain’s capital and largest city, located near the geographic center
+          of the Iberian Peninsula. It’s famous for world‑class art museums (Prado, Reina Sofía, Thyssen), grand boulevards
+          (Gran Vía), historic plazas (Plaza Mayor, Puerta del Sol), the Royal Palace, large parks like El Retiro, a lively
+          tapas and nightlife scene, and easy day‑trip access to historic towns such as Toledo and Segovia."}'
+        call_id: call_ZKcJLIGBda4NlWJ5no0xPy6d
+        id: fc_0f49e2c2e5f4f700006945ada47e4881938c882570c14c40a2
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: required
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 71
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 566
+        output_tokens_details:
+          reasoning_tokens: 448
+        total_tokens: 637
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

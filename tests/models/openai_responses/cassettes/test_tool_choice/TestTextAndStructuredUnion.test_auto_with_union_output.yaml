@@ -1,0 +1,341 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '669'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather for Miami and describe it
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4290'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '3640'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174197
+      created_at: 1766174193
+      error: null
+      id: resp_0f54edbaf2148c84006945adf1f0308196b8cd861f30dc61f9
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa31rlFZ90Z86Fnfft-T3vhzL5qgOeTjofY2gtYMOI5S5z7vj1bbATjWJaCumz8IctA40XZzUkmAKTG5bPqJf3l0HkJih6-Fj9Tkrk1OsivJkEArMFnDLfX0o9Mlv-LY0w5w0kEG9zu9SPchjAwpoSFiq1b29BqLLZAVfRcqPcvKY6Y7Ua6ajPqwa63G6ReViehVgzO0notH_IZBTXAyHcwnHdpIZpfx3KarnN8SY8x8aGFN1TxbPjuVJ51LZJhCIt-pKg04Ya81SkPbLfDeGQEQT6VAP6uWjEPU9qGmij7TjK-_wzbxSLobjL0kX2vaVOZCpWCwOXbbwlAmsOPTWAVoZzbI6fzk0Yakzd8a_VDIB22wM-auEbsv0mSQPG1gHbpTk0uqZGhreIyjQxTSYtdF7gJweUQ0u3L7EaJyNXk05oqSzmDTEIi1LaEc1qAvG4Rv27wJw5KFAwvQwjN9uY4xWyZHpJ-PHvUhqSu0RK3VUq8Riss8v2a6lmkjKUjeHK6YEBArQk11oCD0ctFV9ZX96SZzqG-M2PQ_9y_QTHJxFDwj9jyuq7mwBLvOAkx37MEaenuEhPARGiyQfEjK49_mdUFOpYdgZQMhHVW6WWUQCpCJJn9fmNVst-7eV8ueI4lQyx5vGGx2Ze6gfxFw04Ne3UgyqcXKL1YG37KOkB6YGgJLlPEr-MOx2WAQlJwuJXohw-7WZhv8Yp7i8_HG9XUThr8RGsEWCrJVgOoP8vaOb3m1cMlIQx95eqNCfFkS9l4wAJqhFjtetIZoq_69B6ol38vm8TDyKMujrsozUsyEPak6bU8jDXYbO0hJevvb2oPyOOQ9WJRQSEdxuyB49BVWPq3l1Y5UEfSwsB9Oa65Ot-7_ciEkn5G_e-lSq-092YpB5_x8B0j5Ghte50jn-y_DXyLeLjlursloS4YNKc1JAgNyCfQVikUoSOEJ_vNfR9ixvqSEWEbzYW7N8zFXfaEPOBDv-OkACp97_EwgtQZmYSbxd_REBCwQsfSk2TWgVqy9ga0i97bpyMgN_O2-hdG9aXc3vG_Nz1Fz9i7aCvDJwOJ-NhQ_iNVbHYIGslYgPNckxwGMRwFG-rQhzji3sLZMgUn1RSQXs8HgFhL11jimSOJBwZ-LSZE_bU-Cae80MtbEUM6fIDD_dc1hwXQkciewRGiP_ugs5lebxPv8e6z5He_bbnzr5GvhaW0e9bzPTjOV2sAJpOUv2IDWkxA2EzZTrJYKI09RmKE2n3cdEn7Du43yi3Lcj7Gc3zrjDaGx-pERQRdFEaZs9iqlGgKjNXVeh8m2RipMTZVG5jVN6iLemfL5FnSFjFM1m3vmnVU8VKt0LsK9mSmz2zbCOu-AS8gj9qLMYvRWucYIBj_h9ntV1M6fADxaoYO8oU3YXp6PwcW1S_h9IDvblZoyj-T-tQTHbGRDQhD0n5KRPL1IamhjaU_rpBuSGQvN-DNtvIBEIyJ_1VehaIGNkpHunfNHMpKbyaDyfh9wdrQkmBQnu7tPMKXysKw0Ng2ARbNZBjuVtX4xq5IEs2dG6WSa-EHFoMQcANqYohcHSy6oUG2s9u3RbzHS4dba_Rw04SiU1yHbPbE2D1Xqkb4YHmgasjy3SnU1OxtTikGeNL5iWxFTvNQovcfm1GGOGVCgelkyv0s1w48Ayzxbw01R_Qw8oodrl7ukP21rtaVlylTLuHEIuTPgyUCdj1ns5CDua5gIGOUklv4uyTvqHfkFityrw7NMRhPBUxP7_aIjntuYnO6qwudbSqk-1yJYeCcdU7q4B1WieyPXOhBPvnFI6t07fYObCIsc32A6dcl_3s_GABPKYMgnJr4=
+        id: rs_0f54edbaf2148c84006945adf248b08196a95096f6caea59c5
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Miami"}'
+        call_id: call_lYXStgN1Yy9d1dZ7tF9Nt0OM
+        id: fc_0f54edbaf2148c84006945adf5169c8196a7e7eade1e5dafd0
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 74
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 148
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 222
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2924'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=AHDVdlLa4zqiV15sl1CzQwcp0q5wn2_oEgKPWNl7JF8-1766174197-1.0.1.1-FlerYxlIEjgNBB9LA3T6et1ZuviubO13y.6F6lzPkEA8JMJ3VFkGa4e6RkNv6GwQU_VRXN18lPivlrTUfDBja_vup92Or5khI4Py3HP8XzQ;
+        _cfuvid=BVIK5ecDqtFYiJ7uP3n.aqWPl8K_96CY66V7wYd.TDU-1766174197585-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Get weather for Miami and describe it
+        role: user
+      - encrypted_content: gAAAAABpRa31rlFZ90Z86Fnfft-T3vhzL5qgOeTjofY2gtYMOI5S5z7vj1bbATjWJaCumz8IctA40XZzUkmAKTG5bPqJf3l0HkJih6-Fj9Tkrk1OsivJkEArMFnDLfX0o9Mlv-LY0w5w0kEG9zu9SPchjAwpoSFiq1b29BqLLZAVfRcqPcvKY6Y7Ua6ajPqwa63G6ReViehVgzO0notH_IZBTXAyHcwnHdpIZpfx3KarnN8SY8x8aGFN1TxbPjuVJ51LZJhCIt-pKg04Ya81SkPbLfDeGQEQT6VAP6uWjEPU9qGmij7TjK-_wzbxSLobjL0kX2vaVOZCpWCwOXbbwlAmsOPTWAVoZzbI6fzk0Yakzd8a_VDIB22wM-auEbsv0mSQPG1gHbpTk0uqZGhreIyjQxTSYtdF7gJweUQ0u3L7EaJyNXk05oqSzmDTEIi1LaEc1qAvG4Rv27wJw5KFAwvQwjN9uY4xWyZHpJ-PHvUhqSu0RK3VUq8Riss8v2a6lmkjKUjeHK6YEBArQk11oCD0ctFV9ZX96SZzqG-M2PQ_9y_QTHJxFDwj9jyuq7mwBLvOAkx37MEaenuEhPARGiyQfEjK49_mdUFOpYdgZQMhHVW6WWUQCpCJJn9fmNVst-7eV8ueI4lQyx5vGGx2Ze6gfxFw04Ne3UgyqcXKL1YG37KOkB6YGgJLlPEr-MOx2WAQlJwuJXohw-7WZhv8Yp7i8_HG9XUThr8RGsEWCrJVgOoP8vaOb3m1cMlIQx95eqNCfFkS9l4wAJqhFjtetIZoq_69B6ol38vm8TDyKMujrsozUsyEPak6bU8jDXYbO0hJevvb2oPyOOQ9WJRQSEdxuyB49BVWPq3l1Y5UEfSwsB9Oa65Ot-7_ciEkn5G_e-lSq-092YpB5_x8B0j5Ghte50jn-y_DXyLeLjlursloS4YNKc1JAgNyCfQVikUoSOEJ_vNfR9ixvqSEWEbzYW7N8zFXfaEPOBDv-OkACp97_EwgtQZmYSbxd_REBCwQsfSk2TWgVqy9ga0i97bpyMgN_O2-hdG9aXc3vG_Nz1Fz9i7aCvDJwOJ-NhQ_iNVbHYIGslYgPNckxwGMRwFG-rQhzji3sLZMgUn1RSQXs8HgFhL11jimSOJBwZ-LSZE_bU-Cae80MtbEUM6fIDD_dc1hwXQkciewRGiP_ugs5lebxPv8e6z5He_bbnzr5GvhaW0e9bzPTjOV2sAJpOUv2IDWkxA2EzZTrJYKI09RmKE2n3cdEn7Du43yi3Lcj7Gc3zrjDaGx-pERQRdFEaZs9iqlGgKjNXVeh8m2RipMTZVG5jVN6iLemfL5FnSFjFM1m3vmnVU8VKt0LsK9mSmz2zbCOu-AS8gj9qLMYvRWucYIBj_h9ntV1M6fADxaoYO8oU3YXp6PwcW1S_h9IDvblZoyj-T-tQTHbGRDQhD0n5KRPL1IamhjaU_rpBuSGQvN-DNtvIBEIyJ_1VehaIGNkpHunfNHMpKbyaDyfh9wdrQkmBQnu7tPMKXysKw0Ng2ARbNZBjuVtX4xq5IEs2dG6WSa-EHFoMQcANqYohcHSy6oUG2s9u3RbzHS4dba_Rw04SiU1yHbPbE2D1Xqkb4YHmgasjy3SnU1OxtTikGeNL5iWxFTvNQovcfm1GGOGVCgelkyv0s1w48Ayzxbw01R_Qw8oodrl7ukP21rtaVlylTLuHEIuTPgyUCdj1ns5CDua5gIGOUklv4uyTvqHfkFityrw7NMRhPBUxP7_aIjntuYnO6qwudbSqk-1yJYeCcdU7q4B1WieyPXOhBPvnFI6t07fYObCIsc32A6dcl_3s_GABPKYMgnJr4=
+        id: rs_0f54edbaf2148c84006945adf248b08196a95096f6caea59c5
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Miami"}'
+        call_id: call_lYXStgN1Yy9d1dZ7tF9Nt0OM
+        id: fc_0f54edbaf2148c84006945adf5169c8196a7e7eade1e5dafd0
+        name: get_weather
+        type: function_call
+      - call_id: call_lYXStgN1Yy9d1dZ7tF9Nt0OM
+        output: Sunny, 22C in Miami
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4465'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5970'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174203
+      created_at: 1766174197
+      error: null
+      id: resp_0f54edbaf2148c84006945adf5b6988196af5e345c95e1e96c
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa37i8wqJdIAqVcAKndMVR6rKPbfawEvZn4uy1kvcO05BHaho3NTzFl9DhnieGt_IAWiIsXA3HTWTzYPM93NROyK1CzRCeBkSsMf_75rAy_s6i-SFezN5kX7Cse2qYQyWImPtD03BH4jdCGi22ST7GLO9i87Swb8gORNKK6OqMqKx_IyhcMXMQQLexl67Oz7AJUR70rUJ9Gep1u1FupmKTYuXJZmKGM0RwXwmG2fm5EBiHNJpTJGrgwAaOcL0BN7kqF7Y_2Bu8_LExbgbGSSSLigiqj_Qee9MItaKNATMyqyBA0tHgMmci0XNIxO52Qino0Ei81oRGFFd_Vmh9RKSz1j3iKdC78PCeEGhyQydKwGDQC3FxDyZfnKo-OhcvGbT_8J7GT611WsjP6Zo6N5hH8f0PPVEmLXS95qNV05c7z4aAcMnudnNKOltALTDGs1I3bmPvMu4nJQiUhel-azYa58IQTyf85CuLd9iNaLeiGDRXFpvBUQBo-MCeVguQKZiZdPdqrCJmYthBNjeLMojf9WrzN26SFx5DMkBnvQHB09Ji-Y1DyQ96_zNDoUBmhpB1VP8mhV-7f7EiKbpDIhC4vpBZTLLlXKRjUL2upsX4K-JYofx3-R7zvZBqN2jxSyI0s2xJYI3X31576aS4fVgxKzNnONj-G-K-qeUG7YBHX-NVlDLVDQHN82JS2w8PqlF4KELZPQAaAEMFJsgGWNrdI_94nStjwZ74dsZL65YeAPZLrm1wR6iPlpMIxCDckiU8LnOCOf_PCgTeYBSTrWpGgeSxcE5Pqkq0RUyAhFa0XyquRS0hy8kjP1S_RYtqp1Un33ET708YSummuTeUHFSctsa6fyswm5LvaDfPinXWkpy_1eY39kC77UyYDfYKmH41WI3VuCqtU0jQgK-l8jvyzmM7JyR8sDOpn6BiyKKr8ARppPXW2XCK_Ow2QREzbpSAoZ1ugg7Bt_Q1AC0BoQTM86IXWiQHKw-sYbLGr_d2XdFbSJlgwDWHtHkwERxShEleI9QErHshk4Jz-Mt08td-VADV37l7pMbFeLbLEZyj_L9O4UBo6dsod3bdPwGVELYghOPdvmfeBSOwCDHeKtpGkGpqgGTHnKtJhDa6AUk7am_QSSgG4IoVuwnWsA0nkg9nzVer3YcN5JUmZ7KgDUwg27eYHi8Zt-oGx1iAnAj5lUpHAxEYbnxXdoEESxcGaCecA7XLoUfpNhxkn9iM9MDBiVUCJU-iQ4GkyB_Cmx_tCgWdY9w1IFSuwuemlnrmlAZCLUof59p88B5X5KbYILsViaSP9ieLlNA9O5vLYt4ZdEyd52bVs41YS8esJ69FVNdKpCiQSSmrkWt7Bix98oEoWUmnjX-JE2El5hAtsqHdU-bAkbGEhzJAaHs6UwhTTFkPzbhq8Kq1KiiOqxjgcy2nQpV41ov85s9UHHWlpkpEFaEeQ1uCk1TW5iz6NgATm20PnjcyVwIucjjwyEWfHgUFbrPgzFQBESZvMnFswm19gEuz2yU1bCZscJxmt7D1Jus7LauGm--lFsZoCrY1LayUpLvhQhvx-HWieAnOKwwzJ5Gadyb65WSQBl5NuRJgwYhm7VaNk6ZCJyG2nHELhL5PZxXPWuxk4W_gSaQ-2EjeUNVvaqgWkmgjeFtvUsOqCcZ68QCFOR5YtqfbtJmNANIpMJw0n4_1LSz0TG3u2bCmJ-6sH51SvTblnAYLLSkbNYJ47N
+        id: rs_0f54edbaf2148c84006945adf62c08819698137632dff26c86
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Miami","summary":"Sunny, 22°C — clear skies and pleasant warmth. Expect bright sun; light layers
+          or short sleeves comfortable. Use sunscreen and sunglasses if spending time outdoors; mornings/evenings might be
+          slightly cooler. Overall great weather for outdoor activities."}'
+        call_id: call_3cHnRoHfPOeJqJHc1iuPX0Aj
+        id: fc_0f54edbaf2148c84006945adf8ca648196b667c5d79dd1b368
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 255
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 199
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 454
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

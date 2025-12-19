@@ -1,0 +1,181 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '740'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Describe Seattle briefly
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice:
+        mode: auto
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4914'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '5330'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174209
+      created_at: 1766174204
+      error: null
+      id: resp_0b9be64cebe1cb0c006945adfc0c04819ebf1d64404e56d07b
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa4BpGevTAROF1ODuf2HDwoWDRJvMODu97893EXV_Ix5wVl_kmJeRooxrIyd6wLW4sK2dq096AQRipI4Fr2bMSSzxlMzIXh0doSqvF3q1MafSw1GqnIsWrU4yyEisVnDHTh-QMN52k0yWqkrKudIy_mF2xyDJE00dJftIqe34MEua-urtRxfte4E3PHwZ1y_7_GbFg9YeKJBHOhv3RIlgKxBMkX6Yothimf7CxJK0t3U1Bu7muVyOKMbmrp3QBo8iImKJlBrYAL2yy9QiUiqk5b2cTunsuc_6Vuh8BTW5Gtzkp_fKDwR-Ty8OJBXjqtxEGkgrYhpJgK7r8d5Vj0sCtgTKlo4VSheKzEYCiLN4iEcIT4AHLU2uUtMf7MkTNDJ1xBgcBaeXrMoqRk1pEVgVzndJvkDYTZcFbSt-YI42yKyQso70y7N_rH7iANYOnzn3uuTJJx-hnGtbY-RznDBeKncAWFKiFU8LNVZLDPB5q-1n4RSl_2EP8oQz01sSI3XgjVAEbCLq9lTF5MLUVDm8FtRttgokl29JhjqBfNd2PNU1idhZ0hmlF1GaRWFTCex4v9SjVidaO_5sFy13LHfdpl6_akCrCuJo8nVUJmTuVto8lib1iHvUVaclGW_6yy33YD8rMVnv6x28dMnCe1jgt01OpR19r-shjXT0g8adu4ykdsuMkh1_RpClIUQjnA_F3THJlLUKgNPDjt9ohcrUUEA37pyF0dboSxgpAh7Q5T750a0mkoF6NeqSv177udK-TDSWHqkU0SIyL7j6ArVpczTnZBediDhcORIrXCp0JNhHcT_JoU05TCFAGI2405BMDj60MP2csBfJ4KmaHYQUH-11UibjtRLN4hBjUXPikbstLlQBwcLKIRIDiS0LYyhyJdgjHAImUVhaI90RHmXuu-hQ09EoCgK2s8Asc-FChy9bx5NNrAi6kjbXd4T_ozkS5s8Y-8v_W1S9fDeoBwzUBuekNB_FhuOWGzu_vlFV1PHopY4oYIXbSlVw_qZSho7jyl4aTbs3Gs8Zw2J2wYubl7N4DeTilHEZKijbTpJSWsBBOJJ-mUpqLNZ1qSwTH9WpcBj8qDMiM0fgfvEkNhBBG8ehKSbPVyrzmtwa4au4frvx8IvUh87wZyq-dzUWtAzYSpCabJhdJyjUb-fjF_lPWmpY7sKg_fNoJCLYm-SsHd2gMFL9Ohy-ADiSVEWn7hh6ehyG-Yv5UXcHbbEB7ILV-mracBKYWPnasHQuGv7V50I06um_O-Cj2ps-xaWdQLzV3OM9cVlBHL9kz2NtaVpRXnDWn60bZ1wqaI4vFojDY5WRvO_C7S-HBLkAs3XGtnZlPMBmB3agZ0wqXhNPk3tszjyQJCtfmGq3kIhb1KYW2n-Jdnn2OIvUzrZAWNICSdXadurjGOPqrc-OuObdU24IPhTQS_avwWfC5mAEqRYniWdN8UsbvyO3fK1avqsIz3GoideRQycP6VsI2yOpbSNAHj-SDKnPv3AsqALf51rbjkERwvv6SyNx7WX8J3RJp_7r-BjFYtebL3m-MvEofcPm2MZy0qLzISh2vYm46nPpQetInVILLehwdn19uwtEglRAWanI7AqWtzHgV4SKJwuSFG2nUcKMFBXB-lpKstRO1zFQGk=
+        id: rs_0b9be64cebe1cb0c006945adfc8f78819e833f5eb13a7fa4ed
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Seattle is the largest city in Washington state, located on a narrow isthmus between Puget Sound and Lake
+            Washington in the Pacific Northwest. Known as the "Emerald City," it has a mild, maritime climate with wet winters
+            and relatively dry summers. Landmarks include the Space Needle, Pike Place Market, and waterfront ferries, with
+            frequent views of Mount Rainier on clear days. Seattle is a major tech and aerospace hub (Amazon, Microsoft nearby,
+            Boeing), and it has a strong music, coffee, and outdoor culture. The city proper has roughly 700–800k residents,
+            with a metro area of about 3.5–4 million.
+          type: output_text
+        id: msg_0b9be64cebe1cb0c006945adfe9a4c819e9e69fa478fb9f57b
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice:
+        mode: auto
+        tools:
+        - name: final_result
+          type: function
+        type: allowed_tools
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 70
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 267
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 337
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

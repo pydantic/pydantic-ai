@@ -1,0 +1,278 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '405'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What's the weather in London?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3394'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2267'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174065
+      created_at: 1766174063
+      error: null
+      id: resp_0debae64eefe64ca006945ad6f6d08819d9173972acf734cb6
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa1x3D_OMH5aIi99BcoAgI5l1dr_FvNsUknds-32L3NF9hcMPS4Z1MUNCK6Ai4QXxKHXkmFdR1_qUP8EA4kJL3K4nYeTzyq1PvKba6bKV0hP2-388e0Vi7Ct2ndZfPAza2NXGqufkJGynTukPy_-WpV2OKaCvHWUF9eUfhISmvO5mRhTiEJvQsa0WofdjNidLY7Fh1eLgtrR4n3ER0y7VjYfwAzysjXDDF3u9Irz4fJ5csMlYSoIYSqEutRjTIHtSZFtjvdCLN4GyXIDa0qNG1ZumEaJUf55KapmPxlbBc1uyWN81C9PmZtAVioJwGX9E_t8flD87V2J0rVks_z9Cq7V4O-mLSD3g6ZfzNBJn9lWRHKM99SdQTanZ5Q6Zy9qUAsOyQW4pqxNHe1NCcM8LhjEif4aLtB4o7muaGkZlO6lfAjueaMRNxfnVq91m-D-xPaFUwne1a5AzyqFMrPBSG8PjCu2x9Uv8qQbGMitqwZTcK1sZZRy5FDj2a39d4t0cnSL5FbG6BPUM1S5IkEz4yhspUumXw3tAWtZs7gVjK9Z0HvqRogQz7hQOTe5kYNhsbHMMx2McalCH8yD_8Qp_ds1G747F49Myb5GrmP8vbruVh3DU6LNKCkKcXWrSKISd-694MtjbhNZNeio6aSTo-kLwyUGMPRQ6k-MUJrf_kek-cbK6pswIzvAq-975hdtyFOgRXmM3-gu6mJPT1FZf4BlEeKYyhXXLh-wL97pL4TfEe52MLMFgHuwXHR-MtawEeUR9lojgYp141Nl5YmTn9ec0GuzNN7hFErnOStmt8jQPlgHOy9ajwmHhrKDZ-16PnbRgJkGjNCw3WloBVGuEm_IcRJHrNR117m_BCaFrl22T6qHT_JVbMv0JevxPYOgmXbKbo3WtA7A6URKu3f_q_R6gYrdfk61fq526Ueqse6PjRfEKy8hNs5yRw94xVOdhZYfuNH1_rIQE_yVdHbvc5gu1R5ZXvqvk363gdZrnAYqaHy-9DvtwMid99jbe6SfKbZGYJcu92v7pz4faKrBvZkOriacHOkMz0Gst4Fkuh5GVkEvJN54BZVSeOUJNR3-PEHE58yny1vZ8MvQcr9MSRCA1ZqQVd6cs9tw5T1-rX3D-cqDYA0610CW1_WTH2zByQQYjjK04JlkrnTkRFBij0AONXvRnPvflYJPDB3wP_LNu1vOW9St03HHXBB8DH1g7DWiQnKjB_-Y6CBZCuiyvn09WWOV4Upcx_zObLZM9wgYYKpwt8E6CBvjsirRtzA5Am9LT9TJ5KU1IqxJh8vNPhKwV9m72ltY_y7u3S64F_8hsQsGSKM0yLgkPRLCfW3PkxkksNOv3lt4ynugdhWbhTKTpxltlZlGwJBuMklqNVxorcdothfa00Z2WR9BziV3A4J9
+        id: rs_0debae64eefe64ca006945ad6fb554819d860cda2b51f59f38
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"London"}'
+        call_id: call_RHlw05OaMVowjRif4li7Cixu
+        id: fc_0debae64eefe64ca006945ad71478c819d883def68dc0b7387
+        name: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 50
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 84
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 134
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2234'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=ED9Rcp_SjoLJ5aD1R408hnWy3cf5Fl4_cSlBY62bGoI-1766174065-1.0.1.1-9XtQ_lP8vvok9Kyu7WSzYKj61pVzw0jtdhxn0V1qw5nMTzZ8u_TrxCgDoLB4mwLd1uT4QlnzW5lQjUXGoFsYBDTwMtjwm74wS_OKamJEdL0;
+        _cfuvid=AybzW1SSwsxHtfYIb5OoqwY_bNBvPrzvX81sdIDSb6U-1766174065713-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What's the weather in London?
+        role: user
+      - encrypted_content: gAAAAABpRa1x3D_OMH5aIi99BcoAgI5l1dr_FvNsUknds-32L3NF9hcMPS4Z1MUNCK6Ai4QXxKHXkmFdR1_qUP8EA4kJL3K4nYeTzyq1PvKba6bKV0hP2-388e0Vi7Ct2ndZfPAza2NXGqufkJGynTukPy_-WpV2OKaCvHWUF9eUfhISmvO5mRhTiEJvQsa0WofdjNidLY7Fh1eLgtrR4n3ER0y7VjYfwAzysjXDDF3u9Irz4fJ5csMlYSoIYSqEutRjTIHtSZFtjvdCLN4GyXIDa0qNG1ZumEaJUf55KapmPxlbBc1uyWN81C9PmZtAVioJwGX9E_t8flD87V2J0rVks_z9Cq7V4O-mLSD3g6ZfzNBJn9lWRHKM99SdQTanZ5Q6Zy9qUAsOyQW4pqxNHe1NCcM8LhjEif4aLtB4o7muaGkZlO6lfAjueaMRNxfnVq91m-D-xPaFUwne1a5AzyqFMrPBSG8PjCu2x9Uv8qQbGMitqwZTcK1sZZRy5FDj2a39d4t0cnSL5FbG6BPUM1S5IkEz4yhspUumXw3tAWtZs7gVjK9Z0HvqRogQz7hQOTe5kYNhsbHMMx2McalCH8yD_8Qp_ds1G747F49Myb5GrmP8vbruVh3DU6LNKCkKcXWrSKISd-694MtjbhNZNeio6aSTo-kLwyUGMPRQ6k-MUJrf_kek-cbK6pswIzvAq-975hdtyFOgRXmM3-gu6mJPT1FZf4BlEeKYyhXXLh-wL97pL4TfEe52MLMFgHuwXHR-MtawEeUR9lojgYp141Nl5YmTn9ec0GuzNN7hFErnOStmt8jQPlgHOy9ajwmHhrKDZ-16PnbRgJkGjNCw3WloBVGuEm_IcRJHrNR117m_BCaFrl22T6qHT_JVbMv0JevxPYOgmXbKbo3WtA7A6URKu3f_q_R6gYrdfk61fq526Ueqse6PjRfEKy8hNs5yRw94xVOdhZYfuNH1_rIQE_yVdHbvc5gu1R5ZXvqvk363gdZrnAYqaHy-9DvtwMid99jbe6SfKbZGYJcu92v7pz4faKrBvZkOriacHOkMz0Gst4Fkuh5GVkEvJN54BZVSeOUJNR3-PEHE58yny1vZ8MvQcr9MSRCA1ZqQVd6cs9tw5T1-rX3D-cqDYA0610CW1_WTH2zByQQYjjK04JlkrnTkRFBij0AONXvRnPvflYJPDB3wP_LNu1vOW9St03HHXBB8DH1g7DWiQnKjB_-Y6CBZCuiyvn09WWOV4Upcx_zObLZM9wgYYKpwt8E6CBvjsirRtzA5Am9LT9TJ5KU1IqxJh8vNPhKwV9m72ltY_y7u3S64F_8hsQsGSKM0yLgkPRLCfW3PkxkksNOv3lt4ynugdhWbhTKTpxltlZlGwJBuMklqNVxorcdothfa00Z2WR9BziV3A4J9
+        id: rs_0debae64eefe64ca006945ad6fb554819d860cda2b51f59f38
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"London"}'
+        call_id: call_RHlw05OaMVowjRif4li7Cixu
+        id: fc_0debae64eefe64ca006945ad71478c819d883def68dc0b7387
+        name: get_weather
+        type: function_call
+      - call_id: call_RHlw05OaMVowjRif4li7Cixu
+        output: Sunny, 22C in London
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1911'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1200'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174066
+      created_at: 1766174065
+      error: null
+      id: resp_0debae64eefe64ca006945ad71dd40819dab36d33878d66f07
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: It's sunny in London and about 22°C.
+          type: output_text
+        id: msg_0debae64eefe64ca006945ad727d3c819daf303010091b94e4
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 176
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 14
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 190
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

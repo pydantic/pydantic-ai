@@ -1,0 +1,151 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '429'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Tell me about Boston
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5815'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '11037'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1766174193
+      created_at: 1766174182
+      error: null
+      id: resp_0a3de6f9c3c28af7006945ade67f1081949397585675ead991
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpRa3xoqrkFJ7z7A2vk1rD45NZ4OdhPBqpuQL-vVRLIntjyyWQn8JIoUcM00pudk4lY3CBAINx2ZbYyMfN-B7McnQ-vUPYk6EYdOXp_4uJ0bQHHnbJFGKscnhFYVdMtF9xUpiQNCgY4eyPDfr7YpwCzZFNh8L7iddQGGXOJxM7w9akSqVHjqrkInVsQtLTtP225tS-zwnRq6Cb9X2fHOB7RwiDpvVd6ULrVYqs0adCY6LqZITQlxQwls7sLo2aJ7aKyxpjHd-TrRsxqGNEpC88zAItP9xtVPmDzToqkqFkf6odtE8N7LQzAEYcn8KIjz7TXe3dRBPVjcbtcE7JVFO6lWi4Fcb_qnhBv85ZdX-kNOTE2Vvb9WLr_pz4xUZ1LCWcz1mhV-d4c-HF6oh_GZlrNTIN3z7f9h3bDE6OzvYtRw5G2rd6hk0wegfCdEmA4DO7RTKZ8nU5qE5hQtY8gjSNtRzB8Bm__TU_fqaH7DugHhOGhFHQ8ooUNUxsto8kw_cBhhHltl86LShQcMMkTIjCOlQrwcjIK8Pk9GSNR9dRapZkrmqQvmeN3OfRGh8Wz-STDKQtSjiH-4hP6hN7VX_LNn42LdRMkJhszgBWd6CTLgHYuPXrqTwPP6qOTRqZrCQQ5ULI95PhGXfv1I36ZbAUCEvk1I6q4EQosTm_XIU_sdkknoHFnhGH6xVegOQEJEePyDWcUQek8ZmYF3hoC1WuAWqu2Akhxisl7lbzaRViS-F-9RbAmO_SP4FeUTSYkQh50PG1AdJDQm7XLvOVwAgJ7uO6e5m4B0ZLmrdyUa5NiilyUh1Y1fK-cl9e09QSa2DDY1iHPSUilnQO9pZitB5eUhunoNOgGOstQSn4S_GRS7cTSxg0Qi25eF3zLHu0c2jEG_h89KDpYa1YwNJleuV8dKwgkj20zshGN0AcGw5UIXuzUM3wBIFfo4_gMC68c30SWHU5nh5CKN7IAYBRqxdkOOrBcR9bgj4MkuV-p0FhjZ6vL9nGOVgblh7cAVj06DYErTI29s0_7Cpb4yMimFx5X_IXFbyBzfN8-drpN9jlhMpSU1vhzwITbxh9bEWhZc6TIGol5Lt2aZiRevJtmrzOLov7en-lqbF8fDbDuceaTgguAM4wKu7gunCZT-B_k0LtnM9PFXlB-N4EKl2B1iH8GBecL93oK3CFpwyKL0Rv2TXYHfgAtoZabW-537SbGQuzUoP_N3Hkn9TKgeursTyC2FvatwsRishYczIrCvK5_OmwU7K-Xiytwy9_B32vcZyccn1mTGjSRKdBV3vazbkCFmUwo4L--eYl0f_DTb7pXMjAkK7uqR2-yE2hHN-AGckyzGNvofql4WaZ3DR2z2v7aYNXTnpnhbEYEQjzt_Bx7iCohA4ZJkyEhlb9FmxCvimCWRtQ318qN016wA9T8UIJnD2ypO5mKaNR0g4a8hV2FbG9uoOsEDSjAOzIf-PgynMjaRh2_ZqDEbhAlDCj7A-qcpygKchKujoz5ZlSHhnhFDNQEOnA7DDDjE6wZbERTm-RknXinP3CdNUGIHJLYS0S-6gwLYsvaBYGtaqAhM7G5BXt2PKreO_u4qck0vx6T-itPr0pBBDQpPnoc2God21DUUmnWPCBm2GoZwBBekP4RnGaVbaYqR9vPElvbyeEQXP1NZjasfQrH9yW_wMrCqerU8IBebWcJMv3TKLnjuMAZd-SkWk_N083mF8SrqSFw3uFn54SpDu9lSjDg2qfPnGU_0xxXyRv5_9AOtrhY6JkjZxlBDxXH8vAShLxBxMVuC3vMuPTzePERPpbjsq9sAPe4Ixls2AVstv-ZVpAC32dO2o07eMDPMABaFA1duGnnDxlT3qwb0iCp7Y6JKCQ5I12nB1hyx-p1Tg9nCZkkxjXUP5qT9fhooyTc8_HncMnCPMG7Jtnq5UUl9xFHxZa8j-M3g0ncSv54Dc_dz3J4cKJD8LxljZW__V7fWF-jCZ-wkTI4oQFyFCpHjqhp41Uqpx7IEf3SVJeUGxAw-DbB7_6By0tDbFQR_3bT19U3jsuYsurUvp0R3eRGHCvOCbY83N91mHljyihtj1du8d2LNBss9Ss6n29-0cKZBXNz7kL0N0-t3d_v7fY5Yy12OCXaF_cdWUGdMDbeS9ZmthMgOdKkZrSSPAcQSyQtnUugDslJa9WkdWlo5VYR89rMVYHt1XI-p2iX4TVxViTd3ChPli74FAF0sf_vqkblks_qnYEJfIehNqN2y8mNyRZPCcXpO15usYfDApsfDrG-9JlIQbsXUnLBMeavOQD5JaCrCM-Y5GbSDyK9rUdRc8pLZMSY_iBQsto3w==
+        id: rs_0a3de6f9c3c28af7006945ade6e8048194bc3e6c78157ee9c8
+        summary: []
+        type: reasoning
+      - arguments: '{"city":"Boston","summary":"Boston is the capital and largest city of Massachusetts, founded in 1630 and
+          a major center of American history, culture, education, and innovation. Key historic sites include the Freedom Trail,
+          Boston Common, Faneuil Hall, and the North End. Prominent neighborhoods: Back Bay (Victorian brownstones and Newbury
+          Street), Beacon Hill (historic streets), South End (restaurants and galleries), Fenway/Kenmore (Fenway Park), and
+          the Seaport District (modern waterfront development). Major institutions: Harvard and MIT (just across the Charles
+          River in Cambridge), numerous hospitals and universities (e.g., Boston University, Northeastern, Tufts). Economy:
+          strong in education, healthcare, finance, biotech, and technology. Transportation: Logan International Airport,
+          MBTA subway (the “T”), commuter rail and ferries; Boston is compact and walkable. Culture and sports: world-class
+          museums (Museum of Fine Arts, Isabella Stewart Gardner), vibrant music and theater scenes, passionate sports fans
+          (Red Sox, Celtics, Bruins, Patriots played in nearby Foxborough). Climate: humid continental — cold snowy winters,
+          warm summers. Travel tips: bring comfortable shoes for walking the city and cobblestones, use the T or walk instead
+          of driving (traffic and parking are difficult), book Fenway tours or Red Sox tickets in advance, visit in spring
+          or fall for milder weather and fewer tourists."}'
+        call_id: call_IUcMIrMvIy80BPfbBf6gzo9c
+        id: fc_0a3de6f9c3c28af7006945adec0c588194be9a95467592db7a
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - description: Information about a city.
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 49
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 496
+        output_tokens_details:
+          reasoning_tokens: 192
+        total_tokens: 545
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
