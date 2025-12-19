@@ -6,6 +6,7 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
 import pydantic_core
+from typing_extensions import assert_never
 
 from pydantic_ai.usage import RunUsage
 
@@ -185,9 +186,18 @@ class PromptTemplates:
             if message_part.return_kind in (None, 'tool-executed'):
                 return message_part
 
-            field_name = message_part.return_kind.replace('-', '_')
-            template = getattr(self, field_name, None)
-            # Map return_kind directly to template attribute name (e.g. 'final-result-processed' -> 'final_result_processed')
+            if message_part.return_kind == 'tool-denied':
+                template = self.tool_denied
+            elif message_part.return_kind == 'final-result-processed':
+                template = self.final_result_processed
+            elif message_part.return_kind == 'output-tool-not-executed':
+                template = self.output_tool_not_executed
+            elif message_part.return_kind == 'output-validation-failed':
+                template = self.output_validation_failed
+            elif message_part.return_kind == 'function-tool-not-executed':
+                template = self.function_tool_not_executed
+            else:
+                assert_never(message_part.return_kind)
 
             # ToolDenied cannot fallback to a default prompt template
             # ToolDenied may have a template set via ToolDenied('')
