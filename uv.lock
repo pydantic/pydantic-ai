@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
@@ -620,16 +620,16 @@ wheels = [
 
 [[package]]
 name = "boto3-stubs"
-version = "1.40.64"
+version = "1.42.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/af/362ed100e01551b36558da328dfdd4c3307a112915cef92a18cf3af7c8db/boto3_stubs-1.40.64.tar.gz", hash = "sha256:af4a7fb67bda0c1277afcd45a25065605567d260a8afd34bbdf1799d2492334f", size = 99647, upload-time = "2025-10-31T19:47:34.613Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/34/1be33df73ebab433f51cc550267d37cec00e78cc69c5ab8f12542bd320b5/boto3_stubs-1.42.13.tar.gz", hash = "sha256:de769f1e414ce4a69fa2f79c21054242501c27fbe964c69cde797fcc18e681c1", size = 100894, upload-time = "2025-12-18T20:39:36.404Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/92/45cc1db83ebaaa26d2e4f200436aafbcddf8fb29a8c2b1d296921d9aa722/boto3_stubs-1.40.64-py3-none-any.whl", hash = "sha256:c0c0dd70c02b08550ca596e8799586b3669e9352844db22401e76556b05d71a3", size = 69067, upload-time = "2025-10-31T19:47:25.89Z" },
+    { url = "https://files.pythonhosted.org/packages/41/32/c959bfa6e973a1016ad45781bbb262c9df336eb5965c9225e0ade1c22651/boto3_stubs-1.42.13-py3-none-any.whl", hash = "sha256:2683835a105262e1d7404f638383c230d58178a31ffcd88ad70db941a8274427", size = 69785, upload-time = "2025-12-18T20:39:32.771Z" },
 ]
 
 [package.optional-dependencies]
@@ -2772,6 +2772,7 @@ version = "0.7.30"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/bf/38/d1ef3ae08d8d857e5e0690c5b1e07bf7eb4a1cae5881d87215826dc6cadb/llguidance-0.7.30.tar.gz", hash = "sha256:e93bf75f2b6e48afb86a5cee23038746975e1654672bf5ba0ae75f7d4d4a2248", size = 1055528, upload-time = "2025-06-23T00:23:49.247Z" }
 wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/e1/694c89986fcae7777184fc8b22baa0976eba15a6847221763f6ad211fc1f/llguidance-0.7.30-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c80af02c118d2b0526bcecaab389af2ed094537a069b0fc724cd2a2f2ba3990f", size = 3327974, upload-time = "2025-06-23T00:23:47.556Z" },
     { url = "https://files.pythonhosted.org/packages/fd/77/ab7a548ae189dc23900fdd37803c115c2339b1223af9e8eb1f4329b5935a/llguidance-0.7.30-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:00a256d532911d2cf5ba4ef63e182944e767dd2402f38d63002016bc37755958", size = 3210709, upload-time = "2025-06-23T00:23:45.872Z" },
     { url = "https://files.pythonhosted.org/packages/9c/5b/6a166564b14f9f805f0ea01ec233a84f55789cb7eeffe1d6224ccd0e6cdd/llguidance-0.7.30-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:af8741c867e4bc7e42f7cdc68350c076b4edd0ca10ecefbde75f15a9f6bc25d0", size = 14867038, upload-time = "2025-06-23T00:23:39.571Z" },
     { url = "https://files.pythonhosted.org/packages/af/80/5a40b9689f17612434b820854cba9b8cabd5142072c491b5280fe5f7a35e/llguidance-0.7.30-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9edc409b9decd6cffba5f5bf3b4fbd7541f95daa8cbc9510cbf96c6ab1ffc153", size = 15004926, upload-time = "2025-06-23T00:23:43.965Z" },
@@ -3661,14 +3662,14 @@ wheels = [
 
 [[package]]
 name = "mypy-boto3-bedrock-runtime"
-version = "1.40.62"
+version = "1.42.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/51/d0/ca3c58a1284f9142959fb00889322d4889278c2e4b165350d8e294c07d9c/mypy_boto3_bedrock_runtime-1.40.62.tar.gz", hash = "sha256:5505a60e2b5f9c845ee4778366d49c93c3723f6790d0cec116d8fc5f5609d846", size = 28611, upload-time = "2025-10-29T21:43:02.599Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/95/cb46d84a7a1408e14cac8a8dbbb24a612e438dd10b5f284fb5e01deece3a/mypy_boto3_bedrock_runtime-1.42.3.tar.gz", hash = "sha256:15686cf925719f14bc0d6c85530808736005fb431f007e37d40e10daff4032cc", size = 29476, upload-time = "2025-12-04T20:56:45.423Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4b/c5/ad62e5f80684ce5fe878d320634189ef29d00ee294cd62a37f3e51719f47/mypy_boto3_bedrock_runtime-1.40.62-py3-none-any.whl", hash = "sha256:e383e70b5dffb0b335b49fc1b2772f0d35118f99994bc7e731445ba0ab237831", size = 34497, upload-time = "2025-10-29T21:43:01.591Z" },
+    { url = "https://files.pythonhosted.org/packages/99/19/f8a855cb1ff098afb6d05e2caa681ee34e1a7e4eb51b273ceb1e9c434a4e/mypy_boto3_bedrock_runtime-1.42.3-py3-none-any.whl", hash = "sha256:e28650aaa64ed4ff84ea75aac681c3a0fab0d2c4dd7dc22c00726949dadf87ea", size = 35631, upload-time = "2025-12-04T20:56:43.487Z" },
 ]
 
 [[package]]
@@ -5467,7 +5468,7 @@ provides-extras = ["a2a", "dbos", "examples", "outlines-llamacpp", "outlines-mlx
 dev = [
     { name = "anyio", specifier = ">=4.5.0" },
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
-    { name = "boto3-stubs", extras = ["bedrock-runtime"] },
+    { name = "boto3-stubs", extras = ["bedrock-runtime"], specifier = ">=1.42.13" },
     { name = "coverage", extras = ["toml"], specifier = ">=7.10.7" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "diff-cover", specifier = ">=9.2.0" },
@@ -8624,14 +8625,17 @@ dependencies = [
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f2/a9/dc3c63cf7f082d183711e46ef34d10d8a135c2319dc581905d79449f52ea/xgrammar-0.1.25.tar.gz", hash = "sha256:70ce16b27e8082f20808ed759b0733304316facc421656f0f30cfce514b5b77a", size = 2297187, upload-time = "2025-09-21T05:58:58.942Z" }
 wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/b4/8f78b56ebf64f161258f339cc5898bf761b4fb6c6805d0bca1bcaaaef4a1/xgrammar-0.1.25-cp310-cp310-macosx_10_14_x86_64.whl", hash = "sha256:d12d1078ee2b5c1531610489b433b77694a7786210ceb2c0c1c1eb058e9053c7", size = 679074, upload-time = "2025-09-21T05:58:20.344Z" },
     { url = "https://files.pythonhosted.org/packages/52/38/b57120b73adcd342ef974bff14b2b584e7c47edf28d91419cb9325fd5ef2/xgrammar-0.1.25-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:c2e940541b7cddf3ef55a70f20d4c872af7f0d900bc0ed36f434bf7212e2e729", size = 622668, upload-time = "2025-09-21T05:58:22.269Z" },
     { url = "https://files.pythonhosted.org/packages/19/8d/64430d01c21ca2b1d8c5a1ed47c90f8ac43717beafc9440d01d81acd5cfc/xgrammar-0.1.25-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2063e1c72f0c00f47ac8ce7ce0fcbff6fa77f79012e063369683844e2570c266", size = 8517569, upload-time = "2025-09-21T05:58:23.77Z" },
     { url = "https://files.pythonhosted.org/packages/b1/c4/137d0e9cd038ff4141752c509dbeea0ec5093eb80815620c01b1f1c26d0a/xgrammar-0.1.25-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9785eafa251c996ebaa441f3b8a6c037538930104e265a64a013da0e6fd2ad86", size = 8709188, upload-time = "2025-09-21T05:58:26.246Z" },
     { url = "https://files.pythonhosted.org/packages/6c/3d/c228c470d50865c9db3fb1e75a95449d0183a8248519b89e86dc481d6078/xgrammar-0.1.25-cp310-cp310-win_amd64.whl", hash = "sha256:42ecefd020038b3919a473fe5b9bb9d8d809717b8689a736b81617dec4acc59b", size = 698919, upload-time = "2025-09-21T05:58:28.368Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/b7/ca0ff7c91f24b2302e94b0e6c2a234cc5752b10da51eb937e7f2aa257fde/xgrammar-0.1.25-cp311-cp311-macosx_10_14_x86_64.whl", hash = "sha256:27d7ac4be05cf9aa258c109a8647092ae47cb1e28df7d27caced6ab44b72b799", size = 678801, upload-time = "2025-09-21T05:58:29.936Z" },
     { url = "https://files.pythonhosted.org/packages/43/cd/fdf4fb1b5f9c301d381656a600ad95255a76fa68132978af6f06e50a46e1/xgrammar-0.1.25-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:151c1636188bc8c5cdf318cefc5ba23221c9c8cc07cb392317fb3f7635428150", size = 622565, upload-time = "2025-09-21T05:58:31.185Z" },
     { url = "https://files.pythonhosted.org/packages/55/04/55a87e814bcab771d3e4159281fa382b3d5f14a36114f2f9e572728da831/xgrammar-0.1.25-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:35fc135650aa204bf84db7fe9c0c0f480b6b11419fe47d89f4bd21602ac33be9", size = 8517238, upload-time = "2025-09-21T05:58:32.835Z" },
     { url = "https://files.pythonhosted.org/packages/31/f6/3c5210bc41b61fb32b66bf5c9fd8ec5edacfeddf9860e95baa9caa9a2c82/xgrammar-0.1.25-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fc19d6d7e8e51b6c9a266e949ac7fb3d2992447efeec7df32cca109149afac18", size = 8709514, upload-time = "2025-09-21T05:58:34.727Z" },
     { url = "https://files.pythonhosted.org/packages/21/de/85714f307536b328cc16cc6755151865e8875378c8557c15447ca07dff98/xgrammar-0.1.25-cp311-cp311-win_amd64.whl", hash = "sha256:8fcb24f5a7acd5876165c50bd51ce4bf8e6ff897344a5086be92d1fe6695f7fe", size = 698722, upload-time = "2025-09-21T05:58:36.411Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/d7/a7bdb158afa88af7e6e0d312e9677ba5fb5e423932008c9aa2c45af75d5d/xgrammar-0.1.25-cp312-cp312-macosx_10_14_x86_64.whl", hash = "sha256:96500d7578c46e8551253b9211b02e02f54e147bc290479a64717d80dcf4f7e3", size = 678250, upload-time = "2025-09-21T05:58:37.936Z" },
     { url = "https://files.pythonhosted.org/packages/10/9d/b20588a3209d544a3432ebfcf2e3b1a455833ee658149b08c18eef0c6f59/xgrammar-0.1.25-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:73ba9031e359447af53ce89dfb0775e7b9f4b358d513bcc28a6b4deace661dd5", size = 621550, upload-time = "2025-09-21T05:58:39.464Z" },
     { url = "https://files.pythonhosted.org/packages/99/9c/39bb38680be3b6d6aa11b8a46a69fb43e2537d6728710b299fa9fc231ff0/xgrammar-0.1.25-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c519518ebc65f75053123baaf23776a21bda58f64101a64c2fc4aa467c9cd480", size = 8519097, upload-time = "2025-09-21T05:58:40.831Z" },
     { url = "https://files.pythonhosted.org/packages/c6/c2/695797afa9922c30c45aa94e087ad33a9d87843f269461b622a65a39022a/xgrammar-0.1.25-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:47fdbfc6007df47de2142613220292023e88e4a570546b39591f053e4d9ec33f", size = 8712184, upload-time = "2025-09-21T05:58:43.142Z" },
