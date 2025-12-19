@@ -405,6 +405,7 @@ def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any
     extract_from_properties('', properties)
     return result
 
+
 DEFAULT_PROMPT_TEMPLATES = PromptTemplates(
     final_result_processed=DEFAULT_FINAL_RESULT_PROCESSED,
     output_tool_not_executed=DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
