@@ -1141,10 +1141,6 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif model_kind == 'openrouter':
-        from .openrouter import OpenRouterModel
-
-        return OpenRouterModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

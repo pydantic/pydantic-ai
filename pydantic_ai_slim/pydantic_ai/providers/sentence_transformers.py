@@ -11,14 +11,14 @@ class SentenceTransformersProvider(Provider[Any]):
     @property
     def name(self) -> str:
         """The provider name."""
-        return 'sentence-transformers'
+        return 'sentence-transformers'  # pragma: no cover
 
     @property
     def base_url(self) -> str:
         """The base URL for the provider API."""
-        raise NotImplementedError('The Sentence Transformers provider does not have a set base URL as it runs locally.')
+        raise NotImplementedError('The Sentence Transformers provider does not have a base URL as it runs locally.')
 
     @property
     def client(self) -> Any:
         """The client for the provider."""
-        raise NotImplementedError('The Sentence Transformers provider does not have a set client as it runs locally.')
+        return None  # pragma: no cover

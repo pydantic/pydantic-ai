@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -44,6 +45,7 @@ class TestEmbeddingModel(EmbeddingModel):
             usage=RequestUsage(input_tokens=sum(len(input) for input in inputs)),
             model_name=self.model_name,
             provider_name=self.system,
+            provider_response_id=uuid.uuid4(),
         )
 
     async def max_input_tokens(self) -> int | None:

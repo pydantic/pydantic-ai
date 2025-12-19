@@ -134,7 +134,7 @@ class TestOpenAI:
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
         embedder = Embedder(model, instrument=True)
-        await embedder.embed_query('Hello, world!')
+        await embedder.embed_query('Hello, world!', settings={'dimensions': 128})
 
         assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
             [
@@ -151,6 +151,7 @@ class TestOpenAI:
                         'input_type': 'query',
                         'server.address': 'api.openai.com',
                         'inputs_count': 1,
+                        'embedding_settings': {'dimensions': 128},
                         'inputs': ['Hello, world!'],
                         'logfire.json_schema': {
                             'type': 'object',
@@ -167,7 +168,7 @@ class TestOpenAI:
                         'gen_ai.usage.input_tokens': 4,
                         'operation.cost': 8e-08,
                         'gen_ai.response.model': 'text-embedding-3-small',
-                        'gen_ai.embeddings.dimension.count': 1536,
+                        'gen_ai.embeddings.dimension.count': 128,
                     },
                 }
             ]
@@ -447,6 +448,9 @@ def test_override():
     with embedder.override(model=model2):
         assert embedder._get_model() is model2  # pyright: ignore[reportPrivateUsage]
 
+    with embedder.override():
+        assert embedder._get_model() is model  # pyright: ignore[reportPrivateUsage]
+
     assert embedder._get_model() is model  # pyright: ignore[reportPrivateUsage]
 
 
@@ -503,3 +507,41 @@ def test_result():
     assert result[2] == result['c'] == snapshot([0.0])
     assert result[3] == result['d'] == snapshot([0.5])
     assert result[4] == result['e'] == snapshot([1.0])
+
+
+async def test_limited_instrumentation(capfire: CaptureLogfire):
+    model = TestEmbeddingModel()
+    embedder = Embedder(model, instrument=InstrumentationSettings(include_content=False))
+    await embedder.embed_query('Hello, world!')
+
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+        [
+            {
+                'name': 'embeddings test',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'embeddings',
+                    'gen_ai.provider.name': 'test',
+                    'gen_ai.request.model': 'test',
+                    'input_type': 'query',
+                    'inputs_count': 1,
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'input_type': {'type': 'string'},
+                            'inputs_count': {'type': 'integer'},
+                            'embedding_settings': {'type': 'object'},
+                        },
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'embeddings test',
+                    'gen_ai.usage.input_tokens': 13,
+                    'gen_ai.response.model': 'test',
+                    'gen_ai.embeddings.dimension.count': 8,
+                },
+            }
+        ]
+    )
