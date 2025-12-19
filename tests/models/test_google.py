@@ -3694,9 +3694,12 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_google_image_generation_tool_output_format(google_provider: GoogleProvider) -> None:
-    """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type."""
+async def test_google_image_generation_tool_output_format(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -3704,9 +3707,12 @@ async def test_google_image_generation_tool_output_format(google_provider: Googl
     assert image_config == {'output_mime_type': 'image/png'}
 
 
-async def test_google_image_generation_tool_unsupported_format_raises_error(google_provider: GoogleProvider) -> None:
-    """Test that unsupported output_format values raise an error."""
+async def test_google_image_generation_tool_unsupported_format_raises_error(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test that unsupported output_format values raise an error on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     # 'gif' is not supported by Google
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
 
@@ -3714,19 +3720,31 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(goog
         model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_google_image_generation_tool_output_compression(google_provider: GoogleProvider) -> None:
-    """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality."""
+async def test_google_image_generation_tool_output_compression(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
+    # Test explicit value
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'output_compression_quality': 85}
 
+    # Test None (omitted)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=None)])
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
 
-async def test_google_image_generation_tool_compression_validation(google_provider: GoogleProvider) -> None:
-    """Test compression validation: range and JPEG-only."""
+
+async def test_google_image_generation_tool_compression_validation(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test compression validation on Vertex AI: range and JPEG-only."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
@@ -3749,21 +3767,24 @@ async def test_google_image_generation_tool_compression_validation(google_provid
         )
 
 
-async def test_google_image_generation_rejected_by_gemini_api(
-    allow_model_requests: None, google_provider: GoogleProvider
-) -> None:
-    """Test that output_format and compression are rejected by Gemini API (google-gla)."""
+async def test_google_image_generation_silently_ignored_by_gemini_api(google_provider: GoogleProvider) -> None:
+    """Test that output_format and compression are silently ignored by Gemini API (google-gla)."""
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
 
-    # Test output_format rejection
-    agent = Agent(model, builtin_tools=[ImageGenerationTool(output_format='png')], output_type=BinaryImage)
-    with pytest.raises(ValueError, match='output_mime_type parameter is not supported in Gemini API'):
-        await agent.run('Generate an image.')
+    # Test output_format ignored
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
+    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
 
-    # Test output_compression rejection (compression only, no format)
-    agent = Agent(model, builtin_tools=[ImageGenerationTool(output_compression=90)], output_type=BinaryImage)
-    with pytest.raises(ValueError, match='output_compression_quality parameter is not supported in Gemini API'):
-        await agent.run('Generate an image.')
+    # Test output_compression ignored
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=90)])
+    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
+
+    # Test both ignored when None
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
+    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
 
 
 async def test_google_vertexai_image_generation_with_output_format(
@@ -3781,9 +3802,10 @@ async def test_google_vertexai_image_generation_with_output_format(
     assert result.output.media_type == 'image/jpeg'
 
 
-async def test_google_image_generation_tool_all_fields(google_provider: GoogleProvider) -> None:
-    """Test that all ImageGenerationTool fields are mapped correctly."""
+async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
+    """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     params = ModelRequestParameters(
         builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )

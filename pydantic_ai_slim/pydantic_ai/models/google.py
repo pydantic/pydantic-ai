@@ -376,26 +376,28 @@ class GoogleModel(Model):
                 )
             image_config['image_size'] = tool.size
 
-        if tool.output_format is not None:
-            if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
-                raise UserError(
-                    f'Google image generation only supports `output_format` values: {_GOOGLE_IMAGE_OUTPUT_FORMATS}. '
-                    f'Got: {tool.output_format!r}.'
-                )
-            image_config['output_mime_type'] = f'image/{tool.output_format}'
+        if self.system == 'google-vertex':
+            if tool.output_format is not None:
+                if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
+                    raise UserError(
+                        f'Google image generation only supports `output_format` values: {_GOOGLE_IMAGE_OUTPUT_FORMATS}. '
+                        f'Got: {tool.output_format!r}.'
+                    )
+                image_config['output_mime_type'] = f'image/{tool.output_format}'
 
-        if tool.output_compression != 100:
-            if not (0 <= tool.output_compression <= 100):
-                raise UserError(
-                    f'Google image generation `output_compression` must be between 0 and 100. '
-                    f'Got: {tool.output_compression}.'
-                )
-            if tool.output_format not in (None, 'jpeg'):
-                raise UserError(
-                    f'Google image generation `output_compression` is only supported for JPEG format. '
-                    f'Got format: {tool.output_format!r}. Either set `output_format="jpeg"` or remove `output_compression`.'
-                )
-            image_config['output_compression_quality'] = tool.output_compression
+            output_compression = tool.output_compression
+            if output_compression is not None:
+                if not (0 <= output_compression <= 100):
+                    raise UserError(
+                        f'Google image generation `output_compression` must be between 0 and 100. '
+                        f'Got: {output_compression}.'
+                    )
+                if tool.output_format not in (None, 'jpeg'):
+                    raise UserError(
+                        f'Google image generation `output_compression` is only supported for JPEG format. '
+                        f'Got format: {tool.output_format!r}. Either set `output_format="jpeg"` or remove `output_compression`.'
+                    )
+                image_config['output_compression_quality'] = output_compression
 
         return image_config
 

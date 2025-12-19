@@ -295,13 +295,13 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    output_compression: int = 100
+    output_compression: int | None = None
     """Compression level for the output image.
 
     Supported by:
 
-    * OpenAI Responses. Only supported for 'png' and 'webp' output formats.
-    * Google (Vertex AI only). Only supported for 'jpeg' output format.
+    * OpenAI Responses. Only supported for 'jpeg' and 'webp' output formats. Default: 100.
+    * Google (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None = None
@@ -310,7 +310,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses. Default: 'png'.
-    * Google (Vertex AI only).
+    * Google (Vertex AI only). Default: 'png'.
     """
 
     partial_images: int = 0
