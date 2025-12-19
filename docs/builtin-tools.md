@@ -381,7 +381,7 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `input_fidelity` | ✅ | ❌ |
 | `moderation` | ✅ | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Vertex AI only) |
-| `output_format` | ✅ (png (default), webp, jpeg) | ✅ (png (default), jpeg, webp, Vertex AI only) |
+| `output_format` | ✅ | ✅ (Vertex AI only) |
 | `partial_images` | ✅ | ❌ |
 | `quality` | ✅ | ❌ |
 | `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (1K (default), 2K, 4K) |
