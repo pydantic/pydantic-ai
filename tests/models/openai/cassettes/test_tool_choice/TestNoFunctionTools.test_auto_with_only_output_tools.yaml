@@ -1,0 +1,105 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '405'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about New York
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1404'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '13133'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"New York","summary":"New York City: a major global city of about 8.5–8.8 million people,
+                made of five boroughs (Manhattan, Brooklyn, Queens, The Bronx, Staten Island); famous for finance, culture,
+                arts, museums, Broadway, diverse neighborhoods, and landmarks such as the Statue of Liberty, Times Square,
+                Central Park, and the Empire State Building."}'
+              name: final_result
+            id: call_AFfbcyzj6Jzmm7t45QhY3dlG
+            type: function
+      created: 1766169270
+      id: chatcmpl-CoZb41lVNQ0rc8INkTCj81dRNiXph
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 871
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 768
+          rejected_prediction_tokens: 0
+        prompt_tokens: 132
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 1003
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,242 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '658'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Tokyo and summarize
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1053'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '7603'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Tokyo"}'
+              name: get_weather
+            id: call_bsKbp47zxZp3ICsyN0RbeyoW
+            type: function
+      created: 1766169243
+      id: chatcmpl-CoZadLAE1IuauBa64ehbqf8uN20Kt
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 279
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 155
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 434
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '930'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=8rT1s8sWj_y1A4ho2CZgsveffGoXjjhXDX0kvWwYP4I-1766169250-1.0.1.1-Khif2ZMVjXBWVTHvt4hu3aH6k105FoeOXR6pVZ1AzvH0FH0OxNQKesUWFqNgn3T1nWGWDwc5Y12g7ig.eVPxEIPWy0v_gkkusOM2v4vJ3DY;
+        _cfuvid=uPSWvyuIZvz9grsmTOsP.aHACxO5i67Z9NkTMuoQI8w-1766169250744-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Tokyo and summarize
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Tokyo"}'
+            name: get_weather
+          id: call_bsKbp47zxZp3ICsyN0RbeyoW
+          type: function
+      - content: Sunny, 22C in Tokyo
+        role: tool
+        tool_call_id: call_bsKbp47zxZp3ICsyN0RbeyoW
+      model: gpt-5-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1123'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '7879'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Tokyo","summary":"Sunny, 22°C in Tokyo — mild, pleasant conditions."}'
+              name: final_result
+            id: call_Hqyiv1bioQTfoV7zSC8kDJXF
+            type: function
+      created: 1766169250
+      id: chatcmpl-CoZakjjqGf8bQS7rR5eR5bdz3kAcR
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 423
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 190
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 613
+    status:
+      code: 200
+      message: OK
+version: 1

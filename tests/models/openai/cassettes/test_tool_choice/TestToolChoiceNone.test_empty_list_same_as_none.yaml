@@ -1,0 +1,101 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '377'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Rome?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1843'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '17089'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: |-
+            I can’t fetch live weather data right now. I can help in other ways — for example I can tell you how to check current conditions, give a typical climate summary for this time of year, or give packing/clothing advice.
+
+            Quick options:
+            - To get the current weather now: check a phone weather app or a weather website (e.g., Weather.com, AccuWeather, or a local Italian weather site), or search “Rome weather” in your browser. You can also check METAR/TAF reports for Rome Fiumicino (if you want aviation-style observations).
+            - Typical conditions for Rome in mid-December: average daytime high about 12–14°C (54–57°F), nighttime low about 3–6°C (37–43°F). December is one of Rome’s wetter months — expect a fair chance of rain and generally mild but cool temperatures; occasional chilly days or brief cold snaps are possible.
+            - If you tell me a specific date/time or what you’re planning to do (walking around, sightseeing, evening out), I can give tailored clothing and activity advice based on typical conditions.
+
+            Which would you like?
+          refusal: null
+          role: assistant
+      created: 1766169252
+      id: chatcmpl-CoZam6Lt5vwZS3o3n88gp1WceEWdj
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 626
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 132
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 758
+    status:
+      code: 200
+      message: OK
+version: 1
