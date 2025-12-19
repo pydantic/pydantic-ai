@@ -3569,7 +3569,12 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
             'message': 'The content was filtered.',
             'innererror': {
                 'code': 'ResponsibleAIPolicyViolation',
-                'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+                'content_filter_result': {
+                    'hate': {'filtered': True, 'severity': 'high'},
+                    'self_harm': {'filtered': False, 'severity': 'safe'},
+                    'sexual': {'filtered': False, 'severity': 'safe'},
+                    'violence': {'filtered': False, 'severity': 'medium'},
+                },
             },
         }
     }
@@ -3585,13 +3590,47 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
     agent = Agent(m)
 
-    try:
+    with pytest.raises(
+        ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+    ) as exc_info:
         agent.run_sync('bad prompt')
-    except ContentFilterError as e:
-        # Check that the exception was raised
-        assert "Content filter triggered. Finish reason: 'content_filter'" in str(e)
-        # Verify body contains the inner error details (serialized)
-        assert 'ResponsibleAIPolicyViolation' in str(e.body)
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body) == snapshot(
+        [
+            {
+                'parts': [],
+                'usage': {
+                    'input_tokens': 0,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
+                },
+                'model_name': 'gpt-5-mini',
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': 'azure',
+                'provider_url': None,
+                'provider_details': {
+                    'finish_reason': 'content_filter',
+                    'content_filter_result': {
+                        'hate': {'filtered': True, 'severity': 'high'},
+                        'self_harm': {'filtered': False, 'severity': 'safe'},
+                        'sexual': {'filtered': False, 'severity': 'safe'},
+                        'violence': {'filtered': False, 'severity': 'medium'},
+                    },
+                },
+                'provider_response_id': None,
+                'finish_reason': 'content_filter',
+                'run_id': IsStr(),
+                'metadata': None,
+            }
+        ]
+    )
 
 
 def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None:

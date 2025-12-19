@@ -716,6 +716,12 @@ class GeminiStreamedResponse(StreamedResponse):
             raw_finish_reason = candidate.finish_reason
             if raw_finish_reason:
                 self.provider_details = {'finish_reason': raw_finish_reason.value}
+
+                if candidate.safety_ratings:
+                    self.provider_details['safety_ratings'] = [
+                        r.model_dump(by_alias=True) for r in candidate.safety_ratings
+                    ]
+
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Google streams the grounding metadata (including the web search queries and results)

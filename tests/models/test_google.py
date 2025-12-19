@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import datetime
+import json
 import os
 import re
 import tempfile
@@ -5042,9 +5043,15 @@ async def test_google_stream_empty_chunk(
     empty_candidate = mocker.Mock(finish_reason=None, content=None)
     empty_candidate.grounding_metadata = None
     empty_candidate.url_context_metadata = None
+    # FIX: Set safety_ratings to None to avoid iteration error
+    empty_candidate.safety_ratings = None
 
     chunk_empty = mocker.Mock(
-        candidates=[empty_candidate], model_version=model_name, usage_metadata=None, create_time=datetime.datetime.now()
+        candidates=[empty_candidate],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_empty',
     )
     chunk_empty.model_dump_json.return_value = '{}'
 
@@ -5065,9 +5072,15 @@ async def test_google_stream_empty_chunk(
         grounding_metadata=None,
         url_context_metadata=None,
     )
+    # FIX: Set safety_ratings to None
+    valid_candidate.safety_ratings = None
 
     chunk_valid = mocker.Mock(
-        candidates=[valid_candidate], model_version=model_name, usage_metadata=None, create_time=datetime.datetime.now()
+        candidates=[valid_candidate],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_valid',
     )
     chunk_valid.model_dump_json.return_value = '{"content": "Hello"}'
 
@@ -5084,3 +5097,60 @@ async def test_google_stream_empty_chunk(
         output = await result.get_output()
 
     assert output == 'Hello'
+
+
+async def test_google_stream_safety_filter(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that safety ratings are captured in the exception body when streaming."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    # Mock safety ratings
+    safety_rating = mocker.Mock(category='HARM_CATEGORY_HATE_SPEECH', probability='HIGH', blocked=True)
+    # Configure model_dump
+    safety_rating.model_dump.return_value = {
+        'category': 'HARM_CATEGORY_HATE_SPEECH',
+        'probability': 'HIGH',
+        'blocked': True,
+    }
+
+    candidate = mocker.Mock(
+        finish_reason=GoogleFinishReason.SAFETY,
+        content=None,
+        safety_ratings=[safety_rating],
+        # Ensure these are None to avoid iteration errors
+        grounding_metadata=None,
+        url_context_metadata=None,
+    )
+
+    chunk = mocker.Mock(
+        candidates=[candidate],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_123',  # Set string ID
+    )
+    chunk.model_dump_json.return_value = '{"mock": "json"}'
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        async with agent.run_stream('bad content'):
+            pass
+
+    # Verify exception message
+    assert 'Content filter triggered' in str(exc_info.value)
+
+    # Verify safety ratings are present in the body (serialized ModelResponse)
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+
+    response_msg = body_json[0]
+    assert response_msg['provider_details']['finish_reason'] == 'SAFETY'
+    assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'

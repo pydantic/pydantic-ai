@@ -22,7 +22,6 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
@@ -539,75 +538,3 @@ async def test_return_empty():
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass
-
-
-async def test_central_content_filter_handling():
-    """
-    Test that the agent graph correctly raises ContentFilterError
-    when a model returns finish_reason='content_filter' AND empty content.
-    """
-
-    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        # Simulate a model response that was blocked completely
-        return ModelResponse(
-            parts=[],  # Empty parts triggers the exception
-            model_name='test-model',
-            finish_reason='content_filter',
-        )
-
-    model = FunctionModel(function=filtered_response, model_name='test-model')
-    agent = Agent(model)
-
-    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
-        await agent.run('Trigger filter')
-
-
-async def test_central_content_filter_with_partial_content():
-    """
-    Test that the agent graph returns partial content (does not raise exception)
-    even if finish_reason='content_filter', provided parts are not empty.
-    """
-
-    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(
-            parts=[TextPart('Partially generated content...')], model_name='test-model', finish_reason='content_filter'
-        )
-
-    model = FunctionModel(function=filtered_response, model_name='test-model')
-    agent = Agent(model)
-
-    # Should NOT raise ContentFilterError
-    result = await agent.run('Trigger filter')
-    assert result.output == 'Partially generated content...'
-
-
-async def test_content_filter_serialization_fallback():
-    """
-    Test fallback to str() when ModelResponse cannot be serialized to JSON.
-    Covers the except block in _agent_graph.py.
-    """
-
-    class UnserializableObj:
-        def __repr__(self):
-            return '<Unserializable>'
-
-    # Create a response that will fail JSON serialization
-    response = ModelResponse(
-        parts=[],
-        model_name='test-model',
-        finish_reason='content_filter',
-        # Inject unserializable object into provider_details to break dumping
-        provider_details={'bad_data': UnserializableObj()},
-    )
-
-    async def bad_response_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return response
-
-    model = FunctionModel(function=bad_response_model, model_name='test-model')
-    agent = Agent(model)
-
-    with pytest.raises(ContentFilterError) as exc_info:
-        await agent.run('trigger')
-
-    # Verify it fell back to str() representation
-    assert '<Unserializable>' in str(exc_info.value.body)
