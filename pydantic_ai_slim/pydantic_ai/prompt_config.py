@@ -306,20 +306,24 @@ class ToolConfig:
     Example:
         Given a tool with arguments modeled like:
         ```python
+        from pydantic import BaseModel, Field
+
+        from pydantic_ai import ToolConfig
+
         class Address(BaseModel):
             city: str = Field(description='City name')
 
         class User(BaseModel):
             name: str
             address: Address
-            best_friend: User
+            best_friend: 'User'
 
         ToolConfig(
             parameters_descriptions={
-                'name': 'The user\\'s full name',
+                'name': "The user's full name",
                 'address.city': 'The city where the user lives',
                 # For recursive/referenced models, use dot notation:
-                'best_friend.name': 'The name of the user\\'s best friend',
+                'best_friend.name': "The name of the user's best friend",
             }
         )
         ```

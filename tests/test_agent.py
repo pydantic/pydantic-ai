@@ -65,7 +65,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.messages import ReturnKind
+from pydantic_ai.messages import ToolReturnKind
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -415,7 +415,7 @@ Please fix these validation errors and try again.\
     tool_return_part_no_template = ToolReturnPart(
         tool_name='final_result',
         content='unchanged',
-        return_kind=cast(ReturnKind, 'custom'),
+        return_kind=cast(ToolReturnKind, 'custom'),
     )
     assert PromptTemplates().apply_template(tool_return_part_no_template, ctx) is tool_return_part_no_template
 
