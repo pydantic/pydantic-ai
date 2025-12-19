@@ -595,7 +595,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         | AsyncIterator[StreamedRunResult[AgentDepsT, OutputDataT]],
     ) -> None:
         if isinstance(streamed_run_result, StreamedRunResult):
-            self._streamed_run_result = streamed_run_result  # pragma: no cover
+            self._streamed_run_result = streamed_run_result
         else:
             self._stream = streamed_run_result
 
