@@ -1620,7 +1620,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by ID.'
+                'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by name.'
             ),
         ):
             await client.execute_workflow(
@@ -2697,7 +2697,7 @@ async def test_temporal_agent_multi_model_reserved_id():
     test_model2 = TestModel()
 
     agent = Agent(test_model1, name='reserved_id_test')
-    with pytest.raises(UserError, match="Model ID 'default' is reserved"):
+    with pytest.raises(UserError, match="model name 'default' is reserved"):
         TemporalAgent(
             agent,
             name='reserved_id_test',
@@ -2751,7 +2751,7 @@ async def test_temporal_agent_multi_model_unregistered_error(allow_model_request
     ):
         with workflow_raises(
             UserError,
-            'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by ID.',
+            'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by name.',
         ):
             await client.execute_workflow(
                 MultiModelWorkflowUnregistered.run,

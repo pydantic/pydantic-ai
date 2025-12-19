@@ -257,20 +257,32 @@ class TemporalModel(WrapperModel):
 
         return model
 
-    def resolve_model(
-        self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> models.Model | models.KnownModelName | str:
-        """Resolve a model parameter for use outside a workflow.
+    def resolve_model(self, model: models.Model | models.KnownModelName | str | None = None) -> Model:
+        """Resolve a model parameter to a Model instance.
 
-        If model is None, returns the wrapped (primary) model.
-        If model is a registered name, returns the registered Model instance.
-        Otherwise returns the original value (model instance or string).
+        This is typically used outside of a workflow to resolve model parameters
+        before passing them to the underlying agent methods.
+
+        Args:
+            model: The model to resolve. Can be a Model instance, model name string,
+                   or None for the default model.
+
+        Returns:
+            The resolved Model instance.
         """
-        if model is None:
-            return self.wrapped
-        if isinstance(model, str) and model in self._models_by_id:
-            return self._models_by_id[model]
-        return model
+        # Handle Model instances directly - outside a workflow, unregistered
+        # Model instances are allowed since there's no serialization constraint.
+        if isinstance(model, Model):
+            # Check if registered and return it
+            for m in self._models_by_id.values():
+                if m is model:
+                    return m
+            # Not registered, return as-is for outside workflow use
+            return model
+
+        # For strings and None, use _get_model_id + _resolve_model
+        model_id = self._get_model_id(model)
+        return self._resolve_model_id(model_id)
 
     @contextmanager
     def using_model(self, model: models.Model | models.KnownModelName | str | None) -> Iterator[None]:
@@ -288,7 +300,16 @@ class TemporalModel(WrapperModel):
     def _current_model_id(self) -> str | None:
         return self._model_id_var.get()
 
-    def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any]) -> Model:
+    def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
+        """Resolve a model ID to a Model instance.
+
+        Args:
+            model_id: The model ID string, or None for the default model.
+            run_context: Optional run context for provider factory usage.
+
+        Returns:
+            The resolved Model instance.
+        """
         if model_id is None:
             return self.wrapped
 
@@ -297,9 +318,9 @@ class TemporalModel(WrapperModel):
 
         return self._infer_model(model_id, run_context)  # pragma: lax no cover
 
-    def _infer_model(self, model_name: str, run_context: RunContext[Any]) -> Model:  # pragma: lax no cover
+    def _infer_model(self, model_name: str, run_context: RunContext[Any] | None) -> Model:  # pragma: lax no cover
         provider_factory = self._provider_factory
-        if provider_factory is None:
+        if provider_factory is None or run_context is None:
             return models.infer_model(model_name)
 
         return models.infer_model(model_name, provider_factory=functools.partial(provider_factory, run_context))
