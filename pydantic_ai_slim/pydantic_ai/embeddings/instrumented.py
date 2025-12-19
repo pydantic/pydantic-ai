@@ -190,7 +190,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                 if parsed.hostname:  # pragma: no branch
                     attributes['server.address'] = parsed.hostname
                 if parsed.port:
-                    attributes['server.port'] = parsed.port  # prgma: no cover
+                    attributes['server.port'] = parsed.port  # pragma: no cover
 
         return attributes
 
@@ -198,7 +198,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
     def serialize_any(value: Any) -> str:
         try:
             return ANY_ADAPTER.dump_python(value, mode='json')
-        except Exception:
+        except Exception:  # pragma: no cover
             try:
                 return str(value)
             except Exception as e:
