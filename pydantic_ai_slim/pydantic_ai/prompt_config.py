@@ -11,6 +11,7 @@ from typing_extensions import assert_never
 from pydantic_ai.usage import RunUsage
 
 from ._run_context import RunContext
+from ._tool_arg_descriptions import ToolArgDescriptions
 from .messages import ModelMessage, ModelRequest, ModelRequestPart, RetryPromptPart, ToolReturnKind, ToolReturnPart
 
 if TYPE_CHECKING:
@@ -434,7 +435,7 @@ class PromptConfig:
                 name=tool_name,
                 description=tool_def.description,
                 strict=tool_def.strict,
-                parameters_descriptions=_extract_descriptions_from_json_schema(tool_def.parameters_json_schema),
+                parameters_descriptions=ToolArgDescriptions.from_json_schema(tool_def.parameters_json_schema),
             )
 
         if agent.prompt_config:
@@ -456,54 +457,6 @@ class PromptConfig:
             tool_config=tool_config,
             templates=prompt_templates,
         )
-
-
-# JSON Schema keys
-_PROPERTIES = 'properties'
-_DEFS = '$defs'
-_REF = '$ref'
-_REF_PREFIX = '#/$defs/'
-_DESCRIPTION = 'description'
-
-
-def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any]) -> dict[str, str]:
-    """Extract field descriptions from a JSON schema into dot notation format.
-
-    Recursively traverses the schema's properties to build a flat dictionary mapping
-    dot-notation paths to their descriptions. This is useful for prompt optimizers
-    that need to modify tool argument descriptions.
-    """
-    properties = parameters_json_schema.get(_PROPERTIES, {})
-    if not properties:
-        return {}
-
-    result: dict[str, str] = {}
-    defs = parameters_json_schema.get(_DEFS, {})
-    visited: set[str] = set()
-
-    def extract_from_properties(path: str, props: dict[str, Any]) -> None:
-        """Recursively extract descriptions from properties."""
-        for key, value in props.items():
-            full_path = f'{path}.{key}' if path else key
-
-            if description := value.get(_DESCRIPTION):
-                result[full_path] = description
-
-            if nested_props := value.get(_PROPERTIES):
-                # Handle nested properties directly (e.g. nested models inline)
-                extract_from_properties(full_path, nested_props)
-            elif (ref := value.get(_REF)) and ref.startswith(_REF_PREFIX):
-                # Handle $ref (shared definitions / recursive models)
-                def_name = ref[len(_REF_PREFIX) :]
-                # Avoid infinite recursion for recursive models (e.g. User -> best_friend: User)
-                if def_name not in visited:
-                    visited.add(def_name)
-                    if nested_props := defs.get(def_name, {}).get(_PROPERTIES):
-                        extract_from_properties(full_path, nested_props)
-                    visited.remove(def_name)
-
-    extract_from_properties('', properties)
-    return result
 
 
 DEFAULT_PROMPT_TEMPLATES = PromptTemplates(
