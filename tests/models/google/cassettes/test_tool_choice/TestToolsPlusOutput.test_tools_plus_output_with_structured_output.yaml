@@ -1,0 +1,250 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1193'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Sydney and summarize
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        - description: Get the population of a city.
+          name: get_population
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1373'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1054
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Sydney
+              name: get_weather
+            thoughtSignature: Cr0DAXLI2nwr3CznxrLl/ouE+vavUqBg3iksVUCL4Op+RaOyoGmZcPv1yOiDiivsyfPYuJUNbAlL6iIi53EKJWjUXy1ci6xpk9/c5d4G516l4zIXKlZmQOkLfB6Db4ICNm+ReDr9ldczX8dVMnBecADs4ofY+r9D30TKUh4CcEg68aisrV/6EkUi7GWXhYwe2u3DM1YYNzHjNRl/D66ByHtj73+tRM+9hiMp6fPKorFyo1S/e6GMDk5oVJ0HFiKvBysNjpIF9DRWFPnE7CEVzWd03n3rtgczVOr4taq2G9DYllVf2G2tb5Op+cNXiQ3Ic8/MJAXHxr73g+ge90gZZrBFqoYnAsD6bWelP+0EgLZJcL170PM99OpM70eBqtnFKD9Hx6y2OBRNAAPtYgXADiwb4WAAFzRtOCILv6oJSAZI/Z0skQ8LB4AMZIG6utXJzDUTchk+Q86TQOw04+QfXu6LPEpqf0qj200tiJMKEuaSaAowOE7JP6GvxgdOWlxkQqhtyFsxMnU45XFE/NvHyX73rHHkqpQA7I5g5jUh7vfyIzH9oFzz6cgtNIwhXYoPdhb0PjTbtvhheHITo+haoA==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: ccVFaZHOE7uDz7IPnZCmyQY
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 174
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 174
+        thoughtsTokenCount: 106
+        totalTokenCount: 295
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2146'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Sydney and summarize
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: Sydney
+            id: pyd_ai_6faa9b512ba0491195c44a74929111ef
+            name: get_weather
+          thoughtSignature: Cr0DAXLI2nwr3CznxrLl_ouE-vavUqBg3iksVUCL4Op-RaOyoGmZcPv1yOiDiivsyfPYuJUNbAlL6iIi53EKJWjUXy1ci6xpk9_c5d4G516l4zIXKlZmQOkLfB6Db4ICNm-ReDr9ldczX8dVMnBecADs4ofY-r9D30TKUh4CcEg68aisrV_6EkUi7GWXhYwe2u3DM1YYNzHjNRl_D66ByHtj73-tRM-9hiMp6fPKorFyo1S_e6GMDk5oVJ0HFiKvBysNjpIF9DRWFPnE7CEVzWd03n3rtgczVOr4taq2G9DYllVf2G2tb5Op-cNXiQ3Ic8_MJAXHxr73g-ge90gZZrBFqoYnAsD6bWelP-0EgLZJcL170PM99OpM70eBqtnFKD9Hx6y2OBRNAAPtYgXADiwb4WAAFzRtOCILv6oJSAZI_Z0skQ8LB4AMZIG6utXJzDUTchk-Q86TQOw04-QfXu6LPEpqf0qj200tiJMKEuaSaAowOE7JP6GvxgdOWlxkQqhtyFsxMnU45XFE_NvHyX73rHHkqpQA7I5g5jUh7vfyIzH9oFzz6cgtNIwhXYoPdhb0PjTbtvhheHITo-haoA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_6faa9b512ba0491195c44a74929111ef
+            name: get_weather
+            response:
+              return_value: Sunny, 22C in Sydney
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        - description: Get the population of a city.
+          name: get_population
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1288'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1043
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Sydney
+                summary: The weather in Sydney is Sunny, 22C.
+              name: final_result
+            thoughtSignature: Cs0CAXLI2nwmq57Ni9c7i+HLY4rrZaR3dqrCXbR9hgum8mCQjTX6biZTpP3eDsR9CHw4ebFGKomCcNS6Ul7g9nlgrFlYMjemDObF8q2zivsBmfQ84gvnVJjZwOrYY0W+Fk2yHRMZS5+MRS1G66mWba/W203VWfJluenDG3sCC2wAqn1LhkqvbR4ArCvfzlKbt/w3vCGI7aXL/1QDhUhiVhzvy3rrzrQbJmYZ0AMhvF25pwMKsBY8EaJIAyUmdiQaD3n5mrjvXvyTsQ1q8XvOxcSiJUmHoGdObFsfnQuJbmBkm/z2VuyeIQtElvoBAC8nKpXvMAcLL9r5wx5d7KqMviH24031gDrqEoy+kFiv9/S9gYxGyK8TSidE1aH/jSe8Oy5UDpIMqbk5MU3g+o/KZsx5KvHDQ51WB2x5HhRkVCih9cHcPYAtt9zZgSNDLBAF
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: csVFaeLtG8-Gz7IPuYCtsQQ
+      usageMetadata:
+        candidatesTokenCount: 30
+        promptTokenCount: 213
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 213
+        thoughtsTokenCount: 70
+        totalTokenCount: 313
+    status:
+      code: 200
+      message: OK
+version: 1

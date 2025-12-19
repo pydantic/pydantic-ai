@@ -1,0 +1,88 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '457'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Describe Seattle briefly
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1450'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1049
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Seattle
+                summary: Seattle is a major coastal city in the Pacific Northwest region of the United States. It is known
+                  for its rainy weather, vibrant tech industry, iconic Space Needle, and stunning natural beauty with proximity
+                  to mountains and water.
+              name: final_result
+            thoughtSignature: CrUCAXLI2nw7Qk0iDRmLloLzG5I1XiJDOkqX2w6gMJt3dE1yzQUW2ER5kVGMiMFtaHZy5UrkRdKoj3DuiMfRRIx/P4SYo/jkvOY1E4+j7KF+sF3D6ZJbV7rRTX9aFZUz7shEcZEZcNltbJCerBpCGMLnk/yK1q3vrNG+W2HKSiqQK6yQVSi0BCeGxorZN5MfITYqMj7mAwL4+XO72HcQwIyklEHAu3QRyMrUObN+pBxX1Vv/XcxiZuTnXpeTXHFH7O2D+eEMMQH1avOYtZhbnRw46Q1x4q5URoQDnByVihqx9I/Tv8AI+YDXdH6dUHPJyDw84qGOYNNPH5bAivIWNK0E+DchAO2pGALUM04updlcqND2awj2dJooIn12UXzaeWH8LOJEXQfpDeSBnwu2F+mZsOea4Pzy
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: f8VFadeqMNXRz7IP9Za-kQY
+      usageMetadata:
+        candidatesTokenCount: 61
+        promptTokenCount: 52
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 52
+        thoughtsTokenCount: 57
+        totalTokenCount: 170
+    status:
+      code: 200
+      message: OK
+version: 1

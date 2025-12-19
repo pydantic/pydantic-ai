@@ -1,0 +1,173 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '460'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What's the weather in London?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1174'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1861
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: London
+              name: get_weather
+            thoughtSignature: CqoCAXLI2ny4WrD+8WK6H/3B8e2bFJlIIG7OJP71vGspNQ95OYmC4ywWHe12ZiJb4pdZQNt+bjR5F/CyJWeg739tyG8c6u2AnZvyX93vJfr9YYHD37c1Azz7Ub5+o50gmL8wZM0V2g8PMlSAgTI2c5ainvbhL4gcIhrxjMFkNbpacPy7/EVhuLKvLWG3e8WjbEqGWI2FRLQVhn4R4j7SA8/hrxjWSQfm6Ws/kzkrpJygwBHn7gagWaLBQdwxYVmS9T32eqMv6VPiSty7IkuOXBCYgH5A/8BUU6HBb1XR2Wp1L+7AWysMs0/BCaFJoa7DLyBbK6rjSx7BwL9aOiAG/KYO4Y+dkVfCPZklPBQMN///6oi4GYiQ73fHEOzd/HCYpMH2T2BTp3kQsu23rA==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: WMVFaZSmOP2nmtkPvb_b0Q0
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 49
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 49
+        thoughtsTokenCount: 67
+        totalTokenCount: 131
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1217'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What's the weather in London?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: London
+            id: pyd_ai_e8fa4ba7f7304b91a3a05e6c7f76f173
+            name: get_weather
+          thoughtSignature: CqoCAXLI2ny4WrD-8WK6H_3B8e2bFJlIIG7OJP71vGspNQ95OYmC4ywWHe12ZiJb4pdZQNt-bjR5F_CyJWeg739tyG8c6u2AnZvyX93vJfr9YYHD37c1Azz7Ub5-o50gmL8wZM0V2g8PMlSAgTI2c5ainvbhL4gcIhrxjMFkNbpacPy7_EVhuLKvLWG3e8WjbEqGWI2FRLQVhn4R4j7SA8_hrxjWSQfm6Ws_kzkrpJygwBHn7gagWaLBQdwxYVmS9T32eqMv6VPiSty7IkuOXBCYgH5A_8BUU6HBb1XR2Wp1L-7AWysMs0_BCaFJoa7DLyBbK6rjSx7BwL9aOiAG_KYO4Y-dkVfCPZklPBQMN___6oi4GYiQ73fHEOzd_HCYpMH2T2BTp3kQsu23rA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_e8fa4ba7f7304b91a3a05e6c7f76f173
+            name: get_weather
+            response:
+              return_value: Sunny, 22C in London
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '549'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=547
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The weather in London is Sunny, 22C.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: W8VFaez2C-6eqtsP_Ye5kAQ
+      usageMetadata:
+        candidatesTokenCount: 12
+        promptTokenCount: 88
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 88
+        totalTokenCount: 100
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,99 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '716'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about Madrid
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1366'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=998
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Madrid
+                summary: Madrid is the capital and most populous city of Spain. The city has a rich history, evident in its
+                  architecture and museums.
+              name: final_result
+            thoughtSignature: CsYCAXLI2nwE/pDXjnpbHZhQL/0/6Ga95XpN6PNKNWQMMCrxWVnGXbuwzu3onKEypf+ZZrfXHjF90C3trbBj5iUvIW4E8MMshR0DXUk8oAgX2+tXT4EkiWWQzy29UihcE5UgC6TGC4pF9pgrwk5AVo9f5Sd0bqL6iMWILUxHAKGoRP/mgqh+0EEUYkKv6Ko8wtnrANWv/AcqSCBXOZXeFZ9hYcGFrYObp4yzsV113ctVQIEfDFJPrHE69Z9t27E6SIZvMIvb0X9fu0wU0aMV/H9DYhv8K7fTLSRNnAfeq3DFWHH1TvTQZQyh/A8WU/sJcSg7Oa6ZED5gNT0RmOO27HFApVAJCGP0KToU4+g/+rHZ0wEnyg7tJ/aBHU18QkJneTTmLgY/+HfxZafAAX5GsgTKDtTG/ycEu5luRnWajZ52HZcRCv2LefA=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: acVFaeTzF9XRz7IP9Za-kQY
+      usageMetadata:
+        candidatesTokenCount: 43
+        promptTokenCount: 93
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 93
+        thoughtsTokenCount: 61
+        totalTokenCount: 197
+    status:
+      code: 200
+      message: OK
+version: 1

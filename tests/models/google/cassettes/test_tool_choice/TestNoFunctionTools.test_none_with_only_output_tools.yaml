@@ -1,0 +1,87 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '452'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about Boston
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1365'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1031
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Boston
+                summary: Boston is a historic city known for its role in the American Revolution, its prestigious universities
+                  like Harvard and MIT, and its vibrant cultural scene.
+              name: final_result
+            thoughtSignature: Cq0CAXLI2nwx8TUlKbaBQtxO0UJaNCgYoUURP/6CgnY53FkweZ3TQrxmkMfuaY1IryeBi9b54y9So+rIl7Zyvdj67bpdJOZIVV7zNbGQkOjFNgypqspcggw3J1/UOwV67LqQdJ53AHOR1Dobuu29dJocNuG8sAyI3A1r1kebfLFqI5EOaQMvkBTwboVpPwgJFWMOXpSoACmZ0bYMaVmBgEEWrG+0XmggjC+YXYuYluriQozAi3Tuj916yxoJgmGYuH7a9/cyyrxGfcdnkRwdepC4pTBBLLlRWYoXx7PVIpv82igUsIx907YFEgEt7S/MP2o15vZ9I+UdrC/Hv9SBpxeGvofATRvR3QCPpDfI42lSSchgYakbScOZu4kDWOClQqJ7wDl9+k5oDcHsnvs5jg==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: e8VFafu0B7uDz7IP-pimyQY
+      usageMetadata:
+        candidatesTokenCount: 46
+        promptTokenCount: 53
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 53
+        thoughtsTokenCount: 59
+        totalTokenCount: 158
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,204 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '692'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Miami and describe it
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1494'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1161
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Miami
+              name: get_weather
+            thoughtSignature: CpwEAXLI2nz0XXCb7KRmT7/83f7cB8gdoZHx/vrhmYPGbBXcp/gHaDW7VXQNb4zVpvGkJuTF9EZ0qdbxXnzLOWlKIQ3CFBzk6eGxPw+UX8scnWgmyCttscziprpRt41HJfB2E4GRQ1jPfhu2s0cE2CRQwSLMJzb2X6Xk8KHBhQeoO23Rf/hQh51298shp62VOXumwFmfh3wjcGiiNwGxACPrq3FtVL+y6FAlBNw7S1W/CPH9zyKctjqEkN0DzxlkhJBcPkoDEmkdnn/PKekpmLxXe49oz5NeELylYYXIHEaORYmEIQAdA14gIwhV4oA3Q3LErThkxwCGfgr62Hm5tX4I71VrChbc7snpa5LcPgLcLdeSeEUf/vzsNpR6c5SVKqvnsnW12hZXEbVek/lXNvp/FpsL4ExLcE/fCWbqsxfJ8ptZprbFryjobAKBEJvl423hWSUZCFcLn45j2LLHl8mgJImlu3SB8l/SWV5SweDmyAX2Qbgyz+C/79FN79jmTIrSgJdMM6Gamd2eIawcUxxirdGDMqKTlF+bmICJbW5GE53zD6WUL2A+SZYm6MhQTwvotUkYODBf152thDudHNmLIw48Jbv1bFHYPcMEzoQ7jLjGOQZF5UEPbDDNu5KOTr+YBYcrQAPdibgRMH4IZy8v+KeTCHeBiK/ww785pSlKofBd4sEOE8fEhQteeD/1EqBvNrxn9mifpKMK+pE7
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: fMVFaZnUKdXRz7IP9Za-kQY
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 96
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 96
+        thoughtsTokenCount: 124
+        totalTokenCount: 235
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1767'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather for Miami and describe it
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: Miami
+            id: pyd_ai_970ea4e4e52847828ff613a9cf017f16
+            name: get_weather
+          thoughtSignature: CpwEAXLI2nz0XXCb7KRmT7_83f7cB8gdoZHx_vrhmYPGbBXcp_gHaDW7VXQNb4zVpvGkJuTF9EZ0qdbxXnzLOWlKIQ3CFBzk6eGxPw-UX8scnWgmyCttscziprpRt41HJfB2E4GRQ1jPfhu2s0cE2CRQwSLMJzb2X6Xk8KHBhQeoO23Rf_hQh51298shp62VOXumwFmfh3wjcGiiNwGxACPrq3FtVL-y6FAlBNw7S1W_CPH9zyKctjqEkN0DzxlkhJBcPkoDEmkdnn_PKekpmLxXe49oz5NeELylYYXIHEaORYmEIQAdA14gIwhV4oA3Q3LErThkxwCGfgr62Hm5tX4I71VrChbc7snpa5LcPgLcLdeSeEUf_vzsNpR6c5SVKqvnsnW12hZXEbVek_lXNvp_FpsL4ExLcE_fCWbqsxfJ8ptZprbFryjobAKBEJvl423hWSUZCFcLn45j2LLHl8mgJImlu3SB8l_SWV5SweDmyAX2Qbgyz-C_79FN79jmTIrSgJdMM6Gamd2eIawcUxxirdGDMqKTlF-bmICJbW5GE53zD6WUL2A-SZYm6MhQTwvotUkYODBf152thDudHNmLIw48Jbv1bFHYPcMEzoQ7jLjGOQZF5UEPbDDNu5KOTr-YBYcrQAPdibgRMH4IZy8v-KeTCHeBiK_ww785pSlKofBd4sEOE8fEhQteeD_1EqBvNrxn9mifpKMK-pE7
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_970ea4e4e52847828ff613a9cf017f16
+            name: get_weather
+            response:
+              return_value: Sunny, 22C in Miami
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1822'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1425
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Miami
+                summary: The weather in Miami is Sunny and 22C.
+              name: final_result
+            thoughtSignature: CtsFAXLI2nwcAIjrGWPXIho7gDiAT+jEmemEArhb3GkNsp8ZqAs3oloM+RmPRrgLHn8//1WN+upGAdTou453//fKfWIVsVeEo51A0OmCZwoxwksCrNfWfE5p80/s2FW6otAW3aUPreBThZ9HVPuJHdpnYac76pMgO5bgP5fV45iY8OzzUQmjICPRGTvucKbmyTrCNjRWuzxrdULm7WwHdpEoS0pwe4/HFhctcKK924muHkkZsXsz6evCmcS6RrxVrao0Eex7jwZfNgRx/KzHQphICz1ug5OCrfvi7BDiF8pGJnKQZc2UQHRUZktWn+5Dwjpt+Oy5iGimBJBJW7hQJU0HWHAOYzLTWwCD55EMhq5KPrBtUsa++M1UxcsOFSbZ0nR4bUiPP5ZpRU57FT3U3CLDGUjATHCR7GnKFZATVdCAMM50G+8UCzG/R0zU1ULro5zKxhIOKi80wK1uOT8Ktdf1OZpQKr8M9VK/U2ve/LkeZ1eehKLChie+pr9+Ljte20ANfrPF+mOW5XgFeh5di709BjyD25XU8r0RBRtf7j87z0i7IrjR2tUZV4jkK/C9R3iZp3XborwXlH9HzSiCIHSgLGKzEVTrE6P9cxncCzm40OYbktGkrOcTiE494HqFFHnm9yTZYHn9VNfqd6A3AhgLwj5GmUa0D/N8ynsU4q7bjD338hW8eqAfExe1L+DMJDMxisNV1TJqPCRQYAJAbazIMSsXYyc0Po4XBkPM+x8RdNzgsnmLxVTcnVRzkqtnYTxbRVZjpgqJN3xHINwz5KLMfzOEg0uaR5FjtX+bnh/Ekscd7HC4aa7DBYFW3K2Lz2PlrlZCFHNirTsX8yH3DhXqvgKz2r6+y8l32zju/eKypRr63/ES1+Oaq6hd62VWIjnoXuBnDphgxBTsLi2g1bL6leEGZwXcQ7f0VzIacUS8iZdxOi2bxd/NoQoZLFhpwESlW7whzRJkbrg20KU=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: fsVFaZ7qEKutz7IP56Dm-AI
+      usageMetadata:
+        candidatesTokenCount: 30
+        promptTokenCount: 135
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 135
+        thoughtsTokenCount: 175
+        totalTokenCount: 340
+    status:
+      code: 200
+      message: OK
+version: 1

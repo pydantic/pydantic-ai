@@ -1,0 +1,91 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '600'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Give me any information
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get weather for a city
+          name: get_weather
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get current time in a timezone
+          name: get_time
+          parameters_json_schema:
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1629'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1203
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                timezone: America/Los_Angeles
+              name: get_time
+            thoughtSignature: CvYEAXLI2nz6a911sPOLoJSHPjDFvKQ/GFZKFvHpbgXXk1Y7H/fBrPJM+rjb2hdprtvjjYD/qs73FwCvSnU8dbo/ML0GPFPK/UkibPGyQ7ZDsiZ3ME6KDNDp/H9AJcB8z/KfhpG8ZzC5Z6RH101WNR27jaWHFJOFrGklUEk0AJiM8xRwLZ6OftLyFn76I2eJXd0jHbAImrYg+PX34lQbytf8C7yb4iw3+FQ0zLk/0tJUFIPiulP4KWEmSZQBfSyA2ZENfIrUt6hrxUOEUWQtoWX40OZU9RjAJ7Qkl411a2NSbPYnAGTTb4MrzjHtMNSuOx2N2Sm4Kx9qeAsB7lICxkMbL7aMPj8JWvzZDTJi43d9ZORPU8Ppln8wbJ2Jqi7kfIMndYW3+G3cCMKwrCgkbEWv0KcZjAOVQqKPkJCNNYptmeEpIkaNVU7RPVlitPf73nWGAaUAOM9nHUc2TWLL7A5CVVmNhWNCjuHFGi0QbY/hAO/oOH/D17GQO1l39LqGRl5AxEpy1hXyWzW+M4eRVyqUy1OevqDtpyDIYNK8icbKu+bTQxEIQUk0Dx3ZiFiC8yVrmCUr8qucz3XqSTVWvKczKK6WE5zssF77kmMX8u7psi36YMIriaO55K+bLsYs/h7mfqlQn8FDa76ofuXpU+01wHEyocQpHY35oCdwrbpa+rgkHgcFtcmCMqU2N1pTcKB9bvqCtQKylVofUQV4ef/s4Nsd4mRR3WJ8mtWUco6nz/P5XBXUeF+piPduNxslCcGMDai08GZjLnU1+TCc0LUQjAYVALaaCAkPFkrBg1Fpj/s4EhDpABVaTT4Uhlz1KtOCrAvjDlDW
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: a8VFabPkOYjQz7IPv5HkuAQ
+      usageMetadata:
+        candidatesTokenCount: 20
+        promptTokenCount: 80
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 80
+        thoughtsTokenCount: 132
+        totalTokenCount: 232
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,266 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1213'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather and population for Chicago
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - get_population
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        - description: Get the population of a city.
+          name: get_population
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1801'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1872
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Chicago
+              name: get_weather
+            thoughtSignature: CvYEAXLI2nxpnYGmosgxeRYKOce/mCowezqwpph+wjbhHb5/EIPLKGzTr3eRwqfONcH2EIzFPehMA1S41gD0E2oFk8fLM5fL9Z6Bp6gZvbn0zwXKfdHBUGFWytVqzvaUzL54N1l20Fpbzd+w/gQO055lySsSX1IRTpc5ulLGx7Onk+VtBBJ8iATXGoJrFPEUIYLw6DGn0uN791IihWc9ul4O7pvSkka3QOepmWFU3aQt5x9baB5U7L9FvyYGPsnQK4GnPkRO0EG2bZTf7KoWM48fraLAgXmWfbCTbdRnyOSpeE4p3aLewRpE9b8cEf+mTU8QpmRTo/tWtvLBss9hmoKuabsgK95Jr0uUG6QkMv0Md/HWWKd5kIPWmARuPp0G6w2PwBNgTiS792UDQx0nLESlP9PyKYNaxyCDPXY1Xg4lPL0hof0XY7jg111ouPbiuB5Zwcx6rY0fJbZ+k+qgTMqAWI9lPIqWO0dqXMYWE1UjjTJgezgSlrVAB2nWVZbi+hVXjSFRqwXbRlgoacPA31hvc6Wr28NpBJTnZdsXzmn0IRbfAi0W3+zP6sfPDIE/ff8dNOQA9B7nuf4E1wIlZ4llWrqxbB1w+kagVrSv7e33S6YQHdcYFZvIrxr4XViuMETLkOWCThUBMDzIB2XOe8lUC8uVHeDN0TaFI/ssEjJhvnINlml12sVsQbJ/+qndmPxSG9zp3lNyJyI52GedMlxPHZineR3PehDQp0SGJb05J/TcXnPJ0kUFMi7XuhJyzJqPR3zI9pIc+q5B+CRPuLEQhD6QGCXh9kibitOL+0se/HV3g43EoLy5PLMkyTvv26eQ9o7d/NIj
+          - functionCall:
+              args:
+                city: Chicago
+              name: get_population
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: dMVFab2qLojVz7IP4__06AU
+      usageMetadata:
+        candidatesTokenCount: 30
+        promptTokenCount: 174
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 174
+        thoughtsTokenCount: 154
+        totalTokenCount: 358
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2697'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Get weather and population for Chicago
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: Chicago
+            id: pyd_ai_70ba0680fd084a1bad8b94982d5b32d6
+            name: get_weather
+          thoughtSignature: CvYEAXLI2nxpnYGmosgxeRYKOce_mCowezqwpph-wjbhHb5_EIPLKGzTr3eRwqfONcH2EIzFPehMA1S41gD0E2oFk8fLM5fL9Z6Bp6gZvbn0zwXKfdHBUGFWytVqzvaUzL54N1l20Fpbzd-w_gQO055lySsSX1IRTpc5ulLGx7Onk-VtBBJ8iATXGoJrFPEUIYLw6DGn0uN791IihWc9ul4O7pvSkka3QOepmWFU3aQt5x9baB5U7L9FvyYGPsnQK4GnPkRO0EG2bZTf7KoWM48fraLAgXmWfbCTbdRnyOSpeE4p3aLewRpE9b8cEf-mTU8QpmRTo_tWtvLBss9hmoKuabsgK95Jr0uUG6QkMv0Md_HWWKd5kIPWmARuPp0G6w2PwBNgTiS792UDQx0nLESlP9PyKYNaxyCDPXY1Xg4lPL0hof0XY7jg111ouPbiuB5Zwcx6rY0fJbZ-k-qgTMqAWI9lPIqWO0dqXMYWE1UjjTJgezgSlrVAB2nWVZbi-hVXjSFRqwXbRlgoacPA31hvc6Wr28NpBJTnZdsXzmn0IRbfAi0W3-zP6sfPDIE_ff8dNOQA9B7nuf4E1wIlZ4llWrqxbB1w-kagVrSv7e33S6YQHdcYFZvIrxr4XViuMETLkOWCThUBMDzIB2XOe8lUC8uVHeDN0TaFI_ssEjJhvnINlml12sVsQbJ_-qndmPxSG9zp3lNyJyI52GedMlxPHZineR3PehDQp0SGJb05J_TcXnPJ0kUFMi7XuhJyzJqPR3zI9pIc-q5B-CRPuLEQhD6QGCXh9kibitOL-0se_HV3g43EoLy5PLMkyTvv26eQ9o7d_NIj
+        - functionCall:
+            args:
+              city: Chicago
+            id: pyd_ai_76b559afe6214c7192e9d862312d3e5f
+            name: get_population
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_70ba0680fd084a1bad8b94982d5b32d6
+            name: get_weather
+            response:
+              return_value: Sunny, 22C in Chicago
+        - functionResponse:
+            id: pyd_ai_76b559afe6214c7192e9d862312d3e5f
+            name: get_population
+            response:
+              return_value: Chicago has 1 million people
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_weather
+          - get_population
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        - description: Get the population of a city.
+          name: get_population
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Information about a city.
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1521'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1382
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Chicago
+                summary: The weather in Chicago is Sunny, 22C. Chicago has 1 million people.
+              name: final_result
+            thoughtSignature: CuEDAXLI2nyb22anVX9CjqECZL0di8710nT/i8nzMJXQMXWgbtl6HRJ2919rjRFSM3w+xxfHTMXSS3sIA6vg3WGYLgu18GWw/lpEd3F5UQZg/hj/JaYy0Me4LmWf/Q7eX7wwNoYOP8IemKrRrWb9KjmbPdWdKzq0L858tBrJM6nmkGBzfpOX+mJVLPDvrb5BYllsVS6n5JBmVPZxX8IAXd/2ihKmdbPWXvmbpGrAxaSApM8AUu+37idTBeP/tislFC5L4yh1o36FtkI+7P+62LjZf+0fAXKekA8j+XaNxgHdm2A/D8JH4ndamgwGVoZPn34cUNTLAYy+x9sn4V9Qf8qnM40bzi8/hlrsx4p6r6DDbssxhjHJva9gvUlVh62+fx55F8rzPdk6mjbc83PfnwPlVIsw84WHQj27TqMHKeDFArVIkuZuTANqx6zSGkTH51VSwjYPu0n7q/9/cFFaCdUM3GEOE5Vl71EHOqDLbGsEa643Was1CMA5lXD1EZZZPoBltY7KbCMGmDrTkgogd14G+vmgUbJWBlMs/3kFPDqJOfM8Ggg1XIPjVx/aA8CPSzTIO9rTJnjPVp4b8aCGmJSIdgEXINKuJYIjm394vg8T2XXrDgTGQvMWvLhkIs7Smvy0Hw==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: dsVFaen6DbHVz7IPr4jS6AU
+      usageMetadata:
+        candidatesTokenCount: 37
+        promptTokenCount: 248
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 248
+        thoughtsTokenCount: 110
+        totalTokenCount: 395
+    status:
+      code: 200
+      message: OK
+version: 1
