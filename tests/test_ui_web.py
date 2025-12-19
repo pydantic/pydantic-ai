@@ -170,6 +170,7 @@ def test_chat_app_configure_endpoint_empty():
         )
 
 
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
 def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.MonkeyPatch):
     """Test that openai-chat: and openai-responses: models are kept as separate entries."""
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
