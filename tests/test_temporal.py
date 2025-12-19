@@ -1233,6 +1233,7 @@ async def test_temporal_agent():
 
     toolsets = complex_temporal_agent.toolsets
     assert len(toolsets) == 4
+    print(toolsets[2])
 
     # Wrapped function toolset for the agent's own tools
     assert isinstance(toolsets[0], TemporalFunctionToolset)

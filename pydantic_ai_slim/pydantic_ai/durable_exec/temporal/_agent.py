@@ -244,21 +244,23 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
-        with self._temporal_overrides():
-            return super().toolsets
+        with self._temporal_overrides(force=True):
+            return self._toolsets
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(self, *, model: models.Model | models.KnownModelName | str | None = None) -> Iterator[None]:
+    def _temporal_overrides(
+        self, *, model: models.Model | models.KnownModelName | str | None = None, force: bool = False
+    ) -> Iterator[None]:
         """Context manager for workflow-specific overrides.
 
         When called outside a workflow, this is a no-op.
         When called inside a workflow, it overrides the model and toolsets.
         """
-        if not workflow.in_workflow():
+        if not workflow.in_workflow() and not force:
             yield
             return
 
