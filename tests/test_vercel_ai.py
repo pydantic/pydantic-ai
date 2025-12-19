@@ -1993,7 +1993,7 @@ async def test_tool_approval_request_emission():
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
-        return f'Deleted {path}'
+        return f'Deleted {path}'  # pragma: no cover
 
     request = SubmitMessage(
         id='foo',
@@ -2397,6 +2397,40 @@ def test_denied_tool_ids_skips_approved_tools():
     assert stream.denied_tool_ids == {'denied_tool'}
 
 
+def test_denied_tool_ids_caching():
+    """Test that denied_tool_ids property caches the result."""
+    from pydantic_ai.ui.vercel_ai.request_types import (
+        DynamicToolInputAvailablePart,
+        ToolApprovalResponded,
+    )
+
+    request = SubmitMessage(
+        id='req-1',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='assistant',
+                parts=[
+                    DynamicToolInputAvailablePart(
+                        tool_name='my_tool',
+                        tool_call_id='tool_1',
+                        input={'arg': 'value'},
+                        approval=ToolApprovalResponded(id='approval-1', approved=False),
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    stream = VercelAIEventStream(run_input=request)
+    # First call computes and caches
+    first_result = stream.denied_tool_ids
+    # Second call returns cached value
+    second_result = stream.denied_tool_ids
+    assert first_result is second_result
+    assert first_result == {'tool_1'}
+
+
 async def test_tool_output_denied_chunk_emission():
     """Test that ToolOutputDeniedChunk is emitted when a tool call is denied."""
     from pydantic_ai.tools import DeferredToolRequests
@@ -2417,7 +2451,7 @@ async def test_tool_output_denied_chunk_emission():
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
-        return f'Deleted {path}'
+        return f'Deleted {path}'  # pragma: no cover
 
     # Simulate a follow-up request where the user denied the tool
     request = SubmitMessage(
