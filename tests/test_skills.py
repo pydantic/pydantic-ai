@@ -287,7 +287,7 @@ def test_validate_skill_metadata_name_too_long() -> None:
     assert '64 characters' in warnings[0]
 
 
-def testvalidate_skill_metadata_invalid_name_format() -> None:
+def test_validate_skill_metadata_invalid_name_format() -> None:
     """Test validation with invalid name format."""
     frontmatter = {
         'name': 'Invalid_Name_With_Underscores',
