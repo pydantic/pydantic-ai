@@ -3373,6 +3373,42 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
     )
 
 
+async def test_adapter_load_messages_tool_input_streaming_part():
+    """Test loading streaming tool parts which don't have call_provider_metadata."""
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolInputStreamingPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolInputStreamingPart(
+                    tool_name='my_tool',
+                    tool_call_id='tc_streaming',
+                    input='{"partial": "data"}',
+                    state='input-streaming',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'partial': 'data'},
+                        tool_call_id='tc_streaming',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 async def test_adapter_tool_call_roundtrip_with_provider_details():
     """Test ToolCallPart with provider_details survives dump/load roundtrip."""
     original_messages = [
