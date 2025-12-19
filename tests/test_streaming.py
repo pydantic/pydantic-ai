@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -51,7 +52,10 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
-from .conftest import IsDatetime, IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, try_import
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 pytestmark = pytest.mark.anyio
 
@@ -2882,3 +2886,16 @@ def test_stream_output_after_get_output_sync():
             ),
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_run_stream_sync_instrumentation(capfire: CaptureLogfire):
+    m = TestModel()
+
+    agent = Agent(m, instrument=True)
+
+    result = agent.run_stream_sync('Hello')
+    output = [c for c in result.stream_output()]
+    assert output == snapshot(['success (no tool calls)'])
+
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot()
