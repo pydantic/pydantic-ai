@@ -380,7 +380,7 @@ async def _prepare_request_parameters(
     output_schema = ctx.deps.output_schema
 
     prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
+        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
     function_tools: list[ToolDefinition] = []
