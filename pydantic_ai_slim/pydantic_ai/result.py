@@ -593,7 +593,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         | AsyncIterator[StreamedRunResult[AgentDepsT, OutputDataT]],
     ) -> None:
         if isinstance(streamed_run_result, StreamedRunResult):
-            self._streamed_run_result = streamed_run_result
+            self._streamed_run_result = streamed_run_result  # pragma: no cover
         else:
             self._stream = streamed_run_result
 
@@ -738,14 +738,21 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                         yield item
             except RuntimeError as e:
                 if str(e) != 'Attempted to exit cancel scope in a different task than it was entered in':
-                    raise
+                    raise  # pragma: no cover
 
         return _utils.sync_async_iterator(my_task())
 
     def _async_to_sync(
         self,
-        func: Callable[[StreamedRunResult[AgentDepsT, OutputDataT]], Awaitable[T] | T],
+        func: Callable[[StreamedRunResult[AgentDepsT, OutputDataT]], T]
+        | Callable[[StreamedRunResult[AgentDepsT, OutputDataT]], Awaitable[T]],
     ) -> T:
+        if self._streamed_run_result is not None:
+            res = func(self._streamed_run_result)
+            if inspect.isawaitable(res):
+                res = _utils.get_event_loop().run_until_complete(res)
+            return res
+
         async def my_task():
             async with self._with_streamed_run_result() as result:
                 res = func(result)
