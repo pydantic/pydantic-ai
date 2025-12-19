@@ -1232,31 +1232,35 @@ async def test_temporal_agent():
     assert complex_temporal_agent.model.wrapped == complex_agent.model
 
     toolsets = complex_temporal_agent.toolsets
-    assert len(toolsets) == 4
-    print(toolsets[2])
+    assert len(toolsets) == 5
+
+    # Empty function toolset for the agent's own tools
+    assert isinstance(toolsets[0], FunctionToolset)
+    assert toolsets[0].id == '<agent>'
+    assert toolsets[0].tools == {}
 
     # Wrapped function toolset for the agent's own tools
-    assert isinstance(toolsets[0], TemporalFunctionToolset)
-    assert toolsets[0].id == '<agent>'
-    assert isinstance(toolsets[0].wrapped, FunctionToolset)
-    assert toolsets[0].wrapped.tools.keys() == {'get_weather'}
+    assert isinstance(toolsets[1], TemporalFunctionToolset)
+    assert toolsets[1].id == '<agent>'
+    assert isinstance(toolsets[1].wrapped, FunctionToolset)
+    assert toolsets[1].wrapped.tools.keys() == {'get_weather'}
 
     # Wrapped 'country' toolset
-    assert isinstance(toolsets[1], TemporalFunctionToolset)
-    assert toolsets[1].id == 'country'
-    assert toolsets[1].wrapped == complex_agent.toolsets[1]
-    assert isinstance(toolsets[1].wrapped, FunctionToolset)
-    assert toolsets[1].wrapped.tools.keys() == {'get_country'}
+    assert isinstance(toolsets[2], TemporalFunctionToolset)
+    assert toolsets[2].id == 'country'
+    assert toolsets[2].wrapped == complex_agent.toolsets[1]
+    assert isinstance(toolsets[2].wrapped, FunctionToolset)
+    assert toolsets[2].wrapped.tools.keys() == {'get_country'}
 
     # Wrapped 'mcp' MCP server
-    assert isinstance(toolsets[2], TemporalMCPServer)
-    assert toolsets[2].id == 'mcp'
-    assert toolsets[2].wrapped == complex_agent.toolsets[2]
+    assert isinstance(toolsets[3], TemporalMCPServer)
+    assert toolsets[3].id == 'mcp'
+    assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
     # Unwrapped 'external' toolset
-    assert isinstance(toolsets[3], ExternalToolset)
-    assert toolsets[3].id == 'external'
-    assert toolsets[3] == complex_agent.toolsets[3]
+    assert isinstance(toolsets[4], ExternalToolset)
+    assert toolsets[4].id == 'external'
+    assert toolsets[4] == complex_agent.toolsets[3]
 
     assert [
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]

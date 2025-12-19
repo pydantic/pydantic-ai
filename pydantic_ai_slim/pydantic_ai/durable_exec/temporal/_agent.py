@@ -93,7 +93,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 the first model in this mapping will be used as the default.
             provider_factory:
                 Optional callable used when instantiating models from provider strings (those supplied at runtime).
-                The callable receives the provider name, the current run context (if available) and the run dependencies, allowing custom configuration such as injecting API keys stored on `deps`.
+                The callable receives the provider name and the current run context, allowing custom configuration such as injecting API keys stored on `deps`.
+                Note: This factory is only used inside Temporal workflows. Outside workflows, model strings are resolved using the default provider behavior.
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             activity_config: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
             model_activity_config: The Temporal activity config to use for model request activities. This is merged with the base activity config.
@@ -245,7 +246,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         with self._temporal_overrides(force=True):
-            return self._toolsets
+            return super().toolsets
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
