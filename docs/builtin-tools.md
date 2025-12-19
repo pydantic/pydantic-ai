@@ -380,14 +380,16 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `background` | ✅ | ❌ |
 | `input_fidelity` | ✅ | ❌ |
 | `moderation` | ✅ | ❌ |
-| `output_compression` | ✅ | ❌ |
-| `output_format` | ✅ | ❌ |
+| `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Vertex AI only) |
+| `output_format` | ✅ (png (default), webp, jpeg) | ✅ (png (default), jpeg, webp, Vertex AI only) |
 | `partial_images` | ✅ | ❌ |
 | `quality` | ✅ | ❌ |
 | `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (1K (default), 2K, 4K) |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 
-**Note:** For OpenAI, `auto` lets the model select the value.
+!!! note "Notes"
+    - **OpenAI**: `auto` lets the model select the value.
+    - **Google (Vertex AI)**: Setting `output_compression` will default `output_format` to `jpeg` if not specified.
 
 ## Web Fetch Tool
 

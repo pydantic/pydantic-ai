@@ -398,6 +398,8 @@ class GoogleModel(Model):
                         f'Got format: {tool.output_format!r}. Either set `output_format="jpeg"` or remove `output_compression`.'
                     )
                 image_config['output_compression_quality'] = output_compression
+                if tool.output_format is None:
+                    image_config['output_mime_type'] = 'image/jpeg'
 
         return image_config
 

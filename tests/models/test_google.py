@@ -3731,7 +3731,7 @@ async def test_google_image_generation_tool_output_compression(
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
-    assert image_config == {'output_compression_quality': 85}
+    assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
 
     # Test None (omitted)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=None)])
