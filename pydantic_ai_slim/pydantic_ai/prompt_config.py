@@ -462,7 +462,10 @@ class PromptConfig:
             templates=prompt_templates,
         )
 
-    def merge_prompt_config(self, other_prompt_config: PromptConfig) -> PromptConfig:
+    def merge_prompt_config(self, other_prompt_config: PromptConfig | None) -> PromptConfig:
+        if not other_prompt_config:
+            return self
+
         effective_prompt_templates = other_prompt_config.templates
         effective_tool_config = dict(other_prompt_config.tool_config or {})
 

@@ -1387,14 +1387,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> _prompt_config.PromptConfig | None:
         """Get prompt_config for a run.
 
-        If we've overridden prompt_config via `_override_prompt_config`, use that,
-        otherwise use the prompt_config passed to the call, falling back to the agent default.
+        If we've overridden prompt_config via `_override_prompt_config`, we should merge its values with the prompt_config passed to the call, and merging with the agent default.
+        The values that are not present in the override falls back to the call and then falls back to the agent default.
+
         Returns None if no prompt_config is configured at any level.
         """
+        effective_prompt_config: _prompt_config.PromptConfig | None = None
+
         if some_prompt_config := self._override_prompt_config.get():
-            return some_prompt_config.value
-        else:
-            return prompt_config or self.prompt_config
+            effective_prompt_config = some_prompt_config.value.merge_prompt_config(effective_prompt_config)
+        if prompt_config:
+            effective_prompt_config = prompt_config.merge_prompt_config(effective_prompt_config)
+
+        if self.prompt_config:
+            effective_prompt_config = self.prompt_config.merge_prompt_config(effective_prompt_config)
+
+        return effective_prompt_config
 
     def _normalize_instructions(
         self,
