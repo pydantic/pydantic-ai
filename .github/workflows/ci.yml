@@ -163,15 +163,9 @@ jobs:
           enable-cache: true
           cache-suffix: ${{ matrix.install.name }}
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.5.x
-
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -214,15 +208,9 @@ jobs:
           enable-cache: true
           cache-suffix: lowest-versions
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.5.x
-
       - run: mkdir .coverage
 
       - run: uv sync --group dev
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
