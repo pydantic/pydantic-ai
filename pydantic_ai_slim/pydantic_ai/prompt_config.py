@@ -270,9 +270,79 @@ class ToolConfig:
     """
 
     name: str | None = None
+    """The new name for the tool. If set, this overrides the original tool name."""
+
     description: str | None = None
+    """The new description for the tool. If set, this overrides the original tool description."""
+
     strict: bool | None = None
+    """Whether to enable strict schema behavior for the tool.
+
+    If set, this overrides the strict setting on the tool definition.
+    Currently only supported by OpenAI models.
+    """
+
     parameters_descriptions: dict[str, str] | None = None
+    """A dictionary mapping parameter names to their descriptions.
+
+    This allows you to override or set descriptions for specific tool arguments.
+    Keys are dot-separated paths to the parameter, and values are the descriptions.
+
+    This supports nested fields and Pydantic models with references (e.g. recursive models).
+    The path should follow the structure as if the reference was expanded inline.
+
+    Example:
+        Given a tool with arguments modeled like:
+        ```python
+        class Address(BaseModel):
+            city: str = Field(description='City name')
+
+        class User(BaseModel):
+            name: str
+            address: Address
+            best_friend: User
+
+        ToolConfig(
+            parameters_descriptions={
+                'name': 'The user\\'s full name',
+                'address.city': 'The city where the user lives',
+                # For recursive/referenced models, use dot notation:
+                'best_friend.name': 'The name of the user\\'s best friend',
+            }
+        )
+        ```
+
+        This results in a JSON schema where the `best_friend` reference is inlined and modified,
+        without affecting the original `User` definition:
+
+        ```json
+        {
+          "properties": {
+            "name": {"description": "The user's full name", "type": "string"},
+            "best_friend": {
+              "type": "object",
+              "properties": {
+                 # The description here is updated:
+                 "name": {"description": "The name of the user's best friend", "type": "string"},
+                 # Other fields remain as references or unchanged:
+                 "address": {"$ref": "#/$defs/Address"},
+                 "best_friend": {"$ref": "#/$defs/User"}
+              }
+            },
+            ...
+          },
+          "$defs": {
+             "User": {
+               # The original definition remains unchanged:
+               "properties": {
+                 "name": {"title": "Name", "type": "string"},
+                 ...
+               }
+             }
+          }
+        }
+        ```
+    """
 
 
 @dataclass
@@ -393,9 +463,12 @@ def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any
                 result[full_path] = description
 
             if nested_props := value.get(_PROPERTIES):
+                # Handle nested properties directly (e.g. nested models inline)
                 extract_from_properties(full_path, nested_props)
             elif (ref := value.get(_REF)) and ref.startswith(_REF_PREFIX):
+                # Handle $ref (shared definitions / recursive models)
                 def_name = ref[len(_REF_PREFIX) :]
+                # Avoid infinite recursion for recursive models (e.g. User -> best_friend: User)
                 if def_name not in visited:
                     visited.add(def_name)
                     if nested_props := defs.get(def_name, {}).get(_PROPERTIES):
