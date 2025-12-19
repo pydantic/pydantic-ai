@@ -180,7 +180,7 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv run --no-sync ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
