@@ -308,7 +308,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if workflow.in_workflow():
             with self._temporal_overrides():
                 return super().toolsets
-        return super().toolsets
+        return self._toolsets
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
