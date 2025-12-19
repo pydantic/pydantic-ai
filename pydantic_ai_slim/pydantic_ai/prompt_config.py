@@ -332,18 +332,7 @@ class PromptConfig:
         """
         tool_config: dict[str, ToolConfig] = {}
 
-        prompt_templates: PromptTemplates = PromptTemplates(
-            final_result_processed=DEFAULT_FINAL_RESULT_PROCESSED,
-            output_tool_not_executed=DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
-            output_validation_failed=DEFAULT_OUTPUT_VALIDATION_FAILED,
-            function_tool_not_executed=DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
-            tool_denied=DEFAULT_TOOL_CALL_DENIED,
-            validation_errors_retry_prompt=DEFAULT_MODEL_RETRY,
-            tool_retry_prompt=DEFAULT_MODEL_RETRY,
-            no_tool_retry_prompt=DEFAULT_MODEL_RETRY,
-            prompted_output_template=DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
-            description_template=None,
-        )
+        prompt_templates: PromptTemplates = DEFAULT_PROMPT_TEMPLATES
 
         run_ctx = RunContext(deps=None, model=model, usage=RunUsage())
 
@@ -415,3 +404,16 @@ def _extract_descriptions_from_json_schema(parameters_json_schema: dict[str, Any
 
     extract_from_properties('', properties)
     return result
+
+DEFAULT_PROMPT_TEMPLATES = PromptTemplates(
+    final_result_processed=DEFAULT_FINAL_RESULT_PROCESSED,
+    output_tool_not_executed=DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
+    output_validation_failed=DEFAULT_OUTPUT_VALIDATION_FAILED,
+    function_tool_not_executed=DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
+    tool_denied=DEFAULT_TOOL_CALL_DENIED,
+    validation_errors_retry_prompt=DEFAULT_MODEL_RETRY,
+    tool_retry_prompt=DEFAULT_MODEL_RETRY,
+    no_tool_retry_prompt=DEFAULT_MODEL_RETRY,
+    prompted_output_template=DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
+    description_template=None,
+)
