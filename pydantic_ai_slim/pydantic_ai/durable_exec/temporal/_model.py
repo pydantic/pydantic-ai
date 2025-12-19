@@ -37,7 +37,7 @@ class _RequestParams:
     model_id: str | None = None
 
 
-TemporalProviderFactory = Callable[[RunContext[Any], str], Provider[Any]]
+TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
 
 
 class TemporalStreamedResponse(StreamedResponse):

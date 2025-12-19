@@ -119,10 +119,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
             )
-
-        # Get wrapped agent's model if it's a Model instance
-        wrapped_model = wrapped.model if isinstance(wrapped.model, Model) else None
-
         # start_to_close_timeout is required
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
 
@@ -164,6 +160,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
         activities.append(self.event_stream_handler_activity)
 
+        # Get wrapped agent's model if it's a Model instance
+        wrapped_model = wrapped.model if isinstance(wrapped.model, Model) else None
         temporal_model = TemporalModel(
             wrapped_model,
             activity_name_prefix=activity_name_prefix,
