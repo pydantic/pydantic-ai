@@ -21,7 +21,7 @@ from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition, PromptedOutputSchema
+from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
@@ -553,8 +553,8 @@ class ModelRequestParameters:
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
-        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
-            return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+        if self.prompted_output_template and self.output_object:
+            return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -682,11 +682,14 @@ class Model(ABC):
             params = replace(params, output_tools=[])
         if params.output_object and params.output_mode not in ('native', 'prompted'):
             params = replace(params, output_object=None)
-        if params.prompted_output_template and params.output_mode != 'prompted':
+        if params.prompted_output_template and params.output_mode not in ('prompted', 'native'):
             params = replace(params, prompted_output_template=None)  # pragma: no cover
 
         # Set default prompted output template
-        if params.output_mode == 'prompted' and not params.prompted_output_template:
+        if (
+            params.output_mode == 'prompted'
+            or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
+        ) and not params.prompted_output_template:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
         # Check if output mode is supported
