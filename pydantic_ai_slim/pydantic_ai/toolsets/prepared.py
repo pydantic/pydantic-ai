@@ -62,8 +62,8 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
             original_tool_def = tool.tool_def
             parameters_json_schema = copy.deepcopy(original_tool_def.parameters_json_schema)
 
-            if config.tool_args_descriptions:
-                self._update_arg_descriptions(parameters_json_schema, config.tool_args_descriptions, tool_name)
+            if config.parameters_descriptions:
+                self._update_arg_descriptions(parameters_json_schema, config.parameters_descriptions, tool_name)
 
             updated_tool_def = replace(
                 original_tool_def,
@@ -72,7 +72,7 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
                     k: v
                     for k, v in {
                         'name': config.name,
-                        'description': config.tool_description,
+                        'description': config.description,
                         'strict': config.strict,
                     }.items()
                     if v is not None

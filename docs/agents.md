@@ -857,14 +857,14 @@ agent = Agent(
     prompt_config=PromptConfig(
         tool_config={
             'search_database': ToolConfig(
-                tool_description='Search the customer database for user records by name or email.',
-                tool_args_descriptions={
+                description='Search the customer database for user records by name or email.',
+                parameters_descriptions={
                     'query': 'Search term to match against user names or email addresses.',
                 },
             ),
             'send_notification': ToolConfig(
-                tool_description='Send an urgent notification to the user via their preferred channel.',
-                tool_args_descriptions={
+                description='Send an urgent notification to the user via their preferred channel.',
+                parameters_descriptions={
                     'user_id': 'The unique identifier of the user to notify.',
                     'message': 'The notification message content (max 500 characters).',
                 },
@@ -886,7 +886,7 @@ def send_notification(user_id: str, message: str) -> bool:
     return True
 ```
 
-For nested tool arguments, `tool_args_descriptions` uses dot-separated paths based on the tool's parameters and
+For nested tool arguments, `parameters_descriptions` uses dot-separated paths based on the tool's parameters and
 their nested fields. This works even if the tool argument schema uses `$defs`/`$ref` internally.
 
 ```python {title="tool_config_nested_example.py"}
@@ -908,7 +908,7 @@ agent = Agent(
     prompt_config=PromptConfig(
         tool_config={
             'search': ToolConfig(
-                tool_args_descriptions={
+                parameters_descriptions={
                     'query': 'Search query text.',
                     'config.filters.language': 'ISO 639-1 language code to filter results by.',
                 }

@@ -516,7 +516,7 @@ async def test_comprehensive_toolset_composition():
 
     partial_tool_config = {
         'calc': ToolConfig(
-            tool_args_descriptions={
+            parameters_descriptions={
                 'x': 'First number',
                 'z': 'Third number',
                 # 'y' intentionally missing
@@ -589,7 +589,7 @@ async def test_comprehensive_toolset_composition():
 
     partial_tool_config_with_incorrect_paths = {
         'calc': ToolConfig(
-            tool_args_descriptions={
+            parameters_descriptions={
                 'x': 'First number',
                 'nonexistent': 'This path does not exist',
             }
@@ -627,7 +627,7 @@ async def test_comprehensive_toolset_composition():
         ]
 
     missing_ref_toolset = PreparedToolset(partial_args_toolset, prepare_missing_ref)
-    missing_ref_config = {'calc': ToolConfig(tool_args_descriptions={'arg.b': 'never applied'})}
+    missing_ref_config = {'calc': ToolConfig(parameters_descriptions={'arg.b': 'never applied'})}
     with pytest.raises(
         UserError,
         match=re.escape("Invalid path 'arg.b' for tool 'calc': undefined $ref '#/$defs/Missing'."),
@@ -650,7 +650,7 @@ async def test_comprehensive_toolset_composition():
         ]
 
     circular_ref_toolset = PreparedToolset(partial_args_toolset, prepare_circular_ref)
-    circular_ref_config = {'calc': ToolConfig(tool_args_descriptions={'arg.b': 'never applied'})}
+    circular_ref_config = {'calc': ToolConfig(parameters_descriptions={'arg.b': 'never applied'})}
     with pytest.raises(
         UserError,
         match=re.escape("Circular reference detected in schema at 'arg.b': #/$defs/A"),
@@ -1093,7 +1093,7 @@ async def test_generate_prompt_config_from_agent():
     assert 'final_result' in tool_config
 
     schema_tool_config = tool_config['schema_tool']
-    assert schema_tool_config.tool_args_descriptions == snapshot(
+    assert schema_tool_config.parameters_descriptions == snapshot(
         {
             'inline': 'Inline root.',
             'inline.a': 'Inline child.',
@@ -1101,11 +1101,11 @@ async def test_generate_prompt_config_from_agent():
             'node.child': 'Recursive child.',
         }
     )
-    assert tool_config['empty_schema_tool'].tool_args_descriptions == {}
+    assert tool_config['empty_schema_tool'].parameters_descriptions == {}
 
     calc_config = tool_config['calculate']
 
-    assert calc_config.tool_args_descriptions == snapshot(
+    assert calc_config.parameters_descriptions == snapshot(
         {
             'x': 'The first operand.',
             'y': 'The second operand.',

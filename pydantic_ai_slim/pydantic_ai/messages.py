@@ -873,7 +873,7 @@ class BaseToolReturnPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ReturnKind: TypeAlias = Literal[
+ToolReturnKind: TypeAlias = Literal[
     'final-result-processed',
     'output-tool-not-executed',
     'function-tool-not-executed',
@@ -892,7 +892,7 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    return_kind: ReturnKind | None = None
+    return_kind: ToolReturnKind | None = None
     """How the tool call was resolved, used for disambiguating return parts.
 
     * `tool-executed`: the tool ran successfully and produced a return value

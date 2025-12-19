@@ -10,7 +10,7 @@ import pydantic_core
 from pydantic_ai.usage import RunUsage
 
 from ._run_context import RunContext
-from .messages import ModelMessage, ModelRequest, ModelRequestPart, RetryPromptPart, ToolReturnPart
+from .messages import ModelMessage, ModelRequest, ModelRequestPart, RetryPromptPart, ToolReturnKind, ToolReturnPart
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import Agent
@@ -79,12 +79,13 @@ def default_validation_error(content: str | list[pydantic_core.ErrorDetails]) ->
     return f'{len(content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
 
 
-return_kind_to_default_prompt_template: dict[str, str] = {
+return_kind_to_default_prompt_template: dict[ToolReturnKind, str] = {
     'final-result-processed': DEFAULT_FINAL_RESULT_PROCESSED,
     'output-tool-not-executed': DEFAULT_OUTPUT_TOOL_NOT_EXECUTED,
     'output-validation-failed': DEFAULT_OUTPUT_VALIDATION_FAILED,
     'function-tool-not-executed': DEFAULT_FUNCTION_TOOL_NOT_EXECUTED,
     'tool-denied': DEFAULT_TOOL_CALL_DENIED,
+    # tool-executed does not have a default prompt template or a prompt template callable
 }
 
 
@@ -188,7 +189,9 @@ class PromptTemplates:
             template = getattr(self, field_name, None)
             # Map return_kind directly to template attribute name (e.g. 'final-result-processed' -> 'final_result_processed')
 
-            # Special case for tool-denied: only apply if template is explicitly set
+            # ToolDenied cannot fallback to a default prompt template
+            # ToolDenied may have a template set via ToolDenied('')
+            # If we set a default template then this message will get overridden by the default template, so we only set it if the template is explicitly set
             if message_part.return_kind == 'tool-denied':
                 return self._apply_tool_template(message_part, ctx, template) if template else message_part
 
@@ -267,9 +270,9 @@ class ToolConfig:
     """
 
     name: str | None = None
-    tool_description: str | None = None
+    description: str | None = None
     strict: bool | None = None
-    tool_args_descriptions: dict[str, str] | None = None
+    parameters_descriptions: dict[str, str] | None = None
 
 
 @dataclass
@@ -358,9 +361,9 @@ class PromptConfig:
             tool_def = toolset_tool.tool_def
             tool_config[tool_name] = ToolConfig(
                 name=tool_name,
-                tool_description=tool_def.description,
+                description=tool_def.description,
                 strict=tool_def.strict,
-                tool_args_descriptions=_extract_descriptions_from_json_schema(tool_def.parameters_json_schema),
+                parameters_descriptions=_extract_descriptions_from_json_schema(tool_def.parameters_json_schema),
             )
 
         return PromptConfig(

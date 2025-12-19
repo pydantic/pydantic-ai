@@ -729,7 +729,7 @@ Custom no-tool retry\
 
 
 def test_prompt_config_tool_config_descriptions():
-    """Test that ToolConfig.tool_description updates tool descriptions at the agent level."""
+    """Test that ToolConfig.description updates tool descriptions at the agent level."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Verify the tool description was updated
@@ -744,9 +744,9 @@ def test_prompt_config_tool_config_descriptions():
             tool_config={
                 'my_tool': ToolConfig(
                     name=None,
-                    tool_description='Custom tool description from ToolConfig',
+                    description='Custom tool description from ToolConfig',
                     strict=None,
-                    tool_args_descriptions=None,
+                    parameters_descriptions=None,
                 )
             }
         ),
@@ -762,7 +762,7 @@ def test_prompt_config_tool_config_descriptions():
 
 
 def test_prompt_config_tool_config_descriptions_at_runtime():
-    """Test that ToolConfig.tool_description passed to run_sync() overrides agent-level prompt_config."""
+    """Test that ToolConfig.description passed to run_sync() overrides agent-level prompt_config."""
     observed_descriptions: list[str | None] = []
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -777,10 +777,10 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
         prompt_config=PromptConfig(
             tool_config={
                 'basic_tool': ToolConfig(
-                    name=None, tool_description='Agent-level tool description', strict=None, tool_args_descriptions=None
+                    name=None, description='Agent-level tool description', strict=None, parameters_descriptions=None
                 ),
                 'not_present_basic_tool': ToolConfig(
-                    name=None, tool_description='Should not be used', strict=None, tool_args_descriptions=None
+                    name=None, description='Should not be used', strict=None, parameters_descriptions=None
                 ),
             }
         ),
@@ -803,9 +803,9 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
             tool_config={
                 'basic_tool': ToolConfig(
                     name=None,
-                    tool_description='Runtime custom tool description',
+                    description='Runtime custom tool description',
                     strict=None,
-                    tool_args_descriptions=None,
+                    parameters_descriptions=None,
                 )
             }
         ),
@@ -815,7 +815,7 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
 
 
 def test_prompt_config_tool_config_output_tool_descriptions():
-    """Test that ToolConfig.tool_description updates output tool descriptions (covers ToolConfigPreparedToolset for output_toolset)."""
+    """Test that ToolConfig.description updates output tool descriptions (covers ToolConfigPreparedToolset for output_toolset)."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Verify the output tool description was updated
@@ -838,9 +838,9 @@ def test_prompt_config_tool_config_output_tool_descriptions():
             tool_config={
                 'final_result': ToolConfig(
                     name=None,
-                    tool_description='Custom output tool description from ToolConfig',
+                    description='Custom output tool description from ToolConfig',
                     strict=None,
-                    tool_args_descriptions=None,
+                    parameters_descriptions=None,
                 )
             }
         ),

@@ -164,9 +164,9 @@ def test_docstring_google_prompt_config(docstring_format: Literal['google', 'aut
         tool_config={
             'google_style_docstring': prompt_config.ToolConfig(
                 name=None,
-                tool_description=None,
+                description=None,
                 strict=None,
-                tool_args_descriptions={
+                parameters_descriptions={
                     'foo': 'The foo thing from tool config.',
                     'bar': 'The bar thing from tool config.',
                 },

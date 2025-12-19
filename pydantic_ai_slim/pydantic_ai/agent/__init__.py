@@ -1468,16 +1468,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
-        if tool_config:
-            toolset = ToolConfigPreparedToolset(toolset, tool_config)
-
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
             if self._prepare_output_tools:
                 output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
-            if tool_config:
-                output_toolset = ToolConfigPreparedToolset(output_toolset, tool_config)
             toolset = CombinedToolset([output_toolset, toolset])
+
+        if tool_config:
+            toolset = ToolConfigPreparedToolset(toolset, tool_config)
 
         return toolset
 
