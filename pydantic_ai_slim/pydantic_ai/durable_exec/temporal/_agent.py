@@ -178,10 +178,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         activities.append(self.event_stream_handler_activity)
 
         # Use wrapped_model if available, otherwise first registered model
-        if wrapped_model is not None:
-            primary_model = wrapped_model
-        else:
-            primary_model = next(iter(self._models_by_id.values()))
+        primary_model = wrapped_model or next(iter(self._models_by_id.values()))
         temporal_model = TemporalModel(
             primary_model,
             activity_name_prefix=activity_name_prefix,
