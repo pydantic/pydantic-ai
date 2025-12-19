@@ -136,7 +136,7 @@ MCP also offers [stdio transport](https://spec.modelcontextprotocol.io/specifica
 
 In this example [mcp-run-python](https://github.com/pydantic/mcp-run-python) is used as the MCP server.
 
-```python {title="mcp_stdio_client.py" test="skip"}
+```python {title="mcp_stdio_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
