@@ -338,7 +338,7 @@ def testvalidate_skill_metadata_instructions_too_long() -> None:
     assert any('500 lines' in w for w in warnings)
 
 
-def testvalidate_skill_metadata_multiple_issues() -> None:
+def test_validate_skill_metadata_multiple_issues() -> None:
     """Test validation with multiple issues."""
     frontmatter = {
         'name': 'A' * 65,  # Too long
