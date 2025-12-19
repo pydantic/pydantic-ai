@@ -12,7 +12,34 @@ def validate_tool_choice(  # noqa: C901
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
 ) -> Literal['none', 'auto', 'required'] | tuple[list[str], Literal['auto', 'required']]:
-    """Validate and normalize tool_choice settings into a canonical form for providers."""
+    """Validate and normalize tool_choice settings into a canonical form for providers.
+
+    Args:
+        model_settings: Optional settings containing the tool_choice value.
+        model_request_parameters: Parameters describing available tools and output configuration.
+
+    Returns:
+        A canonical tool_choice value for providers:
+
+        - `'none'`: No tools should be called. Only valid when direct output (text/image) is allowed.
+        - `'auto'`: Model chooses whether to use tools. Direct output is allowed.
+        - `'required'`: Model must use a tool. Direct output is not allowed.
+        - `(tool_names, 'auto')`: Only these tools are available, direct output is allowed.
+        - `(tool_names, 'required')`: Only these tools are available, must use one.
+
+    Raises:
+        UserError: If tool_choice is incompatible with the available tools or output configuration.
+
+    Input behavior:
+
+        - `None` / `'auto'`: Returns `'auto'` if text output allowed, else `'required'`.
+        - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
+          appropriate mode and warns. Otherwise returns `'none'`.
+        - `'required'`: Requires function tool use. Raises if output tools exist or no
+          function tools are defined.
+        - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
+        - `ToolsPlusOutput`: Combines specified function tools with all output tools.
+    """
     tool_choice = (model_settings or {}).get('tool_choice')
 
     allow_direct_output = model_request_parameters.allow_text_output or model_request_parameters.allow_image_output
@@ -86,13 +113,9 @@ def validate_tool_choice(  # noqa: C901
     # ToolsPlusOutput: specific function tools + all output tools
     if isinstance(tool_choice, ToolsPlusOutput):
         output_tool_names = [t.name for t in model_request_parameters.output_tools]
-        all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
 
         # stable order, unique
-        chosen_function = list(dict.fromkeys(tool_choice.function_tools))
-        chosen_function_set = set(chosen_function)
-
-        if not chosen_function:
+        if not tool_choice.function_tools:
             _warn("ToolsPlusOutput with empty function_tools - defaulting to 'none'")
             if output_tool_names:
                 return (output_tool_names, 'auto' if allow_direct_output else 'required')
@@ -100,6 +123,10 @@ def validate_tool_choice(  # noqa: C901
 
         if not output_tool_names:
             _warn('ToolsPlusOutput used but no output tools exist - defaulting to list[str] behavior')
+
+        chosen_function = list(dict.fromkeys(tool_choice.function_tools))
+        chosen_function_set = set(chosen_function)
+        all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
 
         _invalid(
             chosen_function_set,
