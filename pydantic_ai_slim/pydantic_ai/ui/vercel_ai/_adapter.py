@@ -354,6 +354,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 )
 
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
+                    builtin_return_meta = VercelAIAdapter._dump_part_metadata(
+                        id=part.id,
+                        provider_name=builtin_return.provider_name,
+                        provider_details=builtin_return.provider_details,
+                    )
                     content = builtin_return.model_response_str()
                     ui_parts.append(
                         ToolOutputAvailablePart(
@@ -363,7 +368,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             output=content,
                             state='output-available',
                             provider_executed=True,
-                            call_provider_metadata=call_provider_metadata,
+                            call_provider_metadata=builtin_return_meta,
                         )
                     )
                 else:
