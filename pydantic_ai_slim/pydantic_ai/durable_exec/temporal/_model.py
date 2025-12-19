@@ -93,7 +93,7 @@ class TemporalModel(WrapperModel):
         if models:
             for model_id, model_instance in models.items():
                 if model_id == 'default':
-                    raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+                    raise UserError("Registered model name 'default' is reserved for the agent's primary model.")
                 self._models_by_id[model_id] = model_instance
 
         if not self._models_by_id:
