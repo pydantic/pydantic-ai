@@ -4,7 +4,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from typing import Any, Generic, Literal, cast, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTaskRequest, JoinItem
@@ -18,10 +18,8 @@ from . import (
     usage as _usage,
 )
 from .output import OutputDataT
+from .result import FinalResult
 from .tools import AgentDepsT
-
-if TYPE_CHECKING:
-    from .result import FinalResult
 
 
 @dataclasses.dataclass(repr=False)
