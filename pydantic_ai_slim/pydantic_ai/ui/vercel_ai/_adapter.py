@@ -194,14 +194,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         else:
                             assert_never(args)
 
-                        if builtin_tool:
-                            part_id, provider_name, provider_details = None, None, None
-                            if not isinstance(part, (DynamicToolInputStreamingPart, ToolInputStreamingPart)):
-                                part_metadata = cls._load_part_metadata(part.call_provider_metadata)
-                                part_id = part_metadata.get('id')
-                                provider_name = part_metadata.get('provider_name')
-                                provider_details = part_metadata.get('provider_details')
+                        part_id, provider_name, provider_details = None, None, None
+                        if not isinstance(part, (DynamicToolInputStreamingPart, ToolInputStreamingPart)):
+                            part_metadata = cls._load_part_metadata(part.call_provider_metadata)
+                            part_id = part_metadata.get('id')
+                            provider_name = part_metadata.get('provider_name')
+                            provider_details = part_metadata.get('provider_details')
 
+                        if builtin_tool:
                             call_part = BuiltinToolCallPart(
                                 tool_name=tool_name,
                                 tool_call_id=tool_call_id,
@@ -230,12 +230,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     )
                                 )
                         else:
-                            part_id, provider_details = None, None
-                            if not isinstance(part, (DynamicToolInputStreamingPart, ToolInputStreamingPart)):
-                                part_metadata = cls._load_part_metadata(part.call_provider_metadata)
-                                part_id = part_metadata.get('id')
-                                provider_details = part_metadata.get('provider_details')
-
                             builder.add(
                                 ToolCallPart(
                                     tool_name=tool_name,
