@@ -275,7 +275,7 @@ def test_validate_skill_metadata_valid() -> None:
     assert len(warnings) == 0
 
 
-def testvalidate_skill_metadata_name_too_long() -> None:
+def test_validate_skill_metadata_name_too_long() -> None:
     """Test validation with name exceeding 64 characters."""
     frontmatter = {
         'name': 'a' * 65,
