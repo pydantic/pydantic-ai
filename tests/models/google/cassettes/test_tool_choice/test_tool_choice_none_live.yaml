@@ -43,11 +43,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '550'
+      - '548'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=612
+      - gfet4t7; dur=786
       transfer-encoding:
       - chunked
       vary:
@@ -58,20 +58,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: 2 + 2 = 4
+          - text: 2+2 = 4
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: xXU3adymMcW1qtsPj6-BuAU
+      responseId: AT1EafOeEqnhz7IP68TJqAg
       usageMetadata:
-        candidatesTokenCount: 7
+        candidatesTokenCount: 6
         promptTokenCount: 47
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 47
-        thoughtsTokenCount: 22
-        totalTokenCount: 76
+        thoughtsTokenCount: 18
+        totalTokenCount: 71
     status:
       code: 200
       message: OK

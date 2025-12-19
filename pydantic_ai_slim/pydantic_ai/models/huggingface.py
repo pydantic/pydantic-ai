@@ -46,7 +46,7 @@ from . import (
     StreamedResponse,
     check_allow_model_requests,
 )
-from ._tool_choice import filter_tools_for_choice, validate_tool_choice
+from ._tool_choice import validate_tool_choice
 
 try:
     import aiohttp
@@ -330,45 +330,36 @@ class HuggingFaceModel(Model):
 
         Returns a tuple of (tools, tool_choice).
         """
-        tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
-        function_tools = model_request_parameters.function_tools
-        output_tools = model_request_parameters.output_tools
-        all_tools = [*function_tools, *output_tools]
-        allow_text = model_request_parameters.allow_text_output
+        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
 
         def _force_one(name: str) -> ChatCompletionInputToolChoiceClass:
             return ChatCompletionInputToolChoiceClass(
                 function=ChatCompletionInputFunctionName(name=name)  # pyright: ignore[reportCallIssue]
             )
 
-        tool_defs_to_send: list[ToolDefinition]
         tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
-
-        if tool_choice_value in (None, 'auto'):
-            tool_defs_to_send = all_tools
-            tool_choice = 'auto' if allow_text else 'required'
-
-        elif tool_choice_value == 'required':
-            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
-            tool_choice = 'required'
-
-        elif tool_choice_value == 'none':
-            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
-            # HF only supports forcing a single tool; 'required' forces one of filtered output tools
-            tool_choice = _force_one(output_tools[0].name) if len(output_tools) == 1 else 'required'
-
-        elif isinstance(tool_choice_value, list):
-            tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
-            # HF only supports forcing a single tool; 'required' forces one of filtered tools
-            tool_choice = _force_one(tool_choice_value[0]) if len(tool_choice_value) == 1 else 'required'
-
+        if validated_tool_choice in ('auto', 'required'):
+            tool_choice = validated_tool_choice
+        elif validated_tool_choice == 'none':
+            # Use native 'none' mode to keep tool definitions cached while disabling tool calls
+            tool_choice = 'none'
+        elif isinstance(validated_tool_choice, tuple):
+            tool_names, tool_choice_mode = validated_tool_choice
+            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            if tool_choice_mode == 'auto':
+                tool_choice = 'auto'
+            elif len(tool_names) == 1:
+                tool_choice = _force_one(tool_names[0])
+            else:
+                tool_choice = 'required'
         else:
-            assert_never(tool_choice_value)
+            assert_never(validated_tool_choice)
 
-        if not tool_defs_to_send:
+        if not tool_defs:
             return [], None
 
-        tools = [self._map_tool_definition(r) for r in tool_defs_to_send]
+        tools = [self._map_tool_definition(r) for r in tool_defs.values()]
         return tools, tool_choice
 
     async def _map_messages(

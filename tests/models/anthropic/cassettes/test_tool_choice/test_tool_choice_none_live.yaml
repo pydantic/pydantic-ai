@@ -42,23 +42,88 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '480'
+      - '570'
       content-type:
       - application/json
       retry-after:
-      - '45'
+      - '4'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      vary:
+      - accept-encoding
+    parsed_body:
+      error:
+        message: 'This request would exceed the rate limit for your organization (f02248f8-ceba-4e6c-be70-20fd729ec8a1) of
+          50,000 input tokens per minute. For details, refer to: https://docs.claude.com/en/api/rate-limits. You can see the
+          response headers for current usage. Please reduce the prompt length or the maximum tokens requested, or try again
+          later. You may also contact sales at https://www.anthropic.com/contact-sales to discuss your options for a rate
+          limit increase.'
+        type: rate_limit_error
+      request_id: req_011CWEaX9ijsLtnK4ufHFKTn
+      type: error
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '369'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is 2+2?
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      tool_choice:
+        type: none
+      tools:
+      - description: Get the weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '518'
+      content-type:
+      - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - accept-encoding
     parsed_body:
       content:
       - text: |-
           2 + 2 = 4
 
-          This is a simple arithmetic problem. The sum of 2 and 2 is 4.
+          This is a simple arithmetic calculation. I don't need to use any tools for this basic math problem.
         type: text
-      id: msg_01SXvsFVTX8YH6EuEmvTgEiW
+      id: msg_01Mnat81aao7ZiY3K25vvpPp
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: end_turn

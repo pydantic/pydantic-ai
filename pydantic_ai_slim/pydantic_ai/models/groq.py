@@ -51,7 +51,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
-from ._tool_choice import filter_tools_for_choice, validate_tool_choice
+from ._tool_choice import validate_tool_choice
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
@@ -389,62 +389,35 @@ class GroqModel(Model):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        function_tools = model_request_parameters.function_tools
-        output_tools = model_request_parameters.output_tools
+        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
 
-        tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
-        tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
-        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs_to_send]
+        tool_choice: ChatCompletionToolChoiceOptionParam
+        if validated_tool_choice in ('auto', 'required'):
+            tool_choice = validated_tool_choice
+        elif validated_tool_choice == 'none':
+            # Use native 'none' mode to keep tool definitions cached while disabling tool calls
+            tool_choice = 'none'
+        elif isinstance(validated_tool_choice, tuple):
+            tool_names, tool_choice_mode = validated_tool_choice
+            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            if tool_choice_mode == 'auto':
+                tool_choice = 'auto'
+            elif len(tool_names) == 1:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function',
+                    function={'name': tool_names[0]},
+                )
+            else:
+                warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
+                tool_choice = 'required'
+        else:
+            assert_never(validated_tool_choice)
+
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
 
         if not tools:
             return tools, None
-
-        tool_choice: ChatCompletionToolChoiceOptionParam
-
-        if tool_choice_value is None:
-            if not model_request_parameters.allow_text_output:
-                tool_choice = 'required'
-            else:
-                tool_choice = 'auto'
-
-        elif tool_choice_value == 'auto':
-            if not model_request_parameters.allow_text_output:
-                tool_choice = 'required'
-            else:
-                tool_choice = 'auto'
-
-        elif tool_choice_value == 'required':
-            tool_choice = 'required'
-
-        elif tool_choice_value == 'none':
-            # We've filtered to only output tools
-            if len(output_tools) == 1:
-                tool_choice = ChatCompletionNamedToolChoiceParam(
-                    type='function',
-                    function={'name': output_tools[0].name},
-                )
-            elif len(output_tools) > 1:
-                warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
-                tool_choice = 'required'
-            elif not model_request_parameters.allow_text_output:  # pragma: no cover
-                # Unreachable: if output_tools is empty, early return above will have already triggered
-                tool_choice = 'required'
-            else:  # pragma: no cover
-                tool_choice = 'auto'
-
-        elif isinstance(tool_choice_value, list):
-            # Specific tool names
-            if len(tool_choice_value) == 1:
-                tool_choice = ChatCompletionNamedToolChoiceParam(
-                    type='function',
-                    function={'name': tool_choice_value[0]},
-                )
-            else:
-                warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
-                tool_choice = 'required'
-
-        else:
-            assert_never(tool_choice_value)
 
         return tools, tool_choice
 

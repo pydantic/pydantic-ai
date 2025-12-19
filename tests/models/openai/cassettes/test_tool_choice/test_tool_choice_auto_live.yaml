@@ -45,13 +45,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '783'
+      - '782'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '969'
+      - '1500'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -66,17 +66,17 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: 2 + 2 = 4.
+          content: 2 + 2 = 4
           refusal: null
           role: assistant
-      created: 1765242169
-      id: chatcmpl-CkgPpexmls8SXPdfc6CVKUd8TfnIH
+      created: 1766079749
+      id: chatcmpl-CoCJBdbyL0e96N3w2flhr6A6RfasH
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 17
+        completion_tokens: 16
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
@@ -86,7 +86,7 @@ interactions:
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 149
+        total_tokens: 148
     status:
       code: 200
       message: OK

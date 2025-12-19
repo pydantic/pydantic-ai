@@ -49,7 +49,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import filter_tools_for_choice, validate_tool_choice
+from ._tool_choice import validate_tool_choice
 
 try:
     from mistralai import (
@@ -331,36 +331,30 @@ class MistralModel(Model):
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        tool_choice_value = validate_tool_choice(model_settings, model_request_parameters)
-        function_tools = model_request_parameters.function_tools
-        output_tools = model_request_parameters.output_tools
+        validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
 
-        tool_defs_to_send = filter_tools_for_choice(tool_choice_value, function_tools, output_tools)
+        tool_choice: MistralToolChoiceEnum
+        if validated_tool_choice in ('auto', 'required'):
+            tool_choice = validated_tool_choice
+        elif validated_tool_choice == 'none':
+            # Use native 'none' mode to keep tool definitions cached while disabling tool calls
+            tool_choice = 'none'
+        elif isinstance(validated_tool_choice, tuple):
+            tool_names, tool_choice_mode = validated_tool_choice
+            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            tool_choice = 'auto' if tool_choice_mode == 'auto' else 'required'
+        else:
+            assert_never(validated_tool_choice)
 
-        if not tool_defs_to_send:
+        if not tool_defs:
             return None, None
 
         _tool_functions = [
             MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description or '')
-            for r in tool_defs_to_send
+            for r in tool_defs.values()
         ]
         tools = [MistralTool(function=f) for f in _tool_functions]
-
-        allow_text = model_request_parameters.allow_text_output
-
-        if tool_choice_value in (None, 'auto'):
-            tool_choice: MistralToolChoiceEnum = 'auto' if allow_text else 'required'
-
-        elif tool_choice_value == 'none':
-            # We've filtered to output tools only, use 'required' if there are output tools
-            tool_choice = 'required' if output_tools else 'none'
-
-        elif tool_choice_value == 'required' or isinstance(tool_choice_value, list):
-            # Mistral doesn't support specific tool forcing, treat list as 'required'
-            tool_choice = 'required'
-
-        else:
-            assert_never(tool_choice_value)
 
         return tools, tool_choice
 

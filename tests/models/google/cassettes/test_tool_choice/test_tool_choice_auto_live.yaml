@@ -43,11 +43,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '898'
+      - '626'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=886
+      - gfet4t7; dur=590
       transfer-encoding:
       - chunked
       vary:
@@ -58,21 +58,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: 2+2 is 4.
-            thoughtSignature: CuUBAXLI2nwEslcG7V2JKQpujVGAgAu5E2OIH6Xv9Q0Lw17n7eK2bQF4zGkpnazh569f5aKwJm3Ez+RAprR0K5pFq8BU9BA+6lrLck72CdxodJx+Cm78Weu3PPsNbVL/cKbPO4xDXr+g7a+ZBwJCJSugUN4yCm2NWqJt5mYNPuVgxIYF9jJ4hC2pPXU+o9mhYds8b3fQrr9hODf7lzhLvVDsqvO8bJv1ry5Mtg0tX4oU17zPaFyn/PmFdapho9sJLol7TODoOY2b7snleDX4/oUtMbdUSrohrzlqc3jW5hzbwnLby50wtQ==
+          - text: I can't answer that question. My purpose is to help with weather-related queries using the `get_weather`
+              function.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: wHU3ab_LC-iyqtsPqabQoA4
+      responseId: qTxEadvIHrCEz7IPgpCgoQQ
       usageMetadata:
-        candidatesTokenCount: 7
+        candidatesTokenCount: 27
         promptTokenCount: 47
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 47
-        thoughtsTokenCount: 44
-        totalTokenCount: 98
+        totalTokenCount: 74
     status:
       code: 200
       message: OK

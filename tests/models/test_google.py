@@ -4947,7 +4947,7 @@ def test_tool_choice_required_maps_to_any(google_provider: GoogleProvider) -> No
 
 
 def test_tool_choice_specific_tool_single_text_allowed(google_provider: GoogleProvider) -> None:
-    """Specific tool names with allow_text_output=True uses AUTO mode (can't use ANY as it prevents text)."""
+    """Specific tool names use ANY mode with allowed_function_names to restrict tool selection."""
     tool_a = ToolDefinition(
         name='tool_a',
         description='Test tool A',
@@ -4966,16 +4966,13 @@ def test_tool_choice_specific_tool_single_text_allowed(google_provider: GooglePr
     settings: GoogleModelSettings = {'tool_choice': ['tool_a']}
     tools, tool_config, _image_config = model._get_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
-    # Tools are filtered to only tool_a
+    # All tools are sent (not filtered) for caching benefits
     assert tools is not None
-    assert len(tools) == 1
-    func_decls = tools[0].get('function_declarations')
-    assert func_decls is not None
-    assert func_decls[0].get('name') == 'tool_a'
-    # With allow_text_output=True, we use AUTO mode (not ANY) to allow text output
+    assert len(tools) == 2
+    # Selection is enforced via allowed_function_names in the config
     assert tool_config is not None
     fcc = tool_config.get('function_calling_config')
-    assert fcc == snapshot({'mode': FunctionCallingConfigMode.AUTO})
+    assert fcc == snapshot({'mode': FunctionCallingConfigMode.ANY, 'allowed_function_names': ['tool_a']})
 
 
 def test_tool_choice_specific_tool_single_text_not_allowed(google_provider: GoogleProvider) -> None:

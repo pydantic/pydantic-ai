@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+ToolChoiceScalar = Literal['none', 'required', 'auto']
+
+
+@dataclass
+class ToolsPlusOutput:
+    """Allows the user to specify a list of tool names, while also allowing the model to generate output."""
+
+    function_tools: list[str]
+    """The names of function tools available to the model."""
 
 
 class ModelSettings(TypedDict, total=False):
@@ -92,22 +103,30 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     """
 
-    tool_choice: Literal['none', 'required', 'auto'] | list[str] | None
+    tool_choice: ToolChoiceScalar | list[str] | ToolsPlusOutput | None
     """Control which function tools the model can use.
+
+    Warning: when using 'required' or passing a list of tool names, the model will be unable to
+    respond with text directly. Use these settings only if you know what you're doing
+    (for instance when making [direct](TODO: link) model requests).
 
     This setting controls the API's tool_choice parameter. When possible, we send all tools and use
     API-native features (e.g., OpenAI's `allowed_tools`, Gemini's `allowed_function_names`) to restrict
-    which tools the model can call. This preserves API caching benefits. Filtering tools before sending
-    only happens when the provider doesn't support API-native restrictions.
+    which tools the model can call. This preserves API caching benefits.
 
-    Output tools (used for structured output) are managed separately and remain available when needed.
+    About built-in tools: some providers like anthropic
 
-    * `None` (default): All tools sent, tool_choice determined by output configuration
-    * `'auto'`: All tools sent, model decides whether to use them
-    * `'required'`: Only function tools sent (no output tools), model must use one
-    * `'none'`: Only output tools available (function tools disabled)
-    * `list[str]`: Only specified tools available (can include function or output tool names)
-    * `[]` (empty list): Treated as `'none'`
+    * `None` (default): Defaults to 'auto' behavior
+    * `'auto'`: All tools sent including output tools, model decides whether to use them
+    * `'none'`: Tool definitions will be sent to maintain caching, but the model
+        will be prevented from calling them. This also means that the model will only be able to generate text output.
+    * `'required'`: Forces the model to use one or more function tools. No output tools will be sent.
+        Use 'required' only when using [direct](TODO: link) model requests, since the model will be unable to
+        respond with text directly.
+    * `list[str]`: Sends a list of specific function tool names which the model is allowed to use.
+        As with `required`, no output tools will be sent, so use only with [direct](TODO: link) model requests.
+    * `ToolChoiceToolList`: Both the specified function tools and all output tools will be sent.
+        TODO clear up when `str` is one of the output types: do we default to 'auto' or 'required' depending on whether text output is allowed?
 
     Supported by:
 

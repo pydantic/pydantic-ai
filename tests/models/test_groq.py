@@ -5704,7 +5704,7 @@ async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> N
 
 
 async def test_tool_choice_multiple_tools_falls_back_to_required(allow_model_requests: None) -> None:
-    """Multiple specific tools fall back to 'required'."""
+    """Multiple specific tools fall back to 'required' with a warning."""
     mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
     agent = Agent(m)
@@ -5715,6 +5715,10 @@ async def test_tool_choice_multiple_tools_falls_back_to_required(allow_model_req
 
     @agent.tool_plain
     def tool_b(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def tool_c(x: int) -> str:
         return str(x)  # pragma: no cover
 
     with pytest.warns(UserWarning, match='Groq only supports forcing a single tool'):

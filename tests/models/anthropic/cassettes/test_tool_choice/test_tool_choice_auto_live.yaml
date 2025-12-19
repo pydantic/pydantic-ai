@@ -42,23 +42,23 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '521'
+      - '480'
       content-type:
       - application/json
-      retry-after:
-      - '14'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - accept-encoding
     parsed_body:
       content:
       - text: |-
           2 + 2 = 4
 
-          This is a simple arithmetic problem. I don't need to use any tools to answer this basic math question.
+          This is a basic arithmetic problem. Two plus two equals four.
         type: text
-      id: msg_01MPRAkxA9ciXHJpJwp7Vrd9
+      id: msg_015RfHf6eDqBe8DB5VaGqt36
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: end_turn
@@ -71,7 +71,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 571
-        output_tokens: 36
+        output_tokens: 27
         service_tier: standard
     status:
       code: 200

@@ -56,20 +56,20 @@ interactions:
       - '488'
       content-type:
       - application/json
-      retry-after:
-      - '47'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - accept-encoding
     parsed_body:
       content:
-      - id: toolu_01GMZox9yeNRGPMasr4G2sb8
+      - id: toolu_01NwC1Jc6cje16DaLK9Hahio
         input:
           city: <UNKNOWN>
         name: get_weather
         type: tool_use
-      id: msg_01DPYqAxNvskqyAt1TodvqCf
+      id: msg_01PdkvxWzAz1j6PhEEAz14aF
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: tool_use
@@ -110,7 +110,7 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01GMZox9yeNRGPMasr4G2sb8
+        - id: toolu_01NwC1Jc6cje16DaLK9Hahio
           input:
             city: <UNKNOWN>
           name: get_weather
@@ -119,7 +119,7 @@ interactions:
       - content:
         - content: The weather in <UNKNOWN> is sunny and 72°F.
           is_error: false
-          tool_use_id: toolu_01GMZox9yeNRGPMasr4G2sb8
+          tool_use_id: toolu_01NwC1Jc6cje16DaLK9Hahio
           type: tool_result
         role: user
       model: claude-haiku-4-5
@@ -157,20 +157,20 @@ interactions:
       - '488'
       content-type:
       - application/json
-      retry-after:
-      - '44'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - accept-encoding
     parsed_body:
       content:
-      - id: toolu_01AuG2J1q864E4YSXa6HUUsh
+      - id: toolu_01R8rfv17vh6JMhgdFvKyiv8
         input:
           city: <UNKNOWN>
         name: get_weather
         type: tool_use
-      id: msg_012REmAsZn5D4TYHohRmPDGV
+      id: msg_01JGqsdixTEPkbmDhoWDedWs
       model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: tool_use

@@ -1,0 +1,53 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 2+2?"}]}], "system": [], "inferenceConfig": {}, "toolConfig":
+      {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties":
+      {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the weather for a city."}}],
+      "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZTkyZmFlZjMtMjZiYS00ZWZlLTkzMDAtNmE0M2Y1Mzg0YzRm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '390'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '388'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 764
+      output:
+        message:
+          content:
+          - text: |-
+              2 + 2 = 4
+
+              This is a simple arithmetic problem. The sum of 2 and 2 is 4.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 571
+        outputTokens: 35
+        serverToolUsage: {}
+        totalTokens: 606
+    status:
+      code: 200
+      message: OK
+version: 1

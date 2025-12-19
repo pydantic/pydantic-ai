@@ -2405,8 +2405,8 @@ async def test_tool_choice_none_with_output_tools_uses_auto(bedrock_provider: Be
     assert tool_config.get('toolChoice') == {'auto': {}}
 
 
-async def test_tool_choice_none_with_output_required_uses_any(bedrock_provider: BedrockProvider) -> None:
-    """When tool_choice='none' with allow_text_output=False, uses 'any' to force output tool use."""
+async def test_tool_choice_none_with_output_required_uses_specific_tool(bedrock_provider: BedrockProvider) -> None:
+    """When tool_choice='none' with allow_text_output=False, forces the single output tool."""
     function_tool = ToolDefinition(
         name='my_tool',
         description='Function tool',
@@ -2427,8 +2427,8 @@ async def test_tool_choice_none_with_output_required_uses_any(bedrock_provider: 
     tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
-    # With allow_text_output=False, uses 'any' to force tool call
-    assert tool_config.get('toolChoice') == {'any': {}}
+    # With a single output tool and allow_text_output=False, forces that specific tool
+    assert tool_config.get('toolChoice') == {'tool': {'name': 'final_result'}}
 
 
 async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):

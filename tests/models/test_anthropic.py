@@ -8840,7 +8840,7 @@ async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> N
 
 
 async def test_tool_choice_multiple_tools_falls_back_to_any(allow_model_requests: None) -> None:
-    """Multiple specific tools fall back to 'any' with a warning."""
+    """Multiple specific tools fall back to 'any' and filter tools sent."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -8854,11 +8854,18 @@ async def test_tool_choice_multiple_tools_falls_back_to_any(allow_model_requests
     def tool_b(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match='Anthropic only supports forcing a single tool'):
-        await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
+    @agent.tool_plain
+    def tool_c(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    # Select subset of tools (not all) - falls back to 'any' and filters
+    await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
     assert kwargs['tool_choice'] == snapshot({'type': 'any'})
+    # Only the selected tools should be sent
+    tool_names: set[str] = {t['name'] for t in kwargs['tools']}  # pyright: ignore[reportUnknownVariableType]
+    assert tool_names == {'tool_a', 'tool_b'}
 
 
 async def test_tool_choice_none_with_output_tools(allow_model_requests: None) -> None:
@@ -8919,6 +8926,11 @@ async def test_tool_choice_specific_with_thinking_raises_error(allow_model_reque
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
+    @agent.tool_plain
+    def other_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    # Select a subset of tools (not all) to trigger specific tool forcing error
     with pytest.raises(UserError, match='Anthropic does not support forcing specific tools with thinking mode'):
         await agent.run(
             'hello',
@@ -8930,7 +8942,7 @@ async def test_tool_choice_specific_with_thinking_raises_error(allow_model_reque
 
 
 async def test_tool_choice_none_with_multiple_output_tools_falls_back(allow_model_requests: None) -> None:
-    """Multiple output tools force a fallback with a warning - 'any' when text not allowed."""
+    """Multiple output tools with tool_choice='none' - filters to output tools only, uses 'any'."""
 
     class LocationA(BaseModel):
         city: str
@@ -8950,12 +8962,14 @@ async def test_tool_choice_none_with_multiple_output_tools_falls_back(allow_mode
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    # With structured output (no text allowed), falls back to 'any' to force tool usage
-    with pytest.warns(UserWarning, match='Anthropic only supports forcing a single tool'):
-        await agent.run('hello', model_settings={'tool_choice': 'none'})
+    # With structured output (no text allowed), filters to output tools and uses 'any'
+    await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
     assert kwargs['tool_choice']['type'] == 'any'
+    # Only output tools should be sent
+    tool_names: set[str] = {t['name'] for t in kwargs['tools']}  # pyright: ignore[reportUnknownVariableType]
+    assert tool_names == {'final_result_LocationA', 'final_result_LocationB'}
 
 
 async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
@@ -9050,7 +9064,7 @@ async def test_tool_choice_none_single_output_with_parallel_disabled(allow_model
 
 
 async def test_tool_choice_none_multiple_output_tools_with_text_allowed(allow_model_requests: None) -> None:
-    """Multiple output tools with text allowed falls back to 'auto'."""
+    """Multiple output tools with text allowed - filters to output tools, uses 'auto'."""
 
     class LocationA(BaseModel):
         city: str
@@ -9067,12 +9081,14 @@ async def test_tool_choice_none_multiple_output_tools_with_text_allowed(allow_mo
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match='Anthropic only supports forcing a single tool'):
-        await agent.run('hello', model_settings={'tool_choice': 'none'})
+    # With allow_text_output=True, filters to output tools and uses 'auto'
+    await agent.run('hello', model_settings={'tool_choice': 'none'})
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    # With allow_text_output=True, falls back to 'auto'
     assert kwargs['tool_choice']['type'] == 'auto'
+    # Only output tools should be sent
+    tool_names: set[str] = {t['name'] for t in kwargs['tools']}  # pyright: ignore[reportUnknownVariableType]
+    assert tool_names == {'final_result_LocationA', 'final_result_LocationB'}
 
 
 async def test_tool_choice_none_multiple_output_with_parallel_disabled(allow_model_requests: None) -> None:
@@ -9093,8 +9109,7 @@ async def test_tool_choice_none_multiple_output_with_parallel_disabled(allow_mod
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.warns(UserWarning, match='Anthropic only supports forcing a single tool'):
-        await agent.run('hello', model_settings={'tool_choice': 'none', 'parallel_tool_calls': False})
+    await agent.run('hello', model_settings={'tool_choice': 'none', 'parallel_tool_calls': False})
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
     assert kwargs['tool_choice'] == snapshot({'type': 'auto', 'disable_parallel_tool_use': True})
@@ -9111,6 +9126,11 @@ async def test_tool_choice_specific_with_parallel_disabled(allow_model_requests:
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
+    @agent.tool_plain
+    def other_tool(x: int) -> str:
+        return str(x)  # pragma: no cover
+
+    # Select a subset of tools (not all) to test specific tool forcing
     await agent.run('hello', model_settings={'tool_choice': ['my_tool'], 'parallel_tool_calls': False})
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore

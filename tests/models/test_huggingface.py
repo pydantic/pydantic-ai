@@ -1066,8 +1066,8 @@ def test_tool_choice_string_values(tool_choice: str, expected_tool_choice: str) 
     assert result_tool_choice == expected_tool_choice
 
 
-def test_tool_choice_none_filters_to_empty() -> None:
-    """tool_choice='none' filters out function tools, returns empty if no output tools."""
+def test_tool_choice_none_sends_tools_with_none_mode() -> None:
+    """tool_choice='none' sends tools with 'none' mode to keep definitions cached."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -1082,8 +1082,9 @@ def test_tool_choice_none_filters_to_empty() -> None:
     settings: HuggingFaceModelSettings = {'tool_choice': 'none'}
     tools, result_tool_choice = model._get_tool_choice(settings, mrp)  # pyright: ignore[reportPrivateUsage]
 
-    assert tools == []
-    assert result_tool_choice is None
+    assert len(tools) == 1
+    assert tools[0]['function']['name'] == 'my_tool'
+    assert result_tool_choice == 'none'
 
 
 def test_tool_choice_specific_tool_single() -> None:

@@ -48,7 +48,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ToolChoiceScalar
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -58,7 +58,7 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._tool_choice import ToolChoiceValue, validate_tool_choice
+from ._tool_choice import validate_tool_choice
 
 try:
     from google.genai import Client, errors
@@ -420,7 +420,7 @@ class GoogleModel(Model):
 
         validated_tool_choice = validate_tool_choice(model_settings, model_request_parameters)
 
-        function_calling_config_modes: dict[ToolChoiceValue, FunctionCallingConfigMode] = {
+        function_calling_config_modes: dict[ToolChoiceScalar, FunctionCallingConfigMode] = {
             'auto': FunctionCallingConfigMode.AUTO,
             'none': FunctionCallingConfigMode.NONE,
             'required': FunctionCallingConfigMode.ANY,

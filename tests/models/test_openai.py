@@ -3355,6 +3355,7 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
+    """When 'required' is implied (allow_text_output=False) but unsupported, falls back to 'auto' with warning."""
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
@@ -3362,18 +3363,19 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
 
-    await model._completions_create(  # pyright: ignore[reportPrivateUsage]
-        messages=[],
-        stream=False,
-        model_settings={},
-        model_request_parameters=params,
-    )
+    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'stub'"):
+        await model._completions_create(  # pyright: ignore[reportPrivateUsage]
+            messages=[],
+            stream=False,
+            model_settings={},
+            model_request_parameters=params,
+        )
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
-    """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
+    """When 'required' is implied but unsupported for Responses API, falls back to 'auto' with warning."""
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
@@ -3381,12 +3383,13 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
 
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
 
-    await model._responses_create(  # pyright: ignore[reportPrivateUsage]
-        messages=[],
-        stream=False,
-        model_settings={},
-        model_request_parameters=params,
-    )
+    with pytest.warns(UserWarning, match=r"tool_choice='required' is not supported by model 'openai/gpt-oss'"):
+        await model._responses_create(  # pyright: ignore[reportPrivateUsage]
+            messages=[],
+            stream=False,
+            model_settings={},
+            model_request_parameters=params,
+        )
 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
@@ -3457,7 +3460,9 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
     m = OpenAIChatModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m, output_type=Location)
 
-    result = await agent.run('What is the capital of France?')
+    # Qwen model doesn't support tool_choice='required', falls back to 'auto'
+    with pytest.warns(UserWarning, match="tool_choice='required' is not supported"):
+        result = await agent.run('What is the capital of France?')
     assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
 
 
@@ -3549,7 +3554,7 @@ async def test_tool_choice_none_filters_out_function_tools(allow_model_requests:
 
 
 async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> None:
-    """Force the Chat API to call a specific tool."""
+    """Force the Chat API to call a specific tool using allowed_tools format."""
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model)
@@ -3565,11 +3570,19 @@ async def test_tool_choice_specific_tool_single(allow_model_requests: None) -> N
     await agent.run('hello', model_settings={'tool_choice': ['tool_a']})
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)
-    assert kwargs[0]['tool_choice'] == {'type': 'function', 'function': {'name': 'tool_a'}}
+    assert kwargs[0]['tool_choice'] == snapshot(
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'required',
+                'tools': [{'type': 'function', 'function': {'name': 'tool_a'}}],
+            },
+        }
+    )
 
 
 async def test_tool_choice_specific_tools_multiple(allow_model_requests: None) -> None:
-    """Multiple Chat tools should produce an allowed_tools payload."""
+    """Multiple Chat tools should produce an allowed_tools payload with required mode."""
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model)
@@ -3589,11 +3602,16 @@ async def test_tool_choice_specific_tools_multiple(allow_model_requests: None) -
     await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)
-    assert kwargs[0]['tool_choice'] == snapshot(
+    tool_choice = kwargs[0]['tool_choice']
+    # Sort tools by name for deterministic comparison
+    tool_choice['allowed_tools']['tools'] = sorted(
+        tool_choice['allowed_tools']['tools'], key=lambda t: t['function']['name']
+    )
+    assert tool_choice == snapshot(
         {
             'type': 'allowed_tools',
             'allowed_tools': {
-                'mode': 'auto',
+                'mode': 'required',
                 'tools': [
                     {'type': 'function', 'function': {'name': 'tool_a'}},
                     {'type': 'function', 'function': {'name': 'tool_b'}},
@@ -3640,8 +3658,16 @@ async def test_tool_choice_none_with_output_tools(allow_model_requests: None) ->
     assert result.output == Location(city='Paris', country='France')
     kwargs = get_mock_chat_completion_kwargs(mock_client)
     # With tool_choice='none', only output tools are sent (function tool filtered out)
-    # Since there's only one output tool, tool_choice forces it
-    assert kwargs[0]['tool_choice'] == {'type': 'function', 'function': {'name': 'final_result'}}
+    # Uses allowed_tools format with the single output tool
+    assert kwargs[0]['tool_choice'] == snapshot(
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'required',
+                'tools': [{'type': 'function', 'function': {'name': 'final_result'}}],
+            },
+        }
+    )
 
 
 async def test_tool_choice_none_with_multiple_output_tools(allow_model_requests: None) -> None:
@@ -3799,7 +3825,12 @@ async def test_responses_tool_choice_specific_tool_single(allow_model_requests: 
     await agent.run('hello', model_settings={'tool_choice': ['my_tool']})
 
     kwargs = get_mock_responses_kwargs(mock_client)
-    assert kwargs[0]['tool_choice'] == {'type': 'function', 'name': 'my_tool'}
+    # Single tool from subset uses allowed_tools format with required mode
+    assert kwargs[0]['tool_choice'] == {
+        'type': 'allowed_tools',
+        'mode': 'required',
+        'tools': [{'type': 'function', 'name': 'my_tool'}],
+    }
 
 
 async def test_responses_tool_choice_specific_tool_multiple(allow_model_requests: None) -> None:
@@ -3835,15 +3866,23 @@ async def test_responses_tool_choice_specific_tool_multiple(allow_model_requests
     await agent.run('hello', model_settings={'tool_choice': ['tool_a', 'tool_b']})
 
     kwargs = get_mock_responses_kwargs(mock_client)
-    assert kwargs[0]['tool_choice'] == {
-        'type': 'allowed_tools',
-        'mode': 'auto',
-        'tools': [{'type': 'function', 'name': 'tool_a'}, {'type': 'function', 'name': 'tool_b'}],
-    }
+    tool_choice = kwargs[0]['tool_choice']
+    # Sort tools by name for deterministic comparison
+    tool_choice['tools'] = sorted(tool_choice['tools'], key=lambda t: t['name'])
+    assert tool_choice == snapshot(
+        {
+            'type': 'allowed_tools',
+            'mode': 'required',
+            'tools': [
+                {'type': 'function', 'name': 'tool_a'},
+                {'type': 'function', 'name': 'tool_b'},
+            ],
+        }
+    )
 
 
-async def test_responses_tool_choice_none_with_output_tools_warns(allow_model_requests: None) -> None:
-    """tool_choice='none' cannot disable required Responses output tools."""
+async def test_responses_tool_choice_none_with_output_tools(allow_model_requests: None) -> None:
+    """tool_choice='none' filters function tools but keeps output tools for structured output."""
 
     class Location(BaseModel):
         city: str
@@ -3875,8 +3914,12 @@ async def test_responses_tool_choice_none_with_output_tools_warns(allow_model_re
     assert result.output == Location(city='Paris', country='France')
     kwargs = get_mock_responses_kwargs(mock_client)
     # With tool_choice='none', only output tools are sent (function tool filtered out)
-    # Single output tool is forced
-    assert kwargs[0]['tool_choice'] == {'type': 'function', 'name': 'final_result'}
+    # Uses allowed_tools format with the single output tool
+    assert kwargs[0]['tool_choice'] == {
+        'type': 'allowed_tools',
+        'mode': 'required',
+        'tools': [{'type': 'function', 'name': 'final_result'}],
+    }
 
 
 async def test_responses_tool_choice_none_with_multiple_output_tools(allow_model_requests: None) -> None:

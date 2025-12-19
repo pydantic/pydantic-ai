@@ -1,11 +1,11 @@
 """Tests for the centralized `validate_tool_choice()` function.
 
 These tests cover the common logic shared across all providers:
+- The return type: Literal['none', 'auto', 'required'] | tuple[list[str], Literal['auto', 'required']]
 - String value resolution ('none', 'auto', 'required')
 - List[str] validation and resolution
 - Empty list treated as 'none'
 - Invalid tool name detection
-- filter_tools_for_choice helper function
 
 Provider-specific tests (API format mapping) remain in their respective test files.
 """
@@ -19,7 +19,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import (
     ModelRequestParameters,
 )
-from pydantic_ai.models._tool_choice import filter_tools_for_choice, validate_tool_choice
+from pydantic_ai.models._tool_choice import validate_tool_choice
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -34,46 +34,113 @@ def make_tool(name: str) -> ToolDefinition:
 
 
 class TestValidateToolChoiceNone:
-    """Cases where `tool_choice` is unset in the settings."""
+    """Cases where `tool_choice` is unset in the settings.
 
-    def test_none_model_settings_returns_none(self) -> None:
-        """`validate_tool_choice` returns None when `model_settings` is None."""
-        params = ModelRequestParameters()
+    When unset, tool_choice uses allow_text_output to determine result:
+    - allow_text_output=True (default) → 'auto'
+    - allow_text_output=False → 'required'
+    """
+
+    def test_none_model_settings_with_text_allowed_returns_auto(self) -> None:
+        """Unset settings with allow_text_output=True returns 'auto'."""
+        params = ModelRequestParameters(allow_text_output=True)
         result = validate_tool_choice(None, params)
-        assert result is None
+        assert result == 'auto'
 
-    def test_empty_model_settings_returns_none(self) -> None:
-        """Empty `model_settings` dict should also yield None."""
-        params = ModelRequestParameters()
+    def test_none_model_settings_with_text_disallowed_returns_required(self) -> None:
+        """Unset settings with allow_text_output=False returns 'required'."""
+        params = ModelRequestParameters(allow_text_output=False, function_tools=[make_tool('tool')])
+        result = validate_tool_choice(None, params)
+        assert result == 'required'
+
+    def test_empty_model_settings_returns_auto(self) -> None:
+        """Empty `model_settings` dict with text allowed yields 'auto'."""
+        params = ModelRequestParameters(allow_text_output=True)
         settings: ModelSettings = {}
         result = validate_tool_choice(settings, params)
-        assert result is None
+        assert result == 'auto'
 
-    def test_tool_choice_not_set_returns_none(self) -> None:
-        """`tool_choice` missing from settings keeps provider defaults."""
-        params = ModelRequestParameters()
+    def test_tool_choice_not_set_returns_auto(self) -> None:
+        """`tool_choice` missing from settings with text allowed returns 'auto'."""
+        params = ModelRequestParameters(allow_text_output=True)
         settings: ModelSettings = {'temperature': 0.5}
         result = validate_tool_choice(settings, params)
-        assert result is None
+        assert result == 'auto'
 
 
 class TestValidateToolChoiceStringValues:
     """String-valued `tool_choice` entries."""
 
-    @pytest.mark.parametrize(
-        'tool_choice,expected',
-        [
-            pytest.param('none', 'none', id='none'),
-            pytest.param('auto', 'auto', id='auto'),
-            pytest.param('required', 'required', id='required'),
-        ],
-    )
-    def test_string_values(self, tool_choice: str, expected: str) -> None:
-        """Valid string entries are returned as-is."""
-        params = ModelRequestParameters(function_tools=[make_tool('my_tool')])
-        settings: ModelSettings = {'tool_choice': tool_choice}  # type: ignore
+    def test_auto_with_text_allowed_returns_auto(self) -> None:
+        """'auto' with allow_text_output=True returns 'auto'."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('my_tool')],
+            allow_text_output=True,
+        )
+        settings: ModelSettings = {'tool_choice': 'auto'}
         result = validate_tool_choice(settings, params)
-        assert result == expected
+        assert result == 'auto'
+
+    def test_auto_with_text_disallowed_returns_required(self) -> None:
+        """'auto' with allow_text_output=False returns 'required'."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('my_tool')],
+            allow_text_output=False,
+        )
+        settings: ModelSettings = {'tool_choice': 'auto'}
+        result = validate_tool_choice(settings, params)
+        assert result == 'required'
+
+    def test_none_with_text_allowed_no_output_tools_returns_none(self) -> None:
+        """'none' with allow_text_output=True and no output_tools returns 'none'."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('my_tool')],
+            allow_text_output=True,
+        )
+        settings: ModelSettings = {'tool_choice': 'none'}
+        result = validate_tool_choice(settings, params)
+        assert result == 'none'
+
+    def test_none_with_output_tools_text_allowed_returns_tuple(self) -> None:
+        """'none' with output_tools and allow_text_output=True returns tuple with 'auto'."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('my_tool')],
+            output_tools=[make_tool('output')],
+            allow_text_output=True,
+        )
+        settings: ModelSettings = {'tool_choice': 'none'}
+        result = validate_tool_choice(settings, params)
+        assert result == snapshot((['output'], 'auto'))
+
+    def test_none_with_output_tools_text_disallowed_returns_tuple(self) -> None:
+        """'none' with output_tools and allow_text_output=False returns tuple with 'required'."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('my_tool')],
+            output_tools=[make_tool('output')],
+            allow_text_output=False,
+        )
+        settings: ModelSettings = {'tool_choice': 'none'}
+        result = validate_tool_choice(settings, params)
+        assert result == snapshot((['output'], 'required'))
+
+    def test_required_with_function_tools_no_output_returns_required(self) -> None:
+        """'required' with function tools only returns 'required'."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('my_tool')],
+        )
+        settings: ModelSettings = {'tool_choice': 'required'}
+        result = validate_tool_choice(settings, params)
+        assert result == 'required'
+
+    def test_required_with_function_and_output_tools_returns_tuple(self) -> None:
+        """'required' with both function and output tools returns tuple."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('func_tool')],
+            output_tools=[make_tool('output_tool')],
+        )
+        settings: ModelSettings = {'tool_choice': 'required'}
+        result = validate_tool_choice(settings, params)
+        assert result == snapshot((['func_tool'], 'required'))
 
     def test_required_without_function_tools_raises_user_error(self) -> None:
         """'required' with no function tools raises UserError."""
@@ -90,19 +157,29 @@ class TestValidateToolChoiceStringValues:
 class TestValidateToolChoiceSpecificTools:
     """List-based tool_choice entries."""
 
-    def test_single_valid_tool(self) -> None:
-        """Single tool names remain in the returned result."""
+    def test_single_valid_tool_returns_tuple(self) -> None:
+        """Single tool name returns tuple with 'required'."""
         params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')])
         settings: ModelSettings = {'tool_choice': ['tool_a']}
         result = validate_tool_choice(settings, params)
-        assert result == snapshot(['tool_a'])
+        assert result == snapshot((['tool_a'], 'required'))
 
-    def test_multiple_valid_tools(self) -> None:
-        """Multiple valid names stay in insertion order."""
+    def test_multiple_valid_tools_returns_tuple(self) -> None:
+        """Multiple valid names return tuple with 'required'."""
         params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b'), make_tool('tool_c')])
         settings: ModelSettings = {'tool_choice': ['tool_a', 'tool_b']}
         result = validate_tool_choice(settings, params)
-        assert result == snapshot(['tool_a', 'tool_b'])
+        # Note: order is not guaranteed in the list since it's converted to a set
+        assert isinstance(result, tuple)
+        assert set(result[0]) == {'tool_a', 'tool_b'}
+        assert result[1] == 'required'
+
+    def test_all_tools_selected_returns_required(self) -> None:
+        """When all tools are selected, returns 'required' instead of tuple."""
+        params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')])
+        settings: ModelSettings = {'tool_choice': ['tool_a', 'tool_b']}
+        result = validate_tool_choice(settings, params)
+        assert result == 'required'
 
     def test_invalid_tool_name_raises_user_error(self) -> None:
         """Unknown names raise a UserError."""
@@ -129,8 +206,11 @@ class TestValidateToolChoiceSpecificTools:
             validate_tool_choice(settings, params)
 
     def test_empty_list_returns_none_mode(self) -> None:
-        """Empty list is treated as tool_choice='none'."""
-        params = ModelRequestParameters(function_tools=[make_tool('my_tool')])
+        """Empty list with text allowed returns 'none'."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('my_tool')],
+            allow_text_output=True,
+        )
         settings: ModelSettings = {'tool_choice': []}
         result = validate_tool_choice(settings, params)
         assert result == 'none'
@@ -143,7 +223,7 @@ class TestValidateToolChoiceSpecificTools:
         )
         settings: ModelSettings = {'tool_choice': ['output_tool']}
         result = validate_tool_choice(settings, params)
-        assert result == snapshot(['output_tool'])
+        assert result == snapshot((['output_tool'], 'required'))
 
     def test_mixed_function_and_output_tools(self) -> None:
         """Both function and output tool names are accepted together."""
@@ -153,66 +233,17 @@ class TestValidateToolChoiceSpecificTools:
         )
         settings: ModelSettings = {'tool_choice': ['func_tool', 'output_tool']}
         result = validate_tool_choice(settings, params)
-        assert result == snapshot(['func_tool', 'output_tool'])
+        # All tools selected returns 'required'
+        assert result == 'required'
 
-
-class TestFilterToolsForChoice:
-    """Tests for the filter_tools_for_choice helper function."""
-
-    def test_none_returns_all_tools(self) -> None:
-        """None tool_choice returns all tools."""
-        func_tools = [make_tool('func1'), make_tool('func2')]
-        output_tools = [make_tool('output1')]
-        result = filter_tools_for_choice(None, func_tools, output_tools)
-        assert [t.name for t in result] == ['func1', 'func2', 'output1']
-
-    def test_auto_returns_all_tools(self) -> None:
-        """'auto' tool_choice returns all tools."""
-        func_tools = [make_tool('func1'), make_tool('func2')]
-        output_tools = [make_tool('output1')]
-        result = filter_tools_for_choice('auto', func_tools, output_tools)
-        assert [t.name for t in result] == ['func1', 'func2', 'output1']
-
-    def test_required_returns_only_function_tools(self) -> None:
-        """'required' tool_choice returns only function tools."""
-        func_tools = [make_tool('func1'), make_tool('func2')]
-        output_tools = [make_tool('output1')]
-        result = filter_tools_for_choice('required', func_tools, output_tools)
-        assert [t.name for t in result] == ['func1', 'func2']
-
-    def test_none_mode_returns_only_output_tools(self) -> None:
-        """'none' tool_choice returns only output tools."""
-        func_tools = [make_tool('func1'), make_tool('func2')]
-        output_tools = [make_tool('output1')]
-        result = filter_tools_for_choice('none', func_tools, output_tools)
-        assert [t.name for t in result] == ['output1']
-
-    def test_specific_list_returns_named_function_tools_only(self) -> None:
-        """List of function tool names returns only those - no auto-inclusion of output tools."""
-        func_tools = [make_tool('func1'), make_tool('func2'), make_tool('func3')]
-        output_tools = [make_tool('output1')]
-        result = filter_tools_for_choice(['func1', 'func3'], func_tools, output_tools)
-        # output1 is NOT auto-included
-        assert [t.name for t in result] == ['func1', 'func3']
-
-    def test_specific_list_can_include_output_tools(self) -> None:
-        """Output tools are included when explicitly named in tool_choice list."""
-        func_tools = [make_tool('func1'), make_tool('func2')]
-        output_tools = [make_tool('output1')]
-        result = filter_tools_for_choice(['func1', 'output1'], func_tools, output_tools)
-        assert [t.name for t in result] == ['func1', 'output1']
-
-    def test_specific_list_output_tools_only(self) -> None:
-        """When only output tools are named, only those are returned."""
-        func_tools = [make_tool('func1'), make_tool('func2')]
-        output_tools = [make_tool('output1'), make_tool('output2')]
-        result = filter_tools_for_choice(['output1'], func_tools, output_tools)
-        assert [t.name for t in result] == ['output1']
-
-    def test_specific_list_preserves_order(self) -> None:
-        """List filtering preserves the order of tools, not the list order."""
-        func_tools = [make_tool('a'), make_tool('b'), make_tool('c')]
-        output_tools = [make_tool('out1')]
-        result = filter_tools_for_choice(['c', 'out1', 'a'], func_tools, output_tools)
-        # Order is based on [func_tools, output_tools] order, not the list order
-        assert [t.name for t in result] == ['a', 'c', 'out1']
+    def test_subset_of_mixed_tools_returns_tuple(self) -> None:
+        """Subset of mixed tools returns tuple."""
+        params = ModelRequestParameters(
+            function_tools=[make_tool('func_tool1'), make_tool('func_tool2')],
+            output_tools=[make_tool('output_tool')],
+        )
+        settings: ModelSettings = {'tool_choice': ['func_tool1', 'output_tool']}
+        result = validate_tool_choice(settings, params)
+        assert isinstance(result, tuple)
+        assert set(result[0]) == {'func_tool1', 'output_tool'}
+        assert result[1] == 'required'
