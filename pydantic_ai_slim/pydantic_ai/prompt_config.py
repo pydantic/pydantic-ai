@@ -462,6 +462,18 @@ class PromptConfig:
             templates=prompt_templates,
         )
 
+    def merge_prompt_config(self, other_prompt_config: PromptConfig) -> PromptConfig:
+        effective_prompt_templates: PromptTemplates = PromptTemplates()
+
+        if other_prompt_config.templates:
+            effective_prompt_templates = PromptTemplates(**asdict(other_prompt_config.templates))
+
+        if self.templates:
+            updates = {k: v for k, v in asdict(self.templates).items() if v is not None}
+            effective_prompt_templates = replace(effective_prompt_templates, **updates)
+
+        return PromptConfig(templates=effective_prompt_templates)
+
 
 DEFAULT_PROMPT_TEMPLATES = PromptTemplates(
     final_result_processed=DEFAULT_FINAL_RESULT_PROCESSED,
