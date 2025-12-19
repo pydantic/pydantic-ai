@@ -88,7 +88,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             models:
                 Optional mapping of model instances to register with the agent.
                 Keys define the names that can be referenced at runtime and the values are `Model` instances.
-                Registered model instances can be passed directly to `run(model=...)` and will be resolved to their key.
+                Registered model instances can be passed directly to `run(model=...)`.
             provider_factory:
                 Optional callable used when instantiating models from provider strings (those supplied at runtime).
                 The callable receives the provider name, the current run context (if available) and the run dependencies, allowing custom configuration such as injecting API keys stored on `deps`.
