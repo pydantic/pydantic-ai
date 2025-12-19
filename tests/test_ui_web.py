@@ -19,6 +19,8 @@ with try_import() as starlette_import_successful:
     from pydantic_ai.builtin_tools import WebSearchTool
     from pydantic_ai.ui._web import create_web_app
 
+with try_import() as openai_import_successful:
+    import openai  # noqa: F401 # pyright: ignore[reportUnusedImport]
 
 pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
