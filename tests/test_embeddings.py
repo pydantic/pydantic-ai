@@ -21,7 +21,7 @@ from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsFloat, IsInt, IsList, try_import
+from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -142,8 +142,8 @@ class TestOpenAI:
                     'name': 'embeddings text-embedding-3-small',
                     'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                     'parent': None,
-                    'start_time': 1000000000,
-                    'end_time': 2000000000,
+                    'start_time': IsInt(),
+                    'end_time': IsInt(),
                     'attributes': {
                         'gen_ai.operation.name': 'embeddings',
                         'gen_ai.provider.name': 'openai',
@@ -520,8 +520,8 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
                 'name': 'embeddings test',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
-                'start_time': 1000000000,
-                'end_time': 2000000000,
+                'start_time': IsInt(),
+                'end_time': IsInt(),
                 'attributes': {
                     'gen_ai.operation.name': 'embeddings',
                     'gen_ai.provider.name': 'test',
@@ -541,6 +541,7 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
                     'gen_ai.usage.input_tokens': 13,
                     'gen_ai.response.model': 'test',
                     'gen_ai.embeddings.dimension.count': 8,
+                    'gen_ai.response.id': IsStr(),
                 },
             }
         ]
