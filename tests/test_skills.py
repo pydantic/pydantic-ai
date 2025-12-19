@@ -265,7 +265,7 @@ metadata:
 # ==================== Validation Tests ====================
 
 
-def testvalidate_skill_metadata_valid() -> None:
+def test_validate_skill_metadata_valid() -> None:
     """Test validation with valid metadata."""
     frontmatter = {
         'name': 'test-skill',
