@@ -77,7 +77,7 @@ my-skill/
 
 The `SKILL.md` file uses **YAML frontmatter** for metadata and **Markdown** for instructions:
 
-```markdown
+````markdown
 ---
 name: arxiv-search
 description: Search arXiv for research papers
@@ -105,17 +105,15 @@ To search arXiv, use the `run_skill_script` tool with:
 3. **args**: Your search query and options
 
 ## Example
-```
 
+```python
 run_skill_script(
-skill_name="arxiv-search",
-script_name="arxiv_search",
-args=["machine learning", "--max-papers", "5"]
+    skill_name="arxiv-search",
+    script_name="arxiv_search",
+    args=["machine learning", "--max-papers", "5"]
 )
-
 ```
-
-```
+````
 
 ### Required Fields
 
@@ -137,7 +135,7 @@ Following Anthropic's skill naming conventions:
 
 The toolset implements **progressive disclosure** - exposing information only when needed:
 
-```
+```markdown
 ┌─────────────────────────────────────────────────────────────┐
 │  System Prompt (via get_skills_system_prompt())             │
 │  ┌───────────────────────────────────────────────────────┐  │
@@ -236,7 +234,7 @@ Place scripts in either:
 - `scripts/` subdirectory (recommended)
 - Directly in the skill folder
 
-```
+```markdown
 my-skill/
 ├── SKILL.md
 └── scripts/
@@ -291,7 +289,7 @@ toolset = SkillsToolset(
     directories=["./skills", "./shared-skills"],
     auto_discover=True,      # Auto-discover skills on init (default: True)
     validate=True,           # Validate skill structure (default: True)
-    toolset_id="skills",     # Unique identifier (default: "skills")
+    id="skills",             # Unique identifier (default: "skills")
     script_timeout=30,       # Script execution timeout in seconds (default: 30)
     python_executable=None,  # Python executable path (default: sys.executable)
 )
@@ -403,7 +401,7 @@ Here's a complete example with a skill that searches for research papers:
 
 ### Skill Structure
 
-```
+```markdown
 skills/
 └── arxiv-search/
     ├── SKILL.md
@@ -413,7 +411,7 @@ skills/
 
 ### SKILL.md
 
-```markdown
+````markdown
 ---
 name: arxiv-search
 description: Search arXiv for research papers by query
@@ -433,13 +431,15 @@ Use `run_skill_script` with:
 ## Example
 
 To find papers about transformers:
-```
 
-run_skill_script("arxiv-search", "arxiv_search", ["transformers attention mechanism", "--max-papers", "3"])
-
+```python
+run_skill_script(
+    skill_name="arxiv-search",
+    script_name="arxiv_search",
+    args=["transformers attention mechanism", "--max-papers", "3"]
+)
 ```
-
-```
+````
 
 ### arxiv_search.py
 
