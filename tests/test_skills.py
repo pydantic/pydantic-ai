@@ -368,7 +368,7 @@ def test_validate_skill_metadata_good_naming_conventions() -> None:
         assert len(warnings) == 0, f"Name '{name}' should be valid"
 
 
-def testvalidate_skill_metadata_bad_naming_conventions() -> None:
+def test_validate_skill_metadata_bad_naming_conventions() -> None:
     """Test validation with invalid naming conventions."""
     bad_names = [
         'Invalid_Name',  # Underscores
