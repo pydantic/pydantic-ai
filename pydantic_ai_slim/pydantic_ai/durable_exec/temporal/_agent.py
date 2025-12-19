@@ -376,49 +376,33 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if workflow.in_workflow() and event_stream_handler is not None:
-            raise UserError(
-                'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-            )
-
         if workflow.in_workflow():
-            with self._temporal_overrides(model=model):
-                return await super().run(
-                    user_prompt,
-                    output_type=output_type,
-                    message_history=message_history,
-                    deferred_tool_results=deferred_tool_results,
-                    model=None,
-                    instructions=instructions,
-                    deps=deps,
-                    model_settings=model_settings,
-                    usage_limits=usage_limits,
-                    usage=usage,
-                    infer_name=infer_name,
-                    toolsets=toolsets,
-                    builtin_tools=builtin_tools,
-                    event_stream_handler=event_stream_handler or self.event_stream_handler,
-                    **_deprecated_kwargs,
+            if event_stream_handler is not None:
+                raise UserError(
+                    'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
+            resolved_model = None
+        else:
+            resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
 
-        resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
-        return await super().run(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=resolved_model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            event_stream_handler=event_stream_handler or self.event_stream_handler,
-            **_deprecated_kwargs,
-        )
+        with self._temporal_overrides(model=model):
+            return await super().run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=resolved_model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                event_stream_handler=event_stream_handler or self.event_stream_handler,
+                **_deprecated_kwargs,
+            )
 
     @overload
     def run_sync(

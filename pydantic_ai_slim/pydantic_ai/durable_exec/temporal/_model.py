@@ -247,15 +247,13 @@ class TemporalModel(WrapperModel):
 
         if isinstance(model, Model):
             # Check if this model instance is already registered
-            for model_id, registered_model in self._models_by_id.items():
-                if registered_model is model:
-                    if model_id == 'default':
-                        return None
-                    return model_id
-            raise UserError(
-                'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. '
-                'Register the model via `models` or reference a registered model by ID.'
-            )
+            model_id = next((mid for mid, m in self._models_by_id.items() if m is model), ...)
+            if model_id is ...:
+                raise UserError(
+                    'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. '
+                    'Register the model via `models` or reference a registered model by name.'
+                )
+            return None if model_id == 'default' else model_id
 
         return model
 
