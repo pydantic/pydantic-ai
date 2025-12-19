@@ -244,7 +244,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
-        return self._toolsets
+        with self._temporal_overrides():
+            return super().toolsets
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
@@ -939,26 +940,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
 
-            async with super().iter(
-                user_prompt=user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                model=None,
-                instructions=instructions,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                builtin_tools=builtin_tools,
-                **_deprecated_kwargs,
-            ) as run:
-                yield run
-            return
+            resolved_model = None
+        else:
+            resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
 
-        resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
         async with super().iter(
             user_prompt=user_prompt,
             output_type=output_type,

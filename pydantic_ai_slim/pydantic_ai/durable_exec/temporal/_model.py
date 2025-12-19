@@ -113,7 +113,7 @@ class TemporalModel(WrapperModel):
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-            model_for_request = self._resolve_model(params.model_id, run_context)
+            model_for_request = self._resolve_model_id(params.model_id, run_context)
             return await model_for_request.request(
                 params.messages,
                 cast(ModelSettings | None, params.model_settings),
@@ -128,7 +128,7 @@ class TemporalModel(WrapperModel):
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-            model_for_request = self._resolve_model(params.model_id, run_context)
+            model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with model_for_request.request_stream(
                 params.messages,
                 cast(ModelSettings | None, params.model_settings),
@@ -242,7 +242,7 @@ class TemporalModel(WrapperModel):
         Returns a string that will be checked against registered model IDs,
         or passed to infer_model if not found. Returns None to use the default model.
         """
-        if model is None or model == 'default':
+        if model in (None, 'default'):
             return None
 
         if isinstance(model, Model):
@@ -268,9 +268,6 @@ class TemporalModel(WrapperModel):
         If model is None, returns the wrapped (primary) model to use as default.
         Otherwise returns the original value.
         """
-        if model is None:
-            # Return the primary model (wrapped model or first registered)
-            return self.wrapped
         if isinstance(model, str) and model in self._models_by_id:
             return self._models_by_id[model]
         return model
@@ -291,7 +288,7 @@ class TemporalModel(WrapperModel):
     def _current_model_id(self) -> str | None:
         return self._model_id_var.get()
 
-    def _resolve_model(self, model_id: str | None, run_context: RunContext[Any]) -> Model:
+    def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any]) -> Model:
         if model_id is None:
             return self.wrapped
 
