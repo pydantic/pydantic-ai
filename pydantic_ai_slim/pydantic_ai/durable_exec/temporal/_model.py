@@ -93,7 +93,7 @@ class TemporalModel(WrapperModel):
         if models:
             for model_id, model_instance in models.items():
                 if model_id == 'default':
-                    raise UserError("Registered model name 'default' is reserved for the agent's primary model.")
+                    raise UserError("Model ID 'default' is reserved for the agent's primary model.")
                 self._models_by_id[model_id] = model_instance
 
         if not self._models_by_id:
@@ -251,7 +251,7 @@ class TemporalModel(WrapperModel):
             if model_id is ...:
                 raise UserError(
                     'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. '
-                    'Register the model via `models` or reference a registered model by name.'
+                    'Register the model via `models` or reference a registered model by id.'
                 )
             return None if model_id == 'default' else model_id
 
@@ -313,9 +313,9 @@ class TemporalModel(WrapperModel):
 
         return self._infer_model(model_id, run_context)  # pragma: lax no cover
 
-    def _infer_model(self, model_name: str, run_context: RunContext[Any] | None) -> Model:  # pragma: lax no cover
+    def _infer_model(self, model_id: str, run_context: RunContext[Any] | None) -> Model:  # pragma: lax no cover
         provider_factory = self._provider_factory
         if provider_factory is None or run_context is None:
-            return models.infer_model(model_name)
+            return models.infer_model(model_id)
 
-        return models.infer_model(model_name, provider_factory=functools.partial(provider_factory, run_context))
+        return models.infer_model(model_id, provider_factory=functools.partial(provider_factory, run_context))
