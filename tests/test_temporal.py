@@ -87,7 +87,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -1110,6 +1110,123 @@ async def test_toolset_without_id():
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
 
 
+# --- DynamicToolset / @agent.toolset tests ---
+
+
+@dataclass
+class DynamicToolsetDeps:
+    user_name: str
+
+
+dynamic_toolset_agent = Agent(TestModel(), name='dynamic_toolset_agent', deps_type=DynamicToolsetDeps)
+
+
+@dynamic_toolset_agent.toolset(id='my_dynamic_tools')
+def my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
+    toolset = FunctionToolset[DynamicToolsetDeps](id='dynamic_weather')
+
+    @toolset.tool
+    def get_dynamic_weather(location: str) -> str:
+        """Get the weather for a location."""
+        user = ctx.deps.user_name
+        return f'Weather in {location} for {user}: sunny.'
+
+    return toolset
+
+
+dynamic_toolset_temporal_agent = TemporalAgent(
+    dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: DynamicToolsetDeps) -> str:
+        result = await dynamic_toolset_temporal_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_dynamic_toolset_in_workflow(client: Client):
+    """Test that @agent.toolset works correctly in a Temporal workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicToolsetAgentWorkflow.run,
+            args=['Get the weather for London', DynamicToolsetDeps(user_name='Alice')],
+            id='test_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+async def test_dynamic_toolset_outside_workflow():
+    """Test that the dynamic toolset agent works correctly outside of a workflow."""
+    result = await dynamic_toolset_temporal_agent.run(
+        'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
+    )
+    assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- MCP-based DynamicToolset test ---
+# Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
+# Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
+# See https://github.com/pydantic/pydantic-ai/issues/2818 for MCPServer subprocess issues with Temporal.
+
+
+mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
+
+
+@mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
+def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
+    """Dynamic toolset that returns an MCP toolset.
+
+    This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
+    """
+    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+
+
+mcp_dynamic_toolset_temporal_agent = TemporalAgent(
+    mcp_dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPDynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcp_dynamic_toolset_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """Test that @agent.toolset with MCPServerStreamableHTTP works in a Temporal workflow.
+
+    This demonstrates MCP lifecycle management (entering/exiting the MCP toolset context manager)
+    within a DynamicToolset wrapped by TemporalDynamicToolset.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPDynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcp_dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPDynamicToolsetAgentWorkflow.run,
+            args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
+            id='test_mcp_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        # The deepwiki MCP server should return info about the pydantic-ai repo
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
 async def test_temporal_agent():
     assert isinstance(complex_temporal_agent.model, TemporalModel)
     assert complex_temporal_agent.model.wrapped == complex_agent.model
@@ -1159,6 +1276,21 @@ async def test_temporal_agent():
             'agent__complex_agent__mcp_server__mcp__call_tool',
         ]
     )
+
+
+def test_temporal_wrapper_visit_and_replace():
+    """Temporal wrapper toolsets should not be replaced by visit_and_replace."""
+    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+
+    toolsets = complex_temporal_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    temporal_function_toolsets = [ts for ts in toolsets if isinstance(ts, TemporalFunctionToolset)]
+    assert len(temporal_function_toolsets) >= 1
+
+    temporal_function_toolset = temporal_function_toolsets[0]
+
+    # visit_and_replace should return self for temporal wrappers
+    result = temporal_function_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is temporal_function_toolset
 
 
 async def test_temporal_agent_run(allow_model_requests: None):
