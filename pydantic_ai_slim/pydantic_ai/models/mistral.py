@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -46,6 +46,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -227,7 +228,7 @@ class MistralModel(Model):
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
-                messages=self._map_messages(messages, model_request_parameters),
+                messages=await self._map_messages(messages, model_request_parameters),
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
@@ -256,7 +257,7 @@ class MistralModel(Model):
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
-        mistral_messages = self._map_messages(messages, model_request_parameters)
+        mistral_messages = await self._map_messages(messages, model_request_parameters)
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
@@ -497,12 +498,12 @@ class MistralModel(Model):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
-    def _map_user_message(self, message: ModelRequest) -> Iterable[MistralMessages]:
+    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield self._map_user_prompt(part)
+                yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
@@ -519,14 +520,15 @@ class MistralModel(Model):
             else:
                 assert_never(part)
 
-    def _map_messages(
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    async def _map_messages(  # noqa: C901
+        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
         mistral_messages: list[MistralMessages] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                mistral_messages.extend(self._map_user_message(message))
+                async for msg in self._map_user_message(message):
+                    mistral_messages.append(msg)
             elif isinstance(message, ModelResponse):
                 content_chunks: list[MistralContentChunk] = []
                 thinking_chunks: list[MistralTextChunk | MistralReferenceChunk] = []
@@ -570,7 +572,7 @@ class MistralModel(Model):
 
         return processed_messages
 
-    def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
+    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
         content: str | list[MistralContentChunk]
         if isinstance(part.content, str):
             content = part.content
@@ -580,7 +582,12 @@ class MistralModel(Model):
                 if isinstance(item, str):
                     content.append(MistralTextChunk(text=item))
                 elif isinstance(item, ImageUrl):
-                    content.append(MistralImageURLChunk(image_url=MistralImageURL(url=item.url)))
+                    if item.force_download:
+                        downloaded = await download_item(item, data_format='base64_uri')
+                        image_url = MistralImageURL(url=downloaded['data'])
+                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
+                    else:
+                        content.append(MistralImageURLChunk(image_url=MistralImageURL(url=item.url)))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
@@ -591,7 +598,13 @@ class MistralModel(Model):
                         raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
-                        content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
+                        if item.force_download:
+                            downloaded = await download_item(item, data_format='base64_uri')
+                            content.append(
+                                MistralDocumentURLChunk(document_url=downloaded['data'], type='document_url')
+                            )
+                        else:
+                            content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
                         raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):

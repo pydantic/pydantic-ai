@@ -24,6 +24,9 @@ ALLOWED_HEADERS = {
     'x-repo-commit',
     'x-linked-size',
     'x-linked-etag',
+    # required for test_google_model_file_search_tool
+    'x-goog-upload-url',
+    'x-goog-upload-status',
 }
 
 
