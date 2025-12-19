@@ -6,7 +6,6 @@ skill discovery and management with Pydantic AI agents.
 
 from __future__ import annotations
 
-import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,8 +21,6 @@ from ._exceptions import (
     SkillScriptExecutionError,
 )
 from ._types import Skill
-
-logger = logging.getLogger('pydantic_ai.skills')
 
 
 def _is_safe_path(base_path: Path, target_path: Path) -> bool:
@@ -168,7 +165,6 @@ class SkillsToolset(FunctionToolset):
                 return f"Error: Skill '{skill_name}' not found. Available skills: {available}"
 
             skill = self._skills[skill_name]
-            logger.info('Loading skill: %s', skill_name)
 
             lines = [
                 f'# Skill: {skill.name}',
@@ -236,15 +232,12 @@ class SkillsToolset(FunctionToolset):
 
             # Security check
             if not _is_safe_path(skill.path, resource.path):
-                logger.warning('Path traversal attempt detected: %s in %s', resource_name, skill_name)
                 return 'Error: Resource path escapes skill directory.'
 
             try:
                 content = resource.path.read_text(encoding='utf-8')
-                logger.info('Read resource: %s from skill %s', resource_name, skill_name)
                 return content
             except OSError as e:
-                logger.error('Failed to read resource %s: %s', resource_name, e)
                 raise SkillResourceLoadError(f"Failed to read resource '{resource_name}': {e}") from e
 
         @self.tool
@@ -289,15 +282,12 @@ class SkillsToolset(FunctionToolset):
 
             # Security check
             if not _is_safe_path(skill.path, script.path):
-                logger.warning('Path traversal attempt detected: %s in %s', script_name, skill_name)
                 return 'Error: Script path escapes skill directory.'
 
             # Build command
             cmd = [self._python_executable, str(script.path)]
             if args:
                 cmd.extend(args)
-
-            logger.info('Running script: %s with args: %s', script_name, args)
 
             try:
                 # Use anyio.run_process for async-compatible execution
@@ -311,7 +301,6 @@ class SkillsToolset(FunctionToolset):
 
                 # Check if timeout was reached
                 if scope.cancelled_caught:
-                    logger.error('Script %s timed out after %d seconds', script_name, self._script_timeout)
                     raise SkillScriptExecutionError(
                         f"Script '{script_name}' timed out after {self._script_timeout} seconds"
                     )
@@ -331,7 +320,6 @@ class SkillsToolset(FunctionToolset):
                 return output.strip() or '(no output)'
 
             except OSError as e:
-                logger.error('Failed to execute script %s: %s', script_name, e)
                 raise SkillScriptExecutionError(f"Failed to execute script '{script_name}': {e}") from e
 
     def get_skills_system_prompt(self) -> str:
@@ -420,5 +408,4 @@ class SkillsToolset(FunctionToolset):
 
         Call this method to reload skills after changes to the filesystem.
         """
-        logger.info('Refreshing skills from directories')
         self._discover_skills()

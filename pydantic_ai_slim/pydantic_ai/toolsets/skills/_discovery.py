@@ -6,7 +6,6 @@ and parsing SKILL.md files with YAML frontmatter.
 
 from __future__ import annotations
 
-import logging
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -21,8 +20,6 @@ from ._types import (
     SkillResource,
     SkillScript,
 )
-
-logger = logging.getLogger('pydantic_ai.skills')
 
 # Anthropic's naming convention: lowercase letters, numbers, and hyphens only
 SKILL_NAME_PATTERN = re.compile(r'^[a-z0-9-]+$')
@@ -226,11 +223,9 @@ def discover_skills(
         dir_path = Path(skill_dir).expanduser().resolve()
 
         if not dir_path.exists():
-            logger.warning('Skills directory does not exist: %s', dir_path)
             continue
 
         if not dir_path.is_dir():
-            logger.warning('Skills path is not a directory: %s', dir_path)
             continue
 
         # Find all SKILL.md files (recursive search)
@@ -247,17 +242,7 @@ def discover_skills(
                 # Validation
                 if validate:
                     if not name:
-                        logger.warning(
-                            'Skill at %s missing required "name" field, skipping',
-                            skill_folder,
-                        )
                         continue
-                    if not description:
-                        logger.warning(
-                            'Skill "%s" at %s missing "description" field',
-                            name,
-                            skill_folder,
-                        )
 
                 # Use folder name if name not provided
                 if not name:
@@ -273,11 +258,9 @@ def discover_skills(
                     extra=extra,
                 )
 
-                # Validate metadata (log warnings)
+                # Validate metadata
                 if validate:
-                    validation_warnings = validate_skill_metadata(frontmatter, instructions)
-                    for warning in validation_warnings:
-                        logger.warning('Skill "%s" at %s: %s', name, skill_folder, warning)
+                    validate_skill_metadata(frontmatter, instructions)
 
                 # Discover resources and scripts
                 resources = _discover_resources(skill_folder)
@@ -294,14 +277,10 @@ def discover_skills(
                 )
 
                 skills.append(skill)
-                logger.debug('Discovered skill: %s at %s', name, skill_folder)
 
-            except SkillValidationError as e:
-                logger.exception('Skill validation error in %s: %s', skill_file, e)
+            except SkillValidationError:
                 raise
-            except OSError as e:
-                logger.warning('Failed to load skill from %s: %s', skill_file, e)
+            except OSError:
                 continue
 
-    logger.info('Discovered %d skills from %d directories', len(skills), len(directories))
     return skills
