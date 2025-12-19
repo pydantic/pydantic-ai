@@ -10,13 +10,12 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
-from pydantic_core import SchemaValidator, core_schema
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
 from pytest_mock import MockerFixture
@@ -44,7 +43,6 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -117,7 +115,7 @@ def tmp_path_cwd(tmp_path: Path):
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
 )
 @pytest.mark.parametrize('example', find_filter_examples())
-def test_docs_examples(  # noqa: C901
+def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -149,13 +147,8 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    def create_mock_mcp_server(*args: Any, **kwargs: Any) -> MockMCPServer:
-        """Factory to create new mock instances each time."""
-        return MockMCPServer(*args, **kwargs)
-
-    mocker.patch('pydantic_ai.mcp.MCPServerSSE', side_effect=create_mock_mcp_server)
-    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', side_effect=create_mock_mcp_server)
-    mocker.patch('pydantic_ai.mcp.MCPServerStdio', side_effect=create_mock_mcp_server)
+    mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
     mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
@@ -307,26 +300,9 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
-def _create_no_op_validator() -> SchemaValidator:
-    """Create a validator that accepts any input."""
-    return SchemaValidator(schema=core_schema.any_schema())
-
-
 class MockMCPServer(AbstractToolset[Any]):
-    # Common tools that tests need
-    _TOOLS = {
-        'echo_deps',
-        'image_generator',
-        'return_fruit',
-        'get_document',
-        'get_company_logo',
-    }
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Accept any arguments that real MCP servers might take."""
-        # Store for reference but don't need to do anything with them
-        self._args = args
-        self._kwargs = kwargs
+        pass
 
     @property
     def id(self) -> str | None:
@@ -343,48 +319,12 @@ class MockMCPServer(AbstractToolset[Any]):
         pass
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
-        # Return common tools for tests that need them
-        tools: dict[str, ToolsetTool[Any]] = {}
-        for tool_name in self._TOOLS:
-            tools[tool_name] = ToolsetTool(
-                toolset=self,
-                tool_def=ToolDefinition(
-                    name=tool_name,
-                    parameters_json_schema={'type': 'object', 'properties': {}},
-                ),
-                max_retries=0,
-                args_validator=_create_no_op_validator(),
-            )
-        return tools
+        return {}
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
     ) -> Any:
-        # Return specific values for known tools that tests use
-        if name == 'echo_deps':
-            # Return the expected response for echo_deps tool
-            return {'echo': 'This is an echo message', 'deps': ctx.deps if hasattr(ctx, 'deps') else None}
         return None  # pragma: lax no cover
-
-    async def list_resources(self) -> list[Any]:
-        """Mock list_resources returns sample resources."""
-
-        class Resource(NamedTuple):
-            name: str
-            uri: str
-            mime_type: str
-
-        return [Resource(name='user_name_resource', uri='resource://user_name.txt', mime_type='text/plain')]
-
-    async def list_resource_templates(self) -> list[Any]:
-        """Mock list_resource_templates."""
-        return []
-
-    async def read_resource(self, uri: str) -> str:
-        """Mock read_resource returns sample content."""
-        if 'user_name' in uri:
-            return 'Alice'
-        return ''
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
@@ -398,6 +338,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ),
     'What will the weather be like in Paris on Tuesday?': ToolCallPart(
         tool_name='weather_forecast', args={'location': 'Paris', 'forecast_date': '2030-01-01'}, tool_call_id='0001'
+    ),
+    'What is the weather in Paris?': ToolCallPart(
+        tool_name='get_weather_forecast', args={'location': 'Paris'}, tool_call_id='0001'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
     'Tell me a different joke.': 'No.',
@@ -870,6 +813,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
+        return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
