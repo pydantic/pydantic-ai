@@ -2303,92 +2303,98 @@ def test_extract_deferred_tool_results_skips_empty_tool_call_id():
     assert result is None
 
 
-def test_extract_denied_tool_ids_skips_non_tool_parts():
-    """Test that _extract_denied_tool_ids skips non-tool parts."""
-    from pydantic_ai.ui.vercel_ai._event_stream import _extract_denied_tool_ids
+def test_denied_tool_ids_skips_non_tool_parts():
+    """Test that denied_tool_ids property skips non-tool parts."""
     from pydantic_ai.ui.vercel_ai.request_types import (
         DynamicToolInputAvailablePart,
         ToolApprovalResponded,
     )
 
-    messages = [
-        UIMessage(
-            id='msg-1',
-            role='assistant',
-            parts=[
-                TextUIPart(text='Some text'),
-                DynamicToolInputAvailablePart(
-                    tool_name='my_tool',
-                    tool_call_id='tool_1',
-                    input={'arg': 'value'},
-                    approval=ToolApprovalResponded(id='approval-1', approved=False),
-                ),
-            ],
-        ),
-    ]
+    request = SubmitMessage(
+        id='req-1',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='assistant',
+                parts=[
+                    TextUIPart(text='Some text'),
+                    DynamicToolInputAvailablePart(
+                        tool_name='my_tool',
+                        tool_call_id='tool_1',
+                        input={'arg': 'value'},
+                        approval=ToolApprovalResponded(id='approval-1', approved=False),
+                    ),
+                ],
+            ),
+        ],
+    )
 
-    denied_ids = _extract_denied_tool_ids(messages)
-    assert denied_ids == {'tool_1'}
+    stream = VercelAIEventStream(run_input=request)
+    assert stream.denied_tool_ids == {'tool_1'}
 
 
-def test_extract_denied_tool_ids_skips_empty_tool_call_id():
-    """Test that _extract_denied_tool_ids skips parts with empty tool_call_id."""
-    from pydantic_ai.ui.vercel_ai._event_stream import _extract_denied_tool_ids
+def test_denied_tool_ids_skips_empty_tool_call_id():
+    """Test that denied_tool_ids property skips parts with empty tool_call_id."""
     from pydantic_ai.ui.vercel_ai.request_types import (
         DynamicToolInputAvailablePart,
         ToolApprovalResponded,
     )
 
-    messages = [
-        UIMessage(
-            id='msg-1',
-            role='assistant',
-            parts=[
-                DynamicToolInputAvailablePart(
-                    tool_name='my_tool',
-                    tool_call_id='',
-                    input={'arg': 'value'},
-                    approval=ToolApprovalResponded(id='approval-1', approved=False),
-                ),
-            ],
-        ),
-    ]
+    request = SubmitMessage(
+        id='req-1',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='assistant',
+                parts=[
+                    DynamicToolInputAvailablePart(
+                        tool_name='my_tool',
+                        tool_call_id='',
+                        input={'arg': 'value'},
+                        approval=ToolApprovalResponded(id='approval-1', approved=False),
+                    ),
+                ],
+            ),
+        ],
+    )
 
-    denied_ids = _extract_denied_tool_ids(messages)
-    assert denied_ids == set()
+    stream = VercelAIEventStream(run_input=request)
+    assert stream.denied_tool_ids == set()
 
 
-def test_extract_denied_tool_ids_skips_approved_tools():
-    """Test that _extract_denied_tool_ids only extracts denied (not approved) tools."""
-    from pydantic_ai.ui.vercel_ai._event_stream import _extract_denied_tool_ids
+def test_denied_tool_ids_skips_approved_tools():
+    """Test that denied_tool_ids property only extracts denied (not approved) tools."""
     from pydantic_ai.ui.vercel_ai.request_types import (
         DynamicToolInputAvailablePart,
         ToolApprovalResponded,
     )
 
-    messages = [
-        UIMessage(
-            id='msg-1',
-            role='assistant',
-            parts=[
-                DynamicToolInputAvailablePart(
-                    tool_name='my_tool',
-                    tool_call_id='approved_tool',
-                    input={'arg': 'value'},
-                    approval=ToolApprovalResponded(id='approval-1', approved=True),
-                ),
-                DynamicToolInputAvailablePart(
-                    tool_name='my_tool',
-                    tool_call_id='denied_tool',
-                    input={'arg': 'value'},
-                    approval=ToolApprovalResponded(id='approval-2', approved=False),
-                ),
-            ],
-        ),
-    ]
+    request = SubmitMessage(
+        id='req-1',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='assistant',
+                parts=[
+                    DynamicToolInputAvailablePart(
+                        tool_name='my_tool',
+                        tool_call_id='approved_tool',
+                        input={'arg': 'value'},
+                        approval=ToolApprovalResponded(id='approval-1', approved=True),
+                    ),
+                    DynamicToolInputAvailablePart(
+                        tool_name='my_tool',
+                        tool_call_id='denied_tool',
+                        input={'arg': 'value'},
+                        approval=ToolApprovalResponded(id='approval-2', approved=False),
+                    ),
+                ],
+            ),
+        ],
+    )
 
-    denied_ids = _extract_denied_tool_ids(messages)
-    assert denied_ids == {'denied_tool'}
+    stream = VercelAIEventStream(run_input=request)
+    assert stream.denied_tool_ids == {'denied_tool'}
 
 
 async def test_tool_output_denied_chunk_emission():
