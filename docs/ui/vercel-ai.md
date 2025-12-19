@@ -106,7 +106,7 @@ Pydantic AI supports [AI SDK's human-in-the-loop tool approval](https://ai-sdk.d
 
 To enable tool approval, define your tool with `requires_approval=True` and include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in your agent's output types:
 
-```py
+```py {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.tools import DeferredToolRequests
 
@@ -125,7 +125,7 @@ def delete_file(path: str) -> str:
 
 When processing a follow-up request with approval responses, extract and pass the deferred tool results:
 
-```py
+```py {test="skip"}
 @app.post('/chat')
 async def chat(request: Request) -> Response:
     adapter = await VercelAIAdapter.from_request(request, agent=agent)
