@@ -2573,44 +2573,6 @@ async def test_temporal_agent_multi_model_reserved_id():
         )
 
 
-async def test_temporal_agent_multi_model_duplicate_id():
-    """Test that duplicate model IDs in models raise helpful errors."""
-    from collections.abc import Mapping as MappingABC
-
-    test_model1 = TestModel(custom_output_text='Model 1')
-    test_model2 = TestModel(custom_output_text='Model 2')
-    test_model3 = TestModel(custom_output_text='Model 3')
-
-    # Custom Mapping that yields duplicate keys during iteration
-    # This seems contrived but maps silently discard duplicates normally
-    class DuplicateKeyMapping(MappingABC[str, Model]):
-        def __init__(self, items: list[tuple[str, Model]]):
-            self._items = items
-
-        def __getitem__(self, key: str) -> Model:  # pragma: no cover
-            for k, v in self._items:
-                if k == key:
-                    return v
-            raise KeyError(key)
-
-        def __iter__(self):  # pragma: no cover
-            return iter(k for k, _ in self._items)
-
-        def __len__(self):
-            return len(self._items)
-
-        def items(self):  # type: ignore[override]
-            return iter(self._items)
-
-    agent = Agent(test_model1, name='duplicate_id_test')
-    with pytest.raises(UserError, match="Duplicate model ID 'model_2'"):
-        TemporalAgent(
-            agent,
-            name='duplicate_id_test',
-            models=DuplicateKeyMapping([('model_2', test_model2), ('model_2', test_model3)]),
-        )
-
-
 async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requests: None, client: Client):
     """Test selecting different models in a workflow using the model parameter."""
     async with Worker(
@@ -2675,6 +2637,7 @@ async def test_temporal_agent_multi_model_outside_workflow():
     """
     test_model1 = TestModel(custom_output_text='Model 1 response')
     test_model2 = TestModel(custom_output_text='Model 2 response')
+    test_model_unregistered = TestModel(custom_output_text='Unregistered model response')
 
     agent = Agent(test_model1, name='outside_workflow_test')
     temporal_agent = TemporalAgent(
@@ -2695,9 +2658,16 @@ async def test_temporal_agent_multi_model_outside_workflow():
     result = await temporal_agent.run('Hello', model=test_model2)
     assert result.output == 'Model 2 response'
 
+    # Passing an unregistered model instance should also work outside workflow
+    result = await temporal_agent.run('Hello', model=test_model_unregistered)
+    assert result.output == 'Unregistered model response'
+
 
 async def test_temporal_agent_without_default_model():
-    """Test that a TemporalAgent can be created without a default model if models is provided."""
+    """Test that a TemporalAgent can be created without a default model if models is provided.
+
+    When no model is provided to run(), the first registered model should be used.
+    """
     test_model1 = TestModel(custom_output_text='Model 1 response')
     test_model2 = TestModel(custom_output_text='Model 2 response')
 
@@ -2712,7 +2682,11 @@ async def test_temporal_agent_without_default_model():
         },
     )
 
-    # Outside workflow, can use registered models
+    # Without a model, should use the first registered model
+    result = await temporal_agent.run('Hello')
+    assert result.output == 'Model 1 response'
+
+    # Outside workflow, can use registered models by name
     result = await temporal_agent.run('Hello', model='primary')
     assert result.output == 'Model 1 response'
 

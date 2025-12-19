@@ -76,22 +76,38 @@ class TemporalStreamedResponse(StreamedResponse):
 class TemporalModel(WrapperModel):
     def __init__(
         self,
-        model: Model,
+        model: Model | None,
         *,
         activity_name_prefix: str,
         activity_config: ActivityConfig,
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         event_stream_handler: EventStreamHandler[Any] | None = None,
-        models_by_id: Mapping[str, Model] | None = None,
+        models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
     ):
-        super().__init__(model)
+        # Build models_by_id registry from wrapped model and models parameter
+        self._models_by_id: dict[str, Model] = {}
+        if model is not None:
+            self._models_by_id['default'] = model
+        if models:
+            for model_id, model_instance in models.items():
+                if model_id == 'default':
+                    raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+                self._models_by_id[model_id] = model_instance
+
+        if not self._models_by_id:
+            raise UserError(
+                "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
+            )
+
+        # Use provided model if available, otherwise first registered model
+        primary_model = model or next(iter(self._models_by_id.values()))
+        super().__init__(primary_model)
         self.activity_config = activity_config
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
         self._model_id_var: ContextVar[str | None] = ContextVar('_temporal_model_id', default=None)
-        self._models_by_id = dict(models_by_id or {})
         self._provider_factory = provider_factory
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
@@ -220,9 +236,52 @@ class TemporalModel(WrapperModel):
         if model_request_parameters.allow_image_output:
             raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
 
+    def _get_model_id(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
+        """Get the model ID for the given model parameter.
+
+        Returns a string that will be checked against registered model IDs,
+        or passed to infer_model if not found. Returns None to use the default model.
+        """
+        if model is None or model == 'default':
+            return None
+
+        if isinstance(model, Model):
+            # Check if this model instance is already registered
+            for model_id, registered_model in self._models_by_id.items():
+                if registered_model is model:
+                    if model_id == 'default':
+                        return None
+                    return model_id
+            raise UserError(
+                'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. '
+                'Register the model via `models` or reference a registered model by ID.'
+            )
+
+        return model
+
+    def resolve_model_for_outside_workflow(
+        self, model: models.Model | models.KnownModelName | str | None = None
+    ) -> models.Model | models.KnownModelName | str | None:
+        """Resolve a model parameter for use outside a workflow.
+
+        If the model is a registered ID, returns the registered Model instance.
+        If model is None, returns the wrapped (primary) model to use as default.
+        Otherwise returns the original value.
+        """
+        if model is None:
+            # Return the primary model (wrapped model or first registered)
+            return self.wrapped
+        if isinstance(model, str) and model in self._models_by_id:
+            return self._models_by_id[model]
+        return model
+
     @contextmanager
-    def using_model(self, model_id: str | None) -> Iterator[None]:
-        """Context manager to set the model id for the duration of a block."""
+    def using_model(self, model: models.Model | models.KnownModelName | str | None) -> Iterator[None]:
+        """Context manager to set the model for the duration of a block.
+
+        Accepts a Model instance, model name string, or None for the default model.
+        """
+        model_id = self._get_model_id(model)
         token = self._model_id_var.set(model_id)
         try:
             yield
