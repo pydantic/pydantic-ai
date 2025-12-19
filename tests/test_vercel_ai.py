@@ -3540,7 +3540,7 @@ async def test_adapter_dump_messages_builtin_tool_with_full_metadata():
                             'pydantic_ai': {
                                 'id': 'call_456',
                                 'provider_name': 'openai',
-                                'provider_details': {'tool_type': 'web_search_preview'},
+                                'provider_details': {'execution_time_ms': 150},
                             }
                         },
                         'preliminary': None,
