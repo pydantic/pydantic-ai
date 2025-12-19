@@ -92,7 +92,9 @@ def _extract_denied_tool_ids(messages: list[UIMessage]) -> set[str]:
                 continue
             approval = part.approval
             if isinstance(approval, ToolApprovalResponded) and not approval.approved:
-                denied_ids.add(part.tool_call_id)
+                tool_call_id = part.tool_call_id
+                if tool_call_id:
+                    denied_ids.add(tool_call_id)
     return denied_ids
 
 

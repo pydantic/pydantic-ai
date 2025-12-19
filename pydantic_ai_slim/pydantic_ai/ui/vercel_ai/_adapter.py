@@ -128,6 +128,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     continue
 
                 tool_call_id = part.tool_call_id
+                if not tool_call_id:
+                    continue
+
                 if approval.approved:
                     approvals[tool_call_id] = ToolApproved()
                 else:
