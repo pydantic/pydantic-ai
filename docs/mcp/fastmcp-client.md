@@ -73,6 +73,10 @@ from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
 mcp_config = {
     'mcpServers': {
+        "python-runner": {
+            "command": "uv",
+            "args": ["run", "mcp-run-python", "stdio"]
+        },
         'weather_server': {
             'command': 'python',
             'args': ['mcp_server.py']

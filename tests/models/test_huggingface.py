@@ -8,25 +8,7 @@ from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
 
-import aiohttp
 import pytest
-from huggingface_hub import (
-    AsyncInferenceClient,
-    ChatCompletionInputMessage,
-    ChatCompletionOutput,
-    ChatCompletionOutputComplete,
-    ChatCompletionOutputFunctionDefinition,
-    ChatCompletionOutputMessage,
-    ChatCompletionOutputToolCall,
-    ChatCompletionOutputUsage,
-    ChatCompletionStreamOutput,
-    ChatCompletionStreamOutputChoice,
-    ChatCompletionStreamOutputDelta,
-    ChatCompletionStreamOutputDeltaToolCall,
-    ChatCompletionStreamOutputFunction,
-    ChatCompletionStreamOutputUsage,
-)
-from huggingface_hub.errors import HfHubHTTPError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -62,10 +44,27 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    pass
+    import aiohttp
+    from huggingface_hub import (
+        AsyncInferenceClient,
+        ChatCompletionInputMessage,
+        ChatCompletionOutput,
+        ChatCompletionOutputComplete,
+        ChatCompletionOutputFunctionDefinition,
+        ChatCompletionOutputMessage,
+        ChatCompletionOutputToolCall,
+        ChatCompletionOutputUsage,
+        ChatCompletionStreamOutput,
+        ChatCompletionStreamOutputChoice,
+        ChatCompletionStreamOutputDelta,
+        ChatCompletionStreamOutputDeltaToolCall,
+        ChatCompletionStreamOutputFunction,
+        ChatCompletionStreamOutputUsage,
+    )
+    from huggingface_hub.errors import HfHubHTTPError
 
-MockChatCompletion = ChatCompletionOutput | Exception
-MockStreamEvent = ChatCompletionStreamOutput | Exception
+    MockChatCompletion = ChatCompletionOutput | Exception
+    MockStreamEvent = ChatCompletionStreamOutput | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),

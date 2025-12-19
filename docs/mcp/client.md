@@ -163,6 +163,10 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 ```json {title="mcp_config.json"}
 {
   "mcpServers": {
+    "python-runner": {
+        "command": "uv",
+        "args": ["run", "mcp-run-python", "stdio"]
+    },
     "weather": {
       "command": "python",
       "args": ["mcp_server.py"]
