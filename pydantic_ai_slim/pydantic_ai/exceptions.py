@@ -206,10 +206,10 @@ class ToolRetryError(Exception):
         but when ErrorDetails are serialized, exception objects are stripped from ctx.
         The 'msg' field already contains the human-readable message, so we use that directly.
         """
-        title = tool_name or 'ToolRetryError'
         error_count = len(errors)
-        error_word = 'error' if error_count == 1 else 'errors'
-        lines = [f'{error_count} validation {error_word} for {title}']
+        lines = [
+            f'{error_count} validation error{"" if error_count == 1 else "s"}{f" for {tool_name!r}" if tool_name else ""}'
+        ]
         for e in errors:
             loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
             lines.append(loc)

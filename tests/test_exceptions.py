@@ -83,7 +83,7 @@ def test_tool_retry_error_str_with_error_details():
     error = ToolRetryError(part)
 
     assert str(error) == (
-        '1 validation error for my_tool\nname\n  Input should be a valid string [type=string_type, input_value=123]'
+        "1 validation error for 'my_tool'\nname\n  Input should be a valid string [type=string_type, input_value=123]"
     )
 
 
@@ -106,5 +106,5 @@ def test_tool_retry_error_str_with_value_error_type():
     error = ToolRetryError(part)
 
     assert str(error) == (
-        "1 validation error for my_tool\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
+        "1 validation error for 'my_tool'\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
     )
