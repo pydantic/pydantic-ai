@@ -144,9 +144,7 @@ class TestToolChoiceAuto:
                             tool_name='get_weather',
                             args={'city': 'Paris'},
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -252,9 +250,7 @@ class TestToolChoiceAuto:
                             tool_name='get_weather',
                             args={'city': 'London'},
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -319,9 +315,7 @@ class TestToolChoiceAuto:
                             tool_name='get_weather',
                             args={'city': 'Tokyo'},
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -356,9 +350,7 @@ class TestToolChoiceAuto:
                                 'summary': 'The weather in Tokyo is Sunny with a temperature of 22C.',
                             },
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -530,9 +522,7 @@ For the rest of today, you can expect a high of around **25°C (77°F)** with co
                                 'summary': 'Madrid is the capital and most populous city of Spain. The city has a rich history, evident in its architecture and museums.',
                             },
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -592,9 +582,7 @@ class TestToolChoiceRequired:
                     tool_name='get_weather',
                     args={'city': 'London'},
                     tool_call_id=IsStr(),
-                    provider_details={
-                        'thought_signature': IsStr()
-                    },
+                    provider_details={'thought_signature': IsStr()},
                 )
             ]
         )
@@ -621,9 +609,7 @@ class TestToolChoiceRequired:
                     tool_name='get_time',
                     args={'timezone': 'America/Los_Angeles'},
                     tool_call_id=IsStr(),
-                    provider_details={
-                        'thought_signature': IsStr()
-                    },
+                    provider_details={'thought_signature': IsStr()},
                 )
             ]
         )
@@ -661,9 +647,7 @@ class TestToolChoiceList:
                     tool_name='get_weather',
                     args={'city': 'Paris'},
                     tool_call_id=IsStr(),
-                    provider_details={
-                        'thought_signature': IsStr()
-                    },
+                    provider_details={'thought_signature': IsStr()},
                 )
             ]
         )
@@ -691,9 +675,7 @@ class TestToolChoiceList:
                     tool_name='get_time',
                     args={'timezone': 'Asia/Tokyo'},
                     tool_call_id=IsStr(),
-                    provider_details={
-                        'thought_signature': IsStr()
-                    },
+                    provider_details={'thought_signature': IsStr()},
                 )
             ]
         )
@@ -721,9 +703,7 @@ class TestToolChoiceList:
                     tool_name='get_weather',
                     args={'city': 'London'},
                     tool_call_id=IsStr(),
-                    provider_details={
-                        'thought_signature': IsStr()
-                    },
+                    provider_details={'thought_signature': IsStr()},
                 )
             ]
         )
@@ -764,9 +744,7 @@ class TestToolsPlusOutput:
                             tool_name='get_weather',
                             args={'city': 'Sydney'},
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -798,9 +776,7 @@ class TestToolsPlusOutput:
                             tool_name='final_result',
                             args={'city': 'Sydney', 'summary': 'The weather in Sydney is Sunny, 22C.'},
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -857,9 +833,7 @@ class TestToolsPlusOutput:
                             tool_name='get_weather',
                             args={'city': 'Chicago'},
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         ),
                         ToolCallPart(
                             tool_name='get_population',
@@ -905,9 +879,7 @@ class TestToolsPlusOutput:
                                 'summary': 'The weather in Chicago is Sunny, 22C. Chicago has 1 million people.',
                             },
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -969,9 +941,7 @@ class TestNoFunctionTools:
                                 'summary': 'New York City is a major global hub for finance, fashion, art, and culture. It is known for its iconic landmarks like the Statue of Liberty, Times Square, and Central Park, as well as its diverse neighborhoods and Broadway shows.',
                             },
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -1027,9 +997,7 @@ class TestNoFunctionTools:
                                 'summary': 'Boston is a historic city known for its role in the American Revolution, its prestigious universities like Harvard and MIT, and its vibrant cultural scene.',
                             },
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -1093,9 +1061,7 @@ class TestTextAndStructuredUnion:
                             tool_name='get_weather',
                             args={'city': 'Miami'},
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -1130,9 +1096,7 @@ class TestTextAndStructuredUnion:
                                 'summary': 'The weather in Miami is Sunny and 22C.',
                             },
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
@@ -1193,9 +1157,7 @@ class TestTextAndStructuredUnion:
                                 'summary': 'Seattle is a major coastal city in the Pacific Northwest region of the United States. It is known for its rainy weather, vibrant tech industry, iconic Space Needle, and stunning natural beauty with proximity to mountains and water.',
                             },
                             tool_call_id=IsStr(),
-                            provider_details={
-                                'thought_signature': IsStr()
-                            },
+                            provider_details={'thought_signature': IsStr()},
                         )
                     ],
                     usage=RequestUsage(
