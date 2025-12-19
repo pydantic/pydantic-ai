@@ -161,20 +161,44 @@ When `TemporalAgent` dynamically creates activities for the wrapped agent's mode
 
 Other than that, any agent and toolset will just work!
 
+### Instructions Functions, Output Functions, and History Processors
+
+Pydantic AI runs non-async [instructions](../agents.md#instructions) and [system prompt](../agents.md#system-prompts) functions, [history processors](../message-history.md#processing-message-history), [output functions](../output.md#output-functions), and [output validators](../output.md#output-validator-functions) in threads, which are not supported inside Temporal workflows and require an activity. Ensure that these functions are async instead.
+
+Synchronous tool functions are supported, as tools are automatically run in activities unless this is [explicitly disabled](#activity-configuration). Still, it's recommended to make tool functions async as well to improve performance.
+
+### Agent Run Context and Dependencies
+
+As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB.
+
+To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
+
+Specifically, only the `deps`, `run_id`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
+If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
+
+### Streaming
+
+Because Temporal activities cannot stream output directly to the activity call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] are not supported.
+
+Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `TemporalAgent` instance and using [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] inside the workflow.
+The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
+
+As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
+
+- To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
+- To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
+
 ### Model Selection at Runtime
 
-By default, a `TemporalAgent` uses the model that was set on the wrapped agent. However, you can register additional models and select between them at runtime inside workflows using the `models` parameter.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.2'`) and model instances. However, `TemporalAgent` does not support arbitrary model instances because they cannot be serialized for Temporal's replay mechanism.
 
-Inside workflows, you can reference models in four ways:
+Instead, you can:
 
-1. **By registered name**: Pass the string key used in `models` (e.g., `model='fast'`)
-2. **By registered instance**: Pass a model instance that was registered via `models` or as the agent's default model
-3. **By provider string**: Pass a model string like `'openai:gpt-4.1'` which will be instantiated at runtime
-4. **By provider string with factory**: When a `provider_factory` is configured, provider strings are instantiated using your custom factory, allowing you to inject API keys or other configuration from deps
+1. **Use model strings**: Pass a model string like `'openai:gpt-5.2'` to `temporal_agent.run(model=...)`, which will be instantiated at runtime.
+2. **Pre-register model instances**: Pass a dict of model instances to `TemporalAgent(models={...})`, then reference them by name (e.g., `temporal_agent.run(model='fast')`) or by passing the same instance (e.g., `temporal_agent.run(model=fast_model)`).
+3. **Use a provider factory**: For scenarios where you want to support arbitrary model strings but need to customize the provider (e.g., inject API keys from deps), you can pass a `provider_factory` to `TemporalAgent`.
 
-Unregistered model instances cannot be used inside workflows because they cannot be serialized for Temporal's replay mechanism. If you need to use a specific model configuration, register it via `models` first.
-
-Here's a simple example showing how to register and use multiple models:
+Here's an example showing how to pre-register and use multiple models:
 
 ```python {title="multi_model_temporal.py" test="skip"}
 from temporalio import workflow
@@ -186,7 +210,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
 # Create models from different providers
-default_model = OpenAIResponsesModel('gpt-4.1')
+default_model = OpenAIResponsesModel('gpt-5.2')
 fast_model = AnthropicModel('claude-sonnet-4-5')
 reasoning_model = GoogleModel('gemini-2.5-pro')
 
@@ -269,33 +293,6 @@ class DynamicConfigWorkflow:
         result = await temporal_agent.run(prompt, model=model_string)
         return result.output
 ```
-
-### Instructions Functions, Output Functions, and History Processors
-
-Pydantic AI runs non-async [instructions](../agents.md#instructions) and [system prompt](../agents.md#system-prompts) functions, [history processors](../message-history.md#processing-message-history), [output functions](../output.md#output-functions), and [output validators](../output.md#output-validator-functions) in threads, which are not supported inside Temporal workflows and require an activity. Ensure that these functions are async instead.
-
-Synchronous tool functions are supported, as tools are automatically run in activities unless this is [explicitly disabled](#activity-configuration). Still, it's recommended to make tool functions async as well to improve performance.
-
-### Agent Run Context and Dependencies
-
-As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB.
-
-To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
-
-Specifically, only the `deps`, `run_id`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
-If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
-
-### Streaming
-
-Because Temporal activities cannot stream output directly to the activity call site, [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] are not supported.
-
-Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `TemporalAgent` instance and using [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] inside the workflow.
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
-
-As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
-
-- To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
-- To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
 
 ## Activity Configuration
 
