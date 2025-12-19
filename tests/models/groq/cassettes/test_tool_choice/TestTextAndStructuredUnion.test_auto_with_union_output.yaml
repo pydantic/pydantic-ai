@@ -1,0 +1,217 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '655'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Miami and describe it
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '707'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Miami"}'
+              name: get_weather
+            id: 14mvk25vk
+            type: function
+      created: 1766183513
+      id: chatcmpl-5d3fcec7-f117-43e8-a1b0-8054f34dc1d0
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_5436ed2ebe
+      usage:
+        completion_time: 0.074663182
+        completion_tokens: 29
+        prompt_time: 0.030576144
+        prompt_tokens: 764
+        queue_time: 0.181759611
+        total_time: 0.105239326
+        total_tokens: 793
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbvb20fz5v3584j8bm4ssf
+        seed: 159117663
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '872'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=DO1m9nSzUvsAWFxWmSS6xVaengPAjFFxWkdzyc.WoCA-1766183513-1.0.1.1-1Fs6.0TUs.NCg03Saz3QRfFB9yhG0qDvGzjoZ_G0kHFMe769TElPUfd1rTiwpAprT0V39XMMZFysctzy0Gvce4DsINiStIhwya9oFUg5LtM
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Miami and describe it
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Miami"}'
+            name: get_weather
+          id: 14mvk25vk
+          type: function
+      - content: Sunny, 22C in Miami
+        role: tool
+        tool_call_id: 14mvk25vk
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '656'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The current weather in Miami is sunny with a temperature of 22C.
+          role: assistant
+      created: 1766183513
+      id: chatcmpl-6b0c7ad7-a9d8-4e4e-aa2e-6256ff5dfd50
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.036419744
+        completion_tokens: 16
+        prompt_time: 0.02364684
+        prompt_tokens: 821
+        queue_time: 0.073244764
+        total_time: 0.060066584
+        total_tokens: 837
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbvbg3fjjv5mk7s428th0c
+        seed: 258449638
+    status:
+      code: 200
+      message: OK
+version: 1

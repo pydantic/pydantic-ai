@@ -1,0 +1,101 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '400'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Rome?
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '2461'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Rome has a Mediterranean climate, characterized by hot, dry summers and mild, wet winters. Here's a general
+            overview of the weather in Rome:\n\n**Current Weather:** \nTo give you the most up-to-date information, I'd recommend
+            checking a reliable weather website or app, such as AccuWeather, Weather.com, or the Italian Meteorological Society
+            (it might be in Italian). \n\nHowever, I can tell you that Rome's current weather can be checked through various
+            online platforms.\n\n**Seasonal Weather Patterns:**\n\n* **Spring (March to May)**: Mild temperatures, ranging
+            from 12°C (54°F) to 22°C (72°F), with occasional rain showers.\n* **Summer (June to August)**: Hot and dry, with
+            temperatures often reaching 30°C (86°F) or more, sometimes up to 35°C (95°F) or 40°C (104°F) during heatwaves.\n*
+            **Autumn (September to November)**: Comfortable temperatures, ranging from 10°C (50°F) to 25°C (77°F), with some
+            rain.\n* **Winter (December to February)**: Cool and wet, with temperatures ranging from 2°C (36°F) to 12°C (54°F).\n\n**Monthly
+            Average Weather:**\n\nHere's a rough idea of what to expect:\n\n* January: 8°C (46°F) / 12°C (54°F)\n* February:
+            9°C (48°F) / 13°C (56°F)\n* March: 12°C (54°F) / 17°C (63°F)\n* April: 15°C (59°F) / 20°C (68°F)\n* May: 19°C
+            (66°F) / 24°C (75°F)\n* June: 23°C (73°F) / 28°C (82°F)\n* July: 26°C (79°F) / 31°C (88°F)\n* August: 26°C (79°F)
+            / 31°C (88°F)\n* September: 22°C (72°F) / 27°C (81°F)\n* October: 18°C (64°F) / 23°C (73°F)\n* November: 14°C
+            (57°F) / 18°C (64°F)\n* December: 10°C (50°F) / 14°C (57°F)\n\nKeep in mind that these are general temperature
+            ranges, and actual weather conditions can vary from year to year.\n\nIf you're planning a trip to Rome, I recommend
+            checking the weather forecast before your visit to ensure you're prepared for any conditions."
+          role: assistant
+      created: 1766183505
+      id: chatcmpl-11b67e45-99c5-4c62-9560-4e7e6b83d467
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_5436ed2ebe
+      usage:
+        completion_time: 1.260085291
+        completion_tokens: 527
+        prompt_time: 7.4829e-05
+        prompt_tokens: 16
+        queue_time: 0.080774854
+        total_time: 1.26016012
+        total_tokens: 543
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbv1vjfymrc4wxvefg7swg
+        seed: 2080575521
+    status:
+      code: 200
+      message: OK
+version: 1

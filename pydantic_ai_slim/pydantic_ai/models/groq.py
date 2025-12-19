@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -409,7 +408,6 @@ class GroqModel(Model):
                     function={'name': tool_names[0]},
                 )
             else:
-                warnings.warn("Groq only supports forcing a single tool. Falling back to 'required'.")
                 tool_choice = 'required'
         else:
             assert_never(validated_tool_choice)

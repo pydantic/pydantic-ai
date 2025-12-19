@@ -1,0 +1,94 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '416'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Describe Seattle briefly
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1254'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Seattle is a vibrant city located in the Pacific Northwest region of the United States. It is known for
+            its stunning natural beauty, with mountains, forests, and waterways surrounding the city. Seattle is home to iconic
+            landmarks like the Space Needle and Pike Place Market, as well as being the birthplace of grunge music and the
+            headquarters of tech giants like Amazon and Microsoft. The city has a thriving arts and culture scene, a diverse
+            food scene, and a strong sense of community. With its mild oceanic climate, Seattle is a popular destination for
+            outdoor enthusiasts and those who love urban exploration. \n\nWould you like to know more about Seattle?"
+          role: assistant
+      created: 1766183514
+      id: chatcmpl-d3f915b6-4f47-4afa-a7df-10dfc121e670
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_130a0cd72d
+      usage:
+        completion_time: 0.30360756
+        completion_tokens: 129
+        prompt_time: 0.020548935
+        prompt_tokens: 719
+        queue_time: 0.07265861
+        total_time: 0.324156495
+        total_tokens: 848
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbvc0jfq8sg27ww3tencrk
+        seed: 1504010274
+    status:
+      code: 200
+      message: OK
+version: 1

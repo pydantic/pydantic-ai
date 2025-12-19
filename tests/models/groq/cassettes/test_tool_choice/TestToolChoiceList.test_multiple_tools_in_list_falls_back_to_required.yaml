@@ -1,0 +1,101 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '539'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What time is it in Tokyo?
+        role: user
+      model: llama-3.3-70b-versatile
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Get current time in a timezone
+          name: get_time
+          parameters:
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '689'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"timezone":"Tokyo"}'
+              name: get_time
+            id: 1n466wedz
+            type: function
+      created: 1766181227
+      id: chatcmpl-6b13461f-0c39-425e-8c78-890f7085a715
+      model: llama-3.3-70b-versatile
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_43d97c5965
+      usage:
+        completion_time: 0.044266862
+        completion_tokens: 13
+        prompt_time: 0.03209932
+        prompt_tokens: 284
+        queue_time: 0.074660668
+        total_time: 0.076366182
+        total_tokens: 297
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcw9njw0fwn91aarc6ramnq4
+        seed: 111853053
+    status:
+      code: 200
+      message: OK
+version: 1

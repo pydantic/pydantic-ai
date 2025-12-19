@@ -1,0 +1,123 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '881'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Denver and summarize
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Get the population of a city.
+          name: get_population
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '858'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Denver"}'
+              name: get_weather
+            id: 1r6z4xm35
+            type: function
+          - function:
+              arguments: '{"city":"Denver","summary":"weather summary for Denver"}'
+              name: final_result
+            id: pnkj8t2hc
+            type: function
+      created: 1766183511
+      id: chatcmpl-543f274b-b668-40bf-99c0-af2c1c0e2f30
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_5436ed2ebe
+      usage:
+        completion_time: 0.15276976
+        completion_tokens: 67
+        prompt_time: 0.028697709
+        prompt_tokens: 817
+        queue_time: 0.080835091
+        total_time: 0.181467469
+        total_tokens: 884
+      usage_breakdown: null
+      x_groq:
+        id: req_01kcwbv96yfz0rr6w50ncsk9jw
+        seed: 343265918
+    status:
+      code: 200
+      message: OK
+version: 1
