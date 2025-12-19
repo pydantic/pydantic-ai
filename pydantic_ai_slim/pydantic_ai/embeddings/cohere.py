@@ -13,6 +13,7 @@ from .settings import EmbeddingSettings
 try:
     from cohere import AsyncClientV2
     from cohere.core.api_error import ApiError
+    from cohere.core.request_options import RequestOptions
     from cohere.types.embed_by_type_response import EmbedByTypeResponse
     from cohere.types.embed_input_type import EmbedInputType as CohereEmbedInputType
     from cohere.v2.types.v2embed_request_truncate import V2EmbedRequestTruncate
@@ -125,6 +126,12 @@ class CohereEmbeddingModel(EmbeddingModel):
             'cohere_input_type', 'search_document' if input_type == 'document' else 'search_query'
         )
 
+        request_options: RequestOptions = {}
+        if extra_headers := settings.get('extra_headers'):  # pragma: no cover
+            request_options['additional_headers'] = extra_headers
+        if extra_body := settings.get('extra_body'):  # pragma: no cover
+            request_options['additional_body_parameters'] = cast(dict[str, Any], extra_body)
+
         try:
             response = await self._client.embed(
                 model=self.model_name,
@@ -133,18 +140,7 @@ class CohereEmbeddingModel(EmbeddingModel):
                 input_type=cohere_input_type,
                 max_tokens=settings.get('cohere_max_tokens'),
                 truncate=settings.get('cohere_truncate', 'NONE'),
-                request_options={
-                    **(
-                        {'additional_headers': extra_headers}
-                        if (extra_headers := settings.get('extra_headers'))
-                        else {}
-                    ),
-                    **(
-                        {'additional_body_parameters': cast(dict[str, Any], extra_body)}
-                        if (extra_body := settings.get('extra_body'))
-                        else {}
-                    ),
-                },
+                request_options=request_options,
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
