@@ -46,10 +46,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e
 
-            # The tool args will already have been validated into their proper types in the `ToolManager`,
-            # but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
-            args_dict = tool.args_validator.validate_python(params.tool_args)
-            return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
+            return await self._call_tool_in_activity(name, params.tool_args, ctx, tool)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type

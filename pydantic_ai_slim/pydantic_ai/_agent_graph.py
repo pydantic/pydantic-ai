@@ -381,7 +381,7 @@ async def _prepare_request_parameters(
     output_schema = ctx.deps.output_schema
 
     prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
+        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
     function_tools: list[ToolDefinition] = []
@@ -781,7 +781,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
-        # For backwards compatibility, append a new ModelRequest using the tool returns and retries
+        # To allow this message history to be used in a future run without dangling tool calls,
+        # append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
