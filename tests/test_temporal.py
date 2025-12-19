@@ -1654,7 +1654,7 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
             ),
         ):
             await client.execute_workflow(
@@ -1712,7 +1712,7 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                'Toolsets cannot be contextually overridden inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`.'
             ),
         ):
             await client.execute_workflow(

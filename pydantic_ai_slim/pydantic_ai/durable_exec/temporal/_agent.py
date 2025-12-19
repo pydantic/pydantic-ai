@@ -253,23 +253,21 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(
-        self, *, model: models.Model | models.KnownModelName | str | None = None, force: bool = False
-    ) -> Iterator[None]:
-        """Context manager for workflow-specific overrides.
+    def _temporal_overrides(self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None) -> Iterator[None]:
+        in_workflow = workflow.in_workflow()
 
-        When called outside a workflow, this is a no-op.
-        When called inside a workflow, it overrides the model and toolsets.
-        """
-        if not workflow.in_workflow() and not force:
-            yield
-            return
+        if toolsets:
+            if in_workflow and any(not isinstance(t, TemporalWrapperToolset) for t in toolsets):
+                raise UserError(
+                    'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                )
+            overridden_toolsets = [*self._toolsets, *toolsets]
+        else:
+            overridden_toolsets = list(self._toolsets)
 
-        # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        # Override model and set the model for workflow execution
+        # We reset tools here as the temporalized function toolset is already in overridden_toolsets.
         with (
-            super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
-            self._temporal_model.using_model(model),
+            super().override(model=self._model, toolsets=overridden_toolsets, tools=[]),
             _utils.disable_threads(),
         ):
             temporal_active_token = self._temporal_overrides_active.set(True)
@@ -388,7 +386,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         else:
             resolved_model = self._temporal_model.resolve_model(model)
 
-        with self._temporal_overrides(model=model):
+        with self._temporal_overrides():
             return await super().run(
                 user_prompt,
                 output_type=output_type,
@@ -401,7 +399,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=infer_name,
-                toolsets=toolsets,
+                toolsets=None,  # Toolsets are set via _temporal_overrides
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
                 **_deprecated_kwargs,
@@ -920,11 +918,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                 )
 
-            assert model is None, 'Temporal overrides must set the model before `agent.iter()` is invoked'
-
+            if model is not None:
+                raise UserError(
+                    'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                )
             if toolsets is not None:
                 raise UserError(
-                    'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                    'Toolsets cannot be set at agent run time inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`.'
                 )
 
             resolved_model = None
@@ -978,9 +978,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 raise UserError(
                     'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
                 )
-            if _utils.is_set(toolsets):
+            if _utils.is_set(toolsets) and any(not isinstance(t, TemporalWrapperToolset) for t in toolsets):
                 raise UserError(
-                    'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                    'Toolsets cannot be contextually overridden inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`.'
                 )
             if _utils.is_set(tools):
                 raise UserError(
