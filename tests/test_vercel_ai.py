@@ -1651,6 +1651,197 @@ async def test_data_chunk_with_id_and_transient():
     assert {'type': 'data-progress', 'data': {'percent': 100}, 'transient': True} in events
 
 
+async def test_tool_approval_request_emission():
+    """Test that ToolApprovalRequestChunk is emitted when tools require approval."""
+    from pydantic_ai.tools import DeferredToolRequests
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='delete_file',
+                json_args='{"path": "test.txt"}',
+                tool_call_id='delete_1',
+            )
+        }
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return f'Deleted {path}'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Delete test.txt')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Verify tool-approval-request chunk is emitted with UUID approval_id
+    approval_event: dict[str, Any] | None = next(
+        (e for e in events if isinstance(e, dict) and e.get('type') == 'tool-approval-request'),
+        None,
+    )
+    assert approval_event is not None
+    assert approval_event['toolCallId'] == 'delete_1'
+    assert 'approvalId' in approval_event
+
+
+def test_extract_deferred_tool_results_approved():
+    """Test that approved tool calls are correctly extracted from UI messages."""
+    from pydantic_ai.tools import ToolApproved
+    from pydantic_ai.ui.vercel_ai.request_types import (
+        DynamicToolInputAvailablePart,
+        ToolApprovalResponded,
+    )
+
+    messages = [
+        UIMessage(
+            id='msg-1',
+            role='assistant',
+            parts=[
+                DynamicToolInputAvailablePart(
+                    tool_name='delete_file',
+                    tool_call_id='delete_1',
+                    input={'path': 'test.txt'},
+                    approval=ToolApprovalResponded(id='approval-123', approved=True),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is not None
+    assert 'delete_1' in result.approvals
+    assert isinstance(result.approvals['delete_1'], ToolApproved)
+
+
+def test_extract_deferred_tool_results_denied():
+    """Test that denied tool calls are correctly extracted from UI messages."""
+    from pydantic_ai.tools import ToolDenied
+    from pydantic_ai.ui.vercel_ai.request_types import (
+        DynamicToolInputAvailablePart,
+        ToolApprovalResponded,
+    )
+
+    messages = [
+        UIMessage(
+            id='msg-1',
+            role='assistant',
+            parts=[
+                DynamicToolInputAvailablePart(
+                    tool_name='delete_file',
+                    tool_call_id='delete_1',
+                    input={'path': 'test.txt'},
+                    approval=ToolApprovalResponded(id='approval-123', approved=False, reason='User rejected deletion'),
+                ),
+            ],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is not None
+    assert 'delete_1' in result.approvals
+    denial = result.approvals['delete_1']
+    assert isinstance(denial, ToolDenied)
+    assert denial.message == 'User rejected deletion'
+
+
+def test_extract_deferred_tool_results_no_approvals():
+    """Test that None is returned when no approval responses exist."""
+    messages = [
+        UIMessage(
+            id='msg-1',
+            role='user',
+            parts=[TextUIPart(text='Hello')],
+        ),
+    ]
+
+    result = VercelAIAdapter.extract_deferred_tool_results(messages)
+    assert result is None
+
+
+async def test_tool_output_denied_chunk_emission():
+    """Test that ToolOutputDeniedChunk is emitted when a tool call is denied."""
+    from pydantic_ai.tools import DeferredToolRequests
+    from pydantic_ai.ui.vercel_ai.request_types import (
+        DynamicToolInputAvailablePart,
+        ToolApprovalResponded,
+    )
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # Model acknowledges the denial
+        yield 'The file deletion was cancelled as requested.'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return f'Deleted {path}'
+
+    # Simulate a follow-up request where the user denied the tool
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='user-1',
+                role='user',
+                parts=[TextUIPart(text='Delete test.txt')],
+            ),
+            UIMessage(
+                id='assistant-1',
+                role='assistant',
+                parts=[
+                    DynamicToolInputAvailablePart(
+                        tool_name='delete_file',
+                        tool_call_id='delete_1',
+                        input={'path': 'test.txt'},
+                        approval=ToolApprovalResponded(
+                            id='approval-123',
+                            approved=False,
+                            reason='User cancelled the deletion',
+                        ),
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(
+            adapter.run_stream(deferred_tool_results=adapter.deferred_tool_results)
+        )
+    ]
+
+    # Verify tool-output-denied chunk is emitted
+    denied_event: dict[str, Any] | None = next(
+        (e for e in events if isinstance(e, dict) and e.get('type') == 'tool-output-denied'),
+        None,
+    )
+    assert denied_event is not None
+    assert denied_event['toolCallId'] == 'delete_1'
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
@@ -2089,6 +2280,7 @@ async def test_adapter_dump_messages_with_tools():
                         'output': '{"results":["result1","result2"]}',
                         'call_provider_metadata': None,
                         'preliminary': None,
+                        'approval': None,
                     },
                 ],
             },
@@ -2151,6 +2343,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                         'provider_executed': True,
                         'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
                         'preliminary': None,
+                        'approval': None,
                     }
                 ],
             },
@@ -2197,6 +2390,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                         'input': '{"query":"orphan query"}',
                         'provider_executed': True,
                         'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                        'approval': None,
                     }
                 ],
             },
@@ -2363,6 +2557,7 @@ Tool failed with error
 Fix the errors and try again.\
 """,
                         'call_provider_metadata': None,
+                        'approval': None,
                     }
                 ],
             },
@@ -2494,6 +2689,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                         'provider_executed': True,
                         'call_provider_metadata': {'pydantic_ai': {'provider_name': 'test'}},
                         'preliminary': None,
+                        'approval': None,
                     },
                     {
                         'type': 'text',
@@ -2612,6 +2808,7 @@ async def test_adapter_dump_messages_tool_call_without_return():
                         'state': 'input-available',
                         'input': '{"city":"New York"}',
                         'call_provider_metadata': None,
+                        'approval': None,
                     }
                 ],
             }
@@ -2646,6 +2843,7 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                         'state': 'input-available',
                         'input': '{}',
                         'call_provider_metadata': None,
+                        'approval': None,
                     },
                     {
                         'type': 'text',

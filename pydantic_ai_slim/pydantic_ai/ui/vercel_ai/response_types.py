@@ -1,7 +1,9 @@
 """Vercel AI response types (SSE chunks).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+https://github.com/vercel/ai/blob/ai%406.0.0-beta.159/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+
+Tool approval types (`ToolApprovalRequestChunk`, `ToolOutputDeniedChunk`) require AI SDK v6 or later.
 """
 
 from abc import ABC
