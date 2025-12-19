@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
@@ -399,6 +399,7 @@ class PromptConfig:
         This fills in per-tool metadata and default templates, producing a `PromptConfig` that can be
         used as a starting point for prompt optimizers.
 
+        If the agent already has a `prompt_config`, it is used to override the defaults.
         """
         tool_config: dict[str, ToolConfig] = {}
 
@@ -424,6 +425,21 @@ class PromptConfig:
                 strict=tool_def.strict,
                 parameters_descriptions=_extract_descriptions_from_json_schema(tool_def.parameters_json_schema),
             )
+
+        if agent.prompt_config:
+            if agent.prompt_config.templates:
+                current_templates = asdict(agent.prompt_config.templates)
+                updated_templates = {k: v for k, v in current_templates.items() if v is not None}
+                prompt_templates = replace(prompt_templates, **updated_templates)
+
+            if agent.prompt_config.tool_config:
+                for tool_name, config in agent.prompt_config.tool_config.items():
+                    if tool_name in tool_config:
+                        current_config = asdict(config)
+                        updates = {k: v for k, v in current_config.items() if v is not None}
+                        tool_config[tool_name] = replace(tool_config[tool_name], **updates)
+                    else:
+                        tool_config[tool_name] = config
 
         return PromptConfig(
             tool_config=tool_config,
