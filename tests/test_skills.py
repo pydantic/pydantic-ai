@@ -352,7 +352,7 @@ def testvalidate_skill_metadata_multiple_issues() -> None:
     assert len(warnings) >= 3
 
 
-def testvalidate_skill_metadata_good_naming_conventions() -> None:
+def test_validate_skill_metadata_good_naming_conventions() -> None:
     """Test validation with valid naming conventions."""
     good_names = [
         'processing-pdfs',
