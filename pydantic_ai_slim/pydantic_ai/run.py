@@ -4,7 +4,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTaskRequest, JoinItem
@@ -186,11 +186,14 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
             if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
-                base_node: BaseNode[
-                    _agent_graph.GraphAgentState,
-                    _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
-                    FinalResult[OutputDataT],
-                ] = first_task.inputs  # type: ignore[reportUnknownMemberType]
+                base_node = cast(
+                    BaseNode[
+                        _agent_graph.GraphAgentState,
+                        _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
+                        FinalResult[OutputDataT],
+                    ],
+                    first_task.inputs,  # pyright: ignore[reportUnknownMemberType]
+                )
                 if _agent_graph.is_agent_node(node=base_node):  # pragma: no branch
                     return base_node
         if isinstance(task, EndMarker):

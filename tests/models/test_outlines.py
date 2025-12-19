@@ -135,7 +135,7 @@ def transformers_model() -> OutlinesModel:
     hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
-    outlines_model = outlines.models.transformers.from_transformers(
+    outlines_model = outlines.models.transformers.from_transformers(  # pyright: ignore[reportUnknownMemberType]
         hf_model,  # pyright: ignore[reportUnknownArgumentType]
         hf_tokenizer,  # pyright: ignore[reportUnknownArgumentType]
     )
@@ -151,7 +151,7 @@ def transformers_multimodal_model() -> OutlinesModel:
     hf_processor = transformers.AutoProcessor.from_pretrained(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         'trl-internal-testing/tiny-LlavaForConditionalGeneration'
     )
-    outlines_model = outlines.models.transformers.from_transformers(
+    outlines_model = outlines.models.transformers.from_transformers(  # pyright: ignore[reportUnknownMemberType]
         hf_model,
         hf_processor,  # pyright: ignore[reportUnknownArgumentType]
     )

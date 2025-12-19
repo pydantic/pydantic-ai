@@ -78,7 +78,7 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     span_id: str | None = None
     """The span ID of the case span."""
 
-    evaluator_failures: list[EvaluatorFailure] = field(default_factory=list)
+    evaluator_failures: list[EvaluatorFailure] = field(default_factory=list[EvaluatorFailure])
 
 
 @dataclass(kw_only=True)
@@ -195,7 +195,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
     cases: list[ReportCase[InputsT, OutputT, MetadataT]]
     """The cases in the report."""
-    failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
+    failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(
+        default_factory=list[ReportCaseFailure[InputsT, OutputT, MetadataT]]
+    )
     """The failures in the report. These are cases where task execution raised an exception."""
 
     experiment_metadata: dict[str, Any] | None = None

@@ -182,7 +182,7 @@ class Response:
 @dataclass
 class BasicSpan:
     content: str
-    children: list[BasicSpan] = field(default_factory=list)
+    children: list[BasicSpan] = field(default_factory=list['BasicSpan'])
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 

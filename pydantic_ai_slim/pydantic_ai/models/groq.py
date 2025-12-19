@@ -52,7 +52,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
+    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, omit
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -299,21 +299,21 @@ class GroqModel(Model):
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-                tools=tools or NOT_GIVEN,
-                tool_choice=tool_choice or NOT_GIVEN,
-                stop=model_settings.get('stop_sequences', NOT_GIVEN),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', omit),
+                tools=tools or omit,
+                tool_choice=tool_choice or omit,
+                stop=model_settings.get('stop_sequences', omit),
                 stream=stream,
-                response_format=response_format or NOT_GIVEN,
-                max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
+                response_format=response_format or omit,
+                max_tokens=model_settings.get('max_tokens', omit),
+                temperature=model_settings.get('temperature', omit),
+                top_p=model_settings.get('top_p', omit),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                seed=model_settings.get('seed', NOT_GIVEN),
-                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                reasoning_format=model_settings.get('groq_reasoning_format', NOT_GIVEN),
-                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                seed=model_settings.get('seed', omit),
+                presence_penalty=model_settings.get('presence_penalty', omit),
+                reasoning_format=model_settings.get('groq_reasoning_format', omit),
+                frequency_penalty=model_settings.get('frequency_penalty', omit),
+                logit_bias=model_settings.get('logit_bias', omit),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )

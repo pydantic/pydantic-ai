@@ -7,11 +7,11 @@ from datetime import timezone
 from typing import Any, Literal, cast
 
 import pytest
-from _pytest.python_api import RaisesContext
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import to_json
+from pytest import RaisesExc
 
 from pydantic_ai import (
     Agent,
@@ -328,7 +328,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
 def test_all_failed() -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model)
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with cast(RaisesExc[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
@@ -351,7 +351,7 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model, instrument=True)
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with cast(RaisesExc[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
@@ -534,7 +534,7 @@ async def test_first_failed_streaming() -> None:
 async def test_all_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with cast(RaisesExc[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         async with agent.run_stream('hello') as result:
             [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]

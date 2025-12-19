@@ -14,7 +14,7 @@ pytestmark = pytest.mark.anyio
 
 @dataclass
 class CounterState:
-    values: list[int] = field(default_factory=list)
+    values: list[int] = field(default_factory=list[int])
 
 
 async def test_broadcast_to_multiple_steps():

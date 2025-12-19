@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
 
+import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
@@ -2192,7 +2193,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockMistralAI.create_mock(
         SDKError(
             'test error',
-            status_code=500,
+            raw_response=httpx.Response(500, content=b'test error'),
             body='test error',
         )
     )
@@ -2207,7 +2208,7 @@ def test_model_non_http_error(allow_model_requests: None) -> None:
     mock_client = MockMistralAI.create_mock(
         SDKError(
             'Connection error',
-            status_code=300,
+            raw_response=httpx.Response(300, content=b'redirect'),
             body='redirect',
         )
     )

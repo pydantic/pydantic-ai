@@ -33,11 +33,12 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
             # TODO(Marcelo): We can reuse the `_map_tool_result_part` from the mcp module here.
             if isinstance(content, mcp_types.TextContent):
                 user_part_content: str | Sequence[messages.UserContent] = content.text
-            else:
-                # image content
+            elif isinstance(content, mcp_types.ImageContent):
                 user_part_content = [
                     messages.BinaryContent(data=base64.b64decode(content.data), media_type=content.mimeType)
                 ]
+            else:
+                raise NotImplementedError(f'Unsupported user content type: {type(content).__name__}')
 
             request_parts.append(messages.UserPromptPart(content=user_part_content))
         else:
@@ -47,7 +48,10 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 pai_messages.append(messages.ModelRequest(parts=request_parts))
                 request_parts = []
 
-            response_parts.append(map_from_sampling_content(content))
+            if isinstance(content, (mcp_types.TextContent, mcp_types.ImageContent, mcp_types.AudioContent)):
+                response_parts.append(map_from_sampling_content(content))
+            else:
+                raise NotImplementedError(f'Unsupported assistant content type: {type(content).__name__}')
 
     if response_parts:
         pai_messages.append(messages.ModelResponse(parts=response_parts))

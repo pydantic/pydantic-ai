@@ -57,9 +57,9 @@ class ModelResponsePartsManager:
     Parts are generally added and/or updated by providing deltas, which are tracked by vendor-specific IDs.
     """
 
-    _parts: list[ManagedPart] = field(default_factory=list, init=False)
+    _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
-    _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
+    _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
     def get_parts(self) -> list[ModelResponsePart]:
