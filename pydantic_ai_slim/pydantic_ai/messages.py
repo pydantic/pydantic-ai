@@ -881,6 +881,15 @@ ToolReturnKind: TypeAlias = Literal[
     'tool-denied',
     'output-validation-failed',
 ]
+"""How the tool call was resolved, used for disambiguating return parts.
+
+* `final-result-processed`: an output tool produced the run's final result
+* `output-tool-not-executed`: an output tool was skipped because a final result already existed
+* `function-tool-not-executed`: a function tool was skipped due to early termination after a final result
+* `tool-executed`: the tool ran successfully and produced a return value (not templated)
+* `tool-denied`: the tool call was rejected by an approval handler
+* `output-validation-failed`: the tool call was rejected by an output validator
+"""
 
 
 @dataclass(repr=False)
@@ -893,16 +902,7 @@ class ToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
     return_kind: ToolReturnKind | None = None
-    """How the tool call was resolved, used for disambiguating return parts.
-
-    * `tool-executed`: the tool ran successfully and produced a return value
-    * `final-result-processed`: an output tool produced the run's final result
-    * `output-tool-not-executed`: an output tool was skipped because a final result already existed
-    * `function-tool-not-executed`: a function tool was skipped due to early termination after a final result
-    * `tool-denied`: the tool call was rejected by an approval handler
-    * `output-validation-failed`: the tool call was rejected by an output validator
-
-    """
+    """How the tool call was resolved, used for disambiguating return parts."""
 
 
 @dataclass(repr=False)

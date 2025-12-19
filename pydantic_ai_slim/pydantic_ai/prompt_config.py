@@ -183,7 +183,6 @@ class PromptTemplates:
 
     def apply_template(self, message_part: ModelRequestPart, ctx: RunContext[Any]) -> ModelRequestPart:
         if isinstance(message_part, ToolReturnPart):
-
             # tool-executed and any other return kind should not be templated
             if not message_part.return_kind or not return_kind_to_default_prompt_template.get(message_part.return_kind):
                 return message_part
@@ -199,7 +198,7 @@ class PromptTemplates:
             elif message_part.return_kind == 'function-tool-not-executed':
                 template = self.function_tool_not_executed
             else:
-                assert_never(message_part.return_kind) # type: ignore[arg-type]
+                assert_never(message_part.return_kind)  # type: ignore[arg-type]
 
             # ToolDenied cannot fallback to a default prompt template
             # ToolDenied may have a template set via ToolDenied('')
