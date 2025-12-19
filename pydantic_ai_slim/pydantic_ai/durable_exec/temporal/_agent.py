@@ -383,7 +383,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 )
             resolved_model = None
         else:
-            resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
+            resolved_model = self._temporal_model.resolve_model(model)
 
         with self._temporal_overrides(model=model):
             return await super().run(
@@ -926,7 +926,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
             resolved_model = None
         else:
-            resolved_model = self._temporal_model.resolve_model_for_outside_workflow(model)
+            resolved_model = self._temporal_model.resolve_model(model)
 
         async with super().iter(
             user_prompt=user_prompt,

@@ -247,7 +247,7 @@ class TemporalModel(WrapperModel):
 
         if isinstance(model, Model):
             # Check if this model instance is already registered
-            model_id = next((mid for mid, m in self._models_by_id.items() if m is model), ...)
+            model_id = next((model_id for model_id, m in self._models_by_id.items() if m is model), ...)
             if model_id is ...:
                 raise UserError(
                     'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. '
@@ -257,15 +257,17 @@ class TemporalModel(WrapperModel):
 
         return model
 
-    def resolve_model_for_outside_workflow(
+    def resolve_model(
         self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> models.Model | models.KnownModelName | str | None:
+    ) -> models.Model | models.KnownModelName | str:
         """Resolve a model parameter for use outside a workflow.
 
-        If the model is a registered ID, returns the registered Model instance.
-        If model is None, returns the wrapped (primary) model to use as default.
-        Otherwise returns the original value.
+        If model is None, returns the wrapped (primary) model.
+        If model is a registered name, returns the registered Model instance.
+        Otherwise returns the original value (model instance or string).
         """
+        if model is None:
+            return self.wrapped
         if isinstance(model, str) and model in self._models_by_id:
             return self._models_by_id[model]
         return model
