@@ -463,16 +463,25 @@ class PromptConfig:
         )
 
     def merge_prompt_config(self, other_prompt_config: PromptConfig) -> PromptConfig:
-        effective_prompt_templates: PromptTemplates = PromptTemplates()
+        effective_prompt_templates = other_prompt_config.templates
+        effective_tool_config = dict(other_prompt_config.tool_config or {})
 
-        if other_prompt_config.templates:
-            effective_prompt_templates = PromptTemplates(**asdict(other_prompt_config.templates))
-
-        if self.templates:
-            updates = {k: v for k, v in asdict(self.templates).items() if v is not None}
+        if effective_prompt_templates and (templates := self.templates):
+            updates = {k: v for k, v in asdict(templates).items() if v is not None}
             effective_prompt_templates = replace(effective_prompt_templates, **updates)
 
-        return PromptConfig(templates=effective_prompt_templates)
+        if tool_config := self.tool_config:
+            for tool_name, current_tool_config in tool_config.items():
+                updates = {k: v for k, v in asdict(current_tool_config).items() if v is not None}
+                if tool_name in effective_tool_config:
+                    effective_tool_config[tool_name] = replace(effective_tool_config[tool_name], **updates)
+                else:
+                    effective_tool_config[tool_name] = current_tool_config
+
+        return PromptConfig(
+            templates=effective_prompt_templates,
+            tool_config=effective_tool_config or None,
+        )
 
 
 DEFAULT_PROMPT_TEMPLATES = PromptTemplates(
