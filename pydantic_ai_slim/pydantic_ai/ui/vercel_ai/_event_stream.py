@@ -91,7 +91,9 @@ def _extract_denied_tool_ids(messages: list[UIMessage]) -> set[str]:
                 continue
             approval = part.approval
             if isinstance(approval, ToolApprovalResponded) and not approval.approved:
-                denied_ids.add(part.tool_call_id)
+                tool_call_id = part.tool_call_id
+                if tool_call_id:
+                    denied_ids.add(tool_call_id)
     return denied_ids
 
 
@@ -136,7 +138,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
         pydantic_reason = event.result.response.finish_reason
         if pydantic_reason:
-            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason)
+            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'unknown')
 
         # Emit tool approval requests for deferred approvals
         output = event.result.output
