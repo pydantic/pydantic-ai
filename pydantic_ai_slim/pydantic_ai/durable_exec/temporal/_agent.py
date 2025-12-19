@@ -307,8 +307,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
-        with self._temporal_overrides():
-            return super().toolsets
+        if workflow.in_workflow():
+            with self._temporal_overrides():
+                return super().toolsets
+        else:
+            with super().override(toolsets=self._toolsets, tools=[]):
+                return super().toolsets
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
@@ -316,14 +320,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _temporal_overrides(self, *, model_id: str | None = None) -> Iterator[None]:
+        """Context manager for workflow-specific overrides. Only call this when inside a workflow."""
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
-        if not workflow.in_workflow():
-            # Outside workflow, just use the toolsets override
-            with super().override(toolsets=self._toolsets, tools=[]):
-                yield
-            return
-
-        # Inside workflow, override model and set the model_id
+        # Override model and set the model_id for workflow execution
         with (
             super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
             self._temporal_model.using_model(model_id),
@@ -440,37 +439,54 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             )
 
-        model_id: str | None = None
-        resolved_model: models.Model | models.KnownModelName | str | None = model
-
-        if model is not None:
-            if workflow.in_workflow():
-                # In workflow: convert to model_id for the temporal model to use
+        if workflow.in_workflow():
+            # In workflow: convert model to model_id for the temporal model to use
+            model_id: str | None = None
+            if model is not None:
                 model_id = self._get_model_id(model)
-                resolved_model = None
-            else:
-                # Outside workflow: resolve registered model IDs to actual model instances
-                if isinstance(model, str) and model in self._models_by_id:
-                    resolved_model = self._models_by_id[model]
 
-        with self._temporal_overrides(model_id=model_id):
-            return await super().run(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                model=resolved_model,
-                instructions=instructions,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                builtin_tools=builtin_tools,
-                event_stream_handler=event_stream_handler or self.event_stream_handler,
-                **_deprecated_kwargs,
-            )
+            with self._temporal_overrides(model_id=model_id):
+                return await super().run(
+                    user_prompt,
+                    output_type=output_type,
+                    message_history=message_history,
+                    deferred_tool_results=deferred_tool_results,
+                    model=None,
+                    instructions=instructions,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    infer_name=infer_name,
+                    toolsets=toolsets,
+                    builtin_tools=builtin_tools,
+                    event_stream_handler=event_stream_handler or self.event_stream_handler,
+                    **_deprecated_kwargs,
+                )
+        else:
+            # Outside workflow: resolve registered model IDs to actual model instances
+            resolved_model: models.Model | models.KnownModelName | str | None = model
+            if isinstance(model, str) and model in self._models_by_id:
+                resolved_model = self._models_by_id[model]
+
+            with super().override(toolsets=self._toolsets, tools=[]):
+                return await super().run(
+                    user_prompt,
+                    output_type=output_type,
+                    message_history=message_history,
+                    deferred_tool_results=deferred_tool_results,
+                    model=resolved_model,
+                    instructions=instructions,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    infer_name=infer_name,
+                    toolsets=toolsets,
+                    builtin_tools=builtin_tools,
+                    event_stream_handler=event_stream_handler or self.event_stream_handler,
+                    **_deprecated_kwargs,
+                )
 
     @overload
     def run_sync(
