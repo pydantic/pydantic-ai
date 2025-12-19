@@ -299,7 +299,7 @@ def testvalidate_skill_metadata_invalid_name_format() -> None:
     assert any('lowercase letters, numbers, and hyphens' in w for w in warnings)
 
 
-def testvalidate_skill_metadata_reserved_word() -> None:
+def test_validate_skill_metadata_reserved_word() -> None:
     """Test validation with reserved words in name."""
     frontmatter = {
         'name': 'anthropic-helper',
