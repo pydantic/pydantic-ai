@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any, Generic, TypeAlias
+from typing import Any, TypeAlias
 
 from typing_extensions import Self
 
@@ -15,14 +14,6 @@ ToolsetFunc: TypeAlias = Callable[
     AbstractToolset[AgentDepsT] | None | Awaitable[AbstractToolset[AgentDepsT] | None],
 ]
 """A sync/async function which takes a run context and returns a toolset."""
-
-
-@dataclass
-class _RunState(Generic[AgentDepsT]):
-    """Per-run state for a DynamicToolset."""
-
-    toolset: AbstractToolset[AgentDepsT] | None = None
-    run_step: int | None = None
 
 
 class DynamicToolset(AbstractToolset[AgentDepsT]):
@@ -45,7 +36,8 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         self.toolset_func = toolset_func
         self.per_run_step = per_run_step
         self._id = id
-        self._run_state: _RunState[AgentDepsT] | None = None
+        self._toolset: AbstractToolset[AgentDepsT] | None = None
+        self._run_step: int | None = None
 
     @property
     def id(self) -> str | None:
@@ -73,21 +65,17 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
     async def __aexit__(self, *args: Any) -> bool | None:
         try:
             result = None
-            if self._run_state is not None and self._run_state.toolset is not None:
-                result = await self._run_state.toolset.__aexit__(*args)
+            if self._toolset is not None:
+                result = await self._toolset.__aexit__(*args)
         finally:
-            self._run_state = None
+            self._toolset = None
+            self._run_step = None
         return result
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if self._run_state is None:
-            self._run_state = _RunState()
-
-        run_state = self._run_state
-
-        if run_state.toolset is None or (self.per_run_step and ctx.run_step != run_state.run_step):
-            if run_state.toolset is not None:
-                await run_state.toolset.__aexit__()
+        if self._toolset is None or (self.per_run_step and ctx.run_step != self._run_step):
+            if self._toolset is not None:
+                await self._toolset.__aexit__()
 
             toolset = self.toolset_func(ctx)
             if inspect.isawaitable(toolset):
@@ -96,35 +84,33 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             if toolset is not None:
                 await toolset.__aenter__()
 
-            run_state.toolset = toolset
-            run_state.run_step = ctx.run_step
+            self._toolset = toolset
+            self._run_step = ctx.run_step
 
-        if run_state.toolset is None:
+        if self._toolset is None:
             return {}
 
-        return await run_state.toolset.get_tools(ctx)
+        return await self._toolset.get_tools(ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        assert self._run_state is not None and self._run_state.toolset is not None
-        return await self._run_state.toolset.call_tool(name, tool_args, ctx, tool)
+        assert self._toolset is not None
+        return await self._toolset.call_tool(name, tool_args, ctx, tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        if self._run_state is None or self._run_state.toolset is None:
+        if self._toolset is None:
             super().apply(visitor)
         else:
-            self._run_state.toolset.apply(visitor)
+            self._toolset.apply(visitor)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
-        if self._run_state is None or self._run_state.toolset is None:
+        if self._toolset is None:
             return super().visit_and_replace(visitor)
         else:
             new_toolset = self.copy()
-            new_toolset._run_state = _RunState(
-                toolset=self._run_state.toolset.visit_and_replace(visitor),
-                run_step=self._run_state.run_step,
-            )
+            new_toolset._toolset = self._toolset.visit_and_replace(visitor)
+            new_toolset._run_step = self._run_step
             return new_toolset

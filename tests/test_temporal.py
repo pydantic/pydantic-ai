@@ -1188,7 +1188,7 @@ def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
 
     This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
     """
-    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp', id='dynamic_deepwiki')
+    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
 
 
 mcp_dynamic_toolset_temporal_agent = TemporalAgent(

@@ -26,7 +26,7 @@ from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets._dynamic import DynamicToolset, _RunState  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.anyio
 T = TypeVar('T')
 
 
-def build_run_context(deps: T, run_step: int = 0, run_id: str = 'test-run-id') -> RunContext[T]:
+def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -42,7 +42,6 @@ def build_run_context(deps: T, run_step: int = 0, run_id: str = 'test-run-id') -
         prompt=None,
         messages=[],
         run_step=run_step,
-        run_id=run_id,
     )
 
 
@@ -708,12 +707,12 @@ async def test_visit_and_replace():
     toolset1 = FunctionToolset(id='toolset1')
     toolset2 = FunctionToolset(id='toolset2')
 
-    run_ctx = build_run_context(None, run_id='visit-replace-run')
+    run_ctx = build_run_context(None)
 
     active_dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: toolset2)
     await active_dynamic_toolset.get_tools(run_ctx)
-    assert active_dynamic_toolset._run_state is not None  # pyright: ignore[reportPrivateUsage]
-    assert active_dynamic_toolset._run_state.toolset is toolset2  # pyright: ignore[reportPrivateUsage]
+    assert active_dynamic_toolset._toolset is not None  # pyright: ignore[reportPrivateUsage]
+    assert active_dynamic_toolset._toolset is toolset2  # pyright: ignore[reportPrivateUsage]
 
     inactive_dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: FunctionToolset())
 
@@ -731,11 +730,8 @@ async def test_visit_and_replace():
         per_run_step=active_dynamic_toolset.per_run_step,
         id=active_dynamic_toolset._id,  # pyright: ignore[reportPrivateUsage]
     )
-    assert active_dynamic_toolset._run_state is not None  # pyright: ignore[reportPrivateUsage]
-    expected_dynamic._run_state = _RunState(  # pyright: ignore[reportPrivateUsage]
-        toolset=WrapperToolset(toolset2),
-        run_step=active_dynamic_toolset._run_state.run_step,  # pyright: ignore[reportPrivateUsage]
-    )
+    expected_dynamic._toolset = WrapperToolset(toolset2)  # pyright: ignore[reportPrivateUsage]
+    expected_dynamic._run_step = active_dynamic_toolset._run_step  # pyright: ignore[reportPrivateUsage]
 
     assert visited_toolset == CombinedToolset(
         [
@@ -780,17 +776,16 @@ async def test_dynamic_toolset():
 
     toolset = DynamicToolset[None](toolset_func=toolset_factory)
 
-    run_context = build_run_context(None, run_id='test-dynamic-run')
+    run_context = build_run_context(None)
 
     def get_inner_toolset(toolset: DynamicToolset[None] | None) -> EnterableToolset | None:
         assert toolset is not None
-        run_state = toolset._run_state  # pyright: ignore[reportPrivateUsage]
-        inner_toolset = run_state.toolset if run_state else None
+        inner_toolset = toolset._toolset  # pyright: ignore[reportPrivateUsage]
         assert isinstance(inner_toolset, EnterableToolset) or inner_toolset is None
         return inner_toolset
 
     async with toolset:
-        assert toolset._run_state is None  # pyright: ignore[reportPrivateUsage]
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
 
         # Test that calling get_tools initializes the toolset
         tools = await toolset.get_tools(run_context)
@@ -820,22 +815,20 @@ async def test_dynamic_toolset_empty():
 
     toolset = DynamicToolset[None](toolset_func=no_toolset_func)
 
-    run_context = build_run_context(None, run_id='test-empty-run')
+    run_context = build_run_context(None)
 
     tools = await toolset.get_tools(run_context)
 
     assert tools == {}
 
     async with toolset:
-        run_state = toolset._run_state  # pyright: ignore[reportPrivateUsage]
-        assert run_state is None or run_state.toolset is None
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
 
         tools = await toolset.get_tools(run_context)
 
         assert tools == {}
 
-        run_state = toolset._run_state  # pyright: ignore[reportPrivateUsage]
-        assert run_state is not None and run_state.toolset is None
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_dynamic_toolset_id():
