@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
-from pydantic_ai import _utils
+from pydantic_ai import DEFAULT_FINAL_RESULT_PROCESSED, _utils
 
 from ..messages import (
     AgentStreamEvent,
@@ -169,7 +169,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                             result=ToolReturnPart(
                                 tool_call_id=tool_call_id,
                                 tool_name=tool_name,
-                                content='Final result processed.',
+                                content=DEFAULT_FINAL_RESULT_PROCESSED,
                                 return_kind='final-result-processed',
                             )
                         )
