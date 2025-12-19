@@ -326,8 +326,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         with (
             super().override(model=self._temporal_model, toolsets=self._toolsets, tools=[]),
             self._temporal_model.using_model(model_id),
+            _utils.disable_threads(),
         ):
-            token = self._temporal_overrides_active.set(True)
+            temporal_active_token = self._temporal_overrides_active.set(True)
             try:
                 yield
             except PydanticSerializationError as e:
@@ -335,7 +336,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
                 ) from e
             finally:
-                self._temporal_overrides_active.reset(token)
+                self._temporal_overrides_active.reset(temporal_active_token)
 
     @overload
     async def run(
