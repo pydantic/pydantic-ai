@@ -273,11 +273,6 @@ class TemporalModel(WrapperModel):
         # Handle Model instances directly - outside a workflow, unregistered
         # Model instances are allowed since there's no serialization constraint.
         if isinstance(model, Model):
-            # Check if registered and return it
-            for m in self._models_by_id.values():
-                if m is model:
-                    return m
-            # Not registered, return as-is for outside workflow use
             return model
 
         # For strings and None, use _get_model_id + _resolve_model
