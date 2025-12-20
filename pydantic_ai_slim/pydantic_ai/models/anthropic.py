@@ -15,6 +15,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool
+from ..toolsets.searchable import is_search_tool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -569,6 +570,7 @@ class AnthropicModel(Model):
     ) -> list[BetaToolUnionParam]:
         tools: list[BetaToolUnionParam] = [
             self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()
+            if not is_search_tool(r)
         ]
 
         # Add cache_control to the last tool if enabled
