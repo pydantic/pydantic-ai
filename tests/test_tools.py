@@ -149,6 +149,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -184,6 +185,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -227,6 +229,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -270,6 +273,7 @@ def test_google_style_with_returns():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -311,6 +315,7 @@ def test_sphinx_style_with_returns():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -358,6 +363,7 @@ def test_numpy_style_with_returns():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -393,6 +399,7 @@ def test_only_returns_type():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -419,6 +426,7 @@ def test_docstring_unknown():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -463,6 +471,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -500,6 +509,7 @@ def test_takes_just_model():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -546,6 +556,7 @@ def test_takes_model_and_int():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -912,6 +923,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -985,6 +997,7 @@ def test_json_schema_required_parameters():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1001,6 +1014,7 @@ def test_json_schema_required_parameters():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1090,6 +1104,7 @@ def test_schema_generator():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1104,6 +1119,7 @@ def test_schema_generator():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1142,6 +1158,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -2757,3 +2774,59 @@ def test_agent_tool_timeout_passed_to_toolset():
 
     # The agent's tool_timeout should be passed to the toolset as timeout
     assert agent._function_toolset.timeout == 30.0
+
+
+def test_tool_examples_init():
+    def my_tool(x: int) -> int:
+        return x
+
+    examples = [{'x': 1}]
+    tool = Tool(my_tool, examples=examples)
+    assert tool.examples == examples
+    assert tool.tool_def.examples == examples
+
+
+def test_tool_from_schema_examples():
+    def my_tool(x: int) -> int:
+        return x
+
+    examples = [{'x': 1}]
+    tool = Tool.from_schema(
+        my_tool,
+        name='my_tool',
+        description='desc',
+        json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+        examples=examples,
+    )
+    assert tool.examples == examples
+    assert tool.tool_def.examples == examples
+
+
+def test_agent_tool_decorators_examples():
+    agent = Agent('test')
+    examples = [{'x': 1}]
+
+    @agent.tool(examples=examples)
+    def tool_ctx(ctx: RunContext[None], x: int) -> int:
+        return x
+
+    @agent.tool_plain(examples=examples)
+    def tool_plain(x: int) -> int:
+        return x
+
+    assert agent._function_toolset.tools['tool_ctx'].examples == examples
+    assert agent._function_toolset.tools['tool_plain'].examples == examples
+
+
+def test_tool_output_examples():
+    from pydantic_ai.output import ToolOutput
+
+    examples = [{'x': 1}]
+    tool_output = ToolOutput(int, name='foo', examples=examples)
+    assert tool_output.examples == examples
+
+    agent = Agent('test', output_type=tool_output)
+    # Access the output toolset to verify definition
+    assert agent._output_toolset is not None
+    tool_def = agent._output_toolset._tool_defs[0]
+    assert tool_def.examples == examples

@@ -8265,3 +8265,83 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_tool_definition_examples(allow_model_requests: None):
+    from pydantic_ai.tools import ToolDefinition
+
+    examples = [{'x': 1}]
+    tool_def = ToolDefinition(name='foo', description='bar', examples=examples)
+
+    #  a dummy client
+    mock_client = MockAnthropic.create_mock(completion_message([], BetaUsage(input_tokens=0, output_tokens=0)))
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    mapped = m._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+    assert mapped.get('input_examples') == examples
+
+
+async def test_anthropic_beta_headers_with_examples(allow_model_requests: None):
+    # Test standard client
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    examples = [{'x': 1}]
+
+    @agent.tool_plain(examples=examples)
+    def my_tool(x: int) -> int:
+        return x
+
+    await agent.run('hi')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    betas = completion_kwargs['betas']
+    assert 'advanced-tool-use-2025-11-20' in betas
+    assert 'tool-examples-2025-10-29' not in betas
+
+
+async def test_anthropic_bedrock_beta_headers_with_examples(allow_model_requests: None):
+    from unittest.mock import MagicMock
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # Mock client to pass isinstance check
+    mock_client = MagicMock(spec=AsyncAnthropicBedrock)
+    mock_client.base_url = 'https://bedrock.amazonaws.com'
+
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+    tools = [{'name': 'foo', 'input_examples': [{'x': 1}]}]
+    params = ModelRequestParameters()
+    settings = AnthropicModelSettings()
+
+    betas, _ = m._get_betas_and_extra_headers(tools, params, settings)  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+    assert 'tool-examples-2025-10-29' in betas
+    assert 'advanced-tool-use-2025-11-20' not in betas
+
+
+async def test_anthropic_vertex_beta_headers_with_examples(allow_model_requests: None):
+    from unittest.mock import MagicMock
+
+    from anthropic import AsyncAnthropicVertex
+
+    mock_client = MagicMock(spec=AsyncAnthropicVertex)
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+    tools = [{'name': 'foo', 'input_examples': [{'x': 1}]}]
+    params = ModelRequestParameters()
+    settings = AnthropicModelSettings()
+
+    betas, _ = m._get_betas_and_extra_headers(tools, params, settings)  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+    assert 'tool-examples-2025-10-29' in betas
+    assert 'advanced-tool-use-2025-11-20' not in betas
