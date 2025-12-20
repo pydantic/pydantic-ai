@@ -310,8 +310,11 @@ class SkillsToolset(FunctionToolset):
                         f"Script '{script_name}' timed out after {self._script_timeout} seconds"
                     )
 
-                # At this point, result should be set (timeout check passed)
-                assert result is not None
+                # At this point, result should be set; if not, treat as an execution error
+                if result is None:
+                    raise SkillScriptExecutionError(
+                        f"Script '{script_name}' did not complete execution; no result was returned"
+                    )
 
                 # Decode output from bytes to string
                 output = result.stdout.decode('utf-8', errors='replace')
