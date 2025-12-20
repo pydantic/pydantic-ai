@@ -155,6 +155,35 @@ def _discover_resources(skill_folder: Path) -> list[SkillResource]:
     return resources
 
 
+def _find_skill_files(root_dir: Path, max_depth: int | None) -> list[Path]:
+    """Find SKILL.md files with depth-limited search using optimized glob patterns.
+
+    Args:
+        root_dir: Root directory to search from.
+        max_depth: Maximum depth to search. None for unlimited.
+
+    Returns:
+        List of paths to SKILL.md files.
+    """
+    if max_depth is None:
+        # Unlimited recursive search
+        return list(root_dir.glob('**/SKILL.md'))
+
+    # Build explicit glob patterns for each depth level
+    # This is much faster than iterdir() while still limiting depth
+    skill_files: list[Path] = []
+
+    for depth in range(max_depth + 1):
+        if depth == 0:
+            pattern = 'SKILL.md'
+        else:
+            pattern = '/'.join(['*'] * depth) + '/SKILL.md'
+
+        skill_files.extend(root_dir.glob(pattern))
+
+    return skill_files
+
+
 def _discover_scripts(skill_folder: Path, skill_name: str) -> list[SkillScript]:
     """Discover executable scripts in a skill folder.
 
@@ -201,6 +230,7 @@ def _discover_scripts(skill_folder: Path, skill_name: str) -> list[SkillScript]:
 def discover_skills(
     directories: Sequence[str | Path],
     validate: bool = True,
+    max_depth: int | None = 3,
 ) -> list[Skill]:
     """Discover skills from filesystem directories.
 
@@ -210,6 +240,8 @@ def discover_skills(
     Args:
         directories: List of directory paths to search for skills.
         validate: Whether to validate skill structure (requires name and description).
+        max_depth: Maximum depth to search for SKILL.md files. None for unlimited.
+            Default is 3 levels deep to prevent performance issues with large trees.
 
     Returns:
         List of discovered Skill objects.
@@ -228,8 +260,9 @@ def discover_skills(
         if not dir_path.is_dir():
             continue
 
-        # Find all SKILL.md files (recursive search)
-        for skill_file in dir_path.glob('**/SKILL.md'):
+        # Find all SKILL.md files (depth-limited search for performance)
+        skill_files = _find_skill_files(dir_path, max_depth)
+        for skill_file in skill_files:
             try:
                 skill_folder = skill_file.parent
                 content = skill_file.read_text(encoding='utf-8')

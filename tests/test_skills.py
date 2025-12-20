@@ -311,7 +311,7 @@ def test_validate_skill_metadata_reserved_word() -> None:
     assert any('reserved word' in w for w in warnings)
 
 
-def testvalidate_skill_metadata_description_too_long() -> None:
+def test_validate_skill_metadata_description_too_long() -> None:
     """Test validation with description exceeding 1024 characters."""
     frontmatter = {
         'name': 'test-skill',
@@ -323,7 +323,7 @@ def testvalidate_skill_metadata_description_too_long() -> None:
     assert any('1024 characters' in w for w in warnings)
 
 
-def testvalidate_skill_metadata_instructions_too_long() -> None:
+def test_validate_skill_metadata_instructions_too_long() -> None:
     """Test validation with instructions exceeding 500 lines."""
     frontmatter = {
         'name': 'test-skill',

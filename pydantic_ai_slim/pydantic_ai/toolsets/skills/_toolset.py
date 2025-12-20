@@ -82,6 +82,7 @@ class SkillsToolset(FunctionToolset):
         id: str | None = None,
         script_timeout: int = 30,
         python_executable: str | Path | None = None,
+        max_depth: int | None = 3,
     ) -> None:
         """Initialize the skills toolset.
 
@@ -93,11 +94,14 @@ class SkillsToolset(FunctionToolset):
             script_timeout: Timeout in seconds for script execution (default: 30).
             python_executable: Path to Python executable for running scripts.
                 If None, uses sys.executable (default).
+            max_depth: Maximum depth to search for SKILL.md files. None for unlimited.
+                Default is 3 levels deep to prevent performance issues with large trees.
         """
         super().__init__(id=id)
 
         self._directories = [Path(d) for d in directories]
         self._validate = validate
+        self._max_depth = max_depth
         self._script_timeout = script_timeout
         self._python_executable = str(python_executable) if python_executable else sys.executable
         self._skills: dict[str, Skill] = {}
@@ -113,6 +117,7 @@ class SkillsToolset(FunctionToolset):
         skills = discover_skills(
             directories=self._directories,
             validate=self._validate,
+            max_depth=self._max_depth,
         )
         self._skills = {skill.name: skill for skill in skills}
 
@@ -146,7 +151,7 @@ class SkillsToolset(FunctionToolset):
             return '\n'.join(lines)
 
         @self.tool
-        async def load_skill(ctx: RunContext[Any], skill_name: str) -> str:  # noqa: D417  # pyright: ignore[reportUnusedFunction]
+        async def load_skill(ctx: RunContext[Any], skill_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
             """Load full instructions for a skill.
 
             Always load the skill before using read_skill_resource
@@ -154,6 +159,7 @@ class SkillsToolset(FunctionToolset):
             resources, scripts, and their usage patterns.
 
             Args:
+                ctx: Run context (required by toolset protocol).
                 skill_name: Name of the skill to load.
 
             Returns:
