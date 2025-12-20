@@ -70,6 +70,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
+    tool_approval: bool = False
+    """Whether tool approval streaming is enabled for human-in-the-loop workflows."""
+
     message_id: str = field(default_factory=lambda: str(uuid4()))
     """The message ID to use for the next event."""
 

@@ -64,7 +64,9 @@ from .request_types import (
 from .response_types import BaseChunk
 
 if TYPE_CHECKING:
-    pass
+    from starlette.requests import Request
+
+    from ...agent import AbstractAgent
 
 
 __all__ = ['VercelAIAdapter']
@@ -81,27 +83,39 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Build a Vercel AI run input object from the request body."""
         return request_data_ta.validate_json(body)
 
+    @classmethod
+    async def from_request(
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        tool_approval: bool = False,
+    ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
+        """Create a Vercel AI adapter from a request.
+
+        Args:
+            request: The incoming Starlette/FastAPI request.
+            agent: The Pydantic AI agent to run.
+            tool_approval: Whether to enable tool approval streaming for human-in-the-loop workflows.
+        """
+        run_input = cls.build_run_input(await request.body())
+        deferred_tool_results = cls.extract_deferred_tool_results(run_input.messages) if tool_approval else None
+        return cls(
+            agent=agent,
+            run_input=run_input,
+            accept=request.headers.get('accept'),
+            tool_approval=tool_approval,
+            deferred_tool_results=deferred_tool_results,
+        )
+
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
-        return VercelAIEventStream(self.run_input, accept=self.accept)
+        return VercelAIEventStream(self.run_input, accept=self.accept, tool_approval=self.tool_approval)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
-
-    @cached_property
-    def deferred_tool_results(self) -> DeferredToolResults | None:
-        """Extract deferred tool results from tool parts with approval responses.
-
-        When the Vercel AI SDK client responds to a tool-approval-request, it sends
-        the approval decision in the tool part's `approval` field. This method extracts
-        those responses and converts them to Pydantic AI's `DeferredToolResults` format.
-
-        Returns:
-            DeferredToolResults if any tool parts have approval responses, None otherwise.
-        """
-        return self.extract_deferred_tool_results(self.run_input.messages)
 
     @classmethod
     def extract_deferred_tool_results(cls, messages: Sequence[UIMessage]) -> DeferredToolResults | None:
