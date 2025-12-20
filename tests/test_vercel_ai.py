@@ -2282,6 +2282,50 @@ async def test_tool_approval_no_approvals_extracted():
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_run_stream_with_explicit_deferred_tool_results():
+    """Test that run_stream accepts explicit deferred_tool_results parameter."""
+    from unittest.mock import AsyncMock
+
+    from starlette.requests import Request
+
+    from pydantic_ai.tools import DeferredToolResults
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Test')]),
+        ],
+    )
+
+    def mock_header_get(key: str) -> str | None:
+        return None
+
+    request_body = request.model_dump_json().encode()
+    mock_request = AsyncMock(spec=Request)
+    mock_request.body = AsyncMock(return_value=request_body)
+    mock_request.headers.get = mock_header_get
+
+    adapter = await VercelAIAdapter[None, str].from_request(mock_request, agent=agent)
+
+    # Pass deferred_tool_results explicitly (even though it's empty, it covers the else branch)
+    explicit_results = DeferredToolResults()
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(deferred_tool_results=explicit_results))
+    ]
+
+    # Verify stream completed successfully
+    assert events[-1] == '[DONE]'
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
     request = SubmitMessage(
