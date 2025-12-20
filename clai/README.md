@@ -51,7 +51,34 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
-For full CLI documentation, see the [CLI documentation](https://ai.pydantic.dev/cli/).
+## Help
+
+```
+usage: clai [-h] [-l] [--version] [-m MODEL] [-a AGENT] [-t CODE_THEME] [--no-stream] [prompt]
+
+Pydantic AI CLI v...
+
+subcommands:
+  web           Start a web-based chat interface for an agent
+                Run "clai web --help" for more information
+
+positional arguments:
+  prompt                AI prompt for one-shot mode. If omitted, starts interactive mode.
+
+options:
+  -h, --help            show this help message and exit
+  -l, --list-models     List all available models and exit
+  --version             Show version and exit
+  -m MODEL, --model MODEL
+                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "openai:gpt-5".
+  -a AGENT, --agent AGENT
+                        Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
+  -t CODE_THEME, --code-theme CODE_THEME
+                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
+  --no-stream           Disable streaming from the model
+```
+
+For more information on how to use it, see the [CLI documentation](https://ai.pydantic.dev/cli/).
 
 ## Web Chat UI
 

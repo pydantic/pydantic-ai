@@ -8,7 +8,6 @@ from typing import Any, Literal
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
@@ -95,16 +94,8 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.get_tools_activity, self.call_tool_activity]
 
-    async def __aenter__(self) -> Self:
-        # The wrapped MCPServer enters itself around listing and calling tools
-        # so we don't need to enter it here (nor could we because we're not inside a Temporal activity).
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        return None
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
@@ -125,7 +116,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> CallToolResult:
-        if not workflow.in_workflow():
+        if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
