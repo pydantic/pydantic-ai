@@ -312,7 +312,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._temporal_activities
 
     @contextmanager
-    def _temporal_overrides(self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None) -> Iterator[None]:
+    def _temporal_overrides(
+        self,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        force: bool = False,
+    ) -> Iterator[None]:
         in_workflow = workflow.in_workflow()
 
         if toolsets:
@@ -322,9 +327,19 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         else:
             overridden_toolsets = list(self._toolsets)
 
+        # Outside workflow, only apply toolsets override (model is passed directly to run)
+        if not in_workflow and not force:
+            if toolsets:
+                with super().override(toolsets=overridden_toolsets, tools=[]):
+                    yield
+            else:
+                yield
+            return
+
         # We reset tools here as the temporalized function toolset is already in overridden_toolsets.
         with (
-            super().override(model=self._model, toolsets=overridden_toolsets, tools=[]),
+            super().override(model=self._temporal_model, toolsets=overridden_toolsets, tools=[]),
+            self._temporal_model.using_model(model),
             _utils.disable_threads(),
         ):
             temporal_active_token = self._temporal_overrides_active.set(True)
@@ -443,7 +458,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         else:
             resolved_model = self._temporal_model.resolve_model(model)
 
-        with self._temporal_overrides():
+        with self._temporal_overrides(toolsets=toolsets, model=model):
             return await super().run(
                 user_prompt,
                 output_type=output_type,

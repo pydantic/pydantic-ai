@@ -47,15 +47,22 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self,
         toolset: DynamicToolset[AgentDepsT],
         *,
-        activity_name_prefix: str,
-        activity_config: ActivityConfig,
-        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
-        deps_type: type[AgentDepsT],
+        activity_name_prefix: str | None = None,
+        activity_config: ActivityConfig | None = None,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]] | None = None,
+        deps_type: type[AgentDepsT] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     ):
         super().__init__(toolset)
-        self.activity_config = activity_config
-        self.tool_activity_config = tool_activity_config
+        from datetime import timedelta
+
+        if activity_name_prefix is None:
+            raise UserError('activity_name_prefix is required for TemporalDynamicToolset')
+        if deps_type is None:
+            raise UserError('deps_type is required for TemporalDynamicToolset')
+
+        self.activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(minutes=1))
+        self.tool_activity_config = tool_activity_config or {}
         self.run_context_type = run_context_type
 
         async def get_tools_activity(params: _GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
