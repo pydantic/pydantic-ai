@@ -7206,35 +7206,3 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
-
-
-async def test_content_filter_serialization_fallback():
-    """
-    Test fallback to str() when ModelResponse cannot be serialized to JSON.
-    Covers the except block in _agent_graph.py.
-    """
-
-    class UnserializableObj:
-        def __repr__(self):
-            return '<Unserializable>'
-
-    # Create a response that will fail JSON serialization
-    response = ModelResponse(
-        parts=[],
-        model_name='test-model',
-        finish_reason='content_filter',
-        # Inject unserializable object into provider_details to break dumping
-        provider_details={'bad_data': UnserializableObj()},
-    )
-
-    async def bad_response_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return response
-
-    model = FunctionModel(function=bad_response_model, model_name='test-model')
-    agent = Agent(model)
-
-    with pytest.raises(ContentFilterError) as exc_info:
-        await agent.run('trigger')
-
-    # Verify it fell back to str() representation
-    assert '<Unserializable>' in str(exc_info.value.body)

@@ -166,7 +166,8 @@ _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IM
 
 class _AzureContentFilterResultDetail(BaseModel):
     filtered: bool
-    severity: str
+    severity: str | None = None
+    detected: bool | None = None
 
 
 class _AzureContentFilterResult(BaseModel):
@@ -174,7 +175,8 @@ class _AzureContentFilterResult(BaseModel):
     self_harm: _AzureContentFilterResultDetail | None = None
     sexual: _AzureContentFilterResultDetail | None = None
     violence: _AzureContentFilterResultDetail | None = None
-    jailbreak: dict[str, Any] | None = None
+    jailbreak: _AzureContentFilterResultDetail | None = None
+    profanity: _AzureContentFilterResultDetail | None = None
 
 
 class _AzureInnerError(BaseModel):
@@ -224,6 +226,7 @@ def _resolve_openai_image_generation_size(
 
 def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
+    # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
     body_any: Any = e.body
 
     if system == 'azure' and e.status_code == 400 and isinstance(body_any, dict):
@@ -724,11 +727,7 @@ class OpenAIChatModel(Model):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        details = _map_provider_details(response.choices[0])
-
-        if hasattr(response, 'azure_content_filter_result'):
-            details['content_filter_result'] = getattr(response, 'azure_content_filter_result')
-        return details
+        return _map_provider_details(response.choices[0])
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""

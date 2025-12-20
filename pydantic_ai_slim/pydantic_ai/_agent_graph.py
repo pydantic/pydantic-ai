@@ -608,10 +608,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         details = self.model_response.provider_details or {}
                         reason = details.get('finish_reason', 'content_filter')
 
-                        try:
-                            body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
-                        except Exception:
-                            body = str(self.model_response)
+                        body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 
                         raise exceptions.ContentFilterError(
                             f"Content filter triggered. Finish reason: '{reason}'", body=body

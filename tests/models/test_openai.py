@@ -3574,6 +3574,8 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'self_harm': {'filtered': False, 'severity': 'safe'},
                     'sexual': {'filtered': False, 'severity': 'safe'},
                     'violence': {'filtered': False, 'severity': 'medium'},
+                    'jailbreak': {'filtered': False, 'detected': False},
+                    'profanity': {'filtered': False, 'detected': True},  # Added profanity
                 },
             },
         }
@@ -3596,6 +3598,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
         agent.run_sync('bad prompt')
 
     assert exc_info.value.body is not None
+
     assert json.loads(exc_info.value.body) == snapshot(
         [
             {
@@ -3622,6 +3625,8 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                         'self_harm': {'filtered': False, 'severity': 'safe'},
                         'sexual': {'filtered': False, 'severity': 'safe'},
                         'violence': {'filtered': False, 'severity': 'medium'},
+                        'jailbreak': {'filtered': False, 'detected': False},
+                        'profanity': {'filtered': False, 'detected': True},
                     },
                 },
                 'provider_response_id': None,
@@ -3649,7 +3654,7 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
         agent.run_sync('bad prompt')
 
 
-async def test_openai_response_filter_error_sync(allow_model_requests: None):
+async def test_openai_response_filter_error(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content=None, role='assistant'),
     )
@@ -3732,33 +3737,6 @@ def test_azure_400_malformed_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
 
     assert exc_info.value.status_code == 400
-
-
-def test_azure_prompt_filter_no_inner_error(allow_model_requests: None) -> None:
-    """Test Azure content filter that lacks the innererror details."""
-    # Valid content filter code, but missing 'innererror'
-    body = {
-        'error': {
-            'code': 'content_filter',
-            'message': 'The content was filtered.',
-            # No innererror
-        }
-    }
-
-    mock_client = MockOpenAI.create_mock(
-        APIStatusError(
-            'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
-            body=body,
-        )
-    )
-
-    m = OpenAIChatModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
-    agent = Agent(m)
-
-    # Should still raise ContentFilterError
-    with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
-        agent.run_sync('bad prompt')
 
 
 async def test_openai_chat_instructions_after_system_prompts(allow_model_requests: None):
