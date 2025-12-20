@@ -4668,12 +4668,3 @@ class TestLoadProviderMetadata:
         provider_metadata = {'test': {'id': 'test_id'}}
         result = load_provider_metadata(provider_metadata)
         assert result == {}
-def starlette_import_successful() -> bool:
-    """Check if starlette is installed."""
-    try:
-        from starlette.requests import Request
-
-        assert Request  # Verify the import succeeded
-        return True
-    except ImportError:
-        return False
