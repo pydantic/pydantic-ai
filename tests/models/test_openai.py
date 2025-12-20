@@ -3296,3 +3296,69 @@ response\
 """,
         }
     )
+
+
+async def test_defer_loading_tool(allow_model_requests: None):
+    """Test that defer_loading=True tools are only included when activated."""
+    from pydantic_ai.toolsets import FunctionToolset
+
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='1',
+                        function=Function(arguments='{"regex": "weather"}', name='load_tools'),
+                        type='function',
+                    )
+                ],
+            )
+        ),
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='2',
+                        function=Function(arguments='{"city": "San Francisco"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            )
+        ),
+        completion_message(ChatCompletionMessage(content='The weather in San Francisco is sunny and 72°F', role='assistant')),
+    ]
+
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Create a toolset with a defer_loading tool
+    toolset = FunctionToolset()
+
+    @toolset.tool(defer_loading=True)
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny and 72°F"
+
+    # Agent automatically wraps toolsets in SearchableToolset
+    agent = Agent(m, toolsets=[toolset], system_prompt='You are a helpful assistant.')
+
+    result = await agent.run("What's the weather like in San Francisco?")
+    assert result.output == 'The weather in San Francisco is sunny and 72°F'
+
+    # Verify the tool was initially not included, then activated
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    # First request should only have the search tool
+    first_tools = kwargs[0].get('tools', [])
+    tool_names = [t['function']['name'] for t in first_tools]
+    assert 'load_tools' in tool_names
+    assert 'get_weather' not in tool_names
+
+    # Second request should have both tools (get_weather was activated)
+    second_tools = kwargs[1].get('tools', [])
+    tool_names = [t['function']['name'] for t in second_tools]
+    assert 'load_tools' in tool_names
+    assert 'get_weather' in tool_names
