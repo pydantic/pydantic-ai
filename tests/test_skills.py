@@ -722,37 +722,6 @@ async def test_run_skill_script_not_found(sample_skills_dir: Path) -> None:
     assert 'nonexistent' not in script_names
 
 
-def test_get_skills_system_prompt(sample_skills_dir: Path) -> None:
-    """Test generating the system prompt."""
-    toolset = SkillsToolset(directories=[sample_skills_dir])
-
-    prompt = toolset.get_skills_system_prompt()
-
-    # Should include all skill names and descriptions
-    assert 'skill-one' in prompt
-    assert 'skill-two' in prompt
-    assert 'skill-three' in prompt
-    assert 'First test skill for basic operations' in prompt
-    assert 'Second test skill with resources' in prompt
-    assert 'Third test skill with executable scripts' in prompt
-
-    # Should include usage instructions
-    assert 'load_skill' in prompt
-    assert 'read_skill_resource' in prompt
-    assert 'run_skill_script' in prompt
-
-    # Should include progressive disclosure guidance
-    assert 'Progressive disclosure' in prompt or 'progressive disclosure' in prompt
-
-
-def test_get_skills_system_prompt_empty() -> None:
-    """Test system prompt with no skills."""
-    toolset = SkillsToolset(directories=[], auto_discover=False)
-
-    prompt = toolset.get_skills_system_prompt()
-    assert prompt == ''
-
-
 def test_toolset_refresh(sample_skills_dir: Path) -> None:
     """Test refreshing skills."""
     toolset = SkillsToolset(directories=[sample_skills_dir])
@@ -775,3 +744,98 @@ New skill content.
 
     assert len(toolset.skills) == initial_count + 1
     assert 'skill-four' in toolset.skills
+
+
+async def test_get_instructions_returns_system_prompt(sample_skills_dir: Path) -> None:
+    """Test that get_instructions() returns the skills system prompt."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import RunContext
+    from pydantic_ai.usage import RunUsage
+
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+
+    # Create a minimal run context
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    instructions = await toolset.get_instructions(ctx)
+
+    assert instructions is not None
+    # Should include all skill names and descriptions
+    assert 'skill-one' in instructions
+    assert 'skill-two' in instructions
+    assert 'skill-three' in instructions
+    assert 'First test skill for basic operations' in instructions
+    assert 'Second test skill with resources' in instructions
+    assert 'Third test skill with executable scripts' in instructions
+    # Should include usage instructions
+    assert 'load_skill' in instructions
+    assert 'read_skill_resource' in instructions
+    assert 'run_skill_script' in instructions
+    # Should include progressive disclosure guidance
+    assert 'Progressive disclosure' in instructions or 'progressive disclosure' in instructions
+
+
+async def test_get_instructions_empty_toolset() -> None:
+    """Test that get_instructions() returns None for empty toolset."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import RunContext
+    from pydantic_ai.usage import RunUsage
+
+    toolset = SkillsToolset(directories=[], auto_discover=False)
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    instructions = await toolset.get_instructions(ctx)
+    assert instructions is None
+
+
+async def test_get_instructions_with_custom_template(sample_skills_dir: Path) -> None:
+    """Test get_instructions uses custom template when provided."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import RunContext
+    from pydantic_ai.usage import RunUsage
+
+    custom_template = """# My Custom Skills
+
+Available:
+{skills_list}
+
+Use load_skill(name) for details.
+"""
+
+    toolset = SkillsToolset(directories=[sample_skills_dir], instruction_template=custom_template)
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    instructions = await toolset.get_instructions(ctx)
+
+    assert instructions is not None
+    # Should use custom template
+    assert '# My Custom Skills' in instructions
+    assert 'Available:' in instructions
+    assert 'Use load_skill(name) for details.' in instructions
+    # Should still have skill list
+    assert 'skill-one' in instructions
+    assert 'skill-two' in instructions
+    assert 'skill-three' in instructions
+    # Should NOT have default template text
+    assert 'Progressive disclosure' not in instructions
+
+
+async def test_skills_instructions_injected_into_agent(sample_skills_dir: Path) -> None:
+    """Test that SkillsToolset instructions are automatically injected into agent runs."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelRequest
+    from pydantic_ai.models.test import TestModel
+
+    toolset = SkillsToolset(directories=[sample_skills_dir])
+    agent: Agent[None, str] = Agent(TestModel(), toolsets=[toolset])
+
+    result = await agent.run('Hello')
+
+    # Check that the instructions were included in the model request
+    # The instructions should be in the ModelRequest.instructions field
+    model_requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
+    assert any(m.instructions is not None and 'skill-one' in m.instructions for m in model_requests), (
+        'Skills instructions should be injected into model request'
+    )

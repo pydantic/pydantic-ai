@@ -23,16 +23,12 @@ from pydantic_ai import Agent, SkillsToolset
 skills_toolset = SkillsToolset(directories=["./skills"])
 
 # Create agent with skills
+# Skills instructions are automatically injected via get_instructions()
 agent = Agent(
     model='openai:gpt-4o',
     instructions="You are a helpful research assistant.",
     toolsets=[skills_toolset]
 )
-
-# Add skills system prompt
-@agent.system_prompt
-async def add_skills_to_system_prompt() -> str:
-    return skills_toolset.get_skills_system_prompt()
 
 # Use agent - skills tools are automatically available
 result = await agent.run(
@@ -137,7 +133,7 @@ The toolset implements **progressive disclosure** - exposing information only wh
 
 ```markdown
 ┌─────────────────────────────────────────────────────────────┐
-│  System Prompt (via get_skills_system_prompt())             │
+│  System Prompt (automatically injected via toolset)         │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │ Available Skills:                                     │  │
 │  │ - arxiv-search: Search arXiv for research papers      │  │
@@ -182,7 +178,7 @@ Lists all available skills with their descriptions.
 
 **Returns**: Formatted markdown with skill names and descriptions
 
-**When to use**: Optional - skills are already listed in the system prompt via `get_skills_system_prompt()`. Use only if the agent needs to re-check available skills dynamically.
+**When to use**: Optional - skills are already listed in the system prompt automatically. Use only if the agent needs to re-check available skills dynamically.
 
 ### 2. `load_skill(skill_name)`
 
@@ -287,27 +283,48 @@ from pydantic_ai.toolsets import SkillsToolset
 
 toolset = SkillsToolset(
     directories=["./skills", "./shared-skills"],
-    auto_discover=True,      # Auto-discover skills on init (default: True)
-    validate=True,           # Validate skill structure (default: True)
-    id="skills",             # Unique identifier (default: "skills")
-    script_timeout=30,       # Script execution timeout in seconds (default: 30)
-    python_executable=None,  # Python executable path (default: sys.executable)
+    auto_discover=True,           # Auto-discover skills on init (default: True)
+    validate=True,                # Validate skill structure (default: True)
+    id="skills",                  # Unique identifier (default: "skills")
+    script_timeout=30,            # Script execution timeout in seconds (default: 30)
+    python_executable=None,       # Python executable path (default: sys.executable)
+    instruction_template=None,    # Custom instruction template (default: None)
 )
 ```
 
 ### Key Methods
 
-| Method                       | Description                                    |
-| ---------------------------- | ---------------------------------------------- |
-| `get_skills_system_prompt()` | Get system prompt text with all skill metadata |
-| `get_skill(name)`            | Get a specific skill object by name            |
-| `refresh()`                  | Re-scan directories for skills                 |
+| Method            | Description                               |
+| ----------------- | ----------------------------------------- |
+| `get_skill(name)` | Get a specific skill object by name       |
+| `refresh()`       | Re-scan directories for skills            |
 
 ### Properties
 
 | Property | Description                                      |
 | -------- | ------------------------------------------------ |
 | `skills` | Dictionary of loaded skills (`dict[str, Skill]`) |
+
+### Customizing Instructions
+
+You can customize the instruction template that gets injected into the agent's system prompt:
+
+```python
+custom_template = """# My Custom Skills Section
+
+Available tools:
+{skills_list}
+
+Use load_skill(name) to get details.
+"""
+
+toolset = SkillsToolset(
+    directories=["./skills"],
+    instruction_template=custom_template
+)
+```
+
+The template must include the `{skills_list}` placeholder, which will be replaced with the formatted list of available skills.
 
 ## Skill Discovery
 
@@ -511,10 +528,7 @@ async def main():
         instructions="You are a research assistant.",
         toolsets=[skills_toolset]
     )
-
-    @agent.system_prompt
-    async def add_skills():
-        return skills_toolset.get_skills_system_prompt()
+    # Skills instructions are automatically injected
 
     result = await agent.run(
         "Find the 3 most recent papers about large language models"

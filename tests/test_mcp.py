@@ -2049,9 +2049,61 @@ async def test_instructions(mcp_server: MCPServerStdio) -> None:
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
     ):
-        mcp_server.instructions
+        with pytest.warns(DeprecationWarning, match='The `instructions` property is deprecated'):
+            mcp_server.instructions  # type: ignore[deprecated]
     async with mcp_server:
-        assert mcp_server.instructions == 'Be a helpful assistant.'
+        with pytest.warns(DeprecationWarning, match='The `instructions` property is deprecated'):
+            assert mcp_server.instructions == 'Be a helpful assistant.'  # type: ignore[deprecated]
+
+
+async def test_instructions_property_is_deprecated(mcp_server: MCPServerStdio) -> None:
+    """Test that accessing instructions property triggers deprecation warning."""
+    async with mcp_server:
+        with pytest.warns(DeprecationWarning, match='Set `use_server_instructions=True`'):
+            _ = mcp_server.instructions  # type: ignore[deprecated]
+
+
+async def test_get_instructions_with_use_server_instructions_false(run_context: RunContext[int]) -> None:
+    """Test that get_instructions returns None when use_server_instructions is False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], use_server_instructions=False)
+    async with server:
+        instructions = await server.get_instructions(run_context)
+        assert instructions is None
+
+
+async def test_get_instructions_with_use_server_instructions_true(run_context: RunContext[int]) -> None:
+    """Test that get_instructions returns server instructions when use_server_instructions is True."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], use_server_instructions=True)
+    async with server:
+        instructions = await server.get_instructions(run_context)
+        assert instructions == 'Be a helpful assistant.'
+
+
+async def test_get_instructions_raises_before_initialization(run_context: RunContext[int]) -> None:
+    """Test that get_instructions raises AttributeError when called before server is initialized."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], use_server_instructions=True)
+    # Don't enter the context manager - server is not initialized
+    with pytest.raises(AttributeError, match='instructions are only available after initialization'):
+        await server.get_instructions(run_context)
+
+
+async def test_mcp_instructions_injected_into_agent() -> None:
+    """Test that MCP server instructions are injected into agent when use_server_instructions=True."""
+    from pydantic_ai.messages import ModelRequest
+    from pydantic_ai.models.test import TestModel
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], use_server_instructions=True)
+    # Use TestModel with call_tools=[] to prevent tool calls that would fail
+    agent: Agent[None, str] = Agent(TestModel(call_tools=[]), toolsets=[server])
+
+    async with agent:
+        result = await agent.run('Hello')
+
+    # Check that MCP instructions were included in the model request
+    model_requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
+    assert any(m.instructions is not None and 'helpful assistant' in m.instructions for m in model_requests), (
+        'MCP server instructions should be injected when use_server_instructions=True'
+    )
 
 
 async def test_client_info_passed_to_session() -> None:

@@ -21,6 +21,31 @@ from ._exceptions import (
 )
 from ._types import Skill
 
+# Default instruction template for skills system prompt
+DEFAULT_INSTRUCTION_TEMPLATE = """# Skills
+
+You have access to skills that extend your capabilities. Skills are modular packages containing instructions, resources, and scripts for specialized tasks.
+
+## Available Skills
+
+The following skills are available to you. Use them when relevant to the task:
+
+{skills_list}
+
+## How to Use Skills
+
+**Progressive disclosure**: Load skill information only when needed.
+
+1. **When a skill is relevant to the current task**: Use `load_skill(skill_name)` to read the full instructions.
+2. **For additional documentation**: Use `read_skill_resource(skill_name, resource_name)` to read FORMS.md, REFERENCE.md, or other resources.
+3. **To execute skill scripts**: Use `run_skill_script(skill_name, script_name, args)` with appropriate command-line arguments.
+
+**Best practices**:
+- Select skills based on task relevance and descriptions listed above
+- Use progressive disclosure: load only what you need, when you need it, starting with load_skill
+- Follow the skill's documented usage patterns and examples
+"""
+
 
 def _is_safe_path(base_path: Path, target_path: Path) -> bool:
     """Check if target_path is safely within base_path (no path traversal).
@@ -65,10 +90,7 @@ class SkillsToolset(FunctionToolset):
             instructions="You are a helpful assistant.",
             toolsets=[skills_toolset]
         )
-
-        @agent.system_prompt
-        def add_skills_prompt() -> str:
-            return skills_toolset.get_skills_system_prompt()
+        # Skills instructions are automatically injected via get_instructions()
         ```
     """
 
@@ -82,6 +104,7 @@ class SkillsToolset(FunctionToolset):
         script_timeout: int = 30,
         python_executable: str | Path | None = None,
         max_depth: int | None = 3,
+        instruction_template: str | None = None,
     ) -> None:
         """Initialize the skills toolset.
 
@@ -95,6 +118,8 @@ class SkillsToolset(FunctionToolset):
                 If None, uses sys.executable (default).
             max_depth: Maximum depth to search for SKILL.md files. None for unlimited.
                 Default is 3 levels deep to prevent performance issues with large trees.
+            instruction_template: Custom instruction template for skills system prompt.
+                Must include `{skills_list}` placeholder. If None, uses default template.
         """
         super().__init__(id=id)
 
@@ -103,6 +128,7 @@ class SkillsToolset(FunctionToolset):
         self._max_depth = max_depth
         self._script_timeout = script_timeout
         self._python_executable = str(python_executable) if python_executable else sys.executable
+        self._instruction_template = instruction_template
         self._skills: dict[str, Skill] = {}
 
         if auto_discover:
@@ -330,61 +356,32 @@ class SkillsToolset(FunctionToolset):
             except OSError as e:
                 raise SkillScriptExecutionError(f"Failed to execute script '{script_name}': {e}") from e
 
-    def get_skills_system_prompt(self) -> str:
-        """Get the combined system prompt from all loaded skills.
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
+        """Return instructions to inject into the agent's system prompt.
 
-        This should be added to the agent's system prompt to provide
-        skill discovery and usage instructions.
+        Returns the skills system prompt containing all skill metadata
+        and usage guidance for the agent.
 
-        Following Anthropic's approach, this includes all skill metadata upfront
-        in the system prompt, enabling the agent to discover and select skills
-        without needing to call list_skills() first.
+        Args:
+            ctx: The run context for this agent run.
 
         Returns:
-            Formatted system prompt containing:
-            - All skill metadata (name + description)
-            - Instructions for using skill tools
-            - Progressive disclosure guidance
+            The skills system prompt, or None if no skills are loaded.
         """
         if not self._skills:
-            return ''
+            return None
 
-        lines = [
-            '# Skills',
-            '',
-            'You have access to skills that extend your capabilities. Skills are modular packages',
-            'containing instructions, resources, and scripts for specialized tasks.',
-            '',
-            '## Available Skills',
-            '',
-            'The following skills are available to you. Use them when relevant to the task:',
-            '',
-        ]
-
-        # List all skills with descriptions
+        # Build skills list
+        skills_list_lines: list[str] = []
         for name, skill in sorted(self._skills.items()):
-            lines.append(f'- **{name}**: {skill.metadata.description}')
+            skills_list_lines.append(f'- **{name}**: {skill.metadata.description}')
+        skills_list = '\n'.join(skills_list_lines)
 
-        lines.extend(
-            [
-                '',
-                '## How to Use Skills',
-                '',
-                '**Progressive disclosure**: Load skill information only when needed.',
-                '',
-                '1. **When a skill is relevant to the current task**: Use `load_skill(skill_name)` to read the full instructions.',
-                '2. **For additional documentation**: Use `read_skill_resource(skill_name, resource_name)` to read FORMS.md, REFERENCE.md, or other resources.',
-                '3. **To execute skill scripts**: Use `run_skill_script(skill_name, script_name, args)` with appropriate command-line arguments.',
-                '',
-                '**Best practices**:',
-                '- Select skills based on task relevance and descriptions listed above',
-                '- Use progressive disclosure: load only what you need, when you need it, starting with load_skill',
-                "- Follow the skill's documented usage patterns and examples",
-                '',
-            ]
-        )
+        # Use custom template or default
+        template = self._instruction_template if self._instruction_template else DEFAULT_INSTRUCTION_TEMPLATE
 
-        return '\n'.join(lines)
+        # Format template with skills list
+        return template.format(skills_list=skills_list)
 
     @property
     def skills(self) -> dict[str, Skill]:

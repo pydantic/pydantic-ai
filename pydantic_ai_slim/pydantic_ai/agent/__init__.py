@@ -611,15 +611,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
+            parts: list[str | None] = [
                 instructions_literal,
                 *[await func.run(run_context) for func in instructions_functions],
             ]
 
-            parts = [p for p in parts if p]
-            if not parts:
+            # Collect instructions from toolsets
+            toolset_instructions: list[str | None] = []
+
+            async def collect_toolset_instructions(ts: AbstractToolset[AgentDepsT]) -> None:
+                instruction = await ts.get_instructions(run_context)
+                if instruction:
+                    toolset_instructions.append(instruction)
+
+            # Use apply() to visit all leaf toolsets and collect their instructions
+            # We need to run this asynchronously for each toolset
+            toolsets_to_visit: list[AbstractToolset[AgentDepsT]] = []
+            toolset.apply(toolsets_to_visit.append)
+            for ts in toolsets_to_visit:
+                await collect_toolset_instructions(ts)
+
+            parts.extend(toolset_instructions)
+
+            filtered_parts: list[str] = [p for p in parts if p]
+            if not filtered_parts:
                 return None
-            return '\n\n'.join(parts).strip()
+            return '\n\n'.join(filtered_parts).strip()
 
         if isinstance(model_used, InstrumentedModel):
             instrumentation_settings = model_used.instrumentation_settings

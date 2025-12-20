@@ -23,16 +23,12 @@ async def main() -> None:
     skills_toolset = SkillsToolset(directories=[skills_dir])
 
     # Create agent with skills
+    # Skills instructions are automatically injected via get_instructions()
     agent = Agent(
         model='openai:gpt-4o',
         instructions='You are a helpful research assistant.',
         toolsets=[skills_toolset],
     )
-
-    # Add skills system prompt (includes skill descriptions and usage instructions)
-    @agent.system_prompt
-    async def add_skills_prompt() -> str:  # pyright: ignore[reportUnusedFunction]
-        return skills_toolset.get_skills_system_prompt()
 
     # Use agent - skills tools are available for the agent to call
     result = await agent.run('What are the main features of Pydantic AI framework?')

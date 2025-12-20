@@ -13,16 +13,12 @@ Example:
     skills_toolset = SkillsToolset(directories=["./skills"])
 
     # Create agent with skills as a toolset
+    # Skills instructions are automatically injected via get_instructions()
     agent = Agent(
         model='openai:gpt-4o',
         instructions="You are a helpful research assistant.",
         toolsets=[skills_toolset]
     )
-
-    # Add skills system prompt to agent
-    @agent.system_prompt
-    def add_skills_to_system_prompt() -> str:
-        return skills_toolset.get_skills_system_prompt()
 
     # Use agent - skills tools are available for the agent to call
     result = await agent.run(
