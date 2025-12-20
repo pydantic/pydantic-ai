@@ -43,7 +43,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -2904,8 +2904,6 @@ async def test_temporal_model_request_outside_workflow():
     When TemporalModel.request() is called directly (not through TemporalAgent.run())
     and not inside a Temporal workflow, it should delegate to the wrapped model's request method.
     """
-    from pydantic_ai.models import ModelRequestParameters
-
     test_model = TestModel(custom_output_text='Direct model response')
 
     temporal_model = TemporalModel(
@@ -2916,7 +2914,7 @@ async def test_temporal_model_request_outside_workflow():
     )
 
     # Call request() directly - outside a workflow, this should fall back to super().request()
-    messages = [ModelRequest.user_text_prompt('Hello')]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
     response = await temporal_model.request(
         messages,
         model_settings=None,
