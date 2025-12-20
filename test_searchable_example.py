@@ -21,6 +21,7 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore.connection').setLevel(logging.WARNING)
 logging.getLogger('httpcore.http11').setLevel(logging.WARNING)
 logging.getLogger('openai._base_client').setLevel(logging.WARNING)
+logging.getLogger('anthropic._base_client').setLevel(logging.WARNING)
 
 from pydantic_ai import Agent
 from pydantic_ai.toolsets import FunctionToolset
@@ -63,14 +64,6 @@ def calculate_product(a: float, b: float) -> float:
     return a * b
 
 
-@toolset.tool(defer_loading=True)
-def fetch_user_data(user_id: int) -> dict:
-    """Fetch user data from the database.
-
-    Args:
-        user_id: The ID of the user to fetch.
-    """
-    return {"id": user_id, "name": "John Doe", "email": "john@example.com"}
 
 
 @toolset.tool(defer_loading=True)
@@ -85,10 +78,6 @@ def send_email(recipient: str, subject: str, body: str) -> str:
     return f"Email sent to {recipient} with subject '{subject}'"
 
 
-@toolset.tool(defer_loading=True)
-def list_database_tables() -> list[str]:
-    """List all tables in the database."""
-    return ["users", "orders", "products", "reviews"]
 
 
 # Wrap the toolset with SearchableToolset
@@ -96,6 +85,7 @@ def list_database_tables() -> list[str]:
 
 # Create an agent with the searchable toolset
 agent = Agent(
+    # 'anthropic:claude-sonnet-4-5',
     'openai:gpt-4o',
     toolsets=[toolset],
     system_prompt=(

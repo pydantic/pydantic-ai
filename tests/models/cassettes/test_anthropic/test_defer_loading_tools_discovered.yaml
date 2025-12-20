@@ -1,0 +1,252 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '642'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Can you list the database tables and then fetch user 42?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: list_database_tables
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            user_id:
+              type: integer
+          required:
+          - user_id
+          type: object
+        name: fetch_user_data
+      - name: tool_search_tool_regex
+        type: tool_search_tool_regex_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1734'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll help you with that. Let me first search for tools related to listing database tables and fetching user
+          data.
+        type: text
+      - caller:
+          type: direct
+        id: srvtoolu_0138LbLLuuQeaUWh4z1cxRFo
+        input:
+          limit: 10
+          pattern: database|table|list
+        name: tool_search_tool_regex
+        type: server_tool_use
+      - caller:
+          type: direct
+        id: srvtoolu_01CM1qWPyXf2tQPU7q6rQXt4
+        input:
+          limit: 10
+          pattern: user|fetch|get
+        name: tool_search_tool_regex
+        type: server_tool_use
+      - content:
+          tool_references:
+          - tool_name: list_database_tables
+            type: tool_reference
+          type: tool_search_tool_search_result
+        tool_use_id: srvtoolu_0138LbLLuuQeaUWh4z1cxRFo
+        type: tool_search_tool_result
+      - content:
+          tool_references:
+          - tool_name: fetch_user_data
+            type: tool_reference
+          type: tool_search_tool_search_result
+        tool_use_id: srvtoolu_01CM1qWPyXf2tQPU7q6rQXt4
+        type: tool_search_tool_result
+      - text: Perfect! I found the tools we need. Let me list the database tables first and then fetch user 42.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01HyYXRBKwoKy11kdw7nwbcc
+        input: {}
+        name: list_database_tables
+        type: tool_use
+      - caller:
+          type: direct
+        id: toolu_01EhL2VKPXEkhUYDAgJVWWEg
+        input:
+          user_id: 42
+        name: fetch_user_data
+        type: tool_use
+      id: msg_018trubvnDcQLCGTfhLLa2uU
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1789
+        output_tokens: 266
+        server_tool_use:
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1481'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Can you list the database tables and then fetch user 42?
+          type: text
+        role: user
+      - content:
+        - text: I'll help you with that. Let me first search for tools related to listing database tables and fetching user
+            data.
+          type: text
+        - text: Perfect! I found the tools we need. Let me list the database tables first and then fetch user 42.
+          type: text
+        - id: toolu_01HyYXRBKwoKy11kdw7nwbcc
+          input: {}
+          name: list_database_tables
+          type: tool_use
+        - id: toolu_01EhL2VKPXEkhUYDAgJVWWEg
+          input:
+            user_id: 42
+          name: fetch_user_data
+          type: tool_use
+        role: assistant
+      - content:
+        - content: '["users","orders","products","reviews"]'
+          is_error: false
+          tool_use_id: toolu_01HyYXRBKwoKy11kdw7nwbcc
+          type: tool_result
+        - content: '{"id":42,"name":"John Doe","email":"john@example.com"}'
+          is_error: false
+          tool_use_id: toolu_01EhL2VKPXEkhUYDAgJVWWEg
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: list_database_tables
+      - defer_loading: true
+        description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            user_id:
+              type: integer
+          required:
+          - user_id
+          type: object
+        name: fetch_user_data
+      - name: tool_search_tool_regex
+        type: tool_search_tool_regex_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '580'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          Great! Here are the results:
+
+          **Database Tables:**
+          - users
+          - orders
+          - products
+          - reviews
+
+          **User 42 Details:**
+          - ID: 42
+          - Name: John Doe
+          - Email: john@example.com
+        type: text
+      id: msg_01V48By8ySod1HANuPhQNoqo
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 950
+        output_tokens: 57
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

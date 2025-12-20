@@ -7940,3 +7940,36 @@ async def test_defer_loading_tools_propagated_explicitly(allow_model_requests: N
         by_name = {t['name']: t for t in tools}
         assert 'tool_search_tool_regex' in by_name
         assert by_name['get_weather']['defer_loading']
+
+
+@pytest.mark.vcr
+async def test_defer_loading_tools_discovered(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    toolset = FunctionToolset()
+
+    @toolset.tool(defer_loading=True)
+    def list_database_tables() -> list[str]:
+        return ['users', 'orders', 'products', 'reviews']
+
+    @toolset.tool(defer_loading=True)
+    def fetch_user_data(user_id: int) -> dict:
+        return {'id': user_id, 'name': 'John Doe', 'email': 'john@example.com'}
+
+    agent = Agent(model=m, toolsets=[toolset])
+
+    result = await agent.run('Can you list the database tables and then fetch user 42?')
+    assert result.output == snapshot("""\
+Great! Here are the results:
+
+**Database Tables:**
+- users
+- orders
+- products
+- reviews
+
+**User 42 Details:**
+- ID: 42
+- Name: John Doe
+- Email: john@example.com\
+""")
