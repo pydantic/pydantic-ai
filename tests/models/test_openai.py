@@ -44,6 +44,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
@@ -3298,10 +3299,7 @@ response\
     )
 
 
-async def test_defer_loading_tool(allow_model_requests: None):
-    """Test that defer_loading=True tools are only included when activated."""
-    from pydantic_ai.toolsets import FunctionToolset
-
+async def test_defer_loading_tools_activated_explicitly(allow_model_requests: None):
     responses = [
         completion_message(
             ChatCompletionMessage(
@@ -3329,7 +3327,9 @@ async def test_defer_loading_tool(allow_model_requests: None):
                 ],
             )
         ),
-        completion_message(ChatCompletionMessage(content='The weather in San Francisco is sunny and 72°F', role='assistant')),
+        completion_message(
+            ChatCompletionMessage(content='The weather in San Francisco is sunny and 72°F', role='assistant')
+        ),
     ]
 
     mock_client = MockOpenAI.create_mock(responses)
@@ -3340,7 +3340,7 @@ async def test_defer_loading_tool(allow_model_requests: None):
 
     @toolset.tool(defer_loading=True)
     def get_weather(city: str) -> str:
-        return f"The weather in {city} is sunny and 72°F"
+        return f'The weather in {city} is sunny and 72°F'
 
     # Agent automatically wraps toolsets in SearchableToolset
     agent = Agent(m, toolsets=[toolset], system_prompt='You are a helpful assistant.')
@@ -3362,3 +3362,32 @@ async def test_defer_loading_tool(allow_model_requests: None):
     tool_names = [t['function']['name'] for t in second_tools]
     assert 'load_tools' in tool_names
     assert 'get_weather' in tool_names
+
+
+@pytest.mark.vcr
+async def test_defer_loading_tools_discovered(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIChatModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+
+    toolset = FunctionToolset()
+
+    @toolset.tool(defer_loading=True)
+    def list_database_tables() -> list[str]:
+        return ['users', 'orders', 'products', 'reviews']
+
+    @toolset.tool(defer_loading=True)
+    def fetch_user_data(user_id: int) -> dict:
+        return {'id': user_id, 'name': 'John Doe', 'email': 'john@example.com'}
+
+    agent = Agent(model=m, toolsets=[toolset])
+
+    result = await agent.run('Can you list the database tables and then fetch user 42?')
+    assert result.output == snapshot("""\
+Here are the results of your requests:
+
+1. Database tables: users, orders, products, reviews
+2. User 42 details: \n\
+   - Name: John Doe
+   - Email: john@example.com
+
+Let me know if you need more information!\
+""")

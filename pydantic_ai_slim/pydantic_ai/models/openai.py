@@ -712,7 +712,7 @@ class OpenAIChatModel(Model):
         all_tool_defs = model_request_parameters.tool_defs
         active_tool_defs = {
             name: tool for name, tool
-            in all_tool_defs
+            in all_tool_defs.items()
             if is_active(tool, run_id)
         }
         return [self._map_tool_definition(r) for r in active_tool_defs.values()]
