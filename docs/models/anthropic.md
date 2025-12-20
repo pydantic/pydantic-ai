@@ -105,7 +105,7 @@ agent = Agent(model)
 
 ### Google Vertex AI
 
-To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude), use the [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai) client from the `anthropic` package:
+To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-vertex-ai) on how to set up an `AsyncAnthropicVertex` client and then pass it to `AnthropicProvider`:
 
 ```python {test="skip"}
 from anthropic import AsyncAnthropicVertex
@@ -126,7 +126,7 @@ agent = Agent(model)
 
 ### Microsoft Foundry
 
-To use Claude models via [Microsoft Foundry](https://ai.azure.com/), use the [`AsyncAnthropicFoundry`](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) client from the `anthropic` package:
+To use Claude models via [Microsoft Foundry](https://ai.azure.com/), follow the [Anthropic documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) on how to set up an `AsyncAnthropicFoundry` client and then pass it to `AnthropicProvider`:
 
 ```python {test="skip"}
 from anthropic import AsyncAnthropicFoundry
