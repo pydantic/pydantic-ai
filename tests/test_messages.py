@@ -482,6 +482,53 @@ def test_file_part_has_content():
     assert filepart.has_content()
 
 
+def test_tool_call_part_has_content():
+    """Test that has_content correctly handles various argument values including falsy ones."""
+    # None args - no content
+    tool_call = ToolCallPart(tool_name='test_tool', args=None)
+    assert not tool_call.has_content()
+
+    # Empty dict - no content
+    tool_call = ToolCallPart(tool_name='test_tool', args={})
+    assert not tool_call.has_content()
+
+    # Empty string - no content
+    tool_call = ToolCallPart(tool_name='test_tool', args='')
+    assert not tool_call.has_content()
+
+    # Dict with False value - has content (False is a valid value)
+    tool_call = ToolCallPart(tool_name='test_tool', args={'enabled': False})
+    assert tool_call.has_content()
+
+    # Dict with 0 value - has content (0 is a valid value)
+    tool_call = ToolCallPart(tool_name='test_tool', args={'count': 0})
+    assert tool_call.has_content()
+
+    # Dict with None value - has content (None is a valid value)
+    tool_call = ToolCallPart(tool_name='test_tool', args={'data': None})
+    assert tool_call.has_content()
+
+    # Dict with empty string value - has content (empty string is a valid value)
+    tool_call = ToolCallPart(tool_name='test_tool', args={'name': ''})
+    assert tool_call.has_content()
+
+    # Dict with empty list value - has content (empty list is a valid value)
+    tool_call = ToolCallPart(tool_name='test_tool', args={'items': []})
+    assert tool_call.has_content()
+
+    # Dict with empty dict value - has content (empty dict is a valid value)
+    tool_call = ToolCallPart(tool_name='test_tool', args={'metadata': {}})
+    assert tool_call.has_content()
+
+    # Non-empty string args - has content
+    tool_call = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
+    assert tool_call.has_content()
+
+    # Dict with truthy value - has content
+    tool_call = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert tool_call.has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
