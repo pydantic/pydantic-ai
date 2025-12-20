@@ -17,7 +17,6 @@ from ..function import FunctionToolset
 from ._discovery import discover_skills
 from ._exceptions import (
     SkillNotFoundError,
-    SkillResourceLoadError,
     SkillScriptExecutionError,
 )
 from ._types import Skill
@@ -244,7 +243,7 @@ class SkillsToolset(FunctionToolset):
                 content = resource.path.read_text(encoding='utf-8')
                 return content
             except OSError as e:
-                raise SkillResourceLoadError(f"Failed to read resource '{resource_name}': {e}") from e
+                return f"Error: Failed to read resource '{resource_name}': {e}"
 
         @self.tool
         async def run_skill_script(  # noqa: D417  # pyright: ignore[reportUnusedFunction]
