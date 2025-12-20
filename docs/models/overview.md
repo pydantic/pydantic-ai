@@ -235,3 +235,55 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+
+### Response-Based Fallback
+
+In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response using the `fallback_on_response` parameter. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure.
+
+A common use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
+
+```python {title="fallback_on_response.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.google import GoogleModel
+
+
+def web_fetch_failed(response: ModelResponse, messages: list[ModelMessage]) -> bool:
+    """Check if a web_fetch built-in tool failed to retrieve content."""
+    for call, result in response.builtin_tool_calls:
+        if call.tool_name == 'web_fetch':
+            content = result.content
+            if isinstance(content, dict):
+                status = content.get('url_retrieval_status', '')
+                if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+                    return True  # Trigger fallback
+    return False
+
+
+google_model = GoogleModel('gemini-2.0-flash')
+anthropic_model = AnthropicModel('claude-sonnet-4-5')
+
+fallback_model = FallbackModel(
+    google_model,
+    anthropic_model,
+    fallback_on_response=web_fetch_failed,
+)
+
+agent = Agent(fallback_model)
+
+# If Google's web_fetch fails, automatically falls back to Anthropic
+result = agent.run_sync('Summarize https://example.com')
+print(result.output)
+```
+
+The `fallback_on_response` callback receives two arguments:
+
+- `response`: The [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model
+- `messages`: The list of [`ModelMessage`][pydantic_ai.messages.ModelMessage] that were sent to the model
+
+The callback should return `True` to trigger fallback to the next model, or `False` to accept the response.
+
+!!! note
+    When using `fallback_on_response` with streaming (`run_stream`), the entire response is buffered before being returned. This means the caller won't receive partial results until the full response is ready and the fallback condition has been evaluated. This is necessary because the response content must be fully available to evaluate the fallback condition.

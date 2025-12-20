@@ -3,12 +3,14 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from opentelemetry.trace import get_current_span
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
@@ -18,6 +20,8 @@ from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, i
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponse
     from ..settings import ModelSettings
+
+FallbackOnResponse = Callable[['ModelResponse', list['ModelMessage']], bool]
 
 
 @dataclass(init=False)
@@ -31,12 +35,14 @@ class FallbackModel(Model):
 
     _model_name: str = field(repr=False)
     _fallback_on: Callable[[Exception], bool]
+    _fallback_on_response: FallbackOnResponse | None
 
     def __init__(
         self,
         default_model: Model | KnownModelName | str,
         *fallback_models: Model | KnownModelName | str,
         fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelAPIError,),
+        fallback_on_response: FallbackOnResponse | None = None,
     ):
         """Initialize a fallback model instance.
 
@@ -44,6 +50,9 @@ class FallbackModel(Model):
             default_model: The name or instance of the default model to use.
             fallback_models: The names or instances of the fallback models to use upon failure.
             fallback_on: A callable or tuple of exceptions that should trigger a fallback.
+            fallback_on_response: A callable that inspects the model response and message history,
+                returning `True` if fallback should be triggered. This enables fallback based on
+                response content (e.g., a builtin tool indicating failure) rather than exceptions.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -52,6 +61,8 @@ class FallbackModel(Model):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)
         else:
             self._fallback_on = fallback_on
+
+        self._fallback_on_response = fallback_on_response
 
     @property
     def model_name(self) -> str:
@@ -77,6 +88,7 @@ class FallbackModel(Model):
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
         """
         exceptions: list[Exception] = []
+        response_rejections: int = 0
 
         for model in self.models:
             try:
@@ -88,10 +100,14 @@ class FallbackModel(Model):
                     continue
                 raise exc
 
+            if self._fallback_on_response is not None and self._fallback_on_response(response, messages):
+                response_rejections += 1
+                continue
+
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
+        _raise_fallback_exception_group(exceptions, response_rejections)
 
     @asynccontextmanager
     async def request_stream(
@@ -101,8 +117,19 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds."""
+        """Try each model in sequence until one succeeds.
+
+        When `fallback_on_response` is set, the stream is fully consumed and buffered
+        before checking the response. If the response is rejected, the next model is tried.
+        The accepted response's events are then replayed to the caller.
+
+        Note: When using `fallback_on_response` with streaming, the entire response is
+        buffered before being returned, which means the caller won't receive partial
+        results until the full response is ready. This is necessary because the response
+        content must be fully available to evaluate the fallback condition.
+        """
         exceptions: list[Exception] = []
+        response_rejections: int = 0
 
         for model in self.models:
             async with AsyncExitStack() as stack:
@@ -117,11 +144,24 @@ class FallbackModel(Model):
                         continue
                     raise exc  # pragma: no cover
 
+                if self._fallback_on_response is not None:
+                    buffered_events: list[ModelResponseStreamEvent] = []
+                    async for event in response:
+                        buffered_events.append(event)
+
+                    if self._fallback_on_response(response.get(), messages):
+                        response_rejections += 1
+                        continue
+
+                    self._set_span_attributes(model, prepared_parameters)
+                    yield BufferedStreamedResponse(_wrapped=response, _buffered_events=buffered_events)
+                    return
+
                 self._set_span_attributes(model, prepared_parameters)
                 yield response
                 return
 
-        raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
+        _raise_fallback_exception_group(exceptions, response_rejections)
 
     @cached_property
     def profile(self) -> ModelProfile:
@@ -156,3 +196,54 @@ def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...])
         return isinstance(exception, exceptions)
 
     return fallback_condition
+
+
+def _raise_fallback_exception_group(exceptions: list[Exception], response_rejections: int) -> NoReturn:
+    """Raise a FallbackExceptionGroup combining exceptions and response rejections."""
+    all_errors: list[Exception] = list(exceptions)
+    if response_rejections > 0:
+        all_errors.append(RuntimeError(f'{response_rejections} model response(s) rejected by fallback_on_response'))
+
+    if all_errors:
+        raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
+    else:
+        raise FallbackExceptionGroup(
+            'All models from FallbackModel failed',
+            [RuntimeError('No models available')],
+        )  # pragma: no cover
+
+
+@dataclass
+class BufferedStreamedResponse(StreamedResponse):
+    """A StreamedResponse wrapper that replays buffered events."""
+
+    _wrapped: StreamedResponse
+    _buffered_events: list[ModelResponseStreamEvent]
+
+    model_request_parameters: ModelRequestParameters = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.model_request_parameters = self._wrapped.model_request_parameters
+        self._parts_manager = self._wrapped._parts_manager
+        self._usage = self._wrapped._usage
+        self.final_result_event = self._wrapped.final_result_event
+        self.provider_response_id = self._wrapped.provider_response_id
+        self.provider_details = self._wrapped.provider_details
+        self.finish_reason = self._wrapped.finish_reason
+        self._event_iterator = None  # reset so __aiter__ uses _get_event_iterator()
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for event in self._buffered_events:
+            yield event
+
+    @property
+    def model_name(self) -> str:
+        return self._wrapped.model_name
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._wrapped.provider_name
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._wrapped.timestamp
