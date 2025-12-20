@@ -452,7 +452,9 @@ class PromptConfig:
                 for tool_name, config in agent.prompt_config.tool_config.items():
                     if tool_name in tool_config:
                         current_config = asdict(config)
-                        updates = {k: v for k, v in current_config.items() if v is not None}
+                        updates = {
+                            k: v for k, v in current_config.items() if v is not None and k != 'parameters_descriptions'
+                        }
                         tool_config[tool_name] = replace(tool_config[tool_name], **updates)
                     else:
                         tool_config[tool_name] = config
@@ -463,28 +465,51 @@ class PromptConfig:
         )
 
     def merge_prompt_config(self, other_prompt_config: PromptConfig | None) -> PromptConfig:
+        """Merge two prompt configs, preferring non-None values from `self`.
+
+        The `other_prompt_config` is treated as the base, with `self.templates` and
+        `self.tool_config` overriding any fields that are explicitly set (non-None).
+        """
+        # Keep this merge logic in sync if PromptConfig gains additional fields, we would need to merge those as well.
         if not other_prompt_config:
             return self
 
         effective_prompt_templates = other_prompt_config.templates
         effective_tool_config = dict(other_prompt_config.tool_config or {})
 
-        if effective_prompt_templates and (templates := self.templates):
-            updates = {k: v for k, v in asdict(templates).items() if v is not None}
-            effective_prompt_templates = replace(effective_prompt_templates, **updates)
+        if templates := self.templates:
+            updates = {k: v for k, v in asdict(templates).items()}
+            effective_prompt_templates = replace(effective_prompt_templates or PromptTemplates(), **updates)
 
-        if tool_config := self.tool_config:
-            for tool_name, current_tool_config in tool_config.items():
-                updates = {k: v for k, v in asdict(current_tool_config).items() if v is not None}
-                if tool_name in effective_tool_config:
-                    effective_tool_config[tool_name] = replace(effective_tool_config[tool_name], **updates)
-                else:
-                    effective_tool_config[tool_name] = current_tool_config
+        if self.tool_config:
+            for tool_name, current_tool_config in self.tool_config.items():
+                effective_tool_config[tool_name] = PromptConfig.merge_tool_config(
+                    current_tool_config, effective_tool_config.get(tool_name)
+                )
 
         return PromptConfig(
             templates=effective_prompt_templates,
             tool_config=effective_tool_config or None,
         )
+
+    @staticmethod
+    def merge_tool_config(override: ToolConfig, base: ToolConfig | None) -> ToolConfig:
+        if not base:
+            return override
+        merged_tool_config = base
+        if override.name is not None:
+            merged_tool_config = replace(merged_tool_config, name=override.name)
+        if override.description is not None:
+            merged_tool_config = replace(merged_tool_config, description=override.description)
+        if override.strict is not None:
+            merged_tool_config = replace(merged_tool_config, strict=override.strict)
+        if override.parameters_descriptions is not None:
+            merged_parameters_descriptions: dict[str, str] = (
+                base.parameters_descriptions or {}
+            ) | override.parameters_descriptions
+            merged_tool_config = replace(merged_tool_config, parameters_descriptions=merged_parameters_descriptions)
+
+        return merged_tool_config
 
 
 DEFAULT_PROMPT_TEMPLATES = PromptTemplates(
