@@ -2097,7 +2097,7 @@ async def test_tool_output_denied_chunk_emission():
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
-        return f'Deleted {path}'  # pragma: no cover
+        return f'Deleted {path}'
 
     # Simulate a follow-up request where the user denied the tool
     request = SubmitMessage(
