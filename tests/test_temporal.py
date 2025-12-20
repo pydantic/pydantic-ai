@@ -2896,3 +2896,39 @@ async def test_temporal_agent_model_selection_by_instance(
             task_queue=TASK_QUEUE,
         )
         assert output == expected_output
+
+
+async def test_temporal_model_request_outside_workflow():
+    """Test that TemporalModel.request() falls back to wrapped model outside a workflow.
+
+    When TemporalModel.request() is called directly (not through TemporalAgent.run())
+    and not inside a Temporal workflow, it should delegate to the wrapped model's request method.
+    """
+    from pydantic_ai.models import ModelRequestParameters
+
+    test_model = TestModel(custom_output_text='Direct model response')
+
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test__direct_request',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Call request() directly - outside a workflow, this should fall back to super().request()
+    messages = [ModelRequest.user_text_prompt('Hello')]
+    response = await temporal_model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            builtin_tools=[],
+            output_mode='text',
+            allow_text_output=True,
+            output_tools=[],
+            output_object=None,
+        ),
+    )
+
+    # Verify response comes from the wrapped TestModel
+    assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
