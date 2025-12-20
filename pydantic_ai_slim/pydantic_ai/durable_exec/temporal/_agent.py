@@ -260,9 +260,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if toolsets:
             if in_workflow:
 
-                def validate_toolset(t: AbstractToolset[AgentDepsT]) -> None:
+                def validate_toolset(t: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
                     if isinstance(t, TemporalWrapperToolset):
-                        return
+                        return t
 
                     if isinstance(t, FunctionToolset):
                         raise UserError(
@@ -289,8 +289,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                                 'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
                             )
 
+                    return t
+
                 for toolset in toolsets:
-                    toolset.apply(validate_toolset)
+                    toolset.visit_and_replace(validate_toolset)
             overridden_toolsets = [*self._toolsets, *toolsets]
         else:
             overridden_toolsets = list(self._toolsets)
