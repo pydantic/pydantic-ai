@@ -32,8 +32,6 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models.huggingface import HuggingFaceModel
-from pydantic_ai.providers.huggingface import HuggingFaceProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -62,6 +60,9 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputUsage,
     )
     from huggingface_hub.errors import HfHubHTTPError
+
+    from pydantic_ai.models.huggingface import HuggingFaceModel
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     MockChatCompletion = ChatCompletionOutput | Exception
     MockStreamEvent = ChatCompletionStreamOutput | Exception
