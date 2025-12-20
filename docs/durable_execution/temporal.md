@@ -298,13 +298,13 @@ from pydantic_ai.durable_exec.temporal import TemporalAgent, TemporalFunctionToo
 def web_search(query: str) -> str:
     """Search the web for information."""
     # Actual web search implementation
-    return f"Search results for: {query}"
+    return f'Search results for: {query}'
 
 
 def calculate(expression: str) -> str:
     """Evaluate a mathematical expression."""
     # Actual calculation implementation
-    return f"Result: {expression}"
+    return f'Result: {expression}'
 
 
 # Create a shared toolset
@@ -393,12 +393,14 @@ You can also pre-register toolsets with names and reference them by name at runt
 
 ```python {title="named_toolset_temporal.py" test="skip"}
 from temporalio import workflow
+
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.durable_exec.temporal import TemporalAgent, TemporalFunctionToolset
 
+
 # Define tools and toolset
 def magic_trick(input: str) -> str:
-    return f"Magic: {input}"
+    return f'Magic: {input}'
 
 magic_toolset = FunctionToolset(tools=[magic_trick], id='magic')
 
