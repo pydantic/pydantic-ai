@@ -393,7 +393,7 @@ The toolset includes security measures:
 
 - **Path traversal prevention**: Resources and scripts are validated to stay within the skill directory
 - **Script timeout**: Scripts have a configurable timeout (default: 30 seconds)
-- **Sandboxed execution**: Scripts run in a subprocess with limited access
+- **Subprocess execution**: Scripts run in a separate process, but with the same OS-level permissions as your agent process (this is not a security sandbox)
 
 ## Complete Example
 
