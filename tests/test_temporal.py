@@ -2930,3 +2930,43 @@ async def test_temporal_model_request_outside_workflow():
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
+
+
+async def test_temporal_model_request_stream_outside_workflow():
+    """Test that TemporalModel.request_stream() falls back to wrapped model outside a workflow.
+
+    When TemporalModel.request_stream() is called directly (not through TemporalAgent.run())
+    and not inside a Temporal workflow, it should delegate to the wrapped model's request_stream method.
+    """
+    test_model = TestModel(custom_output_text='Direct stream response')
+
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test__direct_stream',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Call request_stream() directly - outside a workflow, this should fall back to super().request_stream()
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    async with temporal_model.request_stream(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            builtin_tools=[],
+            output_mode='text',
+            allow_text_output=True,
+            output_tools=[],
+            output_object=None,
+        ),
+    ) as stream:
+        # Consume the stream
+        async for _ in stream:
+            pass
+
+        # Get the final response
+        response = stream.get()
+
+    # Verify response comes from the wrapped TestModel
+    assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
