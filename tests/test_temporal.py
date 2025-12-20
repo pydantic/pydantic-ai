@@ -3066,3 +3066,54 @@ async def test_dynamic_agent_with_runtime_toolset(allow_model_requests: None, cl
         # Verify tool was called successfully
         assert 'echo' in result
         assert 'echo:' in result
+
+
+# specific toolset for named registration test to avoid conflicts
+named_test_toolset = FunctionToolset(tools=[echo_tool], id='named_tools')
+wrapped_named_test_toolset = TemporalFunctionToolset(
+    named_test_toolset,
+    activity_name_prefix='named',
+    deps_type=type(None),
+)
+named_toolset_agent = TemporalAgent(
+    Agent(TestModel(), name='named_agent'),
+    name='test_agent_named_toolset',
+    toolsets={'shared_tools_name': wrapped_named_test_toolset},
+)
+
+
+@workflow.defn
+class DynamicAgentNamedToolsetWorkflowLocal:
+    __pydantic_ai_agents__ = [named_toolset_agent]
+
+    @workflow.run
+    async def run(self, user_prompt: str) -> str:
+        # Reference toolset by name
+        result = await named_toolset_agent.run(user_prompt, toolsets=['shared_tools_name'])
+        return result.output
+
+
+async def test_dynamic_agent_with_named_toolset(allow_model_requests: None, client: Client):
+    """Test passing a toolset name at runtime to a TemporalAgent within a workflow.
+
+    This test checks that toolsets pre-registered with a name in TemporalAgent
+    can be referenced by that name in `run()`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicAgentNamedToolsetWorkflowLocal],
+        activities=[
+            *wrapped_named_test_toolset.temporal_activities,
+        ],
+    ):
+        result = await client.execute_workflow(
+            DynamicAgentNamedToolsetWorkflowLocal.run,
+            args=['test prompt'],
+            id='test-workflow-run-named-toolset',
+            task_queue=TASK_QUEUE,
+        )
+
+        # Verify tool was called successfully
+        assert 'echo' in result
+        assert 'echo:' in result

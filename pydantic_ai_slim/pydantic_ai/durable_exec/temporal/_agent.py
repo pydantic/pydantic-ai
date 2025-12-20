@@ -117,6 +117,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         name: str | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | Mapping[str, AbstractToolset[AgentDepsT]] | None = None,
         models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -144,6 +145,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Args:
             wrapped: The agent to wrap.
             name: Optional unique agent name to use in the Temporal activities' names. If not provided, the agent's `name` will be used.
+            toolsets:
+                Optional additional toolsets to register with the agent, or a mapping of toolset names to toolset instances.
+                Toolsets passed here will be temporalized and their activities registered alongside the wrapped agent's existing toolsets.
+                If a mapping is provided, toolsets can be referenced by name in `run(toolsets=['name'])`.
+
             models:
                 Optional mapping of model instances to register with the agent.
                 Keys define the names that can be referenced at runtime and the values are `Model` instances.
@@ -191,6 +197,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         ]
         activity_config['retry_policy'] = retry_policy
         self.activity_config = activity_config
+        self._named_toolsets: Mapping[str, AbstractToolset[AgentDepsT]] | None = None
 
         model_activity_config = model_activity_config or {}
         toolset_activity_config = toolset_activity_config or {}
@@ -235,6 +242,18 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         activities.extend(temporal_model.temporal_activities)
         self._temporal_model = temporal_model
 
+        if toolsets:
+            if isinstance(toolsets, Mapping):
+                # Flatten the mapping for temporalization, but keep track of names
+                additional_toolsets = list(toolsets.values())
+                self._named_toolsets = toolsets
+            else:
+                additional_toolsets = list(toolsets)
+                self._named_toolsets = {}
+        else:
+            additional_toolsets = []
+            self._named_toolsets = {}
+
         def temporalize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             id = toolset.id
             if id is None:
@@ -254,9 +273,35 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 activities.extend(toolset.temporal_activities)
             return toolset
 
-        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
+        all_toolsets = [*wrapped.toolsets, *additional_toolsets]
+        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in all_toolsets]
 
-        self._toolsets = temporal_toolsets
+        # If we had named toolsets, we need to map the names to the temporalized versions
+        # We know that visit_and_replace returns a new instance (or the same one if no replacement needed)
+        # matching the structure of the input.
+        # However, since we flattened everything into `all_toolsets` and then mapped it to `temporal_toolsets`,
+        # we can reconstruct the named mapping by index.
+        # But wait, `wrapped.toolsets` are first.
+        if self._named_toolsets:
+            # The additional toolsets are at the end of `temporal_toolsets`
+            num_wrapped_toolsets = len(wrapped.toolsets)
+            # The temporalized additional toolsets
+            temporal_additional_toolsets = temporal_toolsets[num_wrapped_toolsets:]
+
+            # create a new mapping pointing to the temporalized versions
+            new_named_toolsets: dict[str, AbstractToolset[AgentDepsT]] = {}
+            for name, temporal_toolset in zip(self._named_toolsets, temporal_additional_toolsets):
+                new_named_toolsets[name] = temporal_toolset
+            self._named_toolsets = new_named_toolsets
+
+            # If toolsets were passed as a mapping, they are not added to the active toolsets by default
+            if isinstance(toolsets, Mapping):
+                self._toolsets = temporal_toolsets[:num_wrapped_toolsets]
+            else:
+                self._toolsets = temporal_toolsets
+        else:
+            self._toolsets = temporal_toolsets
+
         self._temporal_activities = activities
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
@@ -314,16 +359,21 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @contextmanager
     def _temporal_overrides(
         self,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         force: bool = False,
     ) -> Iterator[None]:
         in_workflow = workflow.in_workflow()
 
         if toolsets:
-            if in_workflow:
-                _validate_temporal_toolsets(toolsets)
-            overridden_toolsets = [*self._toolsets, *toolsets]
+            if workflow.in_workflow():
+                # If toolsets are provided as strings, we can't validate them directly here as they are resolved later.
+                # We only validate if they are already AbstractToolset instances.
+                _validate_temporal_toolsets([t for t in toolsets if not isinstance(t, str)])
+
+            resolved_toolsets = self._resolve_toolsets(toolsets)
+            assert resolved_toolsets is not None
+            overridden_toolsets = [*self._toolsets, *resolved_toolsets]
         else:
             overridden_toolsets = list(self._toolsets)
 
@@ -352,6 +402,26 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             finally:
                 self._temporal_overrides_active.reset(temporal_active_token)
 
+    def _resolve_toolsets(
+        self, toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None
+    ) -> Sequence[AbstractToolset[AgentDepsT]] | None:
+        if toolsets is None:
+            return None
+
+        resolved_toolsets: list[AbstractToolset[AgentDepsT]] = []
+        for t in toolsets:
+            if isinstance(t, str):
+                if self._named_toolsets is None:
+                    raise UserError(f"Unknown toolset name: '{t}'. No named toolsets registered.")
+                if t not in self._named_toolsets:
+                    raise UserError(
+                        f"Unknown toolset name: '{t}'. Available toolsets: {list(self._named_toolsets.keys())}"
+                    )
+                resolved_toolsets.append(self._named_toolsets[t])
+            else:
+                resolved_toolsets.append(t)
+        return resolved_toolsets
+
     @overload
     async def run(
         self,
@@ -367,7 +437,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
@@ -387,7 +457,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
@@ -406,7 +476,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
@@ -492,7 +562,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
@@ -512,7 +582,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
@@ -531,7 +601,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
@@ -589,7 +659,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
-            toolsets=toolsets,
+            toolsets=self._resolve_toolsets(toolsets),
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
             **_deprecated_kwargs,
@@ -610,7 +680,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
@@ -630,7 +700,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
@@ -650,7 +720,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
@@ -707,7 +777,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
-            toolsets=toolsets,
+            toolsets=self._resolve_toolsets(toolsets),
             event_stream_handler=event_stream_handler,
             builtin_tools=builtin_tools,
             **_deprecated_kwargs,
@@ -729,8 +799,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
 
     @overload
@@ -748,8 +819,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
     def run_stream_events(
@@ -766,8 +838,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -818,6 +891,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
 
         Returns:
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
@@ -841,7 +915,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
-            toolsets=toolsets,
+            toolsets=self._resolve_toolsets(toolsets),
             builtin_tools=builtin_tools,
         )
 
@@ -979,6 +1053,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            event_stream_handler: Optional event stream handler to use for this run.
 
         Returns:
             The result of the run.
