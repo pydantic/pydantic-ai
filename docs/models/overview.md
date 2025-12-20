@@ -287,3 +287,52 @@ The callback should return `True` to trigger fallback to the next model, or `Fal
 
 !!! note
     When using `fallback_on_response` with streaming (`run_stream`), the entire response is buffered before being returned. This means the caller won't receive partial results until the full response is ready and the fallback condition has been evaluated. This is necessary because the response content must be fully available to evaluate the fallback condition.
+
+### Part-Based Fallback (Streaming)
+
+For streaming requests, you can use `fallback_on_part` to check each response part as it completes, enabling earlier fallback when failure conditions are detectable before the full response is ready. This is particularly useful when built-in tool results (like `web_fetch`) arrive early in the stream:
+
+```python {title="fallback_on_part.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import BuiltinToolReturnPart, ModelMessage, ModelResponsePart
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.google import GoogleModel
+
+
+def web_fetch_failed_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
+    """Check if a web_fetch built-in tool part indicates failure."""
+    if isinstance(part, BuiltinToolReturnPart) and part.tool_name == 'web_fetch':
+        if isinstance(part.content, dict):
+            status = part.content.get('url_retrieval_status', '')
+            if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+                return True  # Trigger fallback immediately
+    return False
+
+
+google_model = GoogleModel('gemini-2.0-flash')
+anthropic_model = AnthropicModel('claude-sonnet-4-5')
+
+fallback_model = FallbackModel(
+    google_model,
+    anthropic_model,
+    fallback_on_part=web_fetch_failed_part,
+)
+
+agent = Agent(fallback_model)
+
+# With streaming, fallback can occur as soon as the failed tool result arrives
+async with agent.run_stream('Summarize https://example.com') as result:
+    output = await result.get_output()
+print(output)
+```
+
+The `fallback_on_part` callback receives:
+
+- `part`: A [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart] that has completed streaming
+- `messages`: The list of [`ModelMessage`][pydantic_ai.messages.ModelMessage] that were sent to the model
+
+You can use both `fallback_on_part` and `fallback_on_response` together. Parts are checked during streaming, and if the stream completes without part rejection, the full response is checked with `fallback_on_response`.
+
+!!! note
+    `fallback_on_part` only applies to streaming requests (`run_stream`). For non-streaming requests, use `fallback_on_response` instead.

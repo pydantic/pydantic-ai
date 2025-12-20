@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from opentelemetry.trace import get_current_span
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.messages import ModelResponseStreamEvent
+from pydantic_ai.messages import ModelResponseStreamEvent, PartEndEvent
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
@@ -18,10 +18,11 @@ from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
-    from ..messages import ModelMessage, ModelResponse
+    from ..messages import ModelMessage, ModelResponse, ModelResponsePart
     from ..settings import ModelSettings
 
 FallbackOnResponse = Callable[['ModelResponse', list['ModelMessage']], bool]
+FallbackOnPart = Callable[['ModelResponsePart', list['ModelMessage']], bool]
 
 
 @dataclass(init=False)
@@ -36,6 +37,7 @@ class FallbackModel(Model):
     _model_name: str = field(repr=False)
     _fallback_on: Callable[[Exception], bool]
     _fallback_on_response: FallbackOnResponse | None
+    _fallback_on_part: FallbackOnPart | None
 
     def __init__(
         self,
@@ -43,6 +45,7 @@ class FallbackModel(Model):
         *fallback_models: Model | KnownModelName | str,
         fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelAPIError,),
         fallback_on_response: FallbackOnResponse | None = None,
+        fallback_on_part: FallbackOnPart | None = None,
     ):
         """Initialize a fallback model instance.
 
@@ -53,6 +56,10 @@ class FallbackModel(Model):
             fallback_on_response: A callable that inspects the model response and message history,
                 returning `True` if fallback should be triggered. This enables fallback based on
                 response content (e.g., a builtin tool indicating failure) rather than exceptions.
+            fallback_on_part: A callable that inspects each model response part during streaming,
+                returning `True` if fallback should be triggered. This enables early abort of
+                streaming when a failure condition is detected (e.g., a builtin tool failure in
+                the first chunk). Only applies to streaming requests.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -63,6 +70,7 @@ class FallbackModel(Model):
             self._fallback_on = fallback_on
 
         self._fallback_on_response = fallback_on_response
+        self._fallback_on_part = fallback_on_part
 
     @property
     def model_name(self) -> str:
@@ -117,19 +125,10 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds.
-
-        When `fallback_on_response` is set, the stream is fully consumed and buffered
-        before checking the response. If the response is rejected, the next model is tried.
-        The accepted response's events are then replayed to the caller.
-
-        Note: When using `fallback_on_response` with streaming, the entire response is
-        buffered before being returned, which means the caller won't receive partial
-        results until the full response is ready. This is necessary because the response
-        content must be fully available to evaluate the fallback condition.
-        """
+        """Try each model in sequence until one succeeds."""
         exceptions: list[Exception] = []
         response_rejections: int = 0
+        part_rejections: int = 0
 
         for model in self.models:
             async with AsyncExitStack() as stack:
@@ -144,8 +143,30 @@ class FallbackModel(Model):
                         continue
                     raise exc  # pragma: no cover
 
-                if self._fallback_on_response is not None:
+                if self._fallback_on_part is not None:
                     buffered_events: list[ModelResponseStreamEvent] = []
+                    should_fallback = False
+
+                    async for event in response:
+                        buffered_events.append(event)
+                        if isinstance(event, PartEndEvent) and self._fallback_on_part(event.part, messages):
+                            should_fallback = True
+                            break
+
+                    if should_fallback:
+                        part_rejections += 1
+                        continue
+
+                    if self._fallback_on_response is not None and self._fallback_on_response(response.get(), messages):
+                        response_rejections += 1
+                        continue
+
+                    self._set_span_attributes(model, prepared_parameters)
+                    yield BufferedStreamedResponse(_wrapped=response, _buffered_events=buffered_events)
+                    return
+
+                elif self._fallback_on_response is not None:
+                    buffered_events = []
                     async for event in response:
                         buffered_events.append(event)
 
@@ -161,7 +182,7 @@ class FallbackModel(Model):
                 yield response
                 return
 
-        _raise_fallback_exception_group(exceptions, response_rejections)
+        _raise_fallback_exception_group(exceptions, response_rejections, part_rejections)
 
     @cached_property
     def profile(self) -> ModelProfile:
@@ -175,7 +196,7 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
-    def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters):
+    def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters) -> None:
         with suppress(Exception):
             span = get_current_span()
             if span.is_recording():
@@ -198,9 +219,13 @@ def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...])
     return fallback_condition
 
 
-def _raise_fallback_exception_group(exceptions: list[Exception], response_rejections: int) -> NoReturn:
-    """Raise a FallbackExceptionGroup combining exceptions and response rejections."""
+def _raise_fallback_exception_group(
+    exceptions: list[Exception], response_rejections: int, part_rejections: int = 0
+) -> NoReturn:
+    """Raise a FallbackExceptionGroup combining exceptions and rejections."""
     all_errors: list[Exception] = list(exceptions)
+    if part_rejections > 0:
+        all_errors.append(RuntimeError(f'{part_rejections} model(s) rejected by fallback_on_part during streaming'))
     if response_rejections > 0:
         all_errors.append(RuntimeError(f'{response_rejections} model response(s) rejected by fallback_on_response'))
 
