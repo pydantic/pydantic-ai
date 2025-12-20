@@ -17,6 +17,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     BinaryImage,
+    CombinedToolset,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -2970,3 +2971,34 @@ async def test_temporal_model_request_stream_outside_workflow():
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
+
+
+combined_override_child_toolset_1 = FunctionToolset(id='combined_override_child_1')
+combined_override_child_toolset_2 = FunctionToolset(id='combined_override_child_2')
+combined_override_wrapped_toolset_1 = TemporalFunctionToolset(combined_override_child_toolset_1)
+combined_override_wrapped_toolset_2 = TemporalFunctionToolset(combined_override_child_toolset_2)
+combined_override_toolset = CombinedToolset([combined_override_wrapped_toolset_1, combined_override_wrapped_toolset_2])
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithOverrideCombinedToolsets:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        with simple_temporal_agent.override(toolsets=[combined_override_toolset]):
+            return 'ok'
+
+
+async def test_temporal_agent_override_combined_toolsets_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithOverrideCombinedToolsets],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            SimpleAgentWorkflowWithOverrideCombinedToolsets.run,
+            args=['What is the capital of Mexico?'],
+            id=SimpleAgentWorkflowWithOverrideCombinedToolsets.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'ok'
