@@ -14,11 +14,9 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...exceptions import UserError
 from ._agent import TemporalAgent
-from ._fastmcp_toolset import TemporalFastMCPToolset
 from ._function_toolset import TemporalFunctionToolset
 from ._logfire import LogfirePlugin
 from ._mcp import TemporalMCPToolset
-from ._mcp_server import TemporalMCPServer
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
@@ -32,10 +30,24 @@ __all__ = [
     'TemporalWrapperToolset',
     'TemporalFunctionToolset',
     'TemporalMCPToolset',
-    'TemporalMCPServer',
-    'TemporalFastMCPToolset',
     'PydanticAIWorkflow',
 ]
+
+try:
+    from . import _mcp_server as _mcp_server
+except ImportError:
+    pass
+else:
+    TemporalMCPServer = _mcp_server.TemporalMCPServer
+    __all__.append('TemporalMCPServer')
+
+try:
+    from . import _fastmcp_toolset as _fastmcp_toolset
+except ImportError:
+    pass
+else:
+    TemporalFastMCPToolset = _fastmcp_toolset.TemporalFastMCPToolset
+    __all__.append('TemporalFastMCPToolset')
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
 # Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
