@@ -18,6 +18,7 @@ from typing_extensions import Never
 from pydantic_ai import (
     AbstractToolset,
     AgentRunResultEvent,
+    FunctionToolset,
     _utils,
     messages as _messages,
     models,
@@ -257,10 +258,39 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         in_workflow = workflow.in_workflow()
 
         if toolsets:
-            if in_workflow and any(not isinstance(t, TemporalWrapperToolset) for t in toolsets):
-                raise UserError(
-                    'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
-                )
+            if in_workflow:
+
+                def validate_toolset(t: AbstractToolset[AgentDepsT]) -> None:
+                    if isinstance(t, TemporalWrapperToolset):
+                        return
+
+                    if isinstance(t, FunctionToolset):
+                        raise UserError(
+                            'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                        )
+
+                    try:
+                        from pydantic_ai.mcp import MCPServer
+                    except ImportError:
+                        pass
+                    else:
+                        if isinstance(t, MCPServer):
+                            raise UserError(
+                                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                            )
+
+                    try:
+                        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+                    except ImportError:
+                        pass
+                    else:
+                        if isinstance(t, FastMCPToolset):
+                            raise UserError(
+                                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                            )
+
+                for toolset in toolsets:
+                    toolset.apply(validate_toolset)
             overridden_toolsets = [*self._toolsets, *toolsets]
         else:
             overridden_toolsets = list(self._toolsets)

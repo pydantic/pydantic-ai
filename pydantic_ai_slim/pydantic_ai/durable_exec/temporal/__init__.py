@@ -14,8 +14,11 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...exceptions import UserError
 from ._agent import TemporalAgent
+from ._fastmcp_toolset import TemporalFastMCPToolset
 from ._function_toolset import TemporalFunctionToolset
 from ._logfire import LogfirePlugin
+from ._mcp import TemporalMCPToolset
+from ._mcp_server import TemporalMCPServer
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
@@ -28,6 +31,9 @@ __all__ = [
     'TemporalRunContext',
     'TemporalWrapperToolset',
     'TemporalFunctionToolset',
+    'TemporalMCPToolset',
+    'TemporalMCPServer',
+    'TemporalFastMCPToolset',
     'PydanticAIWorkflow',
 ]
 
