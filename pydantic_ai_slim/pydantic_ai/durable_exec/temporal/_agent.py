@@ -50,7 +50,7 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
     """Validate that all leaf toolsets requiring temporal wrapping are properly wrapped.
 
     This function recursively traverses the toolset hierarchy and checks that any leaf
-    toolsets that need temporal wrapping (FunctionToolset, MCPServer, FastMCPToolset)
+    toolsets that need temporal wrapping (FunctionToolset, MCPServer, FastMCPToolset, DynamicToolset)
     are wrapped in a TemporalWrapperToolset.
 
     Args:
@@ -73,8 +73,13 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
         if isinstance(t, TemporalWrapperToolset):
             return t
 
-        # Check if this is a FunctionToolset that needs wrapping
         if isinstance(t, FunctionToolset):
+            raise UserError(error_msg)
+
+        # Check if this is a DynamicToolset that needs wrapping
+        from pydantic_ai.toolsets._dynamic import DynamicToolset
+
+        if isinstance(t, DynamicToolset):
             raise UserError(error_msg)
 
         # Check if this is an MCPServer that needs wrapping
