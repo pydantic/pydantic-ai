@@ -20,6 +20,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
+from ..toolsets.searchable import is_active
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -708,8 +709,13 @@ class OpenAIChatModel(Model):
         return run_id
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters, run_id: str) -> list[chat.ChatCompletionToolParam]:
-        tools = model_request_parameters.active_tool_defs(builtin_search=False, run_id=run_id)
-        return [self._map_tool_definition(r) for r in tools.values()]
+        all_tool_defs = model_request_parameters.tool_defs
+        active_tool_defs = {
+            name: tool for name, tool
+            in all_tool_defs
+            if is_active(tool, run_id)
+        }
+        return [self._map_tool_definition(r) for r in active_tool_defs.values()]
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
