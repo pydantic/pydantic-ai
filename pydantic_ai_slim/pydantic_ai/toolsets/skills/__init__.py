@@ -32,7 +32,7 @@ Example:
     ```
 """
 
-from pydantic_ai.toolsets.skills._discovery import discover_skills, parse_skill_md, validate_skill_metadata
+from pydantic_ai.toolsets.skills._discovery import discover_skills, parse_skill_md
 from pydantic_ai.toolsets.skills._exceptions import (
     SkillException,
     SkillNotFoundError,
@@ -54,7 +54,6 @@ __all__ = (
     # Discovery
     'discover_skills',
     'parse_skill_md',
-    'validate_skill_metadata',
     # Exceptions
     'SkillException',
     'SkillNotFoundError',

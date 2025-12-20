@@ -7,6 +7,7 @@ and parsing SKILL.md files with YAML frontmatter.
 from __future__ import annotations
 
 import re
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -26,50 +27,67 @@ SKILL_NAME_PATTERN = re.compile(r'^[a-z0-9-]+$')
 RESERVED_WORDS = {'anthropic', 'claude'}
 
 
-def validate_skill_metadata(
+def _validate_skill_metadata(
     frontmatter: dict[str, Any],
     instructions: str,
-) -> list[str]:
+) -> bool:
     """Validate skill metadata against Anthropic's requirements.
+
+    Emits warnings for any validation issues found.
 
     Args:
         frontmatter: Parsed YAML frontmatter.
         instructions: The skill instructions content.
 
     Returns:
-        List of validation warnings (empty if no issues).
+        True if validation passed with no issues, False if warnings were emitted.
     """
-    warnings_list: list[str] = []
-
+    is_valid = True
     name = frontmatter.get('name', '')
     description = frontmatter.get('description', '')
 
     # Validate name format
     if name:
-        # Check length first to prevent regex on excessively long strings
+        # Check length first to avoid processing excessively long names (good practice)
         if len(name) > 64:
-            warnings_list.append(f"Skill name '{name}' exceeds 64 characters ({len(name)} chars)")
-        # Only run regex if name is reasonable length (defense in depth)
+            warnings.warn(
+                f"Skill name '{name}' exceeds 64 characters ({len(name)} chars) recommendation. Consider shortening it.",
+                UserWarning,
+                stacklevel=2,
+            )
+            is_valid = False
         elif not SKILL_NAME_PATTERN.match(name):
-            warnings_list.append(f"Skill name '{name}' should contain only lowercase letters, numbers, and hyphens")
+            warnings.warn(
+                f"Skill name '{name}' should contain only lowercase letters, numbers, and hyphens",
+                UserWarning,
+                stacklevel=2,
+            )
+            is_valid = False
         # Check for reserved words
         for reserved in RESERVED_WORDS:
             if reserved in name:
-                warnings_list.append(f"Skill name '{name}' contains reserved word '{reserved}'")
+                warnings.warn(f"Skill name '{name}' contains reserved word '{reserved}'", UserWarning, stacklevel=2)
+                is_valid = False
 
     # Validate description
     if description and len(description) > 1024:
-        warnings_list.append(f'Skill description exceeds 1024 characters ({len(description)} chars)')
+        warnings.warn(
+            f'Skill description exceeds 1024 characters ({len(description)} chars)', UserWarning, stacklevel=2
+        )
+        is_valid = False
 
     # Validate instructions length (Anthropic recommends under 500 lines)
     lines = instructions.split('\n')
     if len(lines) > 500:
-        warnings_list.append(
+        warnings.warn(
             f'SKILL.md body exceeds recommended 500 lines ({len(lines)} lines). '
-            f'Consider splitting into separate resource files.'
+            f'Consider splitting into separate resource files.',
+            UserWarning,
+            stacklevel=2,
         )
+        is_valid = False
 
-    return warnings_list
+    return is_valid
 
 
 def parse_skill_md(content: str) -> tuple[dict[str, Any], str]:
@@ -293,7 +311,7 @@ def discover_skills(
 
                 # Validate metadata
                 if validate:
-                    validate_skill_metadata(frontmatter, instructions)
+                    _ = _validate_skill_metadata(frontmatter, instructions)
 
                 # Discover resources and scripts
                 resources = _discover_resources(skill_folder)
