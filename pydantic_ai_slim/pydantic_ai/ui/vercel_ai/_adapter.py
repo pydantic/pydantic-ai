@@ -121,10 +121,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 approval = part.approval
                 if not isinstance(approval, ToolApprovalResponded):
                     continue
-                tool_call_id = part.tool_call_id
-                if not tool_call_id:
-                    continue
-                approvals[tool_call_id] = approval.approved
+                approvals[part.tool_call_id] = approval.approved
         if not approvals:
             return None
         return DeferredToolResults(approvals=approvals)

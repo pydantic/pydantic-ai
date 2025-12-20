@@ -98,9 +98,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             for part in msg.parts:
                 if not isinstance(part, ToolUIPart | DynamicToolUIPart):
                     continue
-                tool_call_id = part.tool_call_id
-                if tool_call_id and isinstance(part.approval, ToolApprovalResponded) and not part.approval.approved:
-                    denied_ids.add(tool_call_id)
+                if isinstance(part.approval, ToolApprovalResponded) and not part.approval.approved:
+                    denied_ids.add(part.tool_call_id)
         return denied_ids
 
     @property

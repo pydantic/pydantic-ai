@@ -2311,33 +2311,6 @@ def test_extract_deferred_tool_results_skips_non_tool_parts():
     assert result.approvals['tool_1'] is True
 
 
-def test_extract_deferred_tool_results_skips_empty_tool_call_id():
-    """Test that tool parts with empty tool_call_id are skipped."""
-    from pydantic_ai.ui.vercel_ai.request_types import (
-        DynamicToolInputAvailablePart,
-        ToolApprovalResponded,
-    )
-
-    messages = [
-        UIMessage(
-            id='msg-1',
-            role='assistant',
-            parts=[
-                DynamicToolInputAvailablePart(
-                    tool_name='my_tool',
-                    tool_call_id='',
-                    input={'arg': 'value'},
-                    approval=ToolApprovalResponded(id='approval-1', approved=True),
-                ),
-            ],
-        ),
-    ]
-
-    result = VercelAIAdapter._extract_deferred_tool_results(messages)
-    # Should return None since there are no valid approvals
-    assert result is None
-
-
 def test_denied_tool_ids_skips_non_tool_parts():
     """Test that _denied_tool_ids property skips non-tool parts."""
     from pydantic_ai.ui.vercel_ai.request_types import (
@@ -2366,35 +2339,6 @@ def test_denied_tool_ids_skips_non_tool_parts():
 
     stream = VercelAIEventStream(run_input=request)
     assert stream._denied_tool_ids == {'tool_1'}
-
-
-def test_denied_tool_ids_skips_empty_tool_call_id():
-    """Test that _denied_tool_ids property skips parts with empty tool_call_id."""
-    from pydantic_ai.ui.vercel_ai.request_types import (
-        DynamicToolInputAvailablePart,
-        ToolApprovalResponded,
-    )
-
-    request = SubmitMessage(
-        id='req-1',
-        messages=[
-            UIMessage(
-                id='msg-1',
-                role='assistant',
-                parts=[
-                    DynamicToolInputAvailablePart(
-                        tool_name='my_tool',
-                        tool_call_id='',
-                        input={'arg': 'value'},
-                        approval=ToolApprovalResponded(id='approval-1', approved=False),
-                    ),
-                ],
-            ),
-        ],
-    )
-
-    stream = VercelAIEventStream(run_input=request)
-    assert stream._denied_tool_ids == set()
 
 
 def test_denied_tool_ids_skips_approved_tools():
