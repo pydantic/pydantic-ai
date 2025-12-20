@@ -41,7 +41,6 @@ nav:
           - tools.md
           - tools-advanced.md
           - toolsets.md
-          - skills.md
           - deferred-tools.md
           - builtin-tools.md
           - common-tools.md
@@ -56,6 +55,10 @@ nav:
           - mcp/fastmcp-client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
+      - Skills:
+          - Overview: skills/overview.md
+          - Creating Skills: skills/creating-skills.md
+          - Using Skills: skills/using-skills.md
       - Testing: testing.md
       - Web Chat UI: web.md
 
@@ -135,6 +138,7 @@ nav:
           - api/toolsets.md
           - api/builtin_tools.md
           - api/common_tools.md
+          - api/skills.md
           - api/durable_exec.md
           - api/output.md
           - api/result.md
