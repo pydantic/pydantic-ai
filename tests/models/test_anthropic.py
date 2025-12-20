@@ -47,6 +47,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -7901,3 +7902,41 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     assert usage2.cache_read_tokens > 0
     assert usage2.cache_write_tokens > 0
     assert usage2.output_tokens > 0
+
+
+async def test_defer_loading_tools_propagated_explicitly(allow_model_requests: None):
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='1', input={'regex': 'weather'}, name='tool_search_tool_regex', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
+        ),
+        completion_message(
+            [BetaToolUseBlock(id='2', input={'city': 'San Francisco'}, name='get_weather', type='tool_use')],
+            usage=BetaUsage(input_tokens=3, output_tokens=2),
+        ),
+        completion_message(
+            [BetaTextBlock(text='The weather in San Francisco is sunny and 72°F', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=5),
+        ),
+    ]
+
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    toolset = FunctionToolset()
+
+    @toolset.tool(defer_loading=True)
+    def get_weather(city: str) -> str:
+        return f'The weather in {city} is sunny and 72°F'
+
+    agent = Agent(m, toolsets=[toolset], system_prompt='You are a helpful assistant.')
+
+    result = await agent.run("What's the weather like in San Francisco?")
+    assert result.output == 'The weather in San Francisco is sunny and 72°F'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    for tools in [kwargs[0]['tools'], kwargs[1]['tools']]:
+        by_name = {t['name']: t for t in tools}
+        assert 'tool_search_tool_regex' in by_name
+        assert by_name['get_weather']['defer_loading']
