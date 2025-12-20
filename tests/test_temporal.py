@@ -3002,3 +3002,67 @@ async def test_temporal_agent_override_combined_toolsets_in_workflow(allow_model
             task_queue=TASK_QUEUE,
         )
         assert output == 'ok'
+
+
+# Dynamic agent with runtime toolset test
+def echo_tool(x: str) -> str:
+    return f'echo: {x}'
+
+
+# Create toolset for dynamic agent test
+dynamic_test_toolset = FunctionToolset(tools=[echo_tool], id='my_tools')
+
+# Wrap toolset for Temporal
+wrapped_dynamic_test_toolset = TemporalFunctionToolset(
+    dynamic_test_toolset,
+    activity_name_prefix='shared_tools',
+    activity_config=ActivityConfig(start_to_close_timeout=timedelta(minutes=1)),
+    tool_activity_config={},
+    deps_type=type(None),
+)
+
+# Create agent that will be used in workflow
+# This demonstrates dynamic model selection with runtime toolset passing
+dynamic_runtime_test_model = TestModel(call_tools=['echo_tool'])
+dynamic_runtime_test_agent = Agent(dynamic_runtime_test_model, name='test_agent_dynamic_runtime')
+dynamic_runtime_test_temporal_agent = TemporalAgent(dynamic_runtime_test_agent)
+
+
+@workflow.defn
+class DynamicAgentRuntimeToolsetWorkflow:
+    __pydantic_ai_agents__ = [dynamic_runtime_test_temporal_agent]
+
+    @workflow.run
+    async def run(self, user_prompt: str) -> str:
+        # Use the pre-created agent but pass toolset at runtime
+        # This demonstrates decoupling tool registration from agent definition
+        result = await dynamic_runtime_test_temporal_agent.run(user_prompt, toolsets=[wrapped_dynamic_test_toolset])
+        return result.output
+
+
+async def test_dynamic_agent_with_runtime_toolset(allow_model_requests: None, client: Client):
+    """Test passing a TemporalWrapperToolset at runtime to a TemporalAgent within a workflow.
+
+    This test demonstrates the pattern described in the issue where tools are registered
+    separately from agents, allowing dynamic agents to use a shared set of tools.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicAgentRuntimeToolsetWorkflow],
+        # Only register the shared toolset activities
+        # Agent activities are automatically registered via __pydantic_ai_agents__
+        activities=[
+            *wrapped_dynamic_test_toolset.temporal_activities,
+        ],
+    ):
+        result = await client.execute_workflow(
+            DynamicAgentRuntimeToolsetWorkflow.run,
+            args=['test prompt'],
+            id='test-workflow-run-dynamic-runtime',
+            task_queue=TASK_QUEUE,
+        )
+
+        # Verify tool was called successfully
+        assert 'echo' in result
+        assert 'echo:' in result
