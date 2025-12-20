@@ -1,9 +1,7 @@
 # Vercel AI Data Stream Protocol
 
-Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a [Vercel AI Elements](https://ai-sdk.dev/elements) frontend.
+Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a frontend using [AI SDK UI](https://ai-sdk.dev/docs/ai-sdk-ui/overview) hooks like [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat). You can optionally use [AI Elements](https://ai-sdk.dev/elements) for pre-built UI components.
 
-!!! note "AI SDK Version Compatibility"
-    The base protocol is compatible with AI SDK v5 and later. However, [tool approval](#tool-approval) (human-in-the-loop) features require **AI SDK v6 or later**.
 
 ## Usage
 
@@ -39,7 +37,7 @@ async def chat(request: Request) -> Response:
 If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `VercelAIAdapter` instance and directly use its methods, which can be chained to accomplish the same thing as the `VercelAIAdapter.dispatch_request()` class method shown above:
 
 1. The [`VercelAIAdapter.build_run_input()`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.build_run_input] class method takes the request body as bytes and returns a Vercel AI [`RequestData`][pydantic_ai.ui.vercel_ai.request_types.RequestData] run input object, which you can then pass to the [`VercelAIAdapter()`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] constructor along with the agent.
-    - You can also use the [`VercelAIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] class method to build an adapter directly from a Starlette/FastAPI request.
+    - You can also use the [`VercelAIAdapter.from_request()`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.from_request] class method to build an adapter directly from a Starlette/FastAPI request.
 2. The [`VercelAIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] method runs the agent and returns a stream of Vercel AI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agents.md#running-agents) and an optional `on_complete` callback function that receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional Vercel AI events.
     - You can also use [`VercelAIAdapter.run_stream_native()`][pydantic_ai.ui.UIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into Vercel AI events using [`VercelAIAdapter.transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream].
 3. The [`VercelAIAdapter.encode_stream()`][pydantic_ai.ui.UIAdapter.encode_stream] method encodes the stream of Vercel AI events as SSE (HTTP Server-Sent Events) strings, which you can then return as a streaming response.
@@ -87,55 +85,21 @@ async def chat(request: Request) -> Response:
 
 ## Tool Approval
 
-Pydantic AI supports [AI SDK's human-in-the-loop tool approval](https://ai-sdk.dev/cookbook/next/human-in-the-loop) workflow, allowing users to approve or deny tool executions before they run.
+Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md) for details on setting up tools that require approval.
 
-!!! warning "Requires AI SDK v6"
-    Tool approval is an AI SDK v6 feature. The `tool-approval-request` and `tool-output-denied` stream chunks, along with the `approval` field on tool parts, are not available in AI SDK v5.
-
-### How It Works
-
-1. **Tool requests approval**: When an agent calls a tool with `requires_approval=True`, Pydantic AI emits a `tool-approval-request` chunk instead of executing the tool immediately.
-
-2. **User decides**: The AI SDK frontend displays an approval UI. The user can approve or deny the tool execution.
-
-3. **Response is sent**: The frontend sends the approval decision back to the server in a follow-up request.
-
-4. **Tool executes or is denied**: If approved, the tool runs normally. If denied, Pydantic AI emits a `tool-output-denied` chunk and informs the model that the tool was rejected.
-
-### Server-Side Setup
-
-To enable tool approval, define your tool with `requires_approval=True` and include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in your agent's output types:
-
-```py {test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.tools import DeferredToolRequests
-
-agent: Agent[None, str | DeferredToolRequests] = Agent(
-    'openai:gpt-5',
-    output_type=[str, DeferredToolRequests],
-)
-
-@agent.tool_plain(requires_approval=True)
-def delete_file(path: str) -> str:
-    """Delete a file from the filesystem."""
-    # This won't execute until the user approves
-    os.remove(path)
-    return f'Deleted {path}'
-```
-
-When processing a follow-up request with approval responses, extract and pass the deferred tool results:
+To enable tool approval streaming, pass `tool_approval=True` when creating the adapter:
 
 ```py {test="skip" lint="skip"}
 @app.post('/chat')
 async def chat(request: Request) -> Response:
-    adapter = await VercelAIAdapter.from_request(request, agent=agent)
-    return adapter.streaming_response(
-        adapter.run_stream(deferred_tool_results=adapter.deferred_tool_results)
-    )
+    adapter = await VercelAIAdapter.from_request(request, agent=agent, tool_approval=True)
+    return adapter.streaming_response(adapter.run_stream())
 ```
 
-### Client-Side Setup
+When `tool_approval=True`, the adapter will:
 
-On the frontend, use AI SDK v6's [`useChat`](https://v6.ai-sdk.dev/docs/ai-sdk-ui/use-chat) hook with the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component or the `addToolApprovalResponse` function to handle approval UI.
+1. Emit `tool-approval-request` chunks when tools with `requires_approval=True` are called
+2. Automatically extract approval responses from follow-up requests
+3. Emit `tool-output-denied` chunks for rejected tools
 
-See the [AI SDK Human-in-the-Loop Cookbook](https://ai-sdk.dev/cookbook/next/human-in-the-loop) for complete frontend examples.
+On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolResult` function.
