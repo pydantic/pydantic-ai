@@ -4,12 +4,14 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any
 
+import pydantic_core
 from pydantic_core import core_schema
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+
 
 if TYPE_CHECKING:
     from .messages import RetryPromptPart
@@ -193,7 +195,31 @@ class ToolRetryError(Exception):
 
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
-        super().__init__()
+        message = (
+            tool_retry.content
+            if isinstance(tool_retry.content, str)
+            else self._format_error_details(tool_retry.content, tool_retry.tool_name)
+        )
+        super().__init__(message)
+
+    @staticmethod
+    def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
+        """Format ErrorDetails as a human-readable message.
+
+        We format manually rather than using ValidationError.from_exception_data because
+        some error types (value_error, assertion_error, etc.) require an 'error' key in ctx,
+        but when ErrorDetails are serialized, exception objects are stripped from ctx.
+        The 'msg' field already contains the human-readable message, so we use that directly.
+        """
+        error_count = len(errors)
+        lines = [
+            f'{error_count} validation error{"" if error_count == 1 else "s"}{f" for {tool_name!r}" if tool_name else ""}'
+        ]
+        for e in errors:
+            loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
+            lines.append(loc)
+            lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
+        return '\n'.join(lines)
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):

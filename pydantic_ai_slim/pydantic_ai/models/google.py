@@ -154,6 +154,9 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
 _GOOGLE_IMAGE_SIZE = Literal['1K', '2K', '4K']
 _GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
 
+_GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
+_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
+
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
@@ -358,6 +361,48 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
+    def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
+        """Build ImageConfigDict from ImageGenerationTool with validation."""
+        image_config = ImageConfigDict()
+
+        if tool.aspect_ratio is not None:
+            image_config['aspect_ratio'] = tool.aspect_ratio
+
+        if tool.size is not None:
+            if tool.size not in _GOOGLE_IMAGE_SIZES:
+                raise UserError(
+                    f'Google image generation only supports `size` values: {_GOOGLE_IMAGE_SIZES}. '
+                    f'Got: {tool.size!r}. Omit `size` to use the default (1K).'
+                )
+            image_config['image_size'] = tool.size
+
+        if self.system == 'google-vertex':
+            if tool.output_format is not None:
+                if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
+                    raise UserError(
+                        f'Google image generation only supports `output_format` values: {_GOOGLE_IMAGE_OUTPUT_FORMATS}. '
+                        f'Got: {tool.output_format!r}.'
+                    )
+                image_config['output_mime_type'] = f'image/{tool.output_format}'
+
+            output_compression = tool.output_compression
+            if output_compression is not None:
+                if not (0 <= output_compression <= 100):
+                    raise UserError(
+                        f'Google image generation `output_compression` must be between 0 and 100. '
+                        f'Got: {output_compression}.'
+                    )
+                if tool.output_format not in (None, 'jpeg'):
+                    raise UserError(
+                        f'Google image generation `output_compression` is only supported for JPEG format. '
+                        f'Got format: {tool.output_format!r}. Either set `output_format="jpeg"` or remove `output_compression`.'
+                    )
+                image_config['output_compression_quality'] = output_compression
+                if tool.output_format is None:
+                    image_config['output_mime_type'] = 'image/jpeg'
+
+        return image_config
+
     def _get_tools(
         self, model_request_parameters: ModelRequestParameters
     ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
@@ -387,17 +432,7 @@ class GoogleModel(Model):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
-
-                    image_config = ImageConfigDict()
-                    if tool.aspect_ratio is not None:
-                        image_config['aspect_ratio'] = tool.aspect_ratio
-                    if tool.size is not None:
-                        if tool.size not in _GOOGLE_IMAGE_SIZES:
-                            raise UserError(
-                                f'Google image generation only supports `size` values: {_GOOGLE_IMAGE_SIZES}. '
-                                f'Got: {tool.size!r}. Omit `size` to use the default (1K).'
-                            )
-                        image_config['image_size'] = tool.size
+                    image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
