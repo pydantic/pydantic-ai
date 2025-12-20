@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 from uuid import uuid4
 
@@ -34,7 +35,6 @@ from .request_types import (
     RequestData,
     ToolApprovalResponded,
     ToolUIPart,
-    UIMessage,
 )
 from .response_types import (
     BaseChunk,
@@ -81,37 +81,27 @@ def _json_dumps(obj: Any) -> str:
     return to_json(obj).decode('utf-8')
 
 
-def _extract_denied_tool_ids(messages: list[UIMessage]) -> set[str]:
-    """Extract tool_call_ids that were denied from UI messages."""
-    denied_ids: set[str] = set()
-    for msg in messages:
-        if msg.role != 'assistant':
-            continue
-        for part in msg.parts:
-            if not isinstance(part, ToolUIPart | DynamicToolUIPart):
-                continue
-            approval = part.approval
-            if isinstance(approval, ToolApprovalResponded) and not approval.approved:
-                tool_call_id = part.tool_call_id
-                if tool_call_id:
-                    denied_ids.add(tool_call_id)
-    return denied_ids
-
-
 @dataclass
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Vercel AI protocol."""
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
-    _denied_tool_ids: set[str] | None = None
 
-    @property
-    def denied_tool_ids(self) -> set[str]:
+    @cached_property
+    def _denied_tool_ids(self) -> set[str]:
         """Get the set of tool_call_ids that were denied by the user."""
-        if self._denied_tool_ids is None:
-            self._denied_tool_ids = _extract_denied_tool_ids(self.run_input.messages)
-        return self._denied_tool_ids
+        denied_ids: set[str] = set()
+        for msg in self.run_input.messages:
+            if msg.role != 'assistant':
+                continue
+            for part in msg.parts:
+                if not isinstance(part, ToolUIPart | DynamicToolUIPart):
+                    continue
+                tool_call_id = part.tool_call_id
+                if tool_call_id and isinstance(part.approval, ToolApprovalResponded) and not part.approval.approved:
+                    denied_ids.add(tool_call_id)
+        return denied_ids
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -289,7 +279,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         tool_call_id = part.tool_call_id
 
         # Check if this tool was denied by the user (only when tool_approval is enabled)
-        if self.tool_approval and tool_call_id in self.denied_tool_ids:
+        if self.tool_approval and tool_call_id in self._denied_tool_ids:
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())

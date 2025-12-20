@@ -35,7 +35,7 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT, DeferredToolResults, ToolApproved, ToolDenied
+from ...tools import AgentDepsT, DeferredToolApprovalResult, DeferredToolResults
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._utils import dump_provider_metadata, load_provider_metadata
@@ -99,7 +99,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             tool_approval: Whether to enable tool approval streaming for human-in-the-loop workflows.
         """
         run_input = cls.build_run_input(await request.body())
-        deferred_tool_results = cls.extract_deferred_tool_results(run_input.messages) if tool_approval else None
+        deferred_tool_results = cls._extract_deferred_tool_results(run_input.messages) if tool_approval else None
         return cls(
             agent=agent,
             run_input=run_input,
@@ -107,6 +107,27 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             tool_approval=tool_approval,
             deferred_tool_results=deferred_tool_results,
         )
+
+    @classmethod
+    def _extract_deferred_tool_results(cls, messages: Sequence[UIMessage]) -> DeferredToolResults | None:
+        """Extract deferred tool results from UI messages."""
+        approvals: dict[str, bool | DeferredToolApprovalResult] = {}
+        for msg in messages:
+            if msg.role != 'assistant':
+                continue
+            for part in msg.parts:
+                if not isinstance(part, ToolUIPart | DynamicToolUIPart):
+                    continue
+                approval = part.approval
+                if not isinstance(approval, ToolApprovalResponded):
+                    continue
+                tool_call_id = part.tool_call_id
+                if not tool_call_id:
+                    continue
+                approvals[tool_call_id] = approval.approved
+        if not approvals:
+            return None
+        return DeferredToolResults(approvals=approvals)
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
@@ -116,44 +137,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
-
-    @classmethod
-    def extract_deferred_tool_results(cls, messages: Sequence[UIMessage]) -> DeferredToolResults | None:
-        """Extract deferred tool results from UI messages.
-
-        Args:
-            messages: The UI messages to scan for approval responses.
-
-        Returns:
-            DeferredToolResults if any tool parts have approval responses, None otherwise.
-        """
-        approvals: dict[str, bool | ToolApproved | ToolDenied] = {}
-
-        for msg in messages:
-            if msg.role != 'assistant':
-                continue
-
-            for part in msg.parts:
-                if not isinstance(part, ToolUIPart | DynamicToolUIPart):
-                    continue
-
-                approval = part.approval
-                if approval is None or not isinstance(approval, ToolApprovalResponded):
-                    continue
-
-                tool_call_id = part.tool_call_id
-                if not tool_call_id:
-                    continue
-
-                if approval.approved:
-                    approvals[tool_call_id] = ToolApproved()
-                else:
-                    approvals[tool_call_id] = ToolDenied(message=approval.reason or 'The tool call was denied.')
-
-        if not approvals:
-            return None
-
-        return DeferredToolResults(approvals=approvals)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
