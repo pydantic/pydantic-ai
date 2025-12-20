@@ -287,14 +287,13 @@ Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,re
 # since deps are not set, they default to `None`, so can't be `int`
 Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
 
-# TextOutput with RunContext
+# TextOutput with RunContext uses RunContext[Any], so deps_type is not checked.
+# This is intentional: type checking deps in output functions isn't feasible because
+# ToolOutput and plain output functions take arbitrary args, so the type checker
+# treats RunContext as just another arg rather than enforcing deps_type compatibility.
 text_output_with_ctx = TextOutput(str_to_regex_with_ctx)
-assert_type(text_output_with_ctx, TextOutput[re.Pattern[str], int])
+assert_type(text_output_with_ctx, TextOutput[re.Pattern[str]])
 Agent('test', output_type=text_output_with_ctx, deps_type=int)
-Agent('test', output_type=text_output_with_ctx, deps_type=bool)  # bool is subclass of int, works with contravariant
-# NOTE: The following don't produce type errors because _OutputSpecItem uses TextOutput[T_co, Any]
-# which erases the deps type constraint. This is a known limitation.
-# https://github.com/pydantic/pydantic-ai/pull/3732#discussion_r2628741424
 Agent('test', output_type=text_output_with_ctx, deps_type=str)
 Agent('test', output_type=text_output_with_ctx)
 

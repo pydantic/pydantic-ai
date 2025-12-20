@@ -34,7 +34,6 @@ __all__ = (
 
 T = TypeVar('T')
 T_co = TypeVar('T_co', covariant=True)
-TextOutputAgentDepsT = TypeVar('TextOutputAgentDepsT', default=None, contravariant=True)
 
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
@@ -62,8 +61,8 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Callable[[RunContext[TextOutputAgentDepsT], str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
-    type_params=(T_co, TextOutputAgentDepsT),
+    Callable[[RunContext[Any], str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
+    type_params=(T_co,),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
 
@@ -261,7 +260,7 @@ class OutputObjectDefinition:
 
 
 @dataclass
-class TextOutput(Generic[OutputDataT, TextOutputAgentDepsT]):
+class TextOutput(Generic[OutputDataT]):
     """Marker class to use text output for an output function taking a string argument.
 
     Example:
@@ -283,7 +282,7 @@ class TextOutput(Generic[OutputDataT, TextOutputAgentDepsT]):
     ```
     """
 
-    output_function: TextOutputFunc[OutputDataT, TextOutputAgentDepsT]
+    output_function: TextOutputFunc[OutputDataT]
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
@@ -356,7 +355,7 @@ def StructuredDict(
 
 _OutputSpecItem = TypeAliasType(
     '_OutputSpecItem',
-    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co, Any],
+    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
     type_params=(T_co,),
 )
 
