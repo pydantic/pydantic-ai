@@ -65,9 +65,6 @@ class ModelProfile:
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
     """
 
-    supports_tool_search: bool = False
-    """Whether the model has native support for tool search (builtin ToolSearchTool) and defer loading tools."""
-
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""

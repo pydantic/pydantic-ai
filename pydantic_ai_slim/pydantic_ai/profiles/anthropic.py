@@ -23,7 +23,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
         json_schema_transformer=AnthropicJsonSchemaTransformer,
-        supports_tool_search=True,
     )
 
 
