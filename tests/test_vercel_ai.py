@@ -2070,9 +2070,18 @@ async def test_tool_approval_false_does_not_emit_approval_chunks():
     assert len(approval_events) == 0
 
 
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_tool_output_denied_chunk_emission():
-    """Test that ToolOutputDeniedChunk is emitted when a tool call is denied."""
-    from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+    """Test that ToolOutputDeniedChunk is emitted when a tool call is denied.
+
+    This test verifies the full public interface: from_request() extracts approval
+    data from messages, and the adapter emits tool-output-denied chunks for denied tools.
+    """
+    from unittest.mock import AsyncMock
+
+    from starlette.requests import Request
+
+    from pydantic_ai.tools import DeferredToolRequests
     from pydantic_ai.ui.vercel_ai.request_types import (
         DynamicToolInputAvailablePart,
         ToolApprovalResponded,
@@ -2084,9 +2093,7 @@ async def test_tool_output_denied_chunk_emission():
         # Model acknowledges the denial
         yield 'The file deletion was cancelled as requested.'
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
-        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
-    )
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
@@ -2120,8 +2127,17 @@ async def test_tool_output_denied_chunk_emission():
         ],
     )
 
-    deferred_tool_results = DeferredToolResults(approvals={'delete_1': False})
-    adapter = VercelAIAdapter(agent, request, tool_approval=True, deferred_tool_results=deferred_tool_results)
+    def mock_header_get(key: str) -> str | None:
+        return None
+
+    request_body = request.model_dump_json().encode()
+    mock_request = AsyncMock(spec=Request)
+    mock_request.body = AsyncMock(return_value=request_body)
+    mock_request.headers.get = mock_header_get
+
+    adapter = await VercelAIAdapter[None, str | DeferredToolRequests].from_request(
+        mock_request, agent=agent, tool_approval=True
+    )
     events: list[str | dict[str, Any]] = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
         async for event in adapter.encode_stream(adapter.run_stream())
@@ -4534,148 +4550,3 @@ def starlette_import_successful() -> bool:
         return False
 
 
-@pytest.mark.skipif(not starlette_import_successful(), reason='Starlette not installed')
-async def test_from_request_with_tool_approval_enabled():
-    """Test that from_request correctly handles tool_approval parameter."""
-    from unittest.mock import AsyncMock
-
-    from starlette.requests import Request
-
-    from pydantic_ai.ui.vercel_ai.request_types import (
-        DynamicToolInputAvailablePart,
-        ToolApprovalResponded,
-    )
-
-    def mock_header_get(key: str) -> str | None:
-        return None
-
-    agent = Agent(TestModel())
-
-    # Case 1: tool_approval=True with approvals in messages
-    request_with_approvals = SubmitMessage(
-        trigger='submit-message',
-        id='test-id',
-        messages=[
-            UIMessage(
-                id='msg-1',
-                role='assistant',
-                parts=[
-                    DynamicToolInputAvailablePart(
-                        tool_call_id='delete_1',
-                        tool_name='delete_file',
-                        input={'file': 'test.txt'},
-                        approval=ToolApprovalResponded(id='approval-1', approved=True),
-                    ),
-                ],
-            ),
-        ],
-    )
-
-    request_body_with_approvals = request_with_approvals.model_dump_json().encode()
-    mock_request_with_approvals = AsyncMock(spec=Request)
-    mock_request_with_approvals.body = AsyncMock(return_value=request_body_with_approvals)
-    mock_request_with_approvals.headers.get = mock_header_get
-
-    adapter_with_approval = await VercelAIAdapter.from_request(
-        mock_request_with_approvals,
-        agent=agent,
-        tool_approval=True,
-    )
-
-    # Verify tool_approval is set
-    assert adapter_with_approval.tool_approval is True
-    # Verify deferred_tool_results is populated
-    assert adapter_with_approval.deferred_tool_results is not None
-    assert 'delete_1' in adapter_with_approval.deferred_tool_results.approvals
-
-    # Case 2: tool_approval=False
-    mock_request_without_approval = AsyncMock(spec=Request)
-    mock_request_without_approval.body = AsyncMock(return_value=request_body_with_approvals)
-    mock_request_without_approval.headers.get = mock_header_get
-
-    adapter_without_approval = await VercelAIAdapter.from_request(
-        mock_request_without_approval,
-        agent=agent,
-        tool_approval=False,
-    )
-
-    # Verify tool_approval is set
-    assert adapter_without_approval.tool_approval is False
-    # Verify deferred_tool_results is None when tool_approval=False
-    assert adapter_without_approval.deferred_tool_results is None
-
-    # Case 3: tool_approval=True but no approvals in messages
-    request_no_approvals = SubmitMessage(
-        trigger='submit-message',
-        id='test-id-2',
-        messages=[
-            UIMessage(
-                id='msg-2',
-                role='user',
-                parts=[TextUIPart(text='Hello')],
-            ),
-        ],
-    )
-
-    request_body_no_approvals = request_no_approvals.model_dump_json().encode()
-    mock_request_no_approvals = AsyncMock(spec=Request)
-    mock_request_no_approvals.body = AsyncMock(return_value=request_body_no_approvals)
-    mock_request_no_approvals.headers.get = mock_header_get
-
-    adapter_no_approvals = await VercelAIAdapter.from_request(
-        mock_request_no_approvals,
-        agent=agent,
-        tool_approval=True,
-    )
-
-    # Verify tool_approval is set
-    assert adapter_no_approvals.tool_approval is True
-    # Verify deferred_tool_results is None when no approvals exist
-    assert adapter_no_approvals.deferred_tool_results is None
-
-
-async def test_deferred_tool_results_fallback_from_instance():
-    """Test that run_stream_native uses deferred_tool_results from instance when not explicitly passed."""
-    from unittest.mock import patch
-
-    from pydantic_ai.tools import DeferredToolResults, ToolApproved
-
-    # Create test deferred_tool_results
-    test_deferred_results = DeferredToolResults(approvals={'tool_1': ToolApproved()})
-
-    # Create a basic request
-    request = SubmitMessage(
-        id='test-request',
-        messages=[
-            UIMessage(
-                id='test-message',
-                role='user',
-                parts=[TextUIPart(text='Test message')],
-            ),
-        ],
-    )
-
-    # Create a simple agent
-    agent = Agent(model=TestModel())
-
-    # Create adapter with deferred_tool_results set on instance
-    adapter = VercelAIAdapter(agent, request, deferred_tool_results=test_deferred_results)
-
-    # Mock the agent's run_stream_events to capture what deferred_tool_results is passed
-    captured_kwargs: dict[str, Any] = {}
-
-    async def mock_run_stream_events(**kwargs: Any) -> None:
-        captured_kwargs.update(kwargs)
-        # Return empty async iterator
-        return
-        yield  # pragma: no cover
-
-    with patch.object(agent, 'run_stream_events', side_effect=mock_run_stream_events):
-        # Call run_stream_native WITHOUT passing deferred_tool_results
-        result = adapter.run_stream_native()
-        # Consume the iterator
-        async for _ in result:  # pragma: no cover
-            pass
-
-    # Verify that the instance's deferred_tool_results was used
-    assert captured_kwargs['deferred_tool_results'] is test_deferred_results
