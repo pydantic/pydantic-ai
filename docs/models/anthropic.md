@@ -84,7 +84,7 @@ You can use Anthropic models through cloud platforms by passing a custom client 
 
 ### AWS Bedrock
 
-To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), use the [`AsyncAnthropicBedrock`](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock) client from the `anthropic` package:
+To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock) on how to set up an `AsyncAnthropicBedrock` client and then pass it to `AnthropicProvider`:
 
 ```python {test="skip"}
 from anthropic import AsyncAnthropicBedrock
