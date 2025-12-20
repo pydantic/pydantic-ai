@@ -25,6 +25,7 @@ from .._output import OutputObjectDefinition, PromptedOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
+from ..toolsets.searchable import is_search_tool, is_active
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -536,6 +537,23 @@ class ModelRequestParameters:
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    def active_tool_defs(self, builtin_search: bool, run_id: str) -> dict[str, ToolDefinition]:
+        if builtin_search:
+            # Models that support built-in search need to filter out the Pydantic tool search tool.
+            return {
+                name: tool for name, tool
+                in self.tool_defs.items()
+                if not is_search_tool(tool)
+            }
+        else:
+            # All other models rely on Pydantic filtering out not-yet-active tools.
+            tools = {
+                name: tool for name, tool
+                in self.tool_defs.items()
+                if is_active(tool, run_id)
+            }
+            return tools
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:

@@ -493,7 +493,7 @@ class OpenAIChatModel(Model):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        tools = self._get_tools(model_request_parameters, run_id=self._run_id(messages))
         web_search_options = self._get_web_search_options(model_request_parameters)
 
         if not tools:
@@ -699,8 +699,17 @@ class OpenAIChatModel(Model):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    def _run_id(self, messages: list[ModelMessage]) -> str:
+        # Take the last run_id found in messages. TODO can we assume one is always found?
+        run_id = ""
+        for m in messages:
+            if isinstance(m, ModelRequest):
+                run_id = m.run_id
+        return run_id
+
+    def _get_tools(self, model_request_parameters: ModelRequestParameters, run_id: str) -> list[chat.ChatCompletionToolParam]:
+        tools = model_request_parameters.active_tool_defs(builtin_search=False, run_id=run_id)
+        return [self._map_tool_definition(r) for r in tools.values()]
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
@@ -1423,7 +1432,8 @@ class OpenAIResponsesModel(Model):
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+        tools = model_request_parameters.active_tool_defs(builtin_search=False)
+        return [self._map_tool_definition(r) for r in tools.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []

@@ -18,13 +18,12 @@ from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
-from .toolsets.searchable import SearchableToolset
 from .usage import RunUsage
 
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
 
 
-@dataclass(init=False)
+@dataclass
 class ToolManager(Generic[AgentDepsT]):
     """Manages tools for an agent run step. It caches the agent run's toolset's tool definitions and handles calling tools and retries."""
 
@@ -36,20 +35,6 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
-
-    def __init__(
-        self,
-        toolset: AbstractToolset[AgentDepsT],
-        ctx: RunContext[AgentDepsT] | None = None,
-        tools: dict[str, ToolsetTool[AgentDepsT]] | None = None,
-        failed_tools: set[str] | None = None,
-    ) -> None:
-        # TODO can we avoid wrapping if no tools request deferred loading?
-        # That is could the wrapping be pushed down to for_run_step for example?
-        self.toolset = SearchableToolset(toolset)
-        self.ctx = ctx
-        self.tools = tools
-        self.failed_tools = failed_tools if failed_tools is not None else set()
 
     @classmethod
     @contextmanager

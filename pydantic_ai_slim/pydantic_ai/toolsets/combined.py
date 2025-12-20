@@ -86,7 +86,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        assert isinstance(tool, _CombinedToolsetTool)
+        assert isinstance(tool, _CombinedToolsetTool), f"Expected _CombinedToolsetTool, got {type(tool)} for {tool.tool_def.name}"
         return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:

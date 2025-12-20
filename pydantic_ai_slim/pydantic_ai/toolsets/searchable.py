@@ -2,7 +2,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import Self
@@ -69,32 +69,21 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         return f'{self.__class__.__name__}({self.toolset.label})'  # pragma: no cover
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        # Models that support built-in tool search are exposed to all the tools as-is.
-        if ctx.model.profile.supports_tool_search:
-            logging.debug("SearchableToolset.get_tools ==> built-in")
-            return await self.toolset.get_tools(ctx)
+        toolset_tools = await self.toolset.get_tools(ctx)
 
-        # Otherwise add a Pydantic tool search tool and selectively expose activated tools.
-        logging.debug("SearchableToolset.get_tools ==> pydantic")
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
-        # If the model does not support tool search natively, add a Pydantic tool search tool.
         all_tools[_SEARCH_TOOL_NAME] = _SearchTool(
             toolset=self,
-            max_retries=1,
+            max_retries=3,
         )
 
-        toolset_tools = await self.toolset.get_tools(ctx)
         for tool_name, tool in toolset_tools.items():
             # TODO proper error handling
             assert tool_name != _SEARCH_TOOL_NAME
+            defer = tool.tool_def.defer_loading
+            all_tools[tool_name] = _SearchToolsetToolWrapper(tool, self) if defer else tool
 
-            # Expose the tool unless it defers loading and is not yet active.
-            active_tool_names = self._active_tool_names.get(ctx.run_id, set())
-            if not tool.tool_def.defer_loading or tool_name in active_tool_names:
-                all_tools[tool_name] = tool
-
-        logging.debug(f"SearchableToolset.get_tools ==> {[t for t in all_tools]}")
         return all_tools
 
     async def call_tool(
@@ -107,7 +96,8 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
             logging.debug(f"SearchableToolset.call_tool({name}, {tool_args}) ==> {result}")
             return result
         else:
-            result = await self.toolset.call_tool(name, tool_args, ctx, tool)
+            assert isinstance(tool, _SearchToolsetToolWrapper)
+            result = await self.toolset.call_tool(name, tool_args, ctx, tool.wrapped)
             logging.debug(f"SearchableToolset.call_tool({name}, {tool_args}) ==> {result}")
             return result
 
@@ -116,8 +106,9 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         toolset_tools = await self.toolset.get_tools(ctx)
         matching_tool_names: list[str] = []
 
+        rx = re.compile(args['regex'])
+
         for _, tool in toolset_tools.items():
-            rx = re.compile(args['regex'])
             if rx.search(tool.tool_def.name) or rx.search(tool.tool_def.description):
                 matching_tool_names.append(tool.tool_def.name)
 
@@ -138,3 +129,53 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.toolset.__aexit__(*args)
+
+    def is_active(self, tool_def: ToolDefinition, run_id: str) -> bool:
+        return tool_def.name in self._active_tool_names.get(run_id, set())
+
+
+@dataclass(kw_only=True)
+class _SearchToolsetToolWrapper(ToolsetTool[AgentDepsT]):
+    """A ToolsetTool that tags its ToolDefinition to enable tool_is_active query."""
+
+    wrapped: ToolsetTool[AgentDepsT]
+    _tool_def: ToolDefinition
+    _searchable_toolset: SearchableToolset
+
+    def __init__(
+        self,
+        tool: ToolsetTool[AgentDepsT],
+        searchable_toolset: SearchableToolset,
+    ) -> None:
+        self.wrapped = tool
+        self._searchable_toolset = searchable_toolset
+        self.toolset = tool.toolset
+        self._tool_def = tool.tool_def
+        self.max_retries = tool.max_retries
+        self.args_validator = tool.args_validator
+
+    @property
+    def tool_def(self) -> ToolDefinition:
+        metadata = (self._tool_def.metadata or {}).copy()
+        toolset = self._searchable_toolset
+        tool = self._tool_def
+        metadata["active"] = lambda run_id: toolset.is_active(tool_def=tool, run_id=run_id)
+        return replace(self._tool_def, metadata=metadata)
+
+    @tool_def.setter
+    def tool_def(self, value: ToolDefinition) -> None:
+        self._tool_def = value
+
+
+def is_active(tool_def: ToolDefinition, run_id: str) -> bool:
+    """Filters out not-yet-active defer_loading tools."""
+    if not tool_def.defer_loading:
+        return True
+    metadata = (tool_def.metadata or {}).copy()
+    predicate = metadata.get("active")
+    return predicate and predicate(run_id)
+
+
+def is_search_tool(tool_def: ToolDefinition) -> bool:
+    """Check if this tool is a tool implementing search and loading."""
+    return tool_def.name == _SEARCH_TOOL_NAME

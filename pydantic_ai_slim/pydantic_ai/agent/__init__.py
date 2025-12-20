@@ -64,6 +64,7 @@ from ..toolsets._dynamic import (
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
+from ..toolsets.searchable import SearchableToolset
 from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
@@ -1393,7 +1394,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
             toolset = CombinedToolset([output_toolset, toolset])
 
-        return toolset
+        return SearchableToolset(toolset)
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
