@@ -1946,7 +1946,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             None,
             snapshot(
                 {
-                    'additionalProperties': {'type': 'integer'},
+                    'additionalProperties': True,
                     'properties': {'x': {'type': 'integer'}},
                     'required': ['x'],
                     'type': 'object',

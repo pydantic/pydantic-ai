@@ -1574,7 +1574,11 @@ def test_map_from_pai_messages_with_binary_content():
     assert system_prompt == ''
     assert [m.model_dump(by_alias=True) for m in sampling_msgs] == snapshot(
         [
-            {'role': 'user', 'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None}},
+            {
+                'role': 'user',
+                'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None},
+                '_meta': None,
+            },
             {
                 'role': 'user',
                 'content': {
@@ -1584,6 +1588,7 @@ def test_map_from_pai_messages_with_binary_content():
                     'annotations': None,
                     '_meta': None,
                 },
+                '_meta': None,
             },
         ]
     )
