@@ -86,7 +86,7 @@ async def chat(request: Request) -> Response:
 ## Tool Approval
 
 !!! note
-    Tool approval requires AI SDK v6 or later on the frontend.
+    Tool approval requires AI SDK UI v6 or later on the frontend.
 
 Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md) for details on setting up tools that require approval.
 

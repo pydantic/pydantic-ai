@@ -3,7 +3,7 @@
 Converted to Python from:
 https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui-message-stream/ui-message-chunks.ts
 
-Tool approval types (`ToolApprovalRequestChunk`, `ToolOutputDeniedChunk`) require AI SDK v6 or later.
+Tool approval types (`ToolApprovalRequestChunk`, `ToolOutputDeniedChunk`) require AI SDK UI v6 or later.
 """
 
 from abc import ABC
@@ -154,7 +154,7 @@ class ToolOutputErrorChunk(BaseChunk):
 class ToolApprovalRequestChunk(BaseChunk):
     """Tool approval request chunk for human-in-the-loop approval.
 
-    Requires AI SDK v6 or later.
+    Requires AI SDK UI v6 or later.
     """
 
     type: Literal['tool-approval-request'] = 'tool-approval-request'
@@ -165,7 +165,7 @@ class ToolApprovalRequestChunk(BaseChunk):
 class ToolOutputDeniedChunk(BaseChunk):
     """Tool output denied chunk when user denies tool execution.
 
-    Requires AI SDK v6 or later.
+    Requires AI SDK UI v6 or later.
     """
 
     type: Literal['tool-output-denied'] = 'tool-output-denied'
