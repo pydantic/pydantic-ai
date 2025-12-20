@@ -99,7 +99,24 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             tool_approval: Whether to enable tool approval streaming for human-in-the-loop workflows.
         """
         run_input = cls.build_run_input(await request.body())
-        deferred_tool_results = cls._extract_deferred_tool_results(run_input.messages) if tool_approval else None
+
+        # Extract deferred tool results from messages when tool_approval is enabled
+        deferred_tool_results: DeferredToolResults | None = None
+        if tool_approval:
+            approvals: dict[str, bool | DeferredToolApprovalResult] = {}
+            for msg in run_input.messages:
+                if msg.role != 'assistant':
+                    continue
+                for part in msg.parts:
+                    if not isinstance(part, ToolUIPart | DynamicToolUIPart):
+                        continue
+                    approval = part.approval
+                    if not isinstance(approval, ToolApprovalResponded):
+                        continue
+                    approvals[part.tool_call_id] = approval.approved
+            if approvals:
+                deferred_tool_results = DeferredToolResults(approvals=approvals)
+
         return cls(
             agent=agent,
             run_input=run_input,
@@ -107,24 +124,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             tool_approval=tool_approval,
             deferred_tool_results=deferred_tool_results,
         )
-
-    @classmethod
-    def _extract_deferred_tool_results(cls, messages: Sequence[UIMessage]) -> DeferredToolResults | None:
-        """Extract deferred tool results from UI messages."""
-        approvals: dict[str, bool | DeferredToolApprovalResult] = {}
-        for msg in messages:
-            if msg.role != 'assistant':
-                continue
-            for part in msg.parts:
-                if not isinstance(part, ToolUIPart | DynamicToolUIPart):
-                    continue
-                approval = part.approval
-                if not isinstance(approval, ToolApprovalResponded):
-                    continue
-                approvals[part.tool_call_id] = approval.approved
-        if not approvals:
-            return None
-        return DeferredToolResults(approvals=approvals)
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
