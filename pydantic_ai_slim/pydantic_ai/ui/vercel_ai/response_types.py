@@ -151,7 +151,10 @@ class ToolOutputErrorChunk(BaseChunk):
 
 
 class ToolApprovalRequestChunk(BaseChunk):
-    """Tool approval request chunk for human-in-the-loop approval."""
+    """Tool approval request chunk for human-in-the-loop approval.
+
+    Requires AI SDK v6 or later.
+    """
 
     type: Literal['tool-approval-request'] = 'tool-approval-request'
     approval_id: str
@@ -159,7 +162,10 @@ class ToolApprovalRequestChunk(BaseChunk):
 
 
 class ToolOutputDeniedChunk(BaseChunk):
-    """Tool output denied chunk when user denies tool execution."""
+    """Tool output denied chunk when user denies tool execution.
+
+    Requires AI SDK v6 or later.
+    """
 
     type: Literal['tool-output-denied'] = 'tool-output-denied'
     tool_call_id: str
