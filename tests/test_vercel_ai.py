@@ -3163,14 +3163,3 @@ async def test_adapter_dump_messages_with_cache_point():
             }
         ]
     )
-
-
-def starlette_import_successful() -> bool:
-    """Check if starlette is installed."""
-    try:
-        from starlette.requests import Request
-
-        assert Request  # Verify the import succeeded
-        return True
-    except ImportError:
-        return False
