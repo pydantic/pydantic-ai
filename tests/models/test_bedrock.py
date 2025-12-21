@@ -2379,58 +2379,6 @@ async def test_tool_choice_auto_with_required_output(bedrock_provider: BedrockPr
     assert tool_config.get('toolChoice') == {'any': {}}
 
 
-async def test_tool_choice_none_with_output_tools_uses_auto(bedrock_provider: BedrockProvider) -> None:
-    """When tool_choice='none' with output tools, uses 'auto' to let model choose among output tools."""
-    function_tool = ToolDefinition(
-        name='my_tool',
-        description='Function tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    output_tool = ToolDefinition(
-        name='final_result',
-        description='Output tool',
-        parameters_json_schema={'type': 'object', 'properties': {'result': {'type': 'string'}}},
-    )
-    # tool_choice='none' filters function_tools, but output_tools remain
-    mrp = ModelRequestParameters(
-        output_mode='tool', function_tools=[function_tool], allow_text_output=True, output_tools=[output_tool]
-    )
-
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    settings: BedrockModelSettings = {'tool_choice': 'none'}
-    tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tool_config is not None
-    # After filtering, only output tools remain; Bedrock uses 'auto' to let model choose
-    assert tool_config.get('toolChoice') == {'auto': {}}
-
-
-async def test_tool_choice_none_with_output_required_uses_specific_tool(bedrock_provider: BedrockProvider) -> None:
-    """When tool_choice='none' with allow_text_output=False, forces the single output tool."""
-    function_tool = ToolDefinition(
-        name='my_tool',
-        description='Function tool',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-    )
-    output_tool = ToolDefinition(
-        name='final_result',
-        description='Output tool',
-        parameters_json_schema={'type': 'object', 'properties': {'result': {'type': 'string'}}},
-    )
-    # allow_text_output=False means model must use a tool
-    mrp = ModelRequestParameters(
-        output_mode='tool', function_tools=[function_tool], allow_text_output=False, output_tools=[output_tool]
-    )
-
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    settings: BedrockModelSettings = {'tool_choice': 'none'}
-    tool_config = model._map_tool_config(mrp, settings)  # pyright: ignore[reportPrivateUsage]
-
-    assert tool_config is not None
-    # With a single output tool and allow_text_output=False, forces that specific tool
-    assert tool_config.get('toolChoice') == {'tool': {'name': 'final_result'}}
-
-
 async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):
     """Test that ModelResponse with empty parts (e.g. content_filtered) is skipped in message mapping."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)

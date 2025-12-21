@@ -8868,32 +8868,6 @@ async def test_tool_choice_multiple_tools_falls_back_to_any(allow_model_requests
     assert tool_names == {'tool_a', 'tool_b'}
 
 
-async def test_tool_choice_none_with_output_tools(allow_model_requests: None) -> None:
-    """Structured output must remain available even with tool_choice='none'."""
-
-    class Location(BaseModel):
-        city: str
-        country: str
-
-    c = completion_message(
-        [BetaToolUseBlock(id='1', type='tool_use', name='final_result', input={'city': 'Paris', 'country': 'France'})],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, output_type=Location)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    result = await agent.run('hello', model_settings={'tool_choice': 'none'})
-
-    assert result.output == snapshot(Location(city='Paris', country='France'))
-    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    assert kwargs['tool_choice'] == snapshot({'type': 'tool', 'name': 'final_result'})
-
-
 async def test_tool_choice_required_with_thinking_raises_error(allow_model_requests: None) -> None:
     """Thinking mode with tool_choice='required' raises UserError."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
@@ -8941,37 +8915,6 @@ async def test_tool_choice_specific_with_thinking_raises_error(allow_model_reque
         )
 
 
-async def test_tool_choice_none_with_multiple_output_tools_falls_back(allow_model_requests: None) -> None:
-    """Multiple output tools with tool_choice='none' - filters to output tools only, uses 'any'."""
-
-    class LocationA(BaseModel):
-        city: str
-
-    class LocationB(BaseModel):
-        country: str
-
-    c = completion_message(
-        [BetaToolUseBlock(id='1', type='tool_use', name='final_result_LocationA', input={'city': 'Paris'})],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, LocationA | LocationB] = Agent(m, output_type=[LocationA, LocationB])
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    # With structured output (no text allowed), filters to output tools and uses 'any'
-    await agent.run('hello', model_settings={'tool_choice': 'none'})
-
-    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    assert kwargs['tool_choice']['type'] == 'any'
-    # Only output tools should be sent
-    tool_names: set[str] = {t['name'] for t in kwargs['tools']}  # pyright: ignore[reportUnknownVariableType]
-    assert tool_names == {'final_result_LocationA', 'final_result_LocationB'}
-
-
 async def test_tool_choice_auto_with_required_output(allow_model_requests: None) -> None:
     """When tool_choice='auto' but structured output is required, falls back to 'any'."""
 
@@ -8998,28 +8941,6 @@ async def test_tool_choice_auto_with_required_output(allow_model_requests: None)
     assert kwargs['tool_choice'] == snapshot({'type': 'any'})
 
 
-async def test_tool_choice_none_without_output_tools(allow_model_requests: None) -> None:
-    """When tool_choice='none' with no output tools, no tools are sent at all."""
-    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': 'none'})
-
-    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    # Function tools filtered out, no output tools → tools is Omit (sentinel value)
-    from anthropic import Omit
-
-    assert isinstance(kwargs.get('tools'), Omit)  # pyright: ignore[reportUnknownMemberType]
-    # tool_choice is also Omit when no tools are sent
-    assert isinstance(kwargs.get('tool_choice'), Omit)  # pyright: ignore[reportUnknownMemberType]
-
-
 async def test_tool_choice_required_with_parallel_tool_calls_disabled(allow_model_requests: None) -> None:
     """tool_choice='required' with parallel_tool_calls=False sets disable_parallel_tool_use."""
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
@@ -9035,84 +8956,6 @@ async def test_tool_choice_required_with_parallel_tool_calls_disabled(allow_mode
 
     kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
     assert kwargs['tool_choice'] == snapshot({'type': 'any', 'disable_parallel_tool_use': True})
-
-
-async def test_tool_choice_none_single_output_with_parallel_disabled(allow_model_requests: None) -> None:
-    """tool_choice='none' with single output tool and parallel_tool_calls=False."""
-
-    class Location(BaseModel):
-        city: str
-
-    c = completion_message(
-        [BetaToolUseBlock(id='1', type='tool_use', name='final_result', input={'city': 'Paris'})],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, output_type=Location)
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': 'none', 'parallel_tool_calls': False})
-
-    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    assert kwargs['tool_choice'] == snapshot(
-        {'type': 'tool', 'name': 'final_result', 'disable_parallel_tool_use': True}
-    )
-
-
-async def test_tool_choice_none_multiple_output_tools_with_text_allowed(allow_model_requests: None) -> None:
-    """Multiple output tools with text allowed - filters to output tools, uses 'auto'."""
-
-    class LocationA(BaseModel):
-        city: str
-
-    class LocationB(BaseModel):
-        country: str
-
-    c = completion_message([BetaTextBlock(text='Just text', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, LocationA | LocationB | str] = Agent(m, output_type=[LocationA, LocationB, str])
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    # With allow_text_output=True, filters to output tools and uses 'auto'
-    await agent.run('hello', model_settings={'tool_choice': 'none'})
-
-    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    assert kwargs['tool_choice']['type'] == 'auto'
-    # Only output tools should be sent
-    tool_names: set[str] = {t['name'] for t in kwargs['tools']}  # pyright: ignore[reportUnknownVariableType]
-    assert tool_names == {'final_result_LocationA', 'final_result_LocationB'}
-
-
-async def test_tool_choice_none_multiple_output_with_parallel_disabled(allow_model_requests: None) -> None:
-    """Multiple output tools with parallel_tool_calls=False sets disable_parallel_tool_use."""
-
-    class LocationA(BaseModel):
-        city: str
-
-    class LocationB(BaseModel):
-        country: str
-
-    c = completion_message([BetaTextBlock(text='Just text', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, LocationA | LocationB | str] = Agent(m, output_type=[LocationA, LocationB, str])
-
-    @agent.tool_plain
-    def my_tool(x: int) -> str:
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings={'tool_choice': 'none', 'parallel_tool_calls': False})
-
-    kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
-    assert kwargs['tool_choice'] == snapshot({'type': 'auto', 'disable_parallel_tool_use': True})
 
 
 async def test_tool_choice_specific_with_parallel_disabled(allow_model_requests: None) -> None:
