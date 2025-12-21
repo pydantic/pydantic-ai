@@ -1,0 +1,61 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"50c-+aTLbSf6ATgqnMHyKtFwruxDN0s"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "I'm not able to provide real-time information, but I can give you a general overview of Rome's climate.
+            Rome has a Mediterranean climate, characterized by warm summers and mild winters. \n\n- **Summer (June to August):**
+            Expect high temperatures, often reaching above 30°C (86°F), and occasional heatwaves.\n\n- **Winter (December
+            to February):** It's mild, with temperatures ranging from 2°C to 12°C (36°F to 54°F). \n\n- **Spring (March to
+            May) and Autumn (September to November):** These seasons are generally pleasant, with temperatures ranging from
+            10°C to 25°C (50°F to 77°F), making them ideal times to visit.\n\nFor the most accurate and up-to-date weather
+            forecast, I recommend checking a reliable weather website or app."
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1766290025
+      id: oQ414Xm-3pDw3Z-9b1482a9b9ecd6b3
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 167
+        prompt_tokens: 17
+        total_tokens: 184
+    status:
+      code: 200
+      message: OK
+version: 1

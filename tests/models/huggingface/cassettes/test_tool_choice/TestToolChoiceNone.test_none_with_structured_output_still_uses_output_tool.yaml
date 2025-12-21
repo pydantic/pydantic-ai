@@ -1,0 +1,64 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"48c-/jxMtz1B7j2i6kI3zDB0ZTeNB+U"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Madrid","summary":"Madrid, the capital of Spain, is known for its vibrant culture, rich
+                history, and beautiful architecture. The city is home to many famous landmarks such as the Royal Palace of
+                Madrid, the Prado Museum, and the Retana Park. Madrid is also famous for its nightlife, with many bars, clubs,
+                and restaurants to choose from."}'
+              name: final_result
+            id: call_6n5q5145abxn90lj0iptzbyy
+            index: 0
+            type: function
+        seed: null
+      created: 1766290026
+      id: oQ414zu-z1gNr-9b1482b3ed14c5ce
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 101
+        prompt_tokens: 787
+        total_tokens: 888
+    status:
+      code: 200
+      message: OK
+version: 1

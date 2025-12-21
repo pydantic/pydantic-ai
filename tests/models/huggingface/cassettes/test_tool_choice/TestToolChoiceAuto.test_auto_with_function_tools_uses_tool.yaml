@@ -1,0 +1,188 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/meta-llama/Llama-4-Scout-17B-16E-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '904'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
+      ratelimit:
+      - '"api";r=999;t=94'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 67ed3cd9290a7f9d3301f9c1
+      id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      inferenceProviderMapping:
+        fireworks-ai:
+          isModelAuthor: false
+          providerId: accounts/fireworks/models/llama4-scout-instruct-basic
+          status: error
+          task: conversational
+        groq:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        novita:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        nscale:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+        sambanova:
+          isModelAuthor: false
+          providerId: Llama-4-Scout-17B-16E-Instruct
+          status: error
+          task: conversational
+        together:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"33a-l6xwNeTbG5QyeGsFZzR7wpyOisA"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: call_f766mdwhj0oq0z0v375b5gpo
+            index: 0
+            type: function
+        seed: null
+      created: 1766289981
+      id: oQ3zqcd-z1gNr-9b14819a6bbf9c5b
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 29
+        prompt_tokens: 773
+        total_tokens: 802
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"23e-Gnjc7CAi74ZumU7lkbKEx8JSeBM"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '1'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '[get_weather("Paris")]'
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1766289981
+      id: oQ3zqsF-z1gNr-9b14819fb8a9d6c7
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 6
+        prompt_tokens: 797
+        total_tokens: 803
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,70 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"75c-3Ro2Lvzw+6Bhem58o8d7NVe4hfA"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Boston","summary":"Boston is the capital and most populous city of the Commonwealth of
+                Massachusetts in the United States. Boston is also the seat of Suffolk County, although the county government
+                was disbanded on July 1, 1997. The city proper covers 48.4 square miles (125.4 km²) with an estimated 694,583
+                residents in 2023, making it the 24th most populous city in the United States, and the 118th most populous
+                city in the world. The city is the economic and cultural anchor of a substantially larger metropolitan area
+                known as Greater Boston, which has a population of 4,896,149 and ranks as the 10th most populous metropolitan
+                area in the United States. Boston is a global center of education, research, medical care and higher education.
+                The city is known for its academic institutions, including Harvard University and the Massachusetts Institute
+                of Technology.  Boston was the site of several key events of the American Revolution, including the Boston
+                Massacre, the Boston Tea Party, the Siege of Boston, and the Battles of Lexington and Concord."}'
+              name: final_result
+            id: call_yyrfsjevuwaw937eo4orgumq
+            index: 0
+            type: function
+        seed: null
+      created: 1766290038
+      id: oQ4182e-z1gNr-9b1482f389e7aa17
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 260
+        prompt_tokens: 787
+        total_tokens: 1047
+    status:
+      code: 200
+      message: OK
+version: 1

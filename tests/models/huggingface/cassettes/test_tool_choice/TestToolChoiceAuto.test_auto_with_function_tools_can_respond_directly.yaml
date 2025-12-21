@@ -1,0 +1,55 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"22b-ns4gO99ozFoVdpw2fqH0kVuybHs"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '0'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: Hello
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1766289982
+      id: oQ3zr4k-z1gNr-9b1481a3fcfd0836
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 2
+        prompt_tokens: 772
+        total_tokens: 774
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,56 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"2e6-m51tIymhLZ5kEaVNuwbAlhb9buQ"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '1'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: Tokyo, the capital of Japan, is a bustling metropolis known for its vibrant culture, rich history, and
+            cutting-edge technology, offering a unique blend of traditional and modern attractions.
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1766291552
+      id: oQ48tp6-3pDw3Z-9b14a7f87ffedb71
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 37
+        prompt_tokens: 880
+        total_tokens: 917
+    status:
+      code: 200
+      message: OK
+version: 1

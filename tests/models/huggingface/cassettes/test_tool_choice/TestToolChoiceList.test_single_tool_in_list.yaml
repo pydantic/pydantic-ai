@@ -1,0 +1,58 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"3d5-mao9WKpMRXaF3+TDHC/kXUCGfps"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '0'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Paris, the capital of France, is known as the \"City of Light\" for its role in the Enlightenment and
+            its many famous intellectuals and artists. It's famous for its stunning architecture, art museums, fashion industry,
+            and romantic atmosphere. Some must-see attractions include the Eiffel Tower, the Louvre Museum, and Notre-Dame
+            Cathedral. \n\nWould you like to know more about Paris, or perhaps check the current weather there?"
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1766290029
+      id: oQ4161W-3pDw3Z-9b1482c88cd01de9
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 90
+        prompt_tokens: 764
+        total_tokens: 854
+    status:
+      code: 200
+      message: OK
+version: 1

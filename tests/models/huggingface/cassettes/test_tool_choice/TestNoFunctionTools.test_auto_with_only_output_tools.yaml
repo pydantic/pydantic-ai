@@ -1,0 +1,64 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"4d9-qLNNWl74Xvt5mJpgAFiSjqYLJWM"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"New York","summary":"New York is a state in the northeastern United States. It is one of
+                the most populous states and is known for its diverse culture, iconic cities, and natural beauty. The state
+                capital is Albany, while New York City is the largest city and a global hub for finance, media, and entertainment.
+                New York is also famous for its historical landmarks, such as the Statue of Liberty and Central Park."}'
+              name: final_result
+            id: call_956g1vy0rvpbqmwm6y9wd794
+            index: 0
+            type: function
+        seed: null
+      created: 1766290035
+      id: oQ417XV-3pDw3Z-9b1482e84b2405b9
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 118
+        prompt_tokens: 788
+        total_tokens: 906
+    status:
+      code: 200
+      message: OK
+version: 1

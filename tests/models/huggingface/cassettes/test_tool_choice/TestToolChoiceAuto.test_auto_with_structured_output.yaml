@@ -1,0 +1,67 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"45f-QgJ+42PiNxH//WPbHiYb+ePMfAw"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Tokyo"}'
+              name: get_weather
+            id: call_yriz1tydjscsvnsytw354i0a
+            index: 0
+            type: function
+          - function:
+              arguments: '{"city":"Tokyo","summary":"weather summary"}'
+              name: final_result
+            id: call_qbu72noklg7hj7l1qe89fbov
+            index: 1
+            type: function
+        seed: null
+      created: 1766290020
+      id: oQ413FD-3pDw3Z-9b14828e2edd0936
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 63
+        prompt_tokens: 881
+        total_tokens: 944
+    status:
+      code: 200
+      message: OK
+version: 1

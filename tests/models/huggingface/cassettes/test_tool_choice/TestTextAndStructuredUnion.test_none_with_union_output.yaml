@@ -1,0 +1,60 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"495-yEdM08h3gnbim1lLQZ/rE7LkPAQ"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '0'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: Seattle is a vibrant city located in the Pacific Northwest region of the United States. It is known for
+            its stunning natural beauty, with mountains, forests, and waterways surrounding the city. Seattle is home to iconic
+            landmarks such as the Space Needle, Pike Place Market, and the Seattle Waterfront. The city is also famous for
+            its coffee culture, being the birthplace of Starbucks, and is a hub for technology and innovation, with companies
+            like Amazon and Microsoft headquartered there. With a thriving arts and music scene, Seattle is a popular destination
+            for tourists and a great place to live for its residents.
+          role: assistant
+          tool_calls: []
+        seed: null
+      created: 1766290079
+      id: oQ41LeX-3pDw3Z-9b1483fc9f321272
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 121
+        prompt_tokens: 786
+        total_tokens: 907
+    status:
+      code: 200
+      message: OK
+version: 1
