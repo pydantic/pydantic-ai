@@ -1154,12 +1154,13 @@ async def test_fallback_on_response_web_fetch_scenario() -> None:
 
     def web_fetch_failed(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         for call, result in response.builtin_tool_calls:
-            if call.tool_name != 'web_fetch':  # pragma: no branch
-                continue
+            if call.tool_name != 'web_fetch':
+                continue  # pragma: no cover
             content = result.content
-            if not isinstance(content, dict):  # pragma: no branch
-                continue
-            status = content.get('url_retrieval_status', '')
+            if not isinstance(content, dict):
+                continue  # pragma: no cover
+            content_dict = cast(dict[str, Any], content)
+            status = content_dict.get('url_retrieval_status', '')
             if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
                 return True
         return False
