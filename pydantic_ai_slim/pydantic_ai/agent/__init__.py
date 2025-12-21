@@ -15,6 +15,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
+from pydantic_ai._tool_arg_descriptions import ToolArgDescriptions
 
 from .. import (
     _agent_graph,
@@ -1644,6 +1645,61 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
+        )
+
+    async def generate_prompt_config_from_agent(
+        self, *, deps: AgentDepsT, model: models.Model | models.KnownModelName | str | None = None
+    ) -> _prompt_config.PromptConfig:
+        model_used = self._get_model(model)
+        del model
+
+        deps = self._get_deps(deps)
+
+        tool_config: dict[str, _prompt_config.ToolConfig] = {}
+
+        prompt_templates: _prompt_config.PromptTemplates = _prompt_config.DEFAULT_PROMPT_TEMPLATES
+
+        run_ctx = RunContext(deps=deps, model=model_used, usage=_usage.RunUsage())
+
+        # Include both regular and output tools
+        from ..toolsets import CombinedToolset
+
+        all_toolsets = [*self.toolsets]
+        if output_toolset := getattr(self, '_output_toolset', None):
+            all_toolsets.append(output_toolset)
+
+        toolset = CombinedToolset(all_toolsets)
+        tools = await toolset.get_tools(run_ctx)
+
+        for tool_name, toolset_tool in tools.items():
+            tool_def = toolset_tool.tool_def
+            tool_config[tool_name] = _prompt_config.ToolConfig(
+                name=tool_name,
+                description=tool_def.description,
+                strict=tool_def.strict,
+                parameters_descriptions=ToolArgDescriptions.from_json_schema(tool_def.parameters_json_schema),
+            )
+
+        if self.prompt_config:
+            if self.prompt_config.templates:
+                current_templates = dataclasses.asdict(self.prompt_config.templates)
+                updated_templates = {k: v for k, v in current_templates.items() if v is not None}
+                prompt_templates = dataclasses.replace(prompt_templates, **updated_templates)
+
+            if self.prompt_config.tool_config:
+                for tool_name, config in self.prompt_config.tool_config.items():
+                    if tool_name in tool_config:
+                        current_config = dataclasses.asdict(config)
+                        updates = {
+                            k: v for k, v in current_config.items() if v is not None and k != 'parameters_descriptions'
+                        }
+                        tool_config[tool_name] = dataclasses.replace(tool_config[tool_name], **updates)
+                    else:
+                        tool_config[tool_name] = config
+
+        return _prompt_config.PromptConfig(
+            tool_config=tool_config,
+            templates=prompt_templates,
         )
 
     @asynccontextmanager

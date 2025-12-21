@@ -39,6 +39,12 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             for name, tool_def in prepared_tool_defs_by_name.items()
         }
 
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        # We want all the tool definitions, but updated
+        original_tools = await super().get_tools(ctx)
+        # Not updating at the moment lol, but I will
+        return [tool.tool_def for tool in original_tools.values()]
+
     @staticmethod
     def create_tool_config_prepare_func(tool_config: dict[str, ToolConfig]) -> ToolsPrepareFunc[AgentDepsT]:
         async def prepare_func(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:

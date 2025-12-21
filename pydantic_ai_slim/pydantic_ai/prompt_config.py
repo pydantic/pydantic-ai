@@ -10,7 +10,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai.usage import RunUsage
 
-from ._run_context import RunContext
+from ._run_context import AgentDepsT, RunContext
 from ._tool_arg_descriptions import ToolArgDescriptions
 from .messages import ModelMessage, ModelRequest, ModelRequestPart, RetryPromptPart, ToolReturnKind, ToolReturnPart
 
@@ -409,7 +409,7 @@ class PromptConfig:
     """
 
     @staticmethod
-    async def generate_prompt_config_from_agent(agent: Agent[Any, Any], model: Model) -> PromptConfig:
+    async def generate_prompt_config_from_agent(agent: Agent[AgentDepsT], model: Model) -> PromptConfig:
         """Generate a PromptConfig instance based on an Agent instance.
 
         This fills in per-tool metadata and default templates, producing a `PromptConfig` that can be

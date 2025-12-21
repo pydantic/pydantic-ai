@@ -1440,3 +1440,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         return _utils.get_event_loop().run_until_complete(
             self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
         )
+
+    @abstractmethod
+    async def generate_prompt_config_from_agent(
+        self, *, deps: AgentDepsT, model: models.Model | models.KnownModelName | str | None = None
+    ) -> _prompt_config.PromptConfig:
+        """Generate a PromptConfig instance based on an Agent instance.
+
+        This fills in per-tool metadata and default templates, producing a `PromptConfig` that can be
+        used as a starting point for prompt optimizers.
+
+        If the agent already has a `prompt_config`, it is used to override the defaults.
+        """
+        raise NotImplementedError

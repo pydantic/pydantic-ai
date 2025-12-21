@@ -22,3 +22,7 @@ class FilteredToolset(WrapperToolset[AgentDepsT]):
         return {
             name: tool for name, tool in (await super().get_tools(ctx)).items() if self.filter_func(ctx, tool.tool_def)
         }
+    
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        """The list of tool definitions available(including deferred ones)."""
+        return [tool_def for tool_def in (await super().get_all_tool_definitions(ctx))]

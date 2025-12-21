@@ -83,6 +83,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 )
         return all_tools
 
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        toolset_tool_definitions = await asyncio.gather(
+            *(toolset.get_all_tool_definitions(ctx) for toolset in self.toolsets)
+        )
+
+        return toolset_tool_definitions
+
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:

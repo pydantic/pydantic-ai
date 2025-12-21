@@ -13,6 +13,7 @@ from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
     Tool,
+    ToolDefinition,
     ToolFuncEither,
     ToolParams,
     ToolPrepareFunc,
@@ -381,3 +382,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 raise ModelRetry(f'Timed out after {timeout} seconds.') from None
         else:
             return await tool.call_func(tool_args, ctx)
+
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        """The list of tool definitions available(including deferred ones)."""
+        return [tool_def for tool_def in (await super().get_all_tool_definitions(ctx))]
