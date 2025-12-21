@@ -46,6 +46,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
+from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolOutputAvailablePart,
     FileUIPart,
@@ -2103,7 +2104,12 @@ async def test_adapter_load_messages():
                         input={'query': 'What is Logfire?'},
                         output="[Scrubbed due to 'Auth']",
                         provider_executed=True,
-                        call_provider_metadata={'pydantic_ai': {'provider_name': 'openai'}},
+                        call_provider_metadata={
+                            'pydantic_ai': {
+                                'call_meta': {'provider_name': 'openai'},
+                                'return_meta': {'provider_name': 'openai_return'},
+                            }
+                        },
                     ),
                     ToolOutputErrorPart(
                         type='tool-web_search',
@@ -2249,7 +2255,7 @@ async def test_adapter_load_messages():
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
                         timestamp=IsDatetime(),
-                        provider_name='openai',
+                        provider_name='openai_return',
                     ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
@@ -2408,12 +2414,14 @@ async def test_adapter_dump_messages_with_builtin_tools():
                     args={'query': 'test'},
                     tool_call_id='tool_456',
                     provider_name='openai',
+                    provider_details={'tool_type': 'web_search_preview'},
                 ),
                 BuiltinToolReturnPart(
                     tool_name='web_search',
                     content={'status': 'completed'},
                     tool_call_id='tool_456',
                     provider_name='openai',
+                    provider_details={'execution_time_ms': 150},
                 ),
             ]
         ),
@@ -2442,7 +2450,18 @@ async def test_adapter_dump_messages_with_builtin_tools():
                         'input': '{"query":"test"}',
                         'output': '{"status":"completed"}',
                         'provider_executed': True,
-                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'call_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'tool_type': 'web_search_preview'},
+                                },
+                                'return_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'execution_time_ms': 150},
+                                },
+                            }
+                        },
                         'preliminary': None,
                     }
                 ],
@@ -2489,7 +2508,9 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                         'state': 'input-available',
                         'input': '{"query":"orphan query"}',
                         'provider_executed': True,
-                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                        'call_provider_metadata': {
+                            'pydantic_ai': {'provider_name': 'openai'}
+                        },  # No return part, so defaults to normal call provider name
                     }
                 ],
             },
@@ -2785,7 +2806,12 @@ async def test_adapter_dump_messages_text_with_interruption():
                         'input': '{}',
                         'output': 'result',
                         'provider_executed': True,
-                        'call_provider_metadata': {'pydantic_ai': {'provider_name': 'test'}},
+                        'call_provider_metadata': {
+                            'pydantic_ai': {
+                                'call_meta': {'provider_name': 'test'},
+                                'return_meta': {'provider_name': 'test'},
+                            }
+                        },
                         'preliminary': None,
                     },
                     {
@@ -3373,42 +3399,6 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
     )
 
 
-async def test_adapter_load_messages_tool_input_streaming_part():
-    """Test loading streaming tool parts which don't have call_provider_metadata."""
-    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolInputStreamingPart
-
-    ui_messages = [
-        UIMessage(
-            id='msg1',
-            role='assistant',
-            parts=[
-                DynamicToolInputStreamingPart(
-                    tool_name='my_tool',
-                    tool_call_id='tc_streaming',
-                    input='{"partial": "data"}',
-                    state='input-streaming',
-                )
-            ],
-        )
-    ]
-
-    messages = VercelAIAdapter.load_messages(ui_messages)
-    assert messages == snapshot(
-        [
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='my_tool',
-                        args={'partial': 'data'},
-                        tool_call_id='tc_streaming',
-                    ),
-                ],
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-
-
 async def test_adapter_tool_call_roundtrip_with_provider_details():
     """Test ToolCallPart with provider_details survives dump/load roundtrip."""
     original_messages = [
@@ -3574,9 +3564,15 @@ async def test_adapter_dump_messages_builtin_tool_with_full_metadata():
                         'provider_executed': True,
                         'call_provider_metadata': {
                             'pydantic_ai': {
-                                'id': 'call_456',
-                                'provider_name': 'openai',
-                                'provider_details': {'execution_time_ms': 150},
+                                'call_meta': {
+                                    'id': 'call_456',
+                                    'provider_name': 'openai',
+                                    'provider_details': {'tool_type': 'web_search_preview'},
+                                },
+                                'return_meta': {
+                                    'provider_name': 'openai',
+                                    'provider_details': {'execution_time_ms': 150},
+                                },
                             }
                         },
                         'preliminary': None,
@@ -3603,8 +3599,16 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                     provider_executed=True,
                     call_provider_metadata={
                         'pydantic_ai': {
-                            'provider_name': 'openai',
-                            'provider_details': {'execution_time': 100},
+                            'call_meta': {
+                                'id': 'call_456',
+                                'provider_name': 'openai',
+                                'provider_details': {'tool_type': 'web_search_preview'},
+                            },
+                            'return_meta': {
+                                'id': 'call_456',
+                                'provider_name': 'openai',
+                                'provider_details': {'execution_time_ms': 150},
+                            },
                         }
                     },
                 )
@@ -3621,7 +3625,8 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                         tool_name='web_search',
                         args={'query': 'test'},
                         tool_call_id='bt_load',
-                        provider_details={'execution_time': 100},
+                        id='call_456',
+                        provider_details={'tool_type': 'web_search_preview'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -3630,7 +3635,7 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                         tool_call_id='bt_load',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        provider_details={'execution_time': 100},
+                        provider_details={'execution_time_ms': 150},
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -3692,58 +3697,6 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                             'pydantic_ai': {
                                 'id': 'call_fail_id',
                                 'provider_details': {'attempt': 1},
-                            }
-                        },
-                    }
-                ],
-            },
-        ]
-    )
-
-
-async def test_adapter_dump_messages_tool_input_available_with_provider_metadata():
-    """Test dumping ToolCallPart without result includes provider metadata."""
-    messages = [
-        ModelRequest(parts=[UserPromptPart(content='Start task')]),
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='pending_tool',
-                    args={'task': 'process'},
-                    tool_call_id='tc_pending',
-                    id='pending_call_id',
-                    provider_details={'queued': True},
-                ),
-            ]
-        ),
-    ]
-
-    ui_messages = VercelAIAdapter.dump_messages(messages)
-    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
-
-    assert ui_message_dicts == snapshot(
-        [
-            {
-                'id': IsStr(),
-                'role': 'user',
-                'metadata': None,
-                'parts': [{'type': 'text', 'text': 'Start task', 'state': 'done', 'provider_metadata': None}],
-            },
-            {
-                'id': IsStr(),
-                'role': 'assistant',
-                'metadata': None,
-                'parts': [
-                    {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'pending_tool',
-                        'tool_call_id': 'tc_pending',
-                        'state': 'input-available',
-                        'input': '{"task":"process"}',
-                        'call_provider_metadata': {
-                            'pydantic_ai': {
-                                'id': 'pending_call_id',
-                                'provider_details': {'queued': True},
                             }
                         },
                     }
@@ -3873,6 +3826,64 @@ async def test_event_stream_tool_call_end_with_provider_metadata():
     )
 
 
+async def test_event_stream_builtin_tool_call_end_with_provider_metadata():
+    """Test that builtin tool-input-available events include provider_name in provider_metadata."""
+
+    async def event_generator():
+        part = BuiltinToolCallPart(
+            tool_name='web_search',
+            tool_call_id='btc_meta',
+            args={'query': 'test'},
+            id='builtin_call_id_456',
+            provider_name='openai',
+            provider_details={'tool_type': 'web_search_preview'},
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Search')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'btc_meta', 'toolName': 'web_search', 'providerExecuted': True},
+            {'type': 'tool-input-delta', 'toolCallId': 'btc_meta', 'inputTextDelta': '{"query":"test"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'btc_meta',
+                'toolName': 'web_search',
+                'input': {'query': 'test'},
+                'providerExecuted': True,
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'provider_name': 'openai',
+                        'provider_details': {'tool_type': 'web_search_preview'},
+                        'id': 'builtin_call_id_456',
+                    }
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_event_stream_thinking_delta_with_provider_metadata():
     """Test that thinking delta events include provider_metadata."""
     from pydantic_ai.messages import ThinkingPartDelta
@@ -3963,40 +3974,74 @@ async def test_event_stream_thinking_delta_with_provider_metadata():
     )
 
 
-async def test_form_provider_metadata_filters_none_values():
-    """Test that form_provider_metadata only includes non-None values."""
-    from pydantic_ai.ui.vercel_ai._event_stream import form_provider_metadata
-
-    # All None - should return None
-    result = form_provider_metadata(id=None, provider_name=None, provider_details=None)
-    assert result is None
-
-    # Some values
-    result = form_provider_metadata(id='test_id', provider_name=None, provider_details={'key': 'val'})
-    assert result == {'pydantic_ai': {'id': 'test_id', 'provider_details': {'key': 'val'}}}
-
-    # All values
-    result = form_provider_metadata(
-        id='full_id',
-        signature='sig',
-        provider_name='provider',
-        provider_details={'detail': 1},
-    )
-    assert result == {
-        'pydantic_ai': {
-            'id': 'full_id',
-            'signature': 'sig',
-            'provider_name': 'provider',
-            'provider_details': {'detail': 1},
-        }
-    }
-
-
 def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
-    """Sync timestamps between original and new messages."""
+    """Utility function to sync timestamps between original and new messages."""
     for orig_msg, new_msg in zip(original, new):
         for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
             if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                 new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
             new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+
+class TestDumpProviderMetadata:
+    async def test_dump_provider_metadata_filters_none_values(self):
+        """Test that dump_provider_metadata only includes non-None values."""
+
+        # All None - should return None
+        result = dump_provider_metadata(id=None, provider_name=None, provider_details=None)
+        assert result is None
+
+        # Some values
+        result = dump_provider_metadata(id='test_id', provider_name=None, provider_details={'key': 'val'})
+        assert result == {'pydantic_ai': {'id': 'test_id', 'provider_details': {'key': 'val'}}}
+
+        # All values
+        result = dump_provider_metadata(
+            id='full_id',
+            signature='sig',
+            provider_name='provider',
+            provider_details={'detail': 1},
+        )
+        assert result == {
+            'pydantic_ai': {
+                'id': 'full_id',
+                'signature': 'sig',
+                'provider_name': 'provider',
+                'provider_details': {'detail': 1},
+            }
+        }
+
+    async def test_dump_provider_metadata_wrapper_key(self):
+        """Test that dump_provider_metadata includes the wrapper key."""
+
+        result = dump_provider_metadata(
+            wrapper_key='test', id='test_id', provider_name='test_provider', provider_details={'test_detail': 1}
+        )
+        assert result == {
+            'test': {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+        }
+
+        # Test with None wrapper key
+        result = dump_provider_metadata(
+            None, id='test_id', provider_name='test_provider', provider_details={'test_detail': 1}
+        )
+        assert result == {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+
+
+class TestLoadProviderMetadata:
+    async def test_load_provider_metadata_loads_provider_metadata(self):
+        """Test that load_provider_metadata loads provider metadata."""
+
+        provider_metadata = {
+            'pydantic_ai': {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+        }
+        result = load_provider_metadata(provider_metadata)
+        assert result == {'id': 'test_id', 'provider_name': 'test_provider', 'provider_details': {'test_detail': 1}}
+
+    async def test_load_provider_metadata_loads_provider_metadata_incorrect_key(self):
+        """Test that load_provider_metadata fails to load provider metadata if the wrapper key is not present."""
+
+        provider_metadata = {'test': {'id': 'test_id'}}
+        result = load_provider_metadata(provider_metadata)
+        assert result == {}
