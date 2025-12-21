@@ -3722,7 +3722,7 @@ async def test_google_image_generation_tool_output_format(
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'output_mime_type': 'image/png'}
 
@@ -3737,7 +3737,7 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
 
     with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_tool_output_compression(
@@ -3749,13 +3749,13 @@ async def test_google_image_generation_tool_output_compression(
 
     # Test explicit value
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
 
     # Test None (omitted)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=None)])
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
 
@@ -3768,21 +3768,21 @@ async def test_google_image_generation_tool_compression_validation(
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
 
     # Invalid range: < 0
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
 
     # Non-JPEG format (PNG)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
-        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
         )
 
     # Non-JPEG format (WebP)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
-        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
         )
 
@@ -3793,17 +3793,17 @@ async def test_google_image_generation_silently_ignored_by_gemini_api(google_pro
 
     # Test output_format ignored
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test output_compression ignored
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=90)])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test both ignored when None
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
 
@@ -3830,7 +3830,7 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
         builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {
         'aspect_ratio': '16:9',
