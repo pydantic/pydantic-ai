@@ -172,7 +172,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
-    
+
     # async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
     #     """The list of tool definitions available(including deferred ones)."""
     #     return [tool_def for tool_def in (await super().get_all_tool_definitions(ctx))]
