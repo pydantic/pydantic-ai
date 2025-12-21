@@ -287,14 +287,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def _dump_builtin_tool_meta(
         call_provider_metadata: ProviderMetadata | None, return_provider_metadata: ProviderMetadata | None
     ) -> ProviderMetadata | None:
-        """Builtin tool call and return provider metadata use special keys (call_meta and return_meta)."""
+        """Use special keys (call_meta and return_meta) to dump combined provider metadata."""
         return dump_provider_metadata(call_meta=call_provider_metadata, return_meta=return_provider_metadata)
 
     @staticmethod
     def _load_builtin_tool_meta(
         provider_metadata: ProviderMetadata,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Builtin tool call and return provider metadata use special keys (call_meta and return_meta)."""
+        """Use special keys (call_meta and return_meta) to load combined provider metadata."""
         return provider_metadata.get('call_meta'), provider_metadata.get('return_meta')
 
     @staticmethod
@@ -365,12 +365,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 )
             elif isinstance(part, BuiltinToolCallPart):
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
-                    # Builtin tool calls in pydantic_ai are represented by two parts:
+                    # Builtin tool calls are represented by two parts in pydantic_ai:
                     #   1. BuiltinToolCallPart (the tool request) -> part
                     #   2. BuiltinToolReturnPart (the tool's output) -> builtin_return
                     # The Vercel AI SDK only has a single ToolOutputAvailablePart.
-                    # So, we combine the metadata here so that, when we later convert back from Vercel AI to pydantic_ai,
-                    # we can properly reconstruct both the call and return parts with their original metadata.
+                    # So, we need to combine the metadata so that when we later convert back from Vercel AI to pydantic_ai,
+                    # we can properly reconstruct both the call and return parts with their respective metadata.
                     # Note: This extra metadata handling is only needed for built-in tools, since normal tool returns
                     # (ToolReturnPart) do not include provider metadata.
 
