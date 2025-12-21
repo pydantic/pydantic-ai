@@ -270,5 +270,9 @@ class BufferedStreamedResponse(StreamedResponse):
         return self._wrapped.provider_name
 
     @property
+    def provider_url(self) -> str | None:
+        return self._wrapped.provider_url
+
+    @property
     def timestamp(self) -> datetime:
         return self._wrapped.timestamp

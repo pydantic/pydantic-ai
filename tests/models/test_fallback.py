@@ -21,6 +21,7 @@ from pydantic_ai import (
     ModelProfile,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     TextPart,
     ToolCallPart,
     ToolDefinition,
@@ -1337,7 +1338,7 @@ async def test_fallback_on_part_streaming_triggered() -> None:
     async def good_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
         yield 'good content'
 
-    def reject_bad_part(part: TextPart, messages: list[ModelMessage]) -> bool:
+    def reject_bad_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
         return isinstance(part, TextPart) and 'bad' in part.content
 
     bad_model = FunctionModel(stream_function=bad_response_stream)
@@ -1360,7 +1361,7 @@ async def test_fallback_on_part_streaming_not_triggered() -> None:
     async def ok_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
         yield 'ok content'
 
-    def never_reject(part: TextPart, messages: list[ModelMessage]) -> bool:
+    def never_reject(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
         return False
 
     ok_model = FunctionModel(stream_function=ok_response_stream)
@@ -1383,7 +1384,7 @@ async def test_fallback_on_part_streaming_all_fail() -> None:
     async def bad_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
         yield 'bad content'
 
-    def always_reject(part: TextPart, messages: list[ModelMessage]) -> bool:
+    def always_reject(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
         return True
 
     bad_model1 = FunctionModel(stream_function=bad_response_stream)
@@ -1417,7 +1418,7 @@ async def test_fallback_on_part_streaming_early_abort() -> None:
         models_tried.append('good_model')
         yield 'good content'
 
-    def reject_bad_part(part: TextPart, messages: list[ModelMessage]) -> bool:
+    def reject_bad_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
         return isinstance(part, TextPart) and 'bad' in part.content
 
     bad_model = FunctionModel(stream_function=bad_response_stream)
@@ -1452,7 +1453,7 @@ async def test_fallback_on_part_streaming_combined_with_fallback_on_response() -
         call_order.append('third_success')
         yield 'success'
 
-    def reject_part_with_keyword(part: TextPart, messages: list[ModelMessage]) -> bool:
+    def reject_part_with_keyword(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
         return isinstance(part, TextPart) and 'reject_part' in part.content
 
     def reject_response_with_keyword(response: ModelResponse, messages: list[ModelMessage]) -> bool:
@@ -1494,7 +1495,7 @@ async def test_fallback_on_part_streaming_with_exception_fallback() -> None:
         call_order.append('third_success')
         yield 'good'
 
-    def reject_bad_part(part: TextPart, messages: list[ModelMessage]) -> bool:
+    def reject_bad_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
         return isinstance(part, TextPart) and 'bad' in part.content
 
     first_model = FunctionModel(stream_function=first_exception_stream)
@@ -1524,7 +1525,7 @@ async def test_fallback_on_part_streaming_mixed_failures_all_fail() -> None:
     async def bad_part_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
         yield 'bad_part'
 
-    def always_reject(part: TextPart, messages: list[ModelMessage]) -> bool:
+    def always_reject(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
         return True
 
     first_model = FunctionModel(stream_function=exception_stream)
