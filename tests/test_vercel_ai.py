@@ -1039,7 +1039,7 @@ Want me to tailor\
             {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'stop'},
             '[DONE]',
         ]
     )
@@ -1488,7 +1488,7 @@ Fix the errors and try again.\
             {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
             {'type': 'error', 'errorText': 'Exceeded maximum retries (1) for output validation'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1531,7 +1531,7 @@ async def test_run_stream_request_error():
             },
             {'type': 'error', 'errorText': 'Unknown tool'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1572,7 +1572,7 @@ async def test_run_stream_on_complete_error():
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'error', 'errorText': 'Faulty on_complete'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1617,6 +1617,38 @@ async def test_run_stream_on_complete():
             '[DONE]',
         ]
     )
+
+
+async def test_data_chunk_with_id_and_transient():
+    """Test DataChunk supports optional id and transient fields for AI SDK compatibility."""
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    async def on_complete(run_result: AgentRunResult[Any]) -> AsyncIterator[BaseChunk]:
+        # Yield a data chunk with id for reconciliation
+        yield DataChunk(type='data-task', id='task-123', data={'status': 'complete'})
+        # Yield a transient data chunk (not persisted to history)
+        yield DataChunk(type='data-progress', data={'percent': 100}, transient=True)
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(on_complete=on_complete))
+    ]
+
+    # Verify the data chunks are present in the events with correct fields
+    assert {'type': 'data-task', 'id': 'task-123', 'data': {'status': 'complete'}} in events
+    assert {'type': 'data-progress', 'data': {'percent': 100}, 'transient': True} in events
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
