@@ -1285,19 +1285,20 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        provider_details: dict[str, Any] | None = {}
+                        part_provider_details: dict[str, Any] = {}
                         if content.logprobs:
-                            provider_details['logprobs'] = _map_logprobs(content.logprobs)
+                            part_provider_details['logprobs'] = _map_logprobs(content.logprobs)
                         # NOTE: can be removed after https://github.com/pydantic/pydantic-ai/issues/3126
                         # TODO: discuss gate via model settings
+                        # if content.annotations and model_settings.openai_include_web_search_content_annotations:
                         if content.annotations:
-                            provider_details['annotations'] = content.annotations
+                            part_provider_details['annotations'] = content.annotations
 
                         items.append(
                             TextPart(
                                 content=content.text,
                                 id=item.id,
-                                provider_details=provider_details or None,
+                                provider_details=part_provider_details or None,
                             )
                         )
             elif isinstance(item, responses.ResponseFunctionToolCall):
