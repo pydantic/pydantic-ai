@@ -98,6 +98,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('fastmcp not installed', allow_module_level=True)
 
 try:
+    from pydantic_ai.toolsets._dynamic import DynamicToolset
+except ImportError:  # pragma: lax no cover
+    pytest.skip('dynamic toolset not available', allow_module_level=True)
+
+try:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
@@ -3117,3 +3122,210 @@ async def test_dynamic_agent_with_named_toolset(allow_model_requests: None, clie
         # Verify tool was called successfully
         assert 'echo' in result
         assert 'echo:' in result
+
+
+@workflow.defn
+class UnknownToolsetWorkflow:
+    __pydantic_ai_agents__ = [named_toolset_agent]
+
+    @workflow.run
+    async def run(self, user_prompt: str) -> str:
+        # Reference a toolset name that doesn't exist
+        result = await named_toolset_agent.run(user_prompt, toolsets=['nonexistent_toolset'])
+        return result.output
+
+
+async def test_unknown_toolset_name_error(allow_model_requests: None, client: Client):
+    """Test that referencing an unknown toolset name raises an error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnknownToolsetWorkflow],
+        activities=[
+            *wrapped_named_test_toolset.temporal_activities,
+        ],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                UnknownToolsetWorkflow.run,
+                args=['test prompt'],
+                id='test-workflow-unknown-toolset',
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert 'Unknown toolset name' in exc_info.value.__cause__.message
+        assert 'nonexistent_toolset' in exc_info.value.__cause__.message
+
+
+# Create an agent without named toolsets for testing
+agent_without_named = TemporalAgent(
+    Agent(TestModel(), name='no_named_agent'),
+    name='test_agent_no_named',
+)
+
+
+@workflow.defn
+class NoNamedToolsetsWorkflow:
+    __pydantic_ai_agents__ = [agent_without_named]
+
+    @workflow.run
+    async def run(self, user_prompt: str) -> str:
+        result = await agent_without_named.run(user_prompt, toolsets=['some_name'])
+        return result.output
+
+
+async def test_unknown_toolset_name_when_no_named_toolsets(allow_model_requests: None, client: Client):
+    """Test that referencing a toolset name when no named toolsets are registered raises an error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NoNamedToolsetsWorkflow],
+        activities=[],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                NoNamedToolsetsWorkflow.run,
+                args=['test prompt'],
+                id='test-workflow-no-named-toolsets',
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert 'Unknown toolset name' in exc_info.value.__cause__.message
+        assert 'Available toolsets: []' in exc_info.value.__cause__.message
+
+
+async def test_temporal_agent_run_with_toolsets_outside_workflow():
+    """Test that calling run() with toolsets outside a workflow works correctly."""
+
+    # Create a simple tool
+    def simple_tool(ctx: RunContext[None]) -> str:
+        """A simple tool."""
+        return 'tool result'
+
+    extra_toolset = FunctionToolset(tools=[simple_tool], id='extra_tools')
+    wrapped_extra = TemporalFunctionToolset(
+        extra_toolset,
+        activity_name_prefix='extra',
+        deps_type=type(None),
+    )
+
+    agent = TemporalAgent(
+        Agent(TestModel(), name='test_with_toolsets'),
+        name='test_agent_with_toolsets',
+    )
+
+    # Outside workflow, toolsets should be applied correctly
+    result = await agent.run('test', toolsets=[wrapped_extra])
+    assert result.output is not None
+
+
+# Create an unwrapped DynamicToolset for testing
+
+
+def _unwrapped_dynamic_toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+    return FunctionToolset[None](
+        id='inner_toolset'
+    )  # pragma: no cover - test helper function not executed during error test
+
+
+_unwrapped_dynamic_toolset = DynamicToolset(_unwrapped_dynamic_toolset_func, id='dynamic')
+
+
+@workflow.defn
+class WorkflowWithUnwrappedDynamicToolset:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_dynamic_toolset])
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_run_with_unwrapped_dynamic_toolset_error(allow_model_requests: None, client: Client):
+    """Test that passing an unwrapped DynamicToolset at runtime raises an error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithUnwrappedDynamicToolset],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+            ),
+        ):
+            await client.execute_workflow(
+                WorkflowWithUnwrappedDynamicToolset.run,
+                args=['test'],
+                id=WorkflowWithUnwrappedDynamicToolset.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+# Create an unwrapped MCP server for testing
+
+_unwrapped_mcp_server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp')
+
+
+@workflow.defn
+class WorkflowWithUnwrappedMCPServer:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_mcp_server])
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_run_with_unwrapped_mcp_server_error(client: Client):
+    """Test that passing an unwrapped MCPServer at runtime raises an error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithUnwrappedMCPServer],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+            ),
+        ):
+            await client.execute_workflow(
+                WorkflowWithUnwrappedMCPServer.run,
+                args=['test'],
+                id=WorkflowWithUnwrappedMCPServer.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+# Create an unwrapped FastMCP toolset for testing
+
+_unwrapped_fastmcp_toolset = FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')
+
+
+@workflow.defn
+class WorkflowWithUnwrappedFastMCPToolset:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_fastmcp_toolset])
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_run_with_unwrapped_fastmcp_toolset_error(allow_model_requests: None, client: Client):
+    """Test that passing an unwrapped FastMCPToolset at runtime raises an error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithUnwrappedFastMCPToolset],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+            ),
+        ):
+            await client.execute_workflow(
+                WorkflowWithUnwrappedFastMCPToolset.run,
+                args=['test'],
+                id=WorkflowWithUnwrappedFastMCPToolset.__name__,
+                task_queue=TASK_QUEUE,
+            )

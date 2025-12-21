@@ -56,9 +56,9 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         super().__init__(toolset)
         from datetime import timedelta
 
-        if activity_name_prefix is None:
+        if activity_name_prefix is None:  # pragma: no cover
             raise UserError('activity_name_prefix is required for TemporalDynamicToolset')
-        if deps_type is None:
+        if deps_type is None:  # pragma: no cover
             raise UserError('deps_type is required for TemporalDynamicToolset')
 
         self.activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(minutes=1))
