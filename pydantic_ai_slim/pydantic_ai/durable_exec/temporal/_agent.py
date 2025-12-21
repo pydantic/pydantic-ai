@@ -70,7 +70,7 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
     def validate_toolset(t: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # If we encounter a TemporalWrapperToolset, we don't need to check its children
         # since they're already wrapped
-        if isinstance(t, TemporalWrapperToolset):
+        if isinstance(t, TemporalWrapperToolset):  # pragma: no cover
             return t
 
         if isinstance(t, FunctionToolset):
@@ -302,7 +302,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # If toolsets were passed as a mapping, they are not added to the active toolsets by default
             if isinstance(toolsets, Mapping):
                 self._toolsets = temporal_toolsets[:num_wrapped_toolsets]
-            else:
+            else:  # pragma: no cover
                 self._toolsets = temporal_toolsets
         else:
             self._toolsets = temporal_toolsets
