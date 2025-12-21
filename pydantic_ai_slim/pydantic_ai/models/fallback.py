@@ -57,9 +57,11 @@ class FallbackModel(Model):
                 returning `True` if fallback should be triggered. This enables fallback based on
                 response content (e.g., a builtin tool indicating failure) rather than exceptions.
             fallback_on_part: A callable that inspects each model response part during streaming,
-                returning `True` if fallback should be triggered. This enables early abort of
-                streaming when a failure condition is detected (e.g., a builtin tool failure in
-                the first chunk). Only applies to streaming requests.
+                returning `True` if fallback should be triggered. This enables early abort when
+                a failure condition is detected (e.g., a builtin tool failure), saving tokens by
+                not consuming the rest of a doomed response. Only applies to streaming requests.
+                Note: The response is buffered until validation completes, so the caller receives
+                events after the full response is validated, not progressively.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
