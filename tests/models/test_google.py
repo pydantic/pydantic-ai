@@ -4361,6 +4361,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -4419,6 +4420,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -4532,6 +4534,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             timestamp=IsDatetime(),
                         ),
                     ],
+                    timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
