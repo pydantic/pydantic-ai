@@ -3132,7 +3132,7 @@ class UnknownToolsetWorkflow:
     async def run(self, user_prompt: str) -> str:
         # Reference a toolset name that doesn't exist
         result = await named_toolset_agent.run(user_prompt, toolsets=['nonexistent_toolset'])
-        return result.output
+        return result.output  # pragma: no cover - workflow fails before reaching this line
 
 
 async def test_unknown_toolset_name_error(allow_model_requests: None, client: Client):
@@ -3171,7 +3171,7 @@ class NoNamedToolsetsWorkflow:
     @workflow.run
     async def run(self, user_prompt: str) -> str:
         result = await agent_without_named.run(user_prompt, toolsets=['some_name'])
-        return result.output
+        return result.output  # pragma: no cover - workflow fails before reaching this line
 
 
 async def test_unknown_toolset_name_when_no_named_toolsets(allow_model_requests: None, client: Client):
@@ -3234,8 +3234,8 @@ _unwrapped_dynamic_toolset = DynamicToolset(_unwrapped_dynamic_toolset_func, id=
 @workflow.defn
 class WorkflowWithUnwrappedDynamicToolset:
     @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_dynamic_toolset])
+    async def run(self, prompt: str) -> str:  # pragma: no cover
+        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_dynamic_toolset])  # pragma: no cover
         return result.output  # pragma: no cover
 
 
@@ -3269,7 +3269,7 @@ _unwrapped_mcp_server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tim
 @workflow.defn
 class WorkflowWithUnwrappedMCPServer:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> str:  # pragma: no cover
         result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_mcp_server])
         return result.output  # pragma: no cover
 
@@ -3304,8 +3304,8 @@ _unwrapped_fastmcp_toolset = FastMCPToolset('https://mcp.deepwiki.com/mcp', id='
 @workflow.defn
 class WorkflowWithUnwrappedFastMCPToolset:
     @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_fastmcp_toolset])
+    async def run(self, prompt: str) -> str:  # pragma: no cover
+        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_fastmcp_toolset])  # pragma: no cover
         return result.output  # pragma: no cover
 
 
