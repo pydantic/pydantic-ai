@@ -27,6 +27,7 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
+from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1134,8 +1135,6 @@ async def test_fallback_on_response_mixed_failures_all_fail() -> None:
 
 
 async def test_fallback_on_response_web_fetch_scenario() -> None:
-    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
-
     def google_web_fetch_fails(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
@@ -1177,13 +1176,6 @@ async def test_fallback_on_response_web_fetch_scenario() -> None:
 
     result = await agent.run('Summarize https://example.com')
     assert result.output == 'Successfully fetched and summarized the content'
-
-
-async def test_fallback_on_response_none_by_default() -> None:
-    fallback = FallbackModel(success_model, failure_model)
-    agent = Agent(model=fallback)
-    result = await agent.run('hello')
-    assert result.output == 'success'
 
 
 def test_fallback_on_response_sync() -> None:
@@ -1313,15 +1305,6 @@ async def test_fallback_on_response_streaming_combined_with_exception() -> None:
     assert call_order == ['first', 'second', 'third']
 
 
-async def test_fallback_on_response_streaming_without_fallback_on_response() -> None:
-    fallback = FallbackModel(success_model_stream, failure_model_stream)
-    agent = Agent(model=fallback)
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'hello world'
-
-
 async def test_fallback_on_response_streaming_replays_events() -> None:
     def never_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         return False
@@ -1343,10 +1326,14 @@ async def test_fallback_on_response_streaming_replays_events() -> None:
 
 
 async def test_fallback_on_part_streaming_triggered() -> None:
+    models_tried: list[str] = []
+
     async def bad_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
+        models_tried.append('bad_model')
         yield 'bad content'
 
     async def good_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
+        models_tried.append('good_model')
         yield 'good content'
 
     def reject_bad_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
@@ -1366,6 +1353,7 @@ async def test_fallback_on_part_streaming_triggered() -> None:
         output = await result.get_output()
 
     assert output == 'good content'
+    assert models_tried == ['bad_model', 'good_model']
 
 
 async def test_fallback_on_part_streaming_not_triggered() -> None:
@@ -1416,37 +1404,6 @@ async def test_fallback_on_part_streaming_all_fail() -> None:
     assert len(exc_info.value.exceptions) == 1
     assert isinstance(exc_info.value.exceptions[0], RuntimeError)
     assert 'rejected by fallback_on_part' in str(exc_info.value.exceptions[0])
-
-
-async def test_fallback_on_part_streaming_early_abort() -> None:
-    models_tried: list[str] = []
-
-    async def bad_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        models_tried.append('bad_model')
-        yield 'bad content here'
-
-    async def good_response_stream(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
-        models_tried.append('good_model')
-        yield 'good content'
-
-    def reject_bad_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
-        return isinstance(part, TextPart) and 'bad' in part.content
-
-    bad_model = FunctionModel(stream_function=bad_response_stream)
-    good_model = FunctionModel(stream_function=good_response_stream)
-
-    fallback = FallbackModel(
-        bad_model,
-        good_model,
-        fallback_on_part=reject_bad_part,
-    )
-    agent = Agent(model=fallback)
-
-    async with agent.run_stream('hello') as result:
-        output = await result.get_output()
-
-    assert output == 'good content'
-    assert models_tried == ['bad_model', 'good_model']
 
 
 async def test_fallback_on_part_streaming_combined_with_fallback_on_response() -> None:
