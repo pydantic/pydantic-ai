@@ -1,0 +1,171 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '375'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in London?
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '402'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e0-ca6d-7643-ad02-16ebf8d98c0a
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "London"}'
+              name: get_weather
+            id: UHzAInrxV
+            index: 0
+      created: 1766185814
+      id: 151cbc95f74d407bb6601d3275936337
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 12
+        prompt_tokens: 77
+        total_tokens: 89
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '633'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=PStqjQqLrKwF1HmFN_sqwMhFBPgrBf6AI_wvpORMSlw-1766185815-1.0.1.1-BBUHY0t_Jq4_XgChc7MmUUrMvmVl0.WHkfhTOWo9gqWkL.NAABG6_4H1oFgktBPTXRmTXrazCiYbJklqh6NRIB980mlCrfYjgxnLDrqL_x8;
+        _cfuvid=gqzXWZA2TCApcctiPxQLd2kyYUxmkwH5KmZF3SmZEvc-1766185815107-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in London?
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "London"}'
+            name: get_weather
+          id: UHzAInrxV
+          index: 0
+          type: function
+      - content: Sunny, 22C in London
+        role: tool
+        tool_call_id: UHzAInrxV
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '380'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e0-ccc4-7761-97af-cca91fc33a6a
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The current weather in **London** is **sunny** with a temperature of **22°C**.
+          role: assistant
+          tool_calls: null
+      created: 1766185815
+      id: ac1e3a26b804474fb2982b3d4578a877
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 22
+        prompt_tokens: 100
+        total_tokens: 122
+    status:
+      code: 200
+      message: OK
+version: 1

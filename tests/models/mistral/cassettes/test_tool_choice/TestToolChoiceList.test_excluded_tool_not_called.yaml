@@ -1,0 +1,80 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '337'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in London?
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '402'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-0296-7a79-81ac-9dbd567a09b1
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "London"}'
+              name: get_weather
+            id: rSFR5s2er
+            index: 0
+      created: 1766185829
+      id: a5f9a60f9b36446e8c19d4cde64d5835
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 12
+        prompt_tokens: 70
+        total_tokens: 82
+    status:
+      code: 200
+      message: OK
+version: 1

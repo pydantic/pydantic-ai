@@ -1,0 +1,226 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '818'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Denver and summarize
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Get the population of a city.
+          name: get_population
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '404'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-0cee-7112-a266-e848a0abce90
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Denver"}'
+              name: get_weather
+            id: gpxOF7fBp
+            index: 0
+      created: 1766185831
+      id: 1b0759426d354daf824c6e292846cde4
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 13
+        prompt_tokens: 212
+        total_tokens: 225
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1076'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=ZGbllO3uqc0W.158BJjHVpLXz5LenvVEWDP0PnVc4iA-1766185832-1.0.1.1-6sO.0PwIwC64rWUgBpuTt9HIywDncHVD6FWjBKtuvn_UarR1TLSHOniN2_hEnsmDo.r2H0chC91Xye6BETBbHqJ0yRw5mGU.bl.8UeVDZcw;
+        _cfuvid=d_Bb_6DxTpKkh9hWfVX_MZaGe4JdmqmrP_YGPFLbaB4-1766185832373-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Denver and summarize
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Denver"}'
+            name: get_weather
+          id: gpxOF7fBp
+          index: 0
+          type: function
+      - content: Sunny, 22C in Denver
+        role: tool
+        tool_call_id: gpxOF7fBp
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Get the population of a city.
+          name: get_population
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '491'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-106c-75f6-bb5a-c5f7a571d328
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Denver", "summary": "The current weather in Denver is sunny with a temperature of 22°C."}'
+              name: final_result
+            id: P53xN6Sph
+            index: 0
+      created: 1766185832
+      id: 2848b30e5ab7405298e7a88f25c08229
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 33
+        prompt_tokens: 236
+        total_tokens: 269
+    status:
+      code: 200
+      message: OK
+version: 1

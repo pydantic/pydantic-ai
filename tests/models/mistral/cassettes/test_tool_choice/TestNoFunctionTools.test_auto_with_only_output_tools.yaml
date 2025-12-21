@@ -1,0 +1,95 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '391'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Tell me about New York
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1641'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-14fd-7589-b3d1-785f5d121e4d
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "New York", "summary": "New York City is the most populous city in the United States, located
+                in the state of New York. It is a global hub for finance, culture, art, fashion, and entertainment. NYC is
+                composed of five boroughs: Manhattan, Brooklyn, Queens, The Bronx, and Staten Island. \n\nKey highlights include:\n1.
+                **Iconic Landmarks**: Times Square, Statue of Liberty, Empire State Building, Central Park, and Broadway.\n2.
+                **Cultural Diversity**: Home to people from all over the world, offering a rich tapestry of cultures, cuisines,
+                and languages.\n3. **Economic Hub**: Wall Street, located in Lower Manhattan, is the heart of the financial
+                world.\n4. **Arts and Entertainment**: World-class museums like the Metropolitan Museum of Art, MoMA, and
+                the American Museum of Natural History. Broadway is famous for its theater productions.\n5. **Transportation**:
+                An extensive subway system, buses, and iconic yellow taxis make it easy to navigate the city.\n6. **Education
+                and Research**: Home to prestigious institutions like Columbia University, New York University (NYU), and
+                The Juilliard School.\n7. **History**: Played a significant role in the history of the United States, from
+                early colonial times to the present day."}'
+              name: final_result
+            id: rUlHHlegW
+            index: 0
+      created: 1766185833
+      id: 69a9386fcfe34b1e9791d543bf0d1495
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 290
+        prompt_tokens: 84
+        total_tokens: 374
+    status:
+      code: 200
+      message: OK
+version: 1

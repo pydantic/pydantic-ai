@@ -1,0 +1,87 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '375'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Berlin?
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1076'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-aa13-7487-8b84-389e72ff700d
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content:
+          - text: ikuutaget_weather
+            type: text
+          - reference_ids: []
+            type: reference
+          - text: |-
+              {"city": "Berlin"}```json
+              {
+                "city": "Berlin"
+              }
+              ```​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
+            type: text
+          role: assistant
+          tool_calls: null
+      created: 1766185871
+      id: de76628300ac45089ef1ca286b345629
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 225
+        prompt_tokens: 77
+        total_tokens: 302
+    status:
+      code: 200
+      message: OK
+version: 1

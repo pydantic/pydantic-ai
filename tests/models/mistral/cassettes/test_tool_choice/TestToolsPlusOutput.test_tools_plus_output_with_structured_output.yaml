@@ -1,0 +1,205 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '613'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Sydney and summarize
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '404'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-05f0-7e7a-a1c2-1da53fead6cb
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Sydney"}'
+              name: get_weather
+            id: ufa7omPS6
+            index: 0
+      created: 1766185829
+      id: 6c78ffcb43b64c30b0df1e85ed9f5950
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 12
+        prompt_tokens: 149
+        total_tokens: 161
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '871'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=MxM0HoX9jbFgjlqC69pakYZTZiLPXUn1zg1A7uHVVSc-1766185830-1.0.1.1-.czebEh.T_9Cas0CtWiszAkNb6IFprt.QMk4kJKWp2Sd8o9nDvCz6lZk_qr7H80ddJZZHiwieOU04lZjBeXqJEhzFRNmX3luTIsinwgupH8;
+        _cfuvid=3UnNqg_6.v2fScPJVHonI2zmMjzlkaY4fxXuzoAIbJQ-1766185830352-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Sydney and summarize
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Sydney"}'
+            name: get_weather
+          id: ufa7omPS6
+          index: 0
+          type: function
+      - content: Sunny, 22C in Sydney
+        role: tool
+        tool_call_id: ufa7omPS6
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '504'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-0856-7c2d-95d8-2c38eeb5c147
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Sydney", "summary": "The current weather in Sydney is sunny with a temperature of 22 degrees
+                Celsius."}'
+              name: final_result
+            id: fw1e0eNma
+            index: 0
+      created: 1766185830
+      id: 1ba014dcd4ad44959de0dbbf847756b6
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 33
+        prompt_tokens: 172
+        total_tokens: 205
+    status:
+      code: 200
+      message: OK
+version: 1

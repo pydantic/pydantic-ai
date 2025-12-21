@@ -1,0 +1,208 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '610'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Miami and describe it
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '403'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-2f6f-789d-8ed4-6660f02dbdae
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Miami"}'
+              name: get_weather
+            id: prAFu7Ri4
+            index: 0
+      created: 1766185840
+      id: 7f628f19a37b445ea8d79b30781f30b3
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 13
+        prompt_tokens: 150
+        total_tokens: 163
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '866'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=zWjY1HecxedG2baJwThcEx76hY51_6T6aG4WAXOGlIk-1766185840-1.0.1.1-.HNexVJpkA8A7KDaulEMV2ncM8lB8Cp5863mrEJ2ABJa8CCHZW8T7TKZHTJU8ZMiVkQEghY_pIKYL2nlXOGVAhaBAnujF5LY0FWf46NCAd0;
+        _cfuvid=1gnII..gc2OjMvFS0w2ZJdLIxBN0JkmgvDEePuMgymQ-1766185840956-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Miami and describe it
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Miami"}'
+            name: get_weather
+          id: prAFu7Ri4
+          index: 0
+          type: function
+      - content: Sunny, 22C in Miami
+        role: tool
+        tool_call_id: prAFu7Ri4
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: Information about a city.
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '800'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019b38e1-31c8-7643-a2b2-d8fd370f97fd
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            The current weather in **Miami** is **sunny** with a temperature of **22°C (72°F)**.
+
+            Here’s a brief description:
+            - **Conditions**: Clear skies and sunny, making it a great day for outdoor activities.
+            - **Temperature**: A pleasant 22°C, which is warm but comfortable.
+            - **Humidity**: Miami is known for its humidity, so it might feel slightly warmer than the actual temperature.
+            - **Wind**: Light breezes are common, adding to the tropical feel.
+
+            Would you like any additional details?
+          role: assistant
+          tool_calls: null
+      created: 1766185841
+      id: 61d14dd67e8e4df097aac22a3ff7fead
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 116
+        prompt_tokens: 174
+        total_tokens: 290
+    status:
+      code: 200
+      message: OK
+version: 1
