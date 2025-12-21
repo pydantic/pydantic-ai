@@ -1,16 +1,27 @@
-"""Utilities for Vercel AI protocol.
+"""Utilities for converting between Pydantic AI and Vercel AI data structures."""
 
-Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.34/packages/ai/src/ui/ui-messages.ts
-"""
+from typing import Any
 
-from abc import ABC
+from pydantic_ai.messages import ProviderDetailsDelta
+from pydantic_ai.ui.vercel_ai.response_types import ProviderMetadata
 
-from pydantic import BaseModel, ConfigDict
-from pydantic.alias_generators import to_camel
+__all__ = []
+
+PROVIDER_METADATA_KEY = 'pydantic_ai'
 
 
-class CamelBaseModel(BaseModel, ABC):
-    """Base model with camelCase aliases."""
+def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:
+    """Load the Pydantic AI metadata from the provider metadata."""
+    return provider_metadata.get(PROVIDER_METADATA_KEY, {}) if provider_metadata else {}
 
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra='forbid')
+
+def dump_provider_metadata(
+    wrapper_key: str | None = PROVIDER_METADATA_KEY,
+    **kwargs: ProviderDetailsDelta | str,
+) -> dict[str, Any] | None:
+    """Dump provider metadata from keyword arguments."""
+    filtered = {k: v for k, v in kwargs.items() if v is not None}
+    if wrapper_key:
+        return {wrapper_key: filtered} if filtered else None
+    else:
+        return filtered if filtered else None

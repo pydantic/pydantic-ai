@@ -24,7 +24,6 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    ProviderDetailsDelta,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -39,6 +38,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
+from ._utils import dump_provider_metadata, load_provider_metadata
 from .request_types import (
     DataUIPart,
     DynamicToolInputAvailablePart,
@@ -134,7 +134,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif msg.role == 'assistant':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        part_metadata = cls._load_part_metadata(part.provider_metadata)
+                        part_metadata = load_provider_metadata(part.provider_metadata)
                         builder.add(
                             TextPart(
                                 content=part.text,
@@ -143,7 +143,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif isinstance(part, ReasoningUIPart):
-                        part_metadata = cls._load_part_metadata(part.provider_metadata)
+                        part_metadata = load_provider_metadata(part.provider_metadata)
                         builder.add(
                             ThinkingPart(
                                 content=part.text,
@@ -161,7 +161,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             raise ValueError(
                                 'Vercel AI integration can currently only handle assistant file parts with data URIs.'
                             ) from e
-                        part_metadata = cls._load_part_metadata(part.provider_metadata)
+                        part_metadata = load_provider_metadata(part.provider_metadata)
                         builder.add(
                             FilePart(
                                 content=file,
@@ -194,21 +194,37 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         else:
                             assert_never(args)
 
-                        part_id, provider_name, provider_details = None, None, None
+                        part_metadata = {}
+                        part_id = provider_name = provider_details = None
                         if not isinstance(part, (DynamicToolInputStreamingPart, ToolInputStreamingPart)):
-                            part_metadata = cls._load_part_metadata(part.call_provider_metadata)
+                            part_metadata = load_provider_metadata(part.call_provider_metadata)
                             part_id = part_metadata.get('id')
                             provider_name = part_metadata.get('provider_name')
                             provider_details = part_metadata.get('provider_details')
 
                         if builtin_tool:
+                            # For builtin tools, the call and return metadata are combined in the ToolOutputAvailablePart.
+                            # We extract and return them to the respective parts for pydantic_ai.
+                            call_meta = return_meta = {}
+                            if isinstance(part, ToolOutputAvailablePart):
+                                call_meta, return_meta = cls._load_builtin_tool_meta(part_metadata)
+                                call_meta = call_meta or {}
+                                return_meta = return_meta or {}
+
+                            call_id = call_meta.get('id') or part_id
+                            call_provider_name = call_meta.get('provider_name') or provider_name
+                            call_provider_details = call_meta.get('provider_details') or provider_details
+
+                            return_provider_name = return_meta.get('provider_name') or provider_name
+                            return_provider_details = return_meta.get('provider_details') or provider_details
+
                             call_part = BuiltinToolCallPart(
                                 tool_name=tool_name,
                                 tool_call_id=tool_call_id,
                                 args=args,
-                                id=part_id,
-                                provider_name=provider_name,
-                                provider_details=provider_details,
+                                id=call_id,
+                                provider_name=call_provider_name,
+                                provider_details=call_provider_details,
                             )
                             builder.add(call_part)
 
@@ -218,15 +234,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 else:
                                     output = {'error_text': part.error_text, 'is_error': True}
 
-                                call_part.provider_name = provider_name
-
                                 builder.add(
                                     BuiltinToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=output,
-                                        provider_name=provider_name,
-                                        provider_details=provider_details,
+                                        provider_name=return_provider_name,
+                                        provider_details=return_provider_details,
                                     )
                                 )
                         else:
@@ -270,15 +284,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         return builder.messages
 
     @staticmethod
-    def _load_part_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:
-        """Load the Pydantic AI metadata from the provider metadata."""
-        return provider_metadata.get('pydantic_ai', {}) if provider_metadata else {}
+    def _dump_builtin_tool_meta(
+        call_provider_metadata: ProviderMetadata | None, return_provider_metadata: ProviderMetadata | None
+    ) -> ProviderMetadata | None:
+        """Builtin tool call and return provider metadata use special keys (call_meta and return_meta)."""
+        return dump_provider_metadata(call_meta=call_provider_metadata, return_meta=return_provider_metadata)
 
     @staticmethod
-    def _dump_part_metadata(**kwargs: ProviderDetailsDelta | str) -> ProviderMetadata | None:
-        """Dump the Pydantic AI metadata from keyword arguments."""
-        filtered = {k: v for k, v in kwargs.items() if v is not None}
-        return {'pydantic_ai': filtered} if filtered else None
+    def _load_builtin_tool_meta(
+        provider_metadata: ProviderMetadata,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Builtin tool call and return provider metadata use special keys (call_meta and return_meta)."""
+        return provider_metadata.get('call_meta'), provider_metadata.get('return_meta')
 
     @staticmethod
     def _dump_request_message(msg: ModelRequest) -> tuple[list[UIMessagePart], list[UIMessagePart]]:
@@ -306,9 +323,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         return system_ui_parts, user_ui_parts
 
-    @staticmethod
+    @classmethod
     def _dump_response_message(
-        msg: ModelResponse, tool_results: dict[str, ToolReturnPart | RetryPromptPart]
+        cls, msg: ModelResponse, tool_results: dict[str, ToolReturnPart | RetryPromptPart]
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
@@ -326,12 +343,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if ui_parts and isinstance(ui_parts[-1], TextUIPart):
                     ui_parts[-1].text += part.content
                 else:
-                    provider_metadata = VercelAIAdapter._dump_part_metadata(
-                        id=part.id, provider_details=part.provider_details
-                    )
+                    provider_metadata = dump_provider_metadata(id=part.id, provider_details=part.provider_details)
                     ui_parts.append(TextUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
             elif isinstance(part, ThinkingPart):
-                provider_metadata = VercelAIAdapter._dump_part_metadata(
+                provider_metadata = dump_provider_metadata(
                     id=part.id,
                     signature=part.signature,
                     provider_name=part.provider_name,
@@ -343,22 +358,39 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     FileUIPart(
                         url=part.content.data_uri,
                         media_type=part.content.media_type,
-                        provider_metadata=VercelAIAdapter._dump_part_metadata(
+                        provider_metadata=dump_provider_metadata(
                             id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
                         ),
                     )
                 )
             elif isinstance(part, BuiltinToolCallPart):
-                call_provider_metadata = VercelAIAdapter._dump_part_metadata(
+                call_provider_metadata = dump_provider_metadata(
                     id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
                 )
 
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
-                    builtin_return_meta = VercelAIAdapter._dump_part_metadata(
+                    # Builtin tool calls in pydantic_ai are represented by two parts:
+                    #   1. BuiltinToolCallPart (the tool request) -> part
+                    #   2. BuiltinToolReturnPart (the tool's output) -> builtin_return
+                    # The Vercel AI SDK only has a single ToolOutputAvailablePart.
+                    # So, we combine all relevant metadata here so that, when we later convert back from Vercel AI to pydantic_ai,
+                    # we can properly reconstruct both the call and return parts with their original metadata.
+                    # Note: This extra metadata handling is only needed for built-in tools, since normal tool returns
+                    # (ToolReturnPart) do not include provider metadata.
+
+                    call_meta = dump_provider_metadata(
+                        wrapper_key=None,
                         id=part.id,
+                        provider_name=part.provider_name,
+                        provider_details=part.provider_details,
+                    )
+                    return_meta = dump_provider_metadata(
+                        wrapper_key=None,
                         provider_name=builtin_return.provider_name,
                         provider_details=builtin_return.provider_details,
                     )
+                    combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
+
                     content = builtin_return.model_response_str()
                     ui_parts.append(
                         ToolOutputAvailablePart(
@@ -368,7 +400,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             output=content,
                             state='output-available',
                             provider_executed=True,
-                            call_provider_metadata=builtin_return_meta,
+                            call_provider_metadata=combined_provider_meta,
                         )
                     )
                 else:
@@ -384,9 +416,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
             elif isinstance(part, ToolCallPart):
                 tool_result = tool_results.get(part.tool_call_id)
-                call_provider_metadata = VercelAIAdapter._dump_part_metadata(
-                    id=part.id, provider_details=part.provider_details
-                )
+                call_provider_metadata = dump_provider_metadata(id=part.id, provider_details=part.provider_details)
 
                 if isinstance(tool_result, ToolReturnPart):
                     content = tool_result.model_response_str()
