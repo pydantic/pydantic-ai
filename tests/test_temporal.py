@@ -3234,8 +3234,8 @@ _unwrapped_dynamic_toolset = DynamicToolset(_unwrapped_dynamic_toolset_func, id=
 @workflow.defn
 class WorkflowWithUnwrappedDynamicToolset:
     @workflow.run
-    async def run(self, prompt: str) -> str:  # pragma: no cover
-        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_dynamic_toolset])  # pragma: no cover
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_dynamic_toolset])
         return result.output  # pragma: no cover
 
 
@@ -3304,7 +3304,7 @@ _unwrapped_fastmcp_toolset = FastMCPToolset('https://mcp.deepwiki.com/mcp', id='
 @workflow.defn
 class WorkflowWithUnwrappedFastMCPToolset:
     @workflow.run
-    async def run(self, prompt: str) -> str:  # pragma: no cover
+    async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_fastmcp_toolset])  # pragma: no cover
         return result.output  # pragma: no cover
 
