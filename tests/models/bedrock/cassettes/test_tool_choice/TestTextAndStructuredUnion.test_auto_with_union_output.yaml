@@ -1,0 +1,119 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Miami and describe it"}]}], "system": [],
+      "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties":
+      false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the
+      current weather for a city."}}, {"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city":
+      {"type": "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Information about a city."}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZjBiYjhmYzMtNWM3Mi00MGJjLTk0NmItOGE0NmNmNzgzZjgz
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '681'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '505'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1768
+      output:
+        message:
+          content:
+          - text: I'll get the weather information for Miami and describe it for you.
+          - toolUse:
+              input:
+                city: Miami
+              name: get_weather
+              toolUseId: tooluse_a0waPfIwS720kqSPdPWCdw
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 645
+        outputTokens: 68
+        serverToolUsage: {}
+        totalTokens: 713
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Miami and describe it"}]}, {"role": "assistant",
+      "content": [{"text": "I''ll get the weather information for Miami and describe it for you."}, {"toolUse": {"toolUseId":
+      "tooluse_a0waPfIwS720kqSPdPWCdw", "name": "get_weather", "input": {"city": "Miami"}}}]}, {"role": "user", "content":
+      [{"toolResult": {"toolUseId": "tooluse_a0waPfIwS720kqSPdPWCdw", "content": [{"text": "Sunny, 22C in Miami"}], "status":
+      "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema":
+      {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}},
+      "description": "Get the current weather for a city."}}, {"toolSpec": {"name": "final_result", "inputSchema": {"json":
+      {"properties": {"city": {"type": "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title":
+      "CityInfo", "type": "object"}}, "description": "Information about a city."}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YzNiYjFmZWYtMzA1Yy00NDhiLWFmNTctZTc0NzAyNGQxMWRm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1074'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '730'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2579
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Miami
+                summary: Miami is currently experiencing sunny weather with a pleasant temperature of 22°C (approximately
+                  72°F). It's a beautiful day with clear skies and comfortable conditions - perfect for outdoor activities
+                  like visiting the beach, taking a walk along Ocean Drive, or enjoying outdoor dining.
+              name: final_result
+              toolUseId: tooluse_PlSmsSMNS8KXqcPmcgrEmw
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 733
+        outputTokens: 124
+        serverToolUsage: {}
+        totalTokens: 857
+    status:
+      code: 200
+      message: OK
+version: 1

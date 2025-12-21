@@ -1,0 +1,56 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What time is it in London?"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"type": "object", "properties":
+      {"city": {"type": "string"}}, "required": ["city"]}}, "description": "Get weather for a city"}}, {"toolSpec": {"name":
+      "get_time", "inputSchema": {"json": {"type": "object", "properties": {"timezone": {"type": "string"}}, "required": ["timezone"]}},
+      "description": "Get current time in a timezone"}}], "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZmEyY2JlNjMtNTI0ZS00MzUwLThmNjctYTZmMjI3MDVhYTVm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '571'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '435'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1642
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                timezone: Europe/London
+              name: get_time
+              toolUseId: tooluse_NPJrwGxgRfy9al76ipPs_A
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 709
+        outputTokens: 40
+        serverToolUsage: {}
+        totalTokens: 749
+    status:
+      code: 200
+      message: OK
+version: 1

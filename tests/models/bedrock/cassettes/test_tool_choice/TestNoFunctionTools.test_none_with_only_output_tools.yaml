@@ -1,0 +1,65 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about Boston"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Information about a city."}}], "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YjU2NDRiZDItYTI0Yi00Mzc0LTgxMTAtMWE0YmJhNzVkMTEy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '428'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1419'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 5148
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Boston
+                summary: Boston is the capital and largest city of Massachusetts, located in the northeastern United States.
+                  Founded in 1630, it is one of America's oldest cities and played a pivotal role in the American Revolution,
+                  with historic sites like the Freedom Trail, Boston Tea Party Ships & Museum, and Paul Revere's House. The
+                  city is a major center for education, home to prestigious institutions including Harvard University and
+                  MIT in the greater Boston area, as well as Boston University and Northeastern University. Known for its
+                  rich history, diverse neighborhoods like Beacon Hill and the North End, Boston is also famous for its sports
+                  teams (Red Sox, Celtics, Bruins, Patriots), world-class hospitals and medical research facilities, thriving
+                  technology and finance sectors, and cultural attractions including the Boston Symphony Orchestra and Museum
+                  of Fine Arts. The city has a population of approximately 675,000 in the city proper and over 4.8 million
+                  in the metropolitan area.
+              name: final_result
+              toolUseId: tooluse_L6xTc8bNRBmdvdju1vPzSQ
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 672
+        outputTokens: 250
+        serverToolUsage: {}
+        totalTokens: 922
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,51 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Rome?"}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        N2MxYTYxY2QtOWQyYS00MzhlLWI3ZTMtN2MzNzA4NWFmZWYy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '123'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '718'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2039
+      output:
+        message:
+          content:
+          - text: "I don't have access to real-time weather data, so I can't tell you the current weather in Rome. \n\nTo
+              get current weather information for Rome, you could:\n- Check weather websites like weather.com or accuweather.com\n-
+              Search \"Rome weather\" in any search engine\n- Use a weather app on your phone\n- Ask a voice assistant with
+              internet access\n\nIs there anything else about Rome I can help you with?"
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 14
+        outputTokens: 98
+        serverToolUsage: {}
+        totalTokens: 112
+    status:
+      code: 200
+      message: OK
+version: 1

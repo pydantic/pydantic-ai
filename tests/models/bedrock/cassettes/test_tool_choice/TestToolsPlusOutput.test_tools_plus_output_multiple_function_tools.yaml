@@ -1,0 +1,120 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Denver and summarize"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current
+      weather for a city."}}, {"toolSpec": {"name": "get_population", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the population
+      of a city."}}, {"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type": "string"},
+      "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}}, "description":
+      "Information about a city."}}], "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MDhhMDQzYTEtODg3OS00MDliLWI3OTYtY2M4MWY5YTdhM2Jh
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '911'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '427'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1434
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Denver
+              name: get_weather
+              toolUseId: tooluse_0se85brnQlyBGvxoiflIUw
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 798
+        outputTokens: 38
+        serverToolUsage: {}
+        totalTokens: 836
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Denver and summarize"}]}, {"role": "assistant",
+      "content": [{"toolUse": {"toolUseId": "tooluse_0se85brnQlyBGvxoiflIUw", "name": "get_weather", "input": {"city": "Denver"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_0se85brnQlyBGvxoiflIUw", "content": [{"text": "Sunny,
+      22C in Denver"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
+      {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
+      "required": ["city"], "type": "object"}}, "description": "Get the current weather for a city."}}, {"toolSpec": {"name":
+      "get_population", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
+      "required": ["city"], "type": "object"}}, "description": "Get the population of a city."}}, {"toolSpec": {"name": "final_result",
+      "inputSchema": {"json": {"properties": {"city": {"type": "string"}, "summary": {"type": "string"}}, "required": ["city",
+      "summary"], "title": "CityInfo", "type": "object"}}, "description": "Information about a city."}}], "toolChoice": {"any":
+      {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YmQ2MDUyOTctMDJkYS00ZmU3LTk2YzktOWRiZDU3MjM3ZjVl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1225'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '522'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1831
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Denver
+                summary: The weather in Denver is sunny with a temperature of 22°C (approximately 72°F).
+              name: final_result
+              toolUseId: tooluse_FA_24ukrRcyMhIR2iW_0Vw
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 871
+        outputTokens: 75
+        serverToolUsage: {}
+        totalTokens: 946
+    status:
+      code: 200
+      message: OK
+version: 1

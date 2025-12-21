@@ -1,0 +1,59 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Describe Seattle briefly"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Information about a city."}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        Mjg2MzcwN2EtZGI0Mi00ZTY0LTliYWItZGY5Nzc4MDRkNTQ3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '433'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '866'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3453
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Seattle
+                summary: Seattle is a major coastal city in the Pacific Northwest region of Washington State, known for its
+                  iconic Space Needle, thriving tech industry (home to Amazon and Microsoft), vibrant coffee culture (birthplace
+                  of Starbucks), and stunning natural surroundings including Puget Sound and Mount Rainier. The city has a
+                  reputation for frequent rain, a strong music scene (grunge movement), and a progressive, innovative culture.
+              name: final_result
+              toolUseId: tooluse_c5YaJjNEQtmV7JpZpb0Aig
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 580
+        outputTokens: 157
+        serverToolUsage: {}
+        totalTokens: 737
+    status:
+      code: 200
+      message: OK
+version: 1

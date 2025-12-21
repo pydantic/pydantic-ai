@@ -1,0 +1,117 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Sydney and summarize"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current
+      weather for a city."}}, {"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
+      "description": "Information about a city."}}], "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OTczYzAzZjEtODE0Ni00YjlhLTk5MzgtY2I3MzE4YjI0ZGZm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '679'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '427'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1551
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Sydney
+              name: get_weather
+              toolUseId: tooluse_Dkm4jM3eQ-OjadVgsf72CA
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 737
+        outputTokens: 38
+        serverToolUsage: {}
+        totalTokens: 775
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Get weather for Sydney and summarize"}]}, {"role": "assistant",
+      "content": [{"toolUse": {"toolUseId": "tooluse_Dkm4jM3eQ-OjadVgsf72CA", "name": "get_weather", "input": {"city": "Sydney"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Dkm4jM3eQ-OjadVgsf72CA", "content": [{"text": "Sunny,
+      22C in Sydney"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec":
+      {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}},
+      "required": ["city"], "type": "object"}}, "description": "Get the current weather for a city."}}, {"toolSpec": {"name":
+      "final_result", "inputSchema": {"json": {"properties": {"city": {"type": "string"}, "summary": {"type": "string"}},
+      "required": ["city", "summary"], "title": "CityInfo", "type": "object"}}, "description": "Information about a city."}}],
+      "toolChoice": {"any": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWFjZDcxYWYtYTE5NC00NDllLTg3MTQtZDVmZjI0OTVkZGMw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '993'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '576'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2011
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Sydney
+                summary: Sydney is experiencing sunny weather with a pleasant temperature of 22°C (approximately 72°F). It's
+                  a beautiful day with clear skies.
+              name: final_result
+              toolUseId: tooluse_sC1Jv6GLSTiSKr-xyt2UMg
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 810
+        outputTokens: 84
+        serverToolUsage: {}
+        totalTokens: 894
+    status:
+      code: 200
+      message: OK
+version: 1
