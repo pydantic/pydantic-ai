@@ -330,7 +330,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_include_web_search_content_annotations: bool
-    """Whether to include the raw output for text annotations in `TextPart.provider_details['content_annotations']`
+    """Whether to include the raw output for text annotations in `TextPart.provider_details['annotations']`
 
     Opt-in to avoid confusion when https://github.com/pydantic/pydantic-ai/issues/3126 is resolved.
     """
@@ -1285,20 +1285,19 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        part_provider_details: dict[str, Any] = {}
+                        provider_details: dict[str, Any] | None = {}
                         if content.logprobs:
-                            part_provider_details['logprobs'] = _map_logprobs(content.logprobs)
+                            provider_details['logprobs'] = _map_logprobs(content.logprobs)
                         # NOTE: can be removed after https://github.com/pydantic/pydantic-ai/issues/3126
-                        # TODO: handle opt-in via model settings
-                        # if content.annotations and model_settings.openai_include_web_search_content_annotations:
+                        # TODO: discuss gate via model settings
                         if content.annotations:
-                            part_provider_details['annotations'] = content.annotations
+                            provider_details['annotations'] = content.annotations
 
                         items.append(
                             TextPart(
                                 content=content.text,
                                 id=item.id,
-                                provider_details=part_provider_details or None,
+                                provider_details=provider_details or None,
                             )
                         )
             elif isinstance(item, responses.ResponseFunctionToolCall):
@@ -2406,7 +2405,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                 # NOTE: can be removed after https://github.com/pydantic/pydantic-ai/issues/3126
-                # TODO: handle opt-in via model settings
+                # TODO: discuss gate via model settings
                 # if not model_settings.openai_include_web_search_content_annotations:
                 #     continue
 
