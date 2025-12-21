@@ -25,9 +25,8 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
-    from magic import Magic
     from magika import Magika
-
+    from magic import Magic
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -69,8 +68,8 @@ FinishReason: TypeAlias = Literal[
 
 # Shared instances for media type detection to avoid repeated initialization overhead
 
-_magika_instance: 'Magika | None' = None
-_magic_instance: 'Magic | None' = None
+_magika_instance: 'Magika' = None  # type: ignore[var-annotated]
+_magic_instance: 'Magic' = None  # type: ignore[var-annotated]
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
@@ -620,7 +619,7 @@ class BinaryContent:
             from magika import Magika
 
             if _magika_instance is None:
-                _magika_instance: Magika = Magika()
+                _magika_instance = Magika()
             result = _magika_instance.identify_bytes(self.data).output
             self._media_type = result.mime_type
             self._type = result.group
@@ -633,7 +632,7 @@ class BinaryContent:
         from magic import Magic
 
         if _magic_instance is None:
-            _magic_instance: Magic = Magic(mime=True)
+            _magic_instance = Magic(mime=True)
         self._media_type = _magic_instance.from_buffer(self.data)
         warnings.warn(
             'Using magic to identify media_type may result in incorrect identification of some document types. '
