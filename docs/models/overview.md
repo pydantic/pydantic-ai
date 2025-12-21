@@ -236,6 +236,9 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
 
+!!! note "Streaming limitation"
+    For streaming requests, exception-based fallback only catches errors during stream **initialization** (e.g., connection errors, authentication failures). If an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback. To handle mid-stream failures, use [`fallback_on_part`](#part-based-fallback-streaming) which buffers the stream and can cleanly switch to a fallback model.
+
 ### Response-Based Fallback
 
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response using the `fallback_on_response` parameter. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure.
@@ -351,7 +354,7 @@ You can use both `fallback_on_part` and `fallback_on_response` together. Parts a
     - **Faster fallback**: Start the next model immediately instead of waiting for a doomed response to finish
     - **Cost reduction**: Pay only for the tokens consumed before the failure was detected
 
-    If you need true progressive streaming to the caller and don't require fallback validation, use `FallbackModel` without `fallback_on_part` or `fallback_on_response`.
+    If you need progressive streaming to the caller and only want fallback for connection/initialization errors, you can omit `fallback_on_part` and `fallback_on_response`. However, be aware that exception-based fallback (`fallback_on`) only catches errors during stream **initialization**—if an exception occurs mid-stream after events have started flowing, it will propagate to the caller without triggering fallback.
 
 !!! note
     `fallback_on_part` only applies to streaming requests (`run_stream`). For non-streaming requests, use `fallback_on_response` instead.

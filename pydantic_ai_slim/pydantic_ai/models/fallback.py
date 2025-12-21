@@ -53,6 +53,10 @@ class FallbackModel(Model):
             default_model: The name or instance of the default model to use.
             fallback_models: The names or instances of the fallback models to use upon failure.
             fallback_on: A callable or tuple of exceptions that should trigger a fallback.
+                For streaming requests, this only catches exceptions during stream initialization
+                (e.g., connection errors, authentication failures). Exceptions that occur mid-stream
+                after events have started flowing will propagate to the caller without triggering
+                fallback. Use `fallback_on_part` if you need to handle mid-stream failures.
             fallback_on_response: A callable that inspects the model response and message history,
                 returning `True` if fallback should be triggered. This enables fallback based on
                 response content (e.g., a builtin tool indicating failure) rather than exceptions.
