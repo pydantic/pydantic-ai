@@ -243,8 +243,10 @@ In addition to exception-based fallback, you can also trigger fallback based on 
 A common use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
 ```python {title="fallback_on_response.py" test="skip"}
+from typing import Any
+
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, ModelMessage, ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
@@ -252,10 +254,15 @@ from pydantic_ai.models.google import GoogleModel
 
 def web_fetch_failed(response: ModelResponse, messages: list[ModelMessage]) -> bool:
     """Check if a web_fetch built-in tool failed to retrieve content."""
+    call: BuiltinToolCallPart
+    result: BuiltinToolReturnPart
     for call, result in response.builtin_tool_calls:
-        if call.tool_name != 'web_fetch' or not isinstance(result.content, dict):
+        if call.tool_name != 'web_fetch':
             continue
-        status = result.content.get('url_retrieval_status', '')
+        if not isinstance(result.content, dict):
+            continue
+        content: dict[str, Any] = result.content
+        status = content.get('url_retrieval_status', '')
         if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
             return True
     return False
