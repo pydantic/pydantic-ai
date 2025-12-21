@@ -180,7 +180,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         AudioUrl('foobar.potato').media_type
 
 
@@ -200,10 +200,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         ImageUrl('foobar.potato').format
 
 
@@ -241,11 +241,8 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         DocumentUrl('foobar.potato').media_type
-
-    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
-        DocumentUrl('foobar.py').format
 
 
 def test_binary_content_unknown_media_type():
@@ -336,7 +333,7 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
 
 
@@ -582,8 +579,12 @@ Let's generate an image
 
 And then, call the 'hello_world' tool\
 """)
-    assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
-    assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.files == snapshot(
+        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
+    )
+    assert response.images == snapshot(
+        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
+    )
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
     assert response.builtin_tool_calls == snapshot(
         [
@@ -618,7 +619,11 @@ def test_image_url_validation_with_optional_identifier():
     )
 
     image = image_url_ta.validate_python(
-        {'url': 'https://example.com/image.jpg', 'identifier': 'foo', 'media_type': 'image/png'}
+        {
+            'url': 'https://example.com/image.jpg',
+            'identifier': 'foo',
+            'media_type': 'image/png',
+        }
     )
     assert image.url == snapshot('https://example.com/image.jpg')
     assert image.identifier == snapshot('foo')
@@ -652,7 +657,11 @@ def test_binary_content_validation_with_optional_identifier():
     )
 
     binary_content = binary_content_ta.validate_python(
-        {'data': b'fake', 'identifier': 'foo', 'media_type': 'image/png'}
+        {
+            'data': b'fake',
+            'identifier': 'foo',
+            'media_type': 'image/png',
+        }
     )
     assert binary_content.data == b'fake'
     assert binary_content.identifier == snapshot('foo')
@@ -685,19 +694,30 @@ def test_binary_content_from_path(tmp_path: Path):
     test_unknown_file = tmp_path / 'test.unknownext'
     test_unknown_file.write_text('some content', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_unknown_file)
-    assert binary_content == snapshot(BinaryContent(data=b'some content', media_type='application/octet-stream'))
+    assert binary_content == snapshot(
+        BinaryContent(
+            data=b'some content', _media_type='application/octet-stream', media_type='application/octet-stream'
+        )
+    )
 
     # test string path
     test_txt_file = tmp_path / 'test.txt'
     test_txt_file.write_text('just some text', encoding='utf-8')
     string_path = test_txt_file.as_posix()
     binary_content = BinaryContent.from_path(string_path)  # pyright: ignore[reportArgumentType]
-    assert binary_content == snapshot(BinaryContent(data=b'just some text', media_type='text/plain'))
+    assert binary_content == snapshot(
+        BinaryContent(data=b'just some text', _media_type='text/plain', media_type='text/plain')
+    )
 
     # test image file
     test_jpg_file = tmp_path / 'test.jpg'
     test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
     binary_content = BinaryContent.from_path(test_jpg_file)
     assert binary_content == snapshot(
-        BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
+        BinaryImage(
+            data=b'\xff\xd8\xff\xe0' + b'0' * 100,
+            media_type='image/jpeg',
+            _media_type='image/jpeg',
+            _identifier='bc8d49',
+        )
     )

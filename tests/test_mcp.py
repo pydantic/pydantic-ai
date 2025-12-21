@@ -1528,7 +1528,11 @@ def test_map_from_mcp_params_model_request():
                 parts=[
                     UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png', identifier='978ea7')],
+                        content=[
+                            BinaryContent(
+                                data=b'img', _media_type='image/png', media_type='image/png', identifier='978ea7'
+                            )
+                        ],
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]

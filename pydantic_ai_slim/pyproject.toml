@@ -61,6 +61,7 @@ dependencies = [
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
     "genai-prices>=0.0.40",
+    "python-magic>=0.4.27"
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -114,6 +115,8 @@ temporal = ["temporalio==1.20.0"]
 dbos = ["dbos>=1.14.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+
+magika = ["magika>=1.0.1"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

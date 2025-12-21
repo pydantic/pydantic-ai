@@ -2044,7 +2044,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                     UserPromptPart(
                         content=[
                             'hello',
-                            BinaryContent(data=image_bytes, media_type='image/jpeg'),
+                            BinaryContent(data=image_bytes, _media_type='image/jpeg', media_type='image/jpeg'),
                         ],
                         timestamp=IsDatetime(),
                     )
@@ -2128,7 +2128,12 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                     UserPromptPart(
                         content=[
                             'hello',
-                            BinaryContent(data=base64_content, media_type='application/pdf', identifier='b9d976'),
+                            BinaryContent(
+                                data=base64_content,
+                                _media_type='application/pdf',
+                                media_type='application/pdf',
+                                identifier='b9d976',
+                            ),
                         ],
                         timestamp=IsDatetime(),
                     )
