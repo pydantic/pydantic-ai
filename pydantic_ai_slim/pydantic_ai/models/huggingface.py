@@ -319,9 +319,7 @@ class HuggingFaceModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
-            if first_chunk.created
-            else None,
+            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -474,6 +472,8 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
@@ -485,16 +485,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             except IndexError:
                 continue
 
-            provider_details_dict: dict[str, Any] = {}
             if raw_finish_reason := choice.finish_reason:
-                provider_details_dict['finish_reason'] = raw_finish_reason
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                 self.finish_reason = _FINISH_REASON_MAP.get(
                     cast(TextGenerationOutputFinishReason, raw_finish_reason), None
                 )
-            if self._provider_timestamp is not None:  # pragma: no branch
-                provider_details_dict['timestamp'] = self._provider_timestamp
-            if provider_details_dict:  # pragma: no branch
-                self.provider_details = provider_details_dict
 
             # Handle the text part of the response
             content = choice.delta.content

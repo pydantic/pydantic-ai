@@ -673,6 +673,8 @@ class GeminiStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         code_execution_tool_call_id: str | None = None
+        if self._provider_timestamp is not None:
+            self.provider_details = {'timestamp': self._provider_timestamp}  # pragma: no cover
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
@@ -684,16 +686,9 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
-            raw_finish_reason = candidate.finish_reason
-            provider_details_dict: dict[str, Any] = {}
-            if raw_finish_reason:
-                provider_details_dict['finish_reason'] = raw_finish_reason.value
+            if raw_finish_reason := candidate.finish_reason:
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-            if self._provider_timestamp is not None:
-                # _provider_timestamp is always None in Google streaming cassettes
-                provider_details_dict['timestamp'] = self._provider_timestamp  # pragma: no cover
-            if provider_details_dict:
-                self.provider_details = provider_details_dict
 
             # Google streams the grounding metadata (including the web search queries and results)
             # _after_ the text that was generated using it, so it would show up out of order in the stream,

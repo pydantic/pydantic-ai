@@ -372,7 +372,7 @@ class GroqModel(Model):
             _model_profile=self.profile,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
+            _provider_timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -534,6 +534,8 @@ class GroqStreamedResponse(StreamedResponse):
             executed_tool_call_id: str | None = None
             reasoning_index = 0
             reasoning = False
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -545,14 +547,9 @@ class GroqStreamedResponse(StreamedResponse):
                 except IndexError:
                     continue
 
-                provider_details_dict: dict[str, Any] = {}
                 if raw_finish_reason := choice.finish_reason:
-                    provider_details_dict['finish_reason'] = raw_finish_reason
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-                if self._provider_timestamp is not None:  # pragma: no branch
-                    provider_details_dict['timestamp'] = self._provider_timestamp
-                if provider_details_dict:  # pragma: no branch
-                    self.provider_details = provider_details_dict
 
                 if choice.delta.reasoning is not None:
                     if not reasoning:

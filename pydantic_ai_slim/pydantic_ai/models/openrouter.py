@@ -688,17 +688,17 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
         assert isinstance(chunk, _OpenRouterChatCompletionChunk)
 
-        if provider_details := super()._map_provider_details(chunk):  # pragma: no branch
-            provider_details.update(_map_openrouter_provider_details(chunk))
-            # Preserve finish_reason from previous chunk if the current chunk doesn't have one.
-            # After the chunk with native_finish_reason 'completed', OpenRouter sends one more
-            # chunk with usage data (see cassette test_openrouter_stream_with_native_options.yaml)
-            # which has native_finish_reason: null. Since provider_details is replaced on each
-            # chunk, we need to carry forward the finish_reason from the previous chunk.
-            if 'finish_reason' not in provider_details and self.provider_details:  # pragma: no branch
-                if previous_finish_reason := self.provider_details.get('finish_reason'):
-                    provider_details['finish_reason'] = previous_finish_reason
-            return provider_details
+        provider_details = super()._map_provider_details(chunk) or {}
+        provider_details.update(_map_openrouter_provider_details(chunk))
+        # Preserve finish_reason from previous chunk if the current chunk doesn't have one.
+        # After the chunk with native_finish_reason 'completed', OpenRouter sends one more
+        # chunk with usage data (see cassette test_openrouter_stream_with_native_options.yaml)
+        # which has native_finish_reason: null. Since provider_details is replaced on each
+        # chunk, we need to carry forward the finish_reason from the previous chunk.
+        if 'finish_reason' not in provider_details and self.provider_details:  # pragma: no branch
+            if previous_finish_reason := self.provider_details.get('finish_reason'):
+                provider_details['finish_reason'] = previous_finish_reason
+        return provider_details or None
 
     @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]

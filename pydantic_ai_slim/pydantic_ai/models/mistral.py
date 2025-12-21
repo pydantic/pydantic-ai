@@ -614,6 +614,8 @@ class MistralStreamedResponse(StreamedResponse):
     _delta_content: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
         chunk: MistralCompletionEvent
         async for chunk in self._response:
             self._usage += _map_usage(chunk.data)
@@ -626,14 +628,9 @@ class MistralStreamedResponse(StreamedResponse):
             except IndexError:
                 continue
 
-            provider_details_dict: dict[str, Any] = {}
             if raw_finish_reason := choice.finish_reason:
-                provider_details_dict['finish_reason'] = raw_finish_reason
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-            if self._provider_timestamp is not None:  # pragma: no branch
-                provider_details_dict['timestamp'] = self._provider_timestamp
-            if provider_details_dict:  # pragma: no branch
-                self.provider_details = provider_details_dict
 
             # Handle the text part of the response
             content = choice.delta.content

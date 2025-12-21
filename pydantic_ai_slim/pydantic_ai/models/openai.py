@@ -1932,6 +1932,8 @@ class OpenAIStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
         async for chunk in self._validate_response():
             self._usage += self._map_usage(chunk)
 
@@ -1954,7 +1956,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
             if provider_details := self._map_provider_details(chunk):  # pragma: no branch
-                self.provider_details = provider_details
+                self.provider_details = {**(self.provider_details or {}), **provider_details}
 
             for event in self._map_part_delta(choice):
                 yield event
@@ -2046,12 +2048,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
         """
-        provider_details = _map_provider_details(chunk.choices[0])
-        if self._provider_timestamp is not None:  # pragma: no branch
-            if provider_details is None:
-                provider_details = {}
-            provider_details['timestamp'] = self._provider_timestamp
-        return provider_details or None
+        return _map_provider_details(chunk.choices[0])
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)

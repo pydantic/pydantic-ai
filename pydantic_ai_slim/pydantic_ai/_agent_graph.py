@@ -505,11 +505,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
 
-        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
-        last_request = message_history[-1]
-        if isinstance(last_request, _messages.ModelRequest) and last_request.timestamp is None:
-            last_request.timestamp = self.request.timestamp
-
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
@@ -1336,6 +1331,10 @@ async def _process_message_history(
 
     if not isinstance(messages[-1], _messages.ModelRequest):
         raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
+
+    # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
+    if messages[-1].timestamp is None:
+        messages[-1].timestamp = now_utc()
 
     return messages
 
