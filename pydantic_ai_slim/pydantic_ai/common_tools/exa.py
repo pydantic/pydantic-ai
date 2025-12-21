@@ -6,7 +6,7 @@ results across billions of web pages.
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, overload
 
 from typing_extensions import Any, TypedDict
 
@@ -242,6 +242,24 @@ class ExaAnswerTool:
         )
 
 
+@overload
+def exa_search_tool(
+    api_key: str,
+    *,
+    num_results: int = 5,
+    max_characters: int | None = None,
+) -> Tool[Any]: ...
+
+
+@overload
+def exa_search_tool(
+    *,
+    client: AsyncExa,
+    num_results: int = 5,
+    max_characters: int | None = None,
+) -> Tool[Any]: ...
+
+
 def exa_search_tool(
     api_key: str | None = None,
     *,
@@ -276,6 +294,22 @@ def exa_search_tool(
     )
 
 
+@overload
+def exa_find_similar_tool(
+    api_key: str,
+    *,
+    num_results: int = 5,
+) -> Tool[Any]: ...
+
+
+@overload
+def exa_find_similar_tool(
+    *,
+    client: AsyncExa,
+    num_results: int = 5,
+) -> Tool[Any]: ...
+
+
 def exa_find_similar_tool(
     api_key: str | None = None,
     *,
@@ -303,6 +337,14 @@ def exa_find_similar_tool(
     )
 
 
+@overload
+def exa_get_contents_tool(api_key: str) -> Tool[Any]: ...
+
+
+@overload
+def exa_get_contents_tool(*, client: AsyncExa) -> Tool[Any]: ...
+
+
 def exa_get_contents_tool(
     api_key: str | None = None,
     *,
@@ -326,6 +368,14 @@ def exa_get_contents_tool(
         name='exa_get_contents',
         description='Gets the full text content of specified URLs. Useful for reading articles, documentation, or any web page when you have the exact URL.',
     )
+
+
+@overload
+def exa_answer_tool(api_key: str) -> Tool[Any]: ...
+
+
+@overload
+def exa_answer_tool(*, client: AsyncExa) -> Tool[Any]: ...
 
 
 def exa_answer_tool(
