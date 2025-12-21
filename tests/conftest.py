@@ -309,12 +309,17 @@ def vcr_config():
 
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
-    yield
     from pydantic_ai.models import _used_async_http_client_providers  # pyright: ignore[reportPrivateUsage]
 
-    for provider in list(_used_async_http_client_providers):
+    # Snapshot providers that existed before this test (e.g., module-level clients like in test_prefect.py)
+    providers_before = set(_used_async_http_client_providers)
+    yield
+
+    # Only close providers added during this test
+    providers_to_close = _used_async_http_client_providers - providers_before
+    for provider in providers_to_close:
         await cached_async_http_client(provider=provider).aclose()
-    _used_async_http_client_providers.clear()
+    _used_async_http_client_providers.difference_update(providers_to_close)
 
 
 @pytest.fixture(scope='session')

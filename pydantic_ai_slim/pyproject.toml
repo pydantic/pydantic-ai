@@ -113,7 +113,7 @@ temporal = ["temporalio==1.20.0"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
 # Prefect
-prefect = ["prefect>=3.4.21"]
+prefect = ["prefect>=3.6.7"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

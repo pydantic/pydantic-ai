@@ -6180,7 +6180,7 @@ requires-dist = [
     { name = "outlines", extras = ["transformers"], marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'outlines-transformers') or (sys_platform == 'linux' and extra == 'outlines-transformers')", specifier = ">=1.0.0,<1.3.0" },
     { name = "pillow", marker = "extra == 'outlines-sglang'" },
     { name = "pillow", marker = "extra == 'outlines-transformers'" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.4.21" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.6.7" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
