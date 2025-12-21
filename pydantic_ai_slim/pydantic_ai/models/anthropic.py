@@ -13,7 +13,14 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -64,7 +71,6 @@ try:
         omit as OMIT,
     )
     from anthropic.types.beta import (
-        BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
@@ -98,6 +104,7 @@ try:
         BetaRawMessageStreamEvent,
         BetaRedactedThinkingBlock,
         BetaRedactedThinkingBlockParam,
+        BetaRequestDocumentBlockParam,
         BetaRequestMCPServerToolConfigurationParam,
         BetaRequestMCPServerURLDefinitionParam,
         BetaServerToolUseBlock,
@@ -267,6 +274,11 @@ class AnthropicModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """The set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
     async def request(
         self,
@@ -561,6 +573,7 @@ class AnthropicModel(Model):
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -657,8 +670,8 @@ class AnthropicModel(Model):
                     mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
                 mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.add('mcp-client-2025-04-04')
-            else:  # pragma: no cover
-                raise UserError(
+            else:
+                raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
         return tools, mcp_servers, beta_features
@@ -884,7 +897,7 @@ class AnthropicModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_parts.insert(0, instructions)
+            system_prompt_parts.append(instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
@@ -1035,6 +1048,31 @@ class AnthropicModel(Model):
         last_param['cache_control'] = self._build_cache_control(ttl)
 
     @staticmethod
+    def _map_binary_data(data: bytes, media_type: str) -> BetaContentBlockParam:
+        # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
+        if media_type.startswith('image/'):
+            return BetaImageBlockParam(
+                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # type: ignore
+                type='image',
+            )
+        elif media_type == 'application/pdf':
+            return BetaRequestDocumentBlockParam(
+                source=BetaBase64PDFSourceParam(
+                    data=io.BytesIO(data),
+                    media_type='application/pdf',
+                    type='base64',
+                ),
+                type='document',
+            )
+        elif media_type == 'text/plain':
+            return BetaRequestDocumentBlockParam(
+                source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
+                type='document',
+            )
+        else:
+            raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
+
+    @staticmethod
     async def _map_user_prompt(
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
@@ -1049,30 +1087,25 @@ class AnthropicModel(Model):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, BinaryContent):
-                    if item.is_image:
-                        yield BetaImageBlockParam(
-                            source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
-                            type='image',
-                        )
-                    elif item.media_type == 'application/pdf':
-                        yield BetaBase64PDFBlockParam(
-                            source=BetaBase64PDFSourceParam(
-                                data=io.BytesIO(item.data),
-                                media_type='application/pdf',
-                                type='base64',
-                            ),
-                            type='document',
-                        )
-                    else:
-                        raise RuntimeError('Only images and PDFs are supported for binary content')
+                    yield AnthropicModel._map_binary_data(item.data, item.media_type)
                 elif isinstance(item, ImageUrl):
-                    yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
+                    if item.force_download:
+                        downloaded = await download_item(item, data_format='bytes')
+                        yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
+                    else:
+                        yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
-                        yield BetaBase64PDFBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
+                        if item.force_download:
+                            downloaded = await download_item(item, data_format='bytes')
+                            yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
+                        else:
+                            yield BetaRequestDocumentBlockParam(
+                                source={'url': item.url, 'type': 'url'}, type='document'
+                            )
                     elif item.media_type == 'text/plain':
                         downloaded_item = await download_item(item, data_format='text')
-                        yield BetaBase64PDFBlockParam(
+                        yield BetaRequestDocumentBlockParam(
                             source=BetaPlainTextSourceParam(
                                 data=downloaded_item['data'], media_type=item.media_type, type='text'
                             ),
@@ -1297,6 +1330,11 @@ class AnthropicStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

@@ -174,9 +174,7 @@ class ToolManager(Generic[AgentDepsT]):
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
 
-            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
-
-            return result
+            return await self.toolset.call_tool(name, args_dict, ctx, tool)
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             current_retry = self.ctx.retries.get(name, 0)

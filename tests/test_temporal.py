@@ -43,7 +43,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -63,7 +63,13 @@ try:
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        LogfirePlugin,
+        PydanticAIPlugin,
+        PydanticAIWorkflow,
+        TemporalAgent,
+    )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
@@ -81,7 +87,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -1089,7 +1095,7 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match='An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.',
+        match="The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time.",
     ):
         TemporalAgent(Agent(name='test_agent'))
 
@@ -1102,6 +1108,123 @@ async def test_toolset_without_id():
         ),
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+# --- DynamicToolset / @agent.toolset tests ---
+
+
+@dataclass
+class DynamicToolsetDeps:
+    user_name: str
+
+
+dynamic_toolset_agent = Agent(TestModel(), name='dynamic_toolset_agent', deps_type=DynamicToolsetDeps)
+
+
+@dynamic_toolset_agent.toolset(id='my_dynamic_tools')
+def my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
+    toolset = FunctionToolset[DynamicToolsetDeps](id='dynamic_weather')
+
+    @toolset.tool
+    def get_dynamic_weather(location: str) -> str:
+        """Get the weather for a location."""
+        user = ctx.deps.user_name
+        return f'Weather in {location} for {user}: sunny.'
+
+    return toolset
+
+
+dynamic_toolset_temporal_agent = TemporalAgent(
+    dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: DynamicToolsetDeps) -> str:
+        result = await dynamic_toolset_temporal_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_dynamic_toolset_in_workflow(client: Client):
+    """Test that @agent.toolset works correctly in a Temporal workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicToolsetAgentWorkflow.run,
+            args=['Get the weather for London', DynamicToolsetDeps(user_name='Alice')],
+            id='test_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+async def test_dynamic_toolset_outside_workflow():
+    """Test that the dynamic toolset agent works correctly outside of a workflow."""
+    result = await dynamic_toolset_temporal_agent.run(
+        'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
+    )
+    assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- MCP-based DynamicToolset test ---
+# Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
+# Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
+# See https://github.com/pydantic/pydantic-ai/issues/2818 for MCPServer subprocess issues with Temporal.
+
+
+mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
+
+
+@mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
+def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
+    """Dynamic toolset that returns an MCP toolset.
+
+    This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
+    """
+    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+
+
+mcp_dynamic_toolset_temporal_agent = TemporalAgent(
+    mcp_dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPDynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcp_dynamic_toolset_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """Test that @agent.toolset with MCPServerStreamableHTTP works in a Temporal workflow.
+
+    This demonstrates MCP lifecycle management (entering/exiting the MCP toolset context manager)
+    within a DynamicToolset wrapped by TemporalDynamicToolset.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPDynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcp_dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPDynamicToolsetAgentWorkflow.run,
+            args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
+            id='test_mcp_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        # The deepwiki MCP server should return info about the pydantic-ai repo
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
 async def test_temporal_agent():
@@ -1153,6 +1276,21 @@ async def test_temporal_agent():
             'agent__complex_agent__mcp_server__mcp__call_tool',
         ]
     )
+
+
+def test_temporal_wrapper_visit_and_replace():
+    """Temporal wrapper toolsets should not be replaced by visit_and_replace."""
+    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+
+    toolsets = complex_temporal_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    temporal_function_toolsets = [ts for ts in toolsets if isinstance(ts, TemporalFunctionToolset)]
+    assert len(temporal_function_toolsets) >= 1
+
+    temporal_function_toolset = temporal_function_toolsets[0]
+
+    # visit_and_replace should return self for temporal wrappers
+    result = temporal_function_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is temporal_function_toolset
 
 
 async def test_temporal_agent_run(allow_model_requests: None):
@@ -1247,6 +1385,91 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
                 id=SimpleAgentWorkflowWithRunSync.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+def drop_first_message(msgs: list[ModelMessage]) -> list[ModelMessage]:
+    return msgs[1:] if len(msgs) > 1 else msgs
+
+
+agent_with_sync_history_processor = Agent(
+    model, name='agent_with_sync_history_processor', history_processors=[drop_first_message]
+)
+temporal_agent_with_sync_history_processor = TemporalAgent(
+    agent_with_sync_history_processor, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncHistoryProcessorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_history_processor.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_history_processor(allow_model_requests: None, client: Client):
+    """Test that sync history processors work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync history processors to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncHistoryProcessorWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_history_processor)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncHistoryProcessorWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncHistoryProcessorWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+agent_with_sync_instructions = Agent(model, name='agent_with_sync_instructions')
+
+
+@agent_with_sync_instructions.instructions
+def sync_instructions_fn() -> str:
+    return 'You are a helpful assistant.'
+
+
+temporal_agent_with_sync_instructions = TemporalAgent(
+    agent_with_sync_instructions, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class AgentWithSyncInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_instructions.run(prompt)
+        return result.output
+
+
+async def test_temporal_agent_with_sync_instructions(allow_model_requests: None, client: Client):
+    """Test that sync instructions functions work inside Temporal workflows.
+
+    This validates that the _disable_threads ContextVar is properly set
+    by TemporalAgent._temporal_overrides(), allowing sync instructions functions to
+    execute without triggering NotImplementedError from anyio.to_thread.run_sync.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWithSyncInstructionsWorkflow],
+        plugins=[AgentPlugin(temporal_agent_with_sync_instructions)],
+    ):
+        output = await client.execute_workflow(
+            AgentWithSyncInstructionsWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=AgentWithSyncInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
 @workflow.defn
@@ -1374,11 +1597,21 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
             )
 
 
+# Unregistered model instance for testing error case
+unregistered_model = OpenAIChatModel(
+    'gpt-4o-mini',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+
 @workflow.defn
 class SimpleAgentWorkflowWithRunModel:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, model=model)
+        result = await simple_temporal_agent.run(prompt, model=unregistered_model)
         return result.output  # pragma: no cover
 
 
@@ -1392,7 +1625,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by id.'
             ),
         ):
             await client.execute_workflow(
@@ -1856,6 +2089,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
@@ -1898,6 +2132,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -1975,6 +2210,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
@@ -2012,6 +2248,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
@@ -2043,6 +2280,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -2356,3 +2594,379 @@ async def test_beta_graph_parallel_execution_in_workflow(client: Client):
         # Results can be in any order due to parallel execution
         # 10 * 2 = 20, 10 * 3 = 30, 10 * 4 = 40
         assert sorted(output) == [20, 30, 40]
+
+
+@workflow.defn
+class WorkflowWithAgents(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class WorkflowWithAgentsWithoutPydanticAIWorkflow:
+    __pydantic_ai_agents__ = [simple_temporal_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_passing_agents_through_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgents],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgents.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgents.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_passing_agents_through_workflow_without_pydantic_ai_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowWithAgentsWithoutPydanticAIWorkflow],
+    ):
+        output = await client.execute_workflow(
+            WorkflowWithAgentsWithoutPydanticAIWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=WorkflowWithAgentsWithoutPydanticAIWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+# Multi-Model Support Tests
+
+# Module-level test models for multi-model selection test
+test_model_selection_1 = TestModel(custom_output_text='Response from model 1')
+test_model_selection_2 = TestModel(custom_output_text='Response from model 2')
+test_model_selection_3 = TestModel(custom_output_text='Response from model 3')
+
+# Module-level test models for error test
+test_model_error_1 = TestModel()
+test_model_error_2 = TestModel()
+test_model_error_unregistered = TestModel()
+
+# Module-level temporal agents
+agent_selection = Agent(test_model_selection_1, name='multi_model_workflow_test')
+multi_model_selection_test_agent = TemporalAgent(
+    agent_selection,
+    name='multi_model_workflow_test',
+    models={
+        'model_2': test_model_selection_2,
+        'model_3': test_model_selection_3,
+    },
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+agent_error = Agent(test_model_error_1, name='error_test')
+multi_model_error_test_agent = TemporalAgent(
+    agent_error,
+    name='error_test',
+    models={'other': test_model_error_2},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MultiModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await multi_model_selection_test_agent.run(prompt, model=model_id)
+        return result.output
+
+
+@workflow.defn
+class MultiModelWorkflowUnregistered:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # Try to use an unregistered model
+        result = await multi_model_error_test_agent.run(prompt, model=test_model_error_unregistered)
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_multi_model_reserved_id():
+    """Test that reserved model IDs raise helpful errors."""
+    test_model1 = TestModel()
+    test_model2 = TestModel()
+
+    agent = Agent(test_model1, name='reserved_id_test')
+    with pytest.raises(UserError, match="Model ID 'default' is reserved"):
+        TemporalAgent(
+            agent,
+            name='reserved_id_test',
+            models={'default': test_model2},
+        )
+
+
+async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requests: None, client: Client):
+    """Test selecting different models in a workflow using the model parameter."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflow],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        # Test using default model (model_id=None)
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', None],
+            id='MultiModelWorkflow_default',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 1'
+
+        # Test selecting second model by ID
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', 'model_2'],
+            id='MultiModelWorkflow_model2',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 2'
+
+        # Test selecting third model by ID
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', 'model_3'],
+            id='MultiModelWorkflow_model3',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 3'
+
+
+async def test_temporal_agent_multi_model_unregistered_error(allow_model_requests: None, client: Client):
+    """Test that using an unregistered model raises a helpful error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowUnregistered],
+        plugins=[AgentPlugin(multi_model_error_test_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            'Arbitrary model instances cannot be used at runtime inside a Temporal workflow. Register the model via `models` or reference a registered model by id.',
+        ):
+            await client.execute_workflow(
+                MultiModelWorkflowUnregistered.run,
+                args=['Hello'],
+                id='MultiModelWorkflowUnregistered',
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_temporal_agent_multi_model_outside_workflow():
+    """Test that multi-model agents work outside workflows (using wrapped agent behavior).
+
+    Outside a workflow, a TemporalAgent should behave like a regular Agent.
+    This includes supporting model selection by registered ID or instance.
+    """
+    test_model1 = TestModel(custom_output_text='Model 1 response')
+    test_model2 = TestModel(custom_output_text='Model 2 response')
+    test_model_unregistered = TestModel(custom_output_text='Unregistered model response')
+
+    agent = Agent(test_model1, name='outside_workflow_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='outside_workflow_test',
+        models={'secondary': test_model2},
+    )
+
+    # Outside workflow, should use default model
+    result = await temporal_agent.run('Hello')
+    assert result.output == 'Model 1 response'
+
+    # Outside workflow, passing a registered model ID should also work
+    result = await temporal_agent.run('Hello', model='secondary')
+    assert result.output == 'Model 2 response'
+
+    # Passing a registered model instance should also work
+    result = await temporal_agent.run('Hello', model=test_model2)
+    assert result.output == 'Model 2 response'
+
+    # Passing an unregistered model instance should also work outside workflow
+    result = await temporal_agent.run('Hello', model=test_model_unregistered)
+    assert result.output == 'Unregistered model response'
+
+
+async def test_temporal_agent_without_default_model():
+    """Test that a TemporalAgent can be created without a default model if models is provided.
+
+    When no model is provided to run(), the first registered model should be used.
+    """
+    test_model1 = TestModel(custom_output_text='Model 1 response')
+    test_model2 = TestModel(custom_output_text='Model 2 response')
+
+    # Agent without a model
+    agent = Agent(name='no_default_model_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='no_default_model_test',
+        models={
+            'primary': test_model1,
+            'secondary': test_model2,
+        },
+    )
+
+    # Without a model, should use the first registered model
+    result = await temporal_agent.run('Hello')
+    assert result.output == 'Model 1 response'
+
+    # Outside workflow, can use registered models by id
+    result = await temporal_agent.run('Hello', model='primary')
+    assert result.output == 'Model 1 response'
+
+    result = await temporal_agent.run('Hello', model='secondary')
+    assert result.output == 'Model 2 response'
+
+
+# Workflow for testing passing model instances (can't be workflow args, so map by key)
+_model_instance_map = {
+    'default_instance': test_model_selection_1,
+    'model_2_instance': test_model_selection_2,
+}
+
+
+@workflow.defn
+class MultiModelWorkflowInstance:
+    @workflow.run
+    async def run(self, prompt: str, instance_key: str) -> str:
+        model_instance = _model_instance_map[instance_key]
+        result = await multi_model_selection_test_agent.run(prompt, model=model_instance)
+        return result.output
+
+
+@pytest.mark.parametrize(
+    ('model_id', 'expected_output'),
+    [
+        pytest.param('default', 'Response from model 1', id='default_explicit'),
+    ],
+)
+async def test_temporal_agent_model_selection_by_id(
+    allow_model_requests: None, client: Client, model_id: str, expected_output: str
+):
+    """Test model selection by passing model ID strings."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflow],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiModelWorkflow.run,
+            args=['Hello', model_id],
+            id=f'MultiModelWorkflow_{model_id}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == expected_output
+
+
+@pytest.mark.parametrize(
+    ('instance_key', 'expected_output'),
+    [
+        pytest.param('default_instance', 'Response from model 1', id='default_instance'),
+        pytest.param('model_2_instance', 'Response from model 2', id='registered_instance'),
+    ],
+)
+async def test_temporal_agent_model_selection_by_instance(
+    allow_model_requests: None, client: Client, instance_key: str, expected_output: str
+):
+    """Test model selection by passing model instances."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowInstance],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiModelWorkflowInstance.run,
+            args=['Hello', instance_key],
+            id=f'MultiModelWorkflowInstance_{instance_key}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == expected_output
+
+
+async def test_temporal_model_request_outside_workflow():
+    """Test that TemporalModel.request() falls back to wrapped model outside a workflow.
+
+    When TemporalModel.request() is called directly (not through TemporalAgent.run())
+    and not inside a Temporal workflow, it should delegate to the wrapped model's request method.
+    """
+    test_model = TestModel(custom_output_text='Direct model response')
+
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test__direct_request',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Call request() directly - outside a workflow, this should fall back to super().request()
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    response = await temporal_model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            builtin_tools=[],
+            output_mode='text',
+            allow_text_output=True,
+            output_tools=[],
+            output_object=None,
+        ),
+    )
+
+    # Verify response comes from the wrapped TestModel
+    assert any(isinstance(part, TextPart) and part.content == 'Direct model response' for part in response.parts)
+
+
+async def test_temporal_model_request_stream_outside_workflow():
+    """Test that TemporalModel.request_stream() falls back to wrapped model outside a workflow.
+
+    When TemporalModel.request_stream() is called directly (not through TemporalAgent.run())
+    and not inside a Temporal workflow, it should delegate to the wrapped model's request_stream method.
+    """
+    test_model = TestModel(custom_output_text='Direct stream response')
+
+    temporal_model = TemporalModel(
+        test_model,
+        activity_name_prefix='test__direct_stream',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Call request_stream() directly - outside a workflow, this should fall back to super().request_stream()
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    async with temporal_model.request_stream(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            builtin_tools=[],
+            output_mode='text',
+            allow_text_output=True,
+            output_tools=[],
+            output_object=None,
+        ),
+    ) as stream:
+        # Consume the stream
+        async for _ in stream:
+            pass
+
+        # Get the final response
+        response = stream.get()
+
+    # Verify response comes from the wrapped TestModel
+    assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)

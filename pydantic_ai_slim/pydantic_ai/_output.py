@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
+from pydantic._internal._typing_extra import get_function_type_hints
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
@@ -264,6 +265,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 )
 
             return NativeOutputSchema(
+                template=output.template,
                 processor=cls._build_processor(
                     flattened_outputs,
                     name=output.name,
@@ -438,27 +440,6 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
-
-    def __init__(
-        self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool, allows_image: bool
-    ):
-        super().__init__(
-            text_processor=processor,
-            object_def=processor.object_def,
-            allows_deferred_tools=allows_deferred_tools,
-            allows_image=allows_image,
-        )
-        self.processor = processor
-
-
-class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
-    @property
-    def mode(self) -> OutputMode:
-        return 'native'
-
-
-@dataclass(init=False)
-class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     template: str | None
 
     def __init__(
@@ -470,15 +451,13 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         allows_image: bool,
     ):
         super().__init__(
-            processor=processor,
+            text_processor=processor,
+            object_def=processor.object_def,
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
+        self.processor = processor
         self.template = template
-
-    @property
-    def mode(self) -> OutputMode:
-        return 'prompted'
 
     @classmethod
     def build_instructions(cls, template: str, object_def: OutputObjectDefinition) -> str:
@@ -493,6 +472,19 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
             template = '\n\n'.join([template, '{schema}'])
 
         return template.format(schema=json.dumps(schema))
+
+
+class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'native'
+
+
+@dataclass(init=False)
+class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'prompted'
 
 
 @dataclass(init=False)
@@ -1011,4 +1003,35 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
             outputs_flat.extend(union_types)
         else:
             outputs_flat.append(cast(_OutputSpecItem[T], output))
+    return outputs_flat
+
+
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+    outputs: Sequence[OutputSpec[T]]
+    if isinstance(output_spec, Sequence):
+        outputs = output_spec
+    else:
+        outputs = (output_spec,)
+
+    outputs_flat: list[T | type[str]] = []
+    for output in outputs:
+        if isinstance(output, NativeOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))
+        elif isinstance(output, PromptedOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))
+        elif isinstance(output, TextOutput):
+            outputs_flat.append(str)
+        elif isinstance(output, ToolOutput):
+            outputs_flat.extend(types_from_output_spec(output.output))
+        elif union_types := _utils.get_union_args(output):
+            outputs_flat.extend(union_types)
+        elif inspect.isfunction(output) or inspect.ismethod(output):
+            type_hints = get_function_type_hints(output)
+            if return_annotation := type_hints.get('return', None):
+                outputs_flat.extend(types_from_output_spec(return_annotation))
+            else:
+                outputs_flat.append(str)
+        else:
+            outputs_flat.append(cast(T, output))
+
     return outputs_flat

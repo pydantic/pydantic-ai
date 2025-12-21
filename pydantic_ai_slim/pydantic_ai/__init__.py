@@ -11,6 +11,7 @@ from .agent import (
 )
 from .builtin_tools import (
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
@@ -215,14 +216,15 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'CodeExecutionTool',
+    'FileSearchTool',
+    'ImageGenerationTool',
+    'MCPServerTool',
+    'MemoryTool',
+    'UrlContextTool',
+    'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
-    'WebFetchTool',
-    'UrlContextTool',
-    'CodeExecutionTool',
-    'ImageGenerationTool',
-    'MemoryTool',
-    'MCPServerTool',
     # output
     'ToolOutput',
     'NativeOutput',

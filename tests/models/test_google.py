@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
 import datetime
 import os
 import re
+import tempfile
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -29,6 +31,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -49,6 +52,7 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
@@ -147,6 +151,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -218,6 +223,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -247,6 +253,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -285,6 +292,7 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
                         model_name='gemini-2.0-flash-exp',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
+                        provider_url='https://generativelanguage.googleapis.com/',
                         provider_details={'finish_reason': 'STOP'},
                         provider_response_id='w1peaMz6INOvnvgPgYfPiQY',
                         finish_reason='stop',
@@ -386,6 +394,7 @@ print(result)\
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='1NjJaIDxJcL7qtsP5aPfqQs',
                 finish_reason='stop',
@@ -584,6 +593,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -615,6 +625,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -644,6 +655,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -945,6 +957,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1067,6 +1080,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='btnJaOrqE4_6qtsP7bOboQs',
                 finish_reason='stop',
@@ -1144,6 +1158,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='dtnJaKyTAri3qtsPu4imqQs',
                 finish_reason='stop',
@@ -1211,6 +1226,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='ftnJaMmAMcm-qtsPwvCCoAo',
                 finish_reason='stop',
@@ -1388,6 +1404,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='itnJaJK1BsGxqtsPrIeb6Ao',
                 finish_reason='stop',
@@ -1469,6 +1486,7 @@ async def test_google_model_web_fetch_tool(
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='qgqkaI-iDLrTjMcP0bP24A4',
                 finish_reason='stop',
@@ -1546,6 +1564,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1689,6 +1708,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1745,6 +1765,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1946,6 +1967,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1983,6 +2005,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='UN4gafq5OY-kmtkPwqS6kAs',
                 finish_reason='stop',
@@ -2050,6 +2073,7 @@ async def test_google_model_thinking_part_from_other_model(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fb6b6a248196a6216e80fc2ace380c14a8a9087e8689',
                 finish_reason='stop',
@@ -2092,6 +2116,7 @@ async def test_google_model_thinking_part_from_other_model(
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2148,6 +2173,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='beHBaJfEMIi-qtsP3769-Q8',
                 finish_reason='stop',
@@ -2339,6 +2365,7 @@ async def test_google_url_input(
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
+                provider_url='https://aiplatform.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2380,9 +2407,10 @@ async def test_google_url_input_force_download(
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-vertex',
+                provider_url='https://aiplatform.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
-                provider_name='google-vertex',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2433,6 +2461,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2463,6 +2492,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2529,6 +2559,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2559,6 +2590,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2615,6 +2647,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2639,6 +2672,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2712,6 +2746,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2770,6 +2805,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2810,6 +2846,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2856,6 +2893,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2880,6 +2918,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2930,6 +2969,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3140,6 +3180,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3185,6 +3226,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3256,6 +3298,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                 model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3335,6 +3378,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3347,7 +3391,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image model.
-    agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool(size='1K')])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
     assert result.output == snapshot(
@@ -3443,6 +3487,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='D2Eoab-bKZvpz7IPx__4kA8',
                 finish_reason='stop',
@@ -3478,6 +3523,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='FWEoacC5OqGEz7IPgMjBwAc',
                 finish_reason='stop',
@@ -3580,6 +3626,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='cmIoaZ6pJYXRz7IPs4ia-Ag',
                 finish_reason='stop',
@@ -3598,6 +3645,179 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
         match="`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead.",
     ):
         await agent.run('Generate an image of an axolotl.')
+
+
+async def test_google_image_generation_tool_aspect_ratio(google_provider: GoogleProvider) -> None:
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'aspect_ratio': '16:9'}
+
+
+async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:
+    """Test that resolution parameter from ImageGenerationTool is added to image_config."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'image_size': '2K'}
+
+
+async def test_google_image_generation_resolution_with_aspect_ratio(google_provider: GoogleProvider) -> None:
+    """Test that resolution and aspect_ratio from ImageGenerationTool work together."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
+
+
+async def test_google_image_generation_unsupported_size_raises_error(google_provider: GoogleProvider) -> None:
+    """Test that unsupported size values raise an error."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='1024x1024')])
+
+    with pytest.raises(UserError, match='Google image generation only supports `size` values'):
+        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
+    """Test that 'auto' size raises an error for Google since it doesn't support intelligent size selection."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='auto')])
+
+    with pytest.raises(UserError, match='Google image generation only supports `size` values'):
+        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_image_generation_tool_output_format(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'output_mime_type': 'image/png'}
+
+
+async def test_google_image_generation_tool_unsupported_format_raises_error(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test that unsupported output_format values raise an error on Vertex AI."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    # 'gif' is not supported by Google
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
+
+    with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
+        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_image_generation_tool_output_compression(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    # Test explicit value
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
+
+    # Test None (omitted)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=None)])
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
+
+
+async def test_google_image_generation_tool_compression_validation(
+    mocker: MockerFixture, google_provider: GoogleProvider
+) -> None:
+    """Test compression validation on Vertex AI: range and JPEG-only."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    # Invalid range: > 100
+    with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
+        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
+
+    # Invalid range: < 0
+    with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
+        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
+
+    # Non-JPEG format (PNG)
+    with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
+        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
+        )
+
+    # Non-JPEG format (WebP)
+    with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
+        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
+        )
+
+
+async def test_google_image_generation_silently_ignored_by_gemini_api(google_provider: GoogleProvider) -> None:
+    """Test that output_format and compression are silently ignored by Gemini API (google-gla)."""
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+
+    # Test output_format ignored
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
+    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
+
+    # Test output_compression ignored
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=90)])
+    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
+
+    # Test both ignored when None
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
+    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config == {}
+
+
+async def test_google_vertexai_image_generation_with_output_format(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    """Test that output_format works with Vertex AI."""
+    model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
+    agent = Agent(
+        model,
+        builtin_tools=[ImageGenerationTool(output_format='jpeg', output_compression=85)],
+        output_type=BinaryImage,
+    )
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output.media_type == 'image/jpeg'
+
+
+async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
+    """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+    params = ModelRequestParameters(
+        builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
+    )
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {
+        'aspect_ratio': '16:9',
+        'image_size': '2K',
+        'output_mime_type': 'image/jpeg',
+        'output_compression_quality': 90,
+    }
 
 
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
@@ -4030,6 +4250,12 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
+async def _cleanup_file_search_store(store: Any, client: Any) -> None:  # pragma: lax no cover
+    """Helper function to clean up a file search store if it exists."""
+    if store is not None and store.name is not None:
+        await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+
+
 def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:
     return GenerateContentResponse.model_validate(
         {
@@ -4050,6 +4276,341 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
             ],
         }
     )
+
+
+@pytest.mark.vcr()
+async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    client = google_provider.client
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
+        test_file_path = f.name
+
+    store = None
+    try:
+        store = await client.aio.file_search_stores.create(config={'display_name': 'test-file-search-store'})
+        assert store.name is not None
+
+        with open(test_file_path, 'rb') as f:
+            await client.aio.file_search_stores.upload_to_file_search_store(
+                file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
+            )
+
+        await asyncio.sleep(3)
+
+        m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(
+            m,
+            system_prompt='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
+        )
+
+        result = await agent.run('What is the capital of France?')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(
+                            content='You are a helpful assistant.',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={},
+                            tool_call_id=IsStr(),
+                            provider_name='google-gla',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content=[
+                                {
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                }
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='google-gla',
+                        ),
+                        TextPart(
+                            content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.'
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=15,
+                        output_tokens=585,
+                        details={
+                            'thoughts_tokens': 257,
+                            'tool_use_prompt_tokens': 288,
+                            'text_prompt_tokens': 15,
+                            'text_tool_use_prompt_tokens': 288,
+                        },
+                    ),
+                    model_name='gemini-2.5-pro',
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        messages = result.all_messages()
+        result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
+        assert result.new_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Tell me about the Eiffel Tower.',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={},
+                            tool_call_id=IsStr(),
+                            provider_name='google-gla',
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content=[
+                                {
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                },
+                                {
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                },
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='google-gla',
+                        ),
+                        TextPart(
+                            content="""\
+The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France. It is a wrought-iron lattice tower situated on the Champ de Mars.
+
+Here are some key facts about the Eiffel Tower:
+*   **Creator:** The tower was designed and built by the company of French civil engineer Gustave Eiffel, and it is named after him.
+*   **Construction:** It was constructed from 1887 to 1889 to serve as the entrance arch for the 1889 World's Fair.
+*   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
+*   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.\
+"""
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=46,
+                        output_tokens=2709,
+                        details={
+                            'thoughts_tokens': 980,
+                            'tool_use_prompt_tokens': 1436,
+                            'text_prompt_tokens': 46,
+                            'text_tool_use_prompt_tokens': 1436,
+                        },
+                    ),
+                    model_name='gemini-2.5-pro',
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    finally:
+        os.unlink(test_file_path)
+        await _cleanup_file_search_store(store, client)
+
+
+@pytest.mark.vcr()
+async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
+    client = google_provider.client
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
+        test_file_path = f.name
+
+    store = None
+    try:
+        store = await client.aio.file_search_stores.create(config={'display_name': 'test-file-search-stream'})
+        assert store.name is not None
+
+        with open(test_file_path, 'rb') as f:
+            await client.aio.file_search_stores.upload_to_file_search_store(
+                file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
+            )
+
+        await asyncio.sleep(3)
+
+        m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(
+            m,
+            system_prompt='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
+        )
+
+        event_parts: list[Any] = []
+        async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            event_parts.append(event)
+
+        assert agent_run.result is not None
+        messages = agent_run.result.all_messages()
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(
+                            content='You are a helpful assistant.',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'query': 'Capital of France'},
+                            tool_call_id=IsStr(),
+                            provider_name='google-gla',
+                        ),
+                        TextPart(
+                            content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content=[
+                                {
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                }
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='google-gla',
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=15,
+                        output_tokens=1549,
+                        details={
+                            'thoughts_tokens': 742,
+                            'tool_use_prompt_tokens': 770,
+                            'text_prompt_tokens': 15,
+                            'text_tool_use_prompt_tokens': 770,
+                        },
+                    ),
+                    model_name='gemini-2.5-pro',
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+        assert event_parts == snapshot(
+            [
+                PartStartEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'query': 'Capital of France'},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                ),
+                PartEndEvent(
+                    index=0,
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'query': 'Capital of France'},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    next_part_kind='text',
+                ),
+                PartStartEvent(
+                    index=1, part=TextPart(content='The capital of France'), previous_part_kind='builtin-tool-call'
+                ),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' is Paris. The city is well-known for its')),
+                PartDeltaEvent(
+                    index=1, delta=TextPartDelta(content_delta=' famous landmarks, including the Eiffel Tower.')
+                ),
+                PartEndEvent(
+                    index=1,
+                    part=TextPart(
+                        content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
+                    ),
+                    next_part_kind='builtin-tool-return',
+                ),
+                PartStartEvent(
+                    index=2,
+                    part=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content=[
+                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    previous_part_kind='text',
+                ),
+                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                    part=BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'query': 'Capital of France'},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    )
+                ),
+                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                    result=BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content=[
+                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    )
+                ),
+            ]
+        )
+
+    finally:
+        os.unlink(test_file_path)
+        await _cleanup_file_search_store(store, client)
 
 
 async def test_cache_point_filtering():
@@ -4116,6 +4677,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4149,6 +4711,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4178,6 +4741,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4284,6 +4848,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4475,6 +5040,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4497,6 +5063,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -4552,3 +5119,30 @@ async def test_google_streaming_tool_call_thought_signature(
             ),
         ]
     )
+
+
+async def test_google_system_prompts_and_instructions_ordering(google_provider: GoogleProvider):
+    """Test that instructions are appended after all system prompts in the system instruction."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+                UserPromptPart(content='Hello'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    system_instruction, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Verify system parts are in order: system1, system2, instructions
+    assert system_instruction == snapshot(
+        {
+            'role': 'user',
+            'parts': [{'text': 'System prompt 1'}, {'text': 'System prompt 2'}, {'text': 'Instructions content'}],
+        }
+    )
+    assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
