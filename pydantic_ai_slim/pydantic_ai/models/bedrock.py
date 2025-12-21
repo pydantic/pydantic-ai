@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
-    from mypy_boto3_bedrock_runtime.literals import DocumentFormatType, StopReasonType
+    from mypy_boto3_bedrock_runtime.literals import StopReasonType
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -752,10 +752,9 @@ class BedrockConverseModel(Model):
 
                     elif item.kind == 'document-url':
                         name = f'Document {next(document_count)}'
-                        format = cast(DocumentFormatType, item.format)
                         document: DocumentBlockTypeDef = {
                             'name': name,
-                            'format': format,
+                            'format': item.format,  # type: ignore[assignment]
                             'source': source,
                         }
                         content.append({'document': document})
