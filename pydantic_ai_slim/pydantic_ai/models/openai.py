@@ -1583,13 +1583,14 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
                 size = _resolve_openai_image_generation_size(tool)
+                output_compression = tool.output_compression if tool.output_compression is not None else 100
                 tools.append(
                     responses.tool_param.ImageGeneration(
                         type='image_generation',
                         background=tool.background,
                         input_fidelity=tool.input_fidelity,
                         moderation=tool.moderation,
-                        output_compression=tool.output_compression,
+                        output_compression=output_compression,
                         output_format=tool.output_format or 'png',
                         partial_images=tool.partial_images,
                         quality=tool.quality,

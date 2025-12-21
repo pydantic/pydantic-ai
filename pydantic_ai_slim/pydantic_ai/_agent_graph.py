@@ -26,6 +26,7 @@ from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -384,7 +385,7 @@ async def _prepare_request_parameters(
     output_schema = ctx.deps.output_schema
 
     prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
+        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
     function_tools: list[ToolDefinition] = []
@@ -451,25 +452,26 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        async with ctx.deps.model.request_stream(
-            message_history, model_settings, model_request_parameters, run_context
-        ) as streamed_response:
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            agent_stream = result.AgentStream[DepsT, T](
-                _raw_stream_response=streamed_response,
-                _output_schema=ctx.deps.output_schema,
-                _model_request_parameters=model_request_parameters,
-                _output_validators=ctx.deps.output_validators,
-                _run_ctx=build_run_context(ctx),
-                _usage_limits=ctx.deps.usage_limits,
-                _tool_manager=ctx.deps.tool_manager,
-            )
-            yield agent_stream
-            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-            # otherwise usage won't be properly counted:
-            async for _ in agent_stream:
-                pass
+        with set_current_run_context(run_context):
+            async with ctx.deps.model.request_stream(
+                message_history, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                agent_stream = result.AgentStream[DepsT, T](
+                    _raw_stream_response=streamed_response,
+                    _output_schema=ctx.deps.output_schema,
+                    _model_request_parameters=model_request_parameters,
+                    _output_validators=ctx.deps.output_validators,
+                    _run_ctx=build_run_context(ctx),
+                    _usage_limits=ctx.deps.usage_limits,
+                    _tool_manager=ctx.deps.tool_manager,
+                )
+                yield agent_stream
+                # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+                # otherwise usage won't be properly counted:
+                async for _ in agent_stream:
+                    pass
 
         model_response = streamed_response.get()
 
@@ -482,8 +484,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
-        model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        with set_current_run_context(run_context):
+            model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 
         return self._finish_handling(ctx, model_response)
@@ -782,7 +785,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
-        # For backwards compatibility, append a new ModelRequest using the tool returns and retries
+        # To allow this message history to be used in a future run without dangling tool calls,
+        # append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
