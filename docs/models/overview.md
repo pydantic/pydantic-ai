@@ -290,7 +290,9 @@ The callback should return `True` to trigger fallback to the next model, or `Fal
 
 ### Part-Based Fallback (Streaming)
 
-For streaming requests, you can use `fallback_on_part` to check each response part as it completes, enabling earlier fallback when failure conditions are detectable before the full response is ready. This is particularly useful when built-in tool results (like `web_fetch`) arrive early in the stream:
+For streaming requests, you can use `fallback_on_part` to check each response part as it arrives from the model. This enables **early abort** when failure conditions are detectable before the full response completes—saving tokens and reducing latency by starting the fallback sooner.
+
+This is particularly useful when built-in tool results (like `web_fetch`) arrive early in the stream:
 
 ```python {title="fallback_on_part.py" test="skip"}
 from pydantic_ai import Agent
@@ -333,6 +335,17 @@ The `fallback_on_part` callback receives:
 - `messages`: The list of [`ModelMessage`][pydantic_ai.messages.ModelMessage] that were sent to the model
 
 You can use both `fallback_on_part` and `fallback_on_response` together. Parts are checked during streaming, and if the stream completes without part rejection, the full response is checked with `fallback_on_response`.
+
+!!! warning "Buffering trade-off"
+    Like `fallback_on_response`, using `fallback_on_part` buffers the response before returning it to the caller. This means the caller won't receive events progressively—they'll receive the complete response after all parts have been validated.
+
+    The benefit of `fallback_on_part` over `fallback_on_response` is **not** live streaming to the caller, but rather:
+
+    - **Token savings**: Stop consuming a response as soon as a failure is detected, rather than waiting for it to complete
+    - **Faster fallback**: Start the next model immediately instead of waiting for a doomed response to finish
+    - **Cost reduction**: Pay only for the tokens consumed before the failure was detected
+
+    If you need true progressive streaming to the caller and don't require fallback validation, use `FallbackModel` without `fallback_on_part` or `fallback_on_response`.
 
 !!! note
     `fallback_on_part` only applies to streaming requests (`run_stream`). For non-streaming requests, use `fallback_on_response` instead.
