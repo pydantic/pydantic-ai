@@ -3269,7 +3269,7 @@ _unwrapped_mcp_server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tim
 @workflow.defn
 class WorkflowWithUnwrappedMCPServer:
     @workflow.run
-    async def run(self, prompt: str) -> str:  # pragma: no cover
+    async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_mcp_server])
         return result.output  # pragma: no cover
 
@@ -3305,7 +3305,7 @@ _unwrapped_fastmcp_toolset = FastMCPToolset('https://mcp.deepwiki.com/mcp', id='
 class WorkflowWithUnwrappedFastMCPToolset:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_fastmcp_toolset])  # pragma: no cover
+        result = await simple_temporal_agent.run(prompt, toolsets=[_unwrapped_fastmcp_toolset])
         return result.output  # pragma: no cover
 
 
