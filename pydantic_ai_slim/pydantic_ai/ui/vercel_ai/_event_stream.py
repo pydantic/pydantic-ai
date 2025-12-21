@@ -139,9 +139,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     ) -> AsyncIterator[BaseChunk]:
         message_id = self.new_message_id()
         provider_metadata = dump_provider_metadata(
+            id=part.id,
             signature=part.signature,
             provider_name=part.provider_name,
-            id=part.id,
             provider_details=part.provider_details,
         )
         yield ReasoningStartChunk(id=message_id, provider_metadata=provider_metadata)
@@ -163,9 +163,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
         provider_metadata = dump_provider_metadata(
+            id=part.id,
             signature=part.signature,
             provider_name=part.provider_name,
-            id=part.id,
             provider_details=part.provider_details,
         )
         yield ReasoningEndChunk(id=self.message_id, provider_metadata=provider_metadata)

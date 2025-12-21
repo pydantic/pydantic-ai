@@ -1,4 +1,4 @@
-"""Utilities for converting between Pydantic AI and Vercel AI data structures."""
+"""Utilities for handling Pydantic AI and Vercel data streams."""
 
 from typing import Any
 
