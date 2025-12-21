@@ -2767,10 +2767,14 @@ def test_unknown_tool_fix():
 
 def test_unknown_tool_multiple_retries():
     num_retries = 2
+
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=num_retries)
+    def foo() -> str:
+        return 'Hello from foo'
+
+    agent = Agent(FunctionModel(empty), tools=[foo], retries=num_retries)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
@@ -2792,7 +2796,7 @@ def test_unknown_tool_multiple_retries():
                 parts=[
                     RetryPromptPart(
                         tool_name='foobar',
-                        content="Unknown tool name: 'foobar'. No tools available.",
+                        content="Unknown tool name: 'foobar'. Available tools: 'foo'",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
@@ -2810,7 +2814,7 @@ def test_unknown_tool_multiple_retries():
                 parts=[
                     RetryPromptPart(
                         tool_name='foobar',
-                        content="Unknown tool name: 'foobar'. No tools available.",
+                        content="Unknown tool name: 'foobar'. Available tools: 'foo'",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
@@ -2819,7 +2823,7 @@ def test_unknown_tool_multiple_retries():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=65, output_tokens=4),
+                usage=RequestUsage(input_tokens=79, output_tokens=6),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),

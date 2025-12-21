@@ -64,6 +64,7 @@ class ToolManager(Generic[AgentDepsT]):
             toolset=self.toolset,
             ctx=ctx,
             tools=await self.toolset.get_tools(ctx),
+            default_max_retries=self.default_max_retries,
         )
 
     @property
