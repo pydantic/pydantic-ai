@@ -253,12 +253,11 @@ from pydantic_ai.models.google import GoogleModel
 def web_fetch_failed(response: ModelResponse, messages: list[ModelMessage]) -> bool:
     """Check if a web_fetch built-in tool failed to retrieve content."""
     for call, result in response.builtin_tool_calls:
-        if call.tool_name == 'web_fetch':
-            content = result.content
-            if isinstance(content, dict):
-                status = content.get('url_retrieval_status', '')
-                if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
-                    return True  # Trigger fallback
+        if call.tool_name != 'web_fetch' or not isinstance(result.content, dict):
+            continue
+        status = result.content.get('url_retrieval_status', '')
+        if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+            return True
     return False
 
 
@@ -304,12 +303,12 @@ from pydantic_ai.models.google import GoogleModel
 
 def web_fetch_failed_part(part: ModelResponsePart, messages: list[ModelMessage]) -> bool:
     """Check if a web_fetch built-in tool part indicates failure."""
-    if isinstance(part, BuiltinToolReturnPart) and part.tool_name == 'web_fetch':
-        if isinstance(part.content, dict):
-            status = part.content.get('url_retrieval_status', '')
-            if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
-                return True  # Trigger fallback immediately
-    return False
+    if not isinstance(part, BuiltinToolReturnPart) or part.tool_name != 'web_fetch':
+        return False
+    if not isinstance(part.content, dict):
+        return False
+    status = part.content.get('url_retrieval_status', '')
+    return bool(status) and status != 'URL_RETRIEVAL_STATUS_SUCCESS'
 
 
 google_model = GoogleModel('gemini-2.5-flash')
