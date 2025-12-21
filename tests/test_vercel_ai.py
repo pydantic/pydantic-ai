@@ -3644,6 +3644,82 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
     )
 
 
+async def test_adapter_load_messages_tool_input_streaming_part():
+    """Test loading ToolInputStreamingPart which doesn't have call_provider_metadata yet."""
+    from pydantic_ai.ui.vercel_ai.request_types import ToolInputStreamingPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolInputStreamingPart(
+                    type='tool-my_tool',
+                    tool_call_id='tc_streaming',
+                    input='{"query": "test"}',
+                    state='input-streaming',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'query': 'test'},
+                        tool_call_id='tc_streaming',
+                        id=None,
+                        provider_details=None,
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_dynamic_tool_input_streaming_part():
+    """Test loading DynamicToolInputStreamingPart which doesn't have call_provider_metadata yet."""
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolInputStreamingPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolInputStreamingPart(
+                    tool_name='dynamic_tool',
+                    tool_call_id='tc_dyn_streaming',
+                    input='{"arg": 123}',
+                    state='input-streaming',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='dynamic_tool',
+                        args={'arg': 123},
+                        tool_call_id='tc_dyn_streaming',
+                        id=None,
+                        provider_details=None,
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 async def test_adapter_dump_messages_tool_error_with_provider_metadata():
     """Test dumping ToolCallPart with RetryPromptPart includes provider metadata."""
     messages = [
