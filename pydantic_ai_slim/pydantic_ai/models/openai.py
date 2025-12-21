@@ -1285,15 +1285,13 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        part_provider_details: dict[str, Any] | None = None
+                        part_provider_details: dict[str, Any] = {}
                         if content.logprobs:
-                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
-                        # Optionally opt-in to expose raw annotation output in provider_details
+                            part_provider_details['logprobs'] = _map_logprobs(content.logprobs)
                         # NOTE: can be removed after https://github.com/pydantic/pydantic-ai/issues/3126
                         # TODO: handle opt-in via model settings
                         # if content.annotations and model_settings.openai_include_web_search_content_annotations:
                         if content.annotations:
-                            part_provider_details = part_provider_details or {}
                             part_provider_details['annotations'] = content.annotations
 
                         items.append(
