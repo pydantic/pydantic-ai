@@ -24,9 +24,10 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from .models.instrumented import InstrumentationSettings
-    from magika import Magika
     from magic import Magic
+    from magika import Magika
+
+    from .models.instrumented import InstrumentationSettings
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -68,8 +69,8 @@ FinishReason: TypeAlias = Literal[
 
 # Shared instances for media type detection to avoid repeated initialization overhead
 
-_magika_instance: 'Magika | None' = None
-_magic_instance: 'Magic | None' = None
+_magika_instance: Magika | None = None
+_magic_instance: Magic | None = None
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
@@ -1480,30 +1481,36 @@ class ModelResponse:
         body = new_event_body()
         for part in self.parts:
             if isinstance(part, ToolCallPart):
-                body.setdefault('tool_calls', []).append({
-                    'id': part.tool_call_id,
-                    'type': 'function',
-                    'function': {
-                        'name': part.tool_name,
-                        **({'arguments': part.args} if settings.include_content else {}),
-                    },
-                })
+                body.setdefault('tool_calls', []).append(
+                    {
+                        'id': part.tool_call_id,
+                        'type': 'function',
+                        'function': {
+                            'name': part.tool_name,
+                            **({'arguments': part.args} if settings.include_content else {}),
+                        },
+                    }
+                )
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
-                body.setdefault('content', []).append({
-                    'kind': kind,
-                    **({'text': part.content} if settings.include_content else {}),
-                })
+                body.setdefault('content', []).append(
+                    {
+                        'kind': kind,
+                        **({'text': part.content} if settings.include_content else {}),
+                    }
+                )
             elif isinstance(part, FilePart):
-                body.setdefault('content', []).append({
-                    'kind': 'binary',
-                    'media_type': part.content.media_type,
-                    **(
-                        {'binary_content': part.content.base64}
-                        if settings.include_content and settings.include_binary_content
-                        else {}
-                    ),
-                })
+                body.setdefault('content', []).append(
+                    {
+                        'kind': 'binary',
+                        'media_type': part.content.media_type,
+                        **(
+                            {'binary_content': part.content.base64}
+                            if settings.include_content and settings.include_binary_content
+                            else {}
+                        ),
+                    }
+                )
 
         if content := body.get('content'):
             text_content = content[0].get('text')
