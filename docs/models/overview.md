@@ -262,7 +262,7 @@ def web_fetch_failed(response: ModelResponse, messages: list[ModelMessage]) -> b
     return False
 
 
-google_model = GoogleModel('gemini-2.0-flash')
+google_model = GoogleModel('gemini-2.5-flash')
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
 
 fallback_model = FallbackModel(
@@ -310,7 +310,7 @@ def web_fetch_failed_part(part: ModelResponsePart, messages: list[ModelMessage])
     return False
 
 
-google_model = GoogleModel('gemini-2.0-flash')
+google_model = GoogleModel('gemini-2.5-flash')
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
 
 fallback_model = FallbackModel(
