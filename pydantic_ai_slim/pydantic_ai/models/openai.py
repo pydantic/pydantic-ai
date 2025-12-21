@@ -329,6 +329,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
     """
 
+    openai_include_web_search_content_annotations: bool
+    """Whether to include the raw output for text annotations in `TextPart.provider_details['content_annotations']`
+
+    Opt-in to avoid confusion when https://github.com/pydantic/pydantic-ai/issues/3126 is resolved.
+    """
+
     openai_include_file_search_results: bool
     """Whether to include the file search results in the response.
 
@@ -1282,7 +1288,21 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
-                        items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
+                        # Optionally opt-in to expose raw annotation output in provider_details
+                        # NOTE: can be removed after https://github.com/pydantic/pydantic-ai/issues/3126
+                        # TODO: handle opt-in via model settings
+                        # if content.annotations and model_settings.openai_include_web_search_content_annotations:
+                        if content.annotations:
+                            part_provider_details = part_provider_details or {}
+                            part_provider_details['annotations'] = content.annotations
+
+                        items.append(
+                            TextPart(
+                                content=content.text,
+                                id=item.id,
+                                provider_details=part_provider_details or None,
+                            )
+                        )
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
@@ -2387,8 +2407,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # content already accumulated via delta events
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                # TODO(Marcelo): We should support annotations in the future.
-                pass  # there's nothing we need to do here
+                # NOTE: can be removed after https://github.com/pydantic/pydantic-ai/issues/3126
+                # TODO: handle opt-in via model settings
+                # if not model_settings.openai_include_web_search_content_annotations:
+                #     continue
+
+                annotations_by_item_id = getattr(self, '_annotations_by_item_id', {})
+                setattr(self, '_annotations_by_item_id', annotations_by_item_id)
+                annotations_by_item_id.setdefault(chunk.item_id, []).append(chunk.annotation)
+
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id=chunk.item_id,
+                    content='',
+                    id=chunk.item_id,
+                    provider_details={'annotations': annotations_by_item_id[chunk.item_id]},
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 for event in self._parts_manager.handle_text_delta(
