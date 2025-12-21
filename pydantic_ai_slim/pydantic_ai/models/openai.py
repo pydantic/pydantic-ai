@@ -281,11 +281,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     openai_reasoning_generate_summary: Literal['detailed', 'concise']
     """Deprecated alias for `openai_reasoning_summary`."""
 
-    openai_reasoning_summary: Literal['detailed', 'concise']
+    openai_reasoning_summary: Literal['detailed', 'concise', 'auto']
     """A summary of the reasoning performed by the model.
 
     This can be useful for debugging and understanding the model's reasoning process.
-    One of `concise` or `detailed`.
+    One of `concise`, `detailed`, or `auto`.
 
     Check the [OpenAI Reasoning documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries)
     for more details.
@@ -1055,6 +1055,7 @@ class OpenAIChatModel(Model):
                 assert_never(part)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
+        profile = OpenAIModelProfile.from_profile(self.profile)
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1088,7 +1089,10 @@ class OpenAIChatModel(Model):
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        audio = InputAudio(data=item.base64, format=item.format)
+                        if profile.openai_chat_audio_input_encoding == 'uri':
+                            audio = InputAudio(data=item.data_uri, format=item.format)
+                        else:
+                            audio = InputAudio(data=item.base64, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
                         content.append(
@@ -1103,7 +1107,8 @@ class OpenAIChatModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    downloaded_item = await download_item(item, data_format='base64', type_format='extension')
+                    data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
+                    downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
                     assert downloaded_item['data_type'] in (
                         'wav',
                         'mp3',
@@ -1557,9 +1562,12 @@ class OpenAIResponsesModel(Model):
             )
             reasoning_summary = reasoning_generate_summary
 
-        if reasoning_effort is None and reasoning_summary is None:
-            return OMIT
-        return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
+        reasoning: Reasoning = {}
+        if reasoning_effort:
+            reasoning['effort'] = reasoning_effort
+        if reasoning_summary:
+            reasoning['summary'] = reasoning_summary
+        return reasoning or OMIT
 
     def _get_responses_tool_choice(
         self,
@@ -1658,13 +1666,14 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
                 size = _resolve_openai_image_generation_size(tool)
+                output_compression = tool.output_compression if tool.output_compression is not None else 100
                 tools.append(
                     responses.tool_param.ImageGeneration(
                         type='image_generation',
                         background=tool.background,
                         input_fidelity=tool.input_fidelity,
                         moderation=tool.moderation,
-                        output_compression=tool.output_compression,
+                        output_compression=output_compression,
                         output_format=tool.output_format or 'png',
                         partial_images=tool.partial_images,
                         quality=tool.quality,
