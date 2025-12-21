@@ -214,7 +214,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             input=part.args_as_dict(),
             provider_executed=True,
             provider_metadata=dump_provider_metadata(
-                provider_name=part.provider_name, provider_details=part.provider_details, id=part.id
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
             ),
         )
 
