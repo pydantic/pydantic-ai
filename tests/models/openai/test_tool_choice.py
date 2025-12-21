@@ -438,7 +438,7 @@ class TestToolChoiceNone:
                     parts=[
                         TextPart(
                             content="""\
-I can’t access live weather data right now, so I can’t fetch the current conditions for Berlin. I can either:
+I can't access live weather data right now, so I can't fetch the current conditions for Berlin. I can either:
 
 - Tell you how to check live weather quickly (websites/apps to use), or  \n\
 - Give a quick, general summary of typical December weather in Berlin and packing tips, or  \n\
@@ -446,7 +446,7 @@ I can’t access live weather data right now, so I can’t fetch the current con
 
 Which would you prefer?
 
-If you want to check right now yourself, try: search “Berlin weather” or open a weather app (Weather.com, AccuWeather, Google Weather, or the German Meteorological Service). They'll give current temperature, precipitation, wind, and an hourly forecast.\
+If you want to check right now yourself, try: search "Berlin weather" or open a weather app (Weather.com, AccuWeather, Google Weather, or the German Meteorological Service). They'll give current temperature, precipitation, wind, and an hourly forecast.\
 """
                         )
                     ],
@@ -493,12 +493,12 @@ If you want to check right now yourself, try: search “Berlin weather” or ope
                     parts=[
                         TextPart(
                             content="""\
-I can’t fetch live weather data right now. I can help in other ways — for example I can tell you how to check current conditions, give a typical climate summary for this time of year, or give packing/clothing advice.
+I can't fetch live weather data right now. I can help in other ways — for example I can tell you how to check current conditions, give a typical climate summary for this time of year, or give packing/clothing advice.
 
 Quick options:
-- To get the current weather now: check a phone weather app or a weather website (e.g., Weather.com, AccuWeather, or a local Italian weather site), or search “Rome weather” in your browser. You can also check METAR/TAF reports for Rome Fiumicino (if you want aviation-style observations).
-- Typical conditions for Rome in mid-December: average daytime high about 12–14°C (54–57°F), nighttime low about 3–6°C (37–43°F). December is one of Rome’s wetter months — expect a fair chance of rain and generally mild but cool temperatures; occasional chilly days or brief cold snaps are possible.
-- If you tell me a specific date/time or what you’re planning to do (walking around, sightseeing, evening out), I can give tailored clothing and activity advice based on typical conditions.
+- To get the current weather now: check a phone weather app or a weather website (e.g., Weather.com, AccuWeather, or a local Italian weather site), or search "Rome weather" in your browser. You can also check METAR/TAF reports for Rome Fiumicino (if you want aviation-style observations).
+- Typical conditions for Rome in mid-December: average daytime high about 12–14°C (54–57°F), nighttime low about 3–6°C (37–43°F). December is one of Rome's wetter months — expect a fair chance of rain and generally mild but cool temperatures; occasional chilly days or brief cold snaps are possible.
+- If you tell me a specific date/time or what you're planning to do (walking around, sightseeing, evening out), I can give tailored clothing and activity advice based on typical conditions.
 
 Which would you like?\
 """
@@ -1190,7 +1190,7 @@ class TestTextAndStructuredUnion:
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='Seattle is a major city in the Pacific Northwest on the shores of Puget Sound, Washington. Known as the “Emerald City,” it’s famous for landmarks like the Space Needle and Pike Place Market, and for views of Mount Rainier on clear days. Seattle is a tech and innovation hub (home to Amazon and near Microsoft), with a strong coffee culture, vibrant music and arts scenes, and abundant outdoor recreation from city parks to nearby mountains and waterways. The climate is mild with cool, wet winters and relatively dry summers.'
+                            content="""Seattle is a major city in the Pacific Northwest on the shores of Puget Sound, Washington. Known as the "Emerald City," it's famous for landmarks like the Space Needle and Pike Place Market, and for views of Mount Rainier on clear days. Seattle is a tech and innovation hub (home to Amazon and near Microsoft), with a strong coffee culture, vibrant music and arts scenes, and abundant outdoor recreation from city parks to nearby mountains and waterways. The climate is mild with cool, wet winters and relatively dry summers."""
                         )
                     ],
                     usage=RequestUsage(

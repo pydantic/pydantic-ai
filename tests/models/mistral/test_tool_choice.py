@@ -882,7 +882,7 @@ class TestTextAndStructuredUnion:
                             content="""\
 The current weather in **Miami** is **sunny** with a temperature of **22°C (72°F)**.
 
-Here’s a brief description:
+Here's a brief description:
 - **Conditions**: Clear skies and sunny, making it a great day for outdoor activities.
 - **Temperature**: A pleasant 22°C, which is warm but comfortable.
 - **Humidity**: Miami is known for its humidity, so it might feel slightly warmer than the actual temperature.

@@ -48,6 +48,7 @@ nav:
       - Advanced Features:
           - input.md
           - thinking.md
+          - tool-choice.md
           - retries.md
       - MCP:
           - Overview: mcp/overview.md
@@ -364,6 +365,7 @@ plugins:
           - common-tools.md
           - output.md
           - retries.md
+          - tool-choice.md
           - message-history.md
           - multi-agent-applications.md
           - thinking.md
