@@ -242,7 +242,7 @@ In addition to exception-based fallback, you can also trigger fallback based on 
 
 A common use case is when using built-in tools like web search or URL fetching. For example, Google's `WebFetchTool` may return a successful response with a status indicating the URL fetch failed:
 
-```python {title="fallback_on_response.py" test="skip"}
+```python {title="fallback_on_response.py" test="skip" lint="skip"}
 from typing import Any
 
 from pydantic_ai import Agent
@@ -300,7 +300,7 @@ For streaming requests, you can use `fallback_on_part` to check each response pa
 
 This is particularly useful when built-in tool results (like `web_fetch`) arrive early in the stream:
 
-```python {title="fallback_on_part.py" test="skip"}
+```python {title="fallback_on_part.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import BuiltinToolReturnPart, ModelMessage, ModelResponsePart
 from pydantic_ai.models.anthropic import AnthropicModel
