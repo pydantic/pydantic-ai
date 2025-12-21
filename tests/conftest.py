@@ -241,7 +241,7 @@ def event_loop() -> Iterator[None]:
     new_loop.close()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(scope='session', autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
 
@@ -277,7 +277,11 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
 
 @pytest.fixture(autouse=True)
-def mock_vcr_aiohttp_content(mocker: MockerFixture):
+def mock_vcr_aiohttp_content(request: pytest.FixtureRequest, mocker: MockerFixture):
+    # Only patch if test uses VCR marker
+    if request.node.get_closest_marker('vcr') is None:
+        return
+
     try:
         from vcr.stubs import aiohttp_stubs
     except ImportError:  # pragma: lax no cover
@@ -306,19 +310,11 @@ def vcr_config():
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     yield
-    for provider in [
-        'openai',
-        'anthropic',
-        'azure',
-        'google-gla',
-        'google-vertex',
-        'groq',
-        'mistral',
-        'cohere',
-        'deepseek',
-        None,
-    ]:
+    from pydantic_ai.models import _used_async_http_client_providers  # pyright: ignore[reportPrivateUsage]
+
+    for provider in list(_used_async_http_client_providers):
         await cached_async_http_client(provider=provider).aclose()
+    _used_async_http_client_providers.clear()
 
 
 @pytest.fixture(scope='session')

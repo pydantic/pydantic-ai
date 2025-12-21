@@ -1141,6 +1141,10 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
+_used_async_http_client_providers: set[str | None] = set()
+"""Track which providers have had HTTP clients created, for efficient cleanup in tests."""
+
+
 def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     """Cached HTTPX async client that creates a separate client for each provider.
 
@@ -1156,6 +1160,7 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
+    _used_async_http_client_providers.add(provider)
     client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     if client.is_closed:
         # This happens if the context manager is used, so we need to create a new client.

@@ -127,6 +127,7 @@ async def sampling_callback(
                 annotations=None,
                 meta=None,
             ),
+            meta=None,
         )
     ]
     """
