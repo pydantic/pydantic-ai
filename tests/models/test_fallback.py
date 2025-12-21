@@ -941,7 +941,8 @@ fallback_model_impl = FunctionModel(fallback_response)
 
 async def test_fallback_on_response_triggered() -> None:
     def should_fallback_on_primary(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return 'primary' in (response.parts[0].content if response.parts else '')
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
 
     fallback = FallbackModel(
         primary_model,
@@ -1058,7 +1059,8 @@ async def test_fallback_on_response_combined_with_exception_fallback() -> None:
         return ModelResponse(parts=[TextPart('good response')])
 
     def reject_bad_response(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return 'bad' in (response.parts[0].content if response.parts else '')
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'bad' in part.content
 
     first_model = FunctionModel(first_fails_with_exception)
     second_model = FunctionModel(second_fails_response_check)
@@ -1107,7 +1109,8 @@ async def test_fallback_on_response_mixed_failures_all_fail() -> None:
         return ModelResponse(parts=[TextPart('bad response')])
 
     def reject_bad_response(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return 'bad' in (response.parts[0].content if response.parts else '')
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'bad' in part.content
 
     first_model = FunctionModel(first_fails_with_exception)
     second_model = FunctionModel(second_fails_response_check)
@@ -1154,7 +1157,8 @@ async def test_fallback_on_response_web_fetch_scenario() -> None:
             if call.tool_name == 'web_fetch':
                 content = result.content
                 if isinstance(content, dict):
-                    status = content.get('url_retrieval_status', '')
+                    content_dict: dict[str, Any] = content
+                    status = content_dict.get('url_retrieval_status', '')
                     if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
                         return True
         return False
@@ -1182,7 +1186,8 @@ async def test_fallback_on_response_none_by_default() -> None:
 
 def test_fallback_on_response_sync() -> None:
     def should_fallback(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return 'primary' in (response.parts[0].content if response.parts else '')
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
 
     fallback = FallbackModel(
         primary_model,
@@ -1211,7 +1216,8 @@ fallback_model_stream_impl = FunctionModel(stream_function=fallback_response_str
 
 async def test_fallback_on_response_streaming_triggered() -> None:
     def should_fallback_on_primary(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return 'primary' in (response.parts[0].content if response.parts else '')
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'primary' in part.content
 
     fallback = FallbackModel(
         primary_model_stream,
@@ -1283,7 +1289,8 @@ async def test_fallback_on_response_streaming_combined_with_exception() -> None:
         yield 'response'
 
     def reject_bad_response(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return 'bad' in (response.parts[0].content if response.parts else '')
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'bad' in part.content
 
     first_model = FunctionModel(stream_function=first_fails_with_exception)
     second_model = FunctionModel(stream_function=second_fails_response_check)
@@ -1328,7 +1335,9 @@ async def test_fallback_on_response_streaming_replays_events() -> None:
         responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
 
     assert len(responses) >= 2
-    assert responses[-1].parts[0].content == 'primary response'
+    part = responses[-1].parts[0]
+    assert isinstance(part, TextPart)
+    assert part.content == 'primary response'
 
 
 async def test_fallback_on_part_streaming_triggered() -> None:
@@ -1457,7 +1466,8 @@ async def test_fallback_on_part_streaming_combined_with_fallback_on_response() -
         return isinstance(part, TextPart) and 'reject_part' in part.content
 
     def reject_response_with_keyword(response: ModelResponse, messages: list[ModelMessage]) -> bool:
-        return bool(response.parts) and 'reject_response' in response.parts[0].content
+        part = response.parts[0] if response.parts else None
+        return isinstance(part, TextPart) and 'reject_response' in part.content
 
     first_model = FunctionModel(stream_function=part_rejected_stream)
     second_model = FunctionModel(stream_function=response_rejected_stream)
