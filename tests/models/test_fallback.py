@@ -1161,7 +1161,7 @@ async def test_fallback_on_response_web_fetch_scenario() -> None:
                 continue  # pragma: no cover
             content_dict = cast(dict[str, Any], content)
             status = content_dict.get('url_retrieval_status', '')
-            if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+            if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':  # pragma: no branch
                 return True
         return False
 
