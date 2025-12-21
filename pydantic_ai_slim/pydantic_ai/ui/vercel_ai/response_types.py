@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from ._utils import CamelBaseModel
+from ._models import CamelBaseModel
 
 # Technically this is recursive union of JSON types; for simplicity, we call it Any
 JSONValue = Any
