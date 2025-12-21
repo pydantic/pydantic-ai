@@ -1154,13 +1154,14 @@ async def test_fallback_on_response_web_fetch_scenario() -> None:
 
     def web_fetch_failed(response: ModelResponse, messages: list[ModelMessage]) -> bool:
         for call, result in response.builtin_tool_calls:
-            if call.tool_name == 'web_fetch':
-                content = result.content
-                if isinstance(content, dict):
-                    content_dict: dict[str, Any] = content
-                    status = content_dict.get('url_retrieval_status', '')
-                    if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
-                        return True
+            if call.tool_name != 'web_fetch':  # pragma: no branch
+                continue
+            content = result.content
+            if not isinstance(content, dict):  # pragma: no branch
+                continue
+            status = content.get('url_retrieval_status', '')
+            if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+                return True
         return False
 
     google_model = FunctionModel(google_web_fetch_fails)
@@ -1262,7 +1263,7 @@ async def test_fallback_on_response_streaming_all_fail() -> None:
 
     with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         async with agent.run_stream('hello') as result:
-            await result.get_output()
+            await result.get_output()  # pragma: no cover
 
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     assert len(exc_info.value.exceptions) == 1
@@ -1408,7 +1409,7 @@ async def test_fallback_on_part_streaming_all_fail() -> None:
 
     with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         async with agent.run_stream('hello') as result:
-            await result.get_output()
+            await result.get_output()  # pragma: no cover
 
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     assert len(exc_info.value.exceptions) == 1
@@ -1550,7 +1551,7 @@ async def test_fallback_on_part_streaming_mixed_failures_all_fail() -> None:
 
     with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         async with agent.run_stream('hello') as result:
-            await result.get_output()
+            await result.get_output()  # pragma: no cover
 
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     assert len(exc_info.value.exceptions) == 2
