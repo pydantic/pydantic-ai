@@ -309,6 +309,13 @@ def test_binary_content_is_methods():
     assert document_content.format == 'pdf'
 
 
+def test_binary_content_base64():
+    bc = BinaryContent(data=b'Hello, world!', media_type='image/png')
+    assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
+    assert not bc.base64.startswith('data:')
+    assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -666,7 +673,8 @@ def test_binary_content_from_path(tmp_path: Path):
     test_xml_file = tmp_path / 'test.xml'
     test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_xml_file)
-    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
+    assert binary_content.data == b'<think>about trains</think>'
+    assert binary_content.media_type in ('application/xml', 'text/xml')  # Depends on the platform
 
     # test non-existent file
     non_existent_file = tmp_path / 'non-existent.txt'

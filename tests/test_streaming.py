@@ -2791,3 +2791,57 @@ def test_structured_response_sync_validation():
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
+
+
+async def test_get_output_after_stream_output():
+    """Verify that we don't get duplicate messages in history when using tool output and `get_output` is called after `stream_output`."""
+    m = TestModel()
+
+    agent = Agent(m, output_type=bool)
+
+    async with agent.run_stream('Hello') as result:
+        outputs: list[bool] = []
+        async for o in result.stream_output():
+            outputs.append(o)
+        o = await result.get_output()
+        outputs.append(o)
+
+    assert outputs == snapshot([False, False])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'response': False},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )

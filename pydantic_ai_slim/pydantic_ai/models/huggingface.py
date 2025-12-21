@@ -12,7 +12,6 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -234,9 +233,6 @@ class HuggingFaceModel(Model):
         else:
             tool_choice = 'auto'
 
-        if model_request_parameters.builtin_tools:
-            raise UserError('HuggingFace does not support built-in tools')
-
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
         try:
@@ -364,7 +360,8 @@ class HuggingFaceModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            hf_messages.insert(0, ChatCompletionInputMessage(content=instructions, role='system'))  # type: ignore
+            system_prompt_count = sum(1 for m in hf_messages if getattr(m, 'role', None) == 'system')
+            hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))  # type: ignore
         return hf_messages
 
     @staticmethod

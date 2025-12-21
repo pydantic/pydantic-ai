@@ -68,7 +68,11 @@ from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutput
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
+    from starlette.applications import Starlette
+
+    from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..ui._web import ModelsParam
 
 __all__ = (
     'Agent',
@@ -250,9 +254,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
             instructions: Instructions to use for this agent, you can also register instructions via a function with
-                [`instructions`][pydantic_ai.Agent.instructions] or pass additional, temporary, instructions when executing a run.
+                [`instructions`][pydantic_ai.agent.Agent.instructions] or pass additional, temporary, instructions when executing a run.
             system_prompt: Static system prompts to use for this agent, you can also register system
-                prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
+                prompts via a function with [`system_prompt`][pydantic_ai.agent.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
@@ -265,7 +269,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
-                [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+                [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
             builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
                 support certain tools. If the model doesn't support the builtin tools, an error will be raised.
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
@@ -280,14 +284,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
                 to defer the evaluation until the first run. Useful if you want to
-                [override the model][pydantic_ai.Agent.override] for testing.
+                [override the model][pydantic_ai.agent.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
             instrument: Set to True to automatically instrument with OpenTelemetry,
                 which will use Logfire if it's configured.
                 Set to an instance of [`InstrumentationSettings`][pydantic_ai.agent.InstrumentationSettings] to customize.
                 If this isn't set, then the last value set by
-                [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
+                [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
             history_processors: Optional list of callables to process the message history before sending it to the model.
@@ -1268,6 +1272,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         per_run_step: bool = True,
+        id: str | None = None,
     ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]]: ...
 
     def toolset(
@@ -1276,6 +1281,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         per_run_step: bool = True,
+        id: str | None = None,
     ) -> Any:
         """Decorator to register a toolset function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
 
@@ -1297,10 +1303,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The toolset function to register.
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
+            id: An optional unique ID for the dynamic toolset. Required for use with durable execution
+                environments like Temporal, where the ID identifies the toolset's activities within the workflow.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
-            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step))
+            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step, id=id))
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
@@ -1401,10 +1409,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = CombinedToolset(toolsets)
 
-        # Copy the dynamic toolsets to ensure each run has its own instances
         def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             if isinstance(toolset, DynamicToolset):
-                return dataclasses.replace(toolset)
+                return toolset.copy()
             else:
                 return toolset
 
@@ -1507,6 +1514,71 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 toolset.sampling_model = sampling_model
 
         self._get_toolset().apply(_set_sampling_model)
+
+    def to_web(
+        self,
+        *,
+        models: ModelsParam = None,
+        builtin_tools: list[AbstractBuiltinTool] | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
+    ) -> Starlette:
+        """Create a Starlette app that serves a web chat UI for this agent.
+
+        This method returns a pre-configured Starlette application that provides a web-based
+        chat interface for interacting with the agent. The UI is downloaded and cached on
+        first use, and includes support for model selection and builtin tool configuration.
+
+        The returned Starlette application can be mounted into a FastAPI app or run directly
+        with any ASGI server (uvicorn, hypercorn, etc.).
+
+        Note that the `deps` and `model_settings` will be the same for each request.
+        To provide different `deps` for each request use the lower-level adapters directly.
+
+        Args:
+            models: Additional models to make available in the UI. Can be:
+                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
+                - A dict mapping display labels to model names/instances
+                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                The agent's model is always included. Builtin tool support is automatically
+                determined from each model's profile.
+            builtin_tools: Additional builtin tools to make available in the UI.
+                The agent's configured builtin tools are always included. Tool labels
+                in the UI are derived from the tool's `label` property.
+            deps: Optional dependencies to use for all requests.
+            model_settings: Optional settings to use for all model requests.
+            instructions: Optional extra instructions to pass to each agent run.
+
+        Returns:
+            A configured Starlette application ready to be served (e.g., with uvicorn)
+
+        Example:
+            ```python
+            from pydantic_ai import Agent
+            from pydantic_ai.builtin_tools import WebSearchTool
+
+            agent = Agent('openai:gpt-5', builtin_tools=[WebSearchTool()])
+
+            # Simple usage - uses agent's model and builtin tools
+            app = agent.to_web()
+
+            # Or provide additional models for UI selection
+            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+
+            # Then run with: uvicorn app:app --reload
+            ```
+        """
+        from ..ui._web import create_web_app
+
+        return create_web_app(
+            self,
+            models=models,
+            builtin_tools=builtin_tools,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+        )
 
     @asynccontextmanager
     @deprecated(

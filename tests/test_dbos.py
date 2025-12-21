@@ -1826,3 +1826,18 @@ async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
             'fastmcp_agent__model.request',
         ]
     )
+
+
+def test_dbos_mcp_wrapper_visit_and_replace():
+    """DBOS MCP wrapper toolsets should not be replaced by visit_and_replace."""
+    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
+
+    toolsets = fastmcp_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    dbos_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DBOSFastMCPToolset)]
+    assert len(dbos_mcp_toolsets) >= 1
+
+    dbos_mcp_toolset = dbos_mcp_toolsets[0]
+
+    # visit_and_replace should return self for DBOS wrappers
+    result = dbos_mcp_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is dbos_mcp_toolset
