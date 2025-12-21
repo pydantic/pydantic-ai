@@ -25,6 +25,8 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+    from magic import Magic
+    from magika import Magika
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -66,8 +68,9 @@ FinishReason: TypeAlias = Literal[
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
 # Shared instances for media type detection to avoid repeated initialization overhead
-_magika_instance: Any = None
-_magic_instance: Any = None
+
+_magika_instance: 'Magika | None' = None
+_magic_instance: 'Magic | None' = None
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
@@ -617,7 +620,7 @@ class BinaryContent:
             from magika import Magika
 
             if _magika_instance is None:
-                _magika_instance = Magika()
+                _magika_instance: Magika = Magika()
             result = _magika_instance.identify_bytes(self.data).output
             self._media_type = result.mime_type
             self._type = result.group
@@ -630,15 +633,14 @@ class BinaryContent:
         from magic import Magic
 
         if _magic_instance is None:
-            _magic_instance = Magic(mime=True)
+            _magic_instance: Magic = Magic(mime=True)
         self._media_type = _magic_instance.from_buffer(self.data)
-        if _magika_instance is None:  # Only warn if magika is not available
-            warnings.warn(
-                'Using magic to identify media_type may result in incorrect identification of some document types. '
-                'To improve identification, please install the "magika" package.',
-                category=UserWarning,
-                stacklevel=1,
-            )
+        warnings.warn(
+            'Using magic to identify media_type may result in incorrect identification of some document types. '
+            'To improve identification, please install the "magika" package.',
+            category=UserWarning,
+            stacklevel=1,
+        )
         return self._media_type
 
     @property
@@ -1473,36 +1475,30 @@ class ModelResponse:
         body = new_event_body()
         for part in self.parts:
             if isinstance(part, ToolCallPart):
-                body.setdefault('tool_calls', []).append(
-                    {
-                        'id': part.tool_call_id,
-                        'type': 'function',
-                        'function': {
-                            'name': part.tool_name,
-                            **({'arguments': part.args} if settings.include_content else {}),
-                        },
-                    }
-                )
+                body.setdefault('tool_calls', []).append({
+                    'id': part.tool_call_id,
+                    'type': 'function',
+                    'function': {
+                        'name': part.tool_name,
+                        **({'arguments': part.args} if settings.include_content else {}),
+                    },
+                })
             elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
-                body.setdefault('content', []).append(
-                    {
-                        'kind': kind,
-                        **({'text': part.content} if settings.include_content else {}),
-                    }
-                )
+                body.setdefault('content', []).append({
+                    'kind': kind,
+                    **({'text': part.content} if settings.include_content else {}),
+                })
             elif isinstance(part, FilePart):
-                body.setdefault('content', []).append(
-                    {
-                        'kind': 'binary',
-                        'media_type': part.content.media_type,
-                        **(
-                            {'binary_content': part.content.base64}
-                            if settings.include_content and settings.include_binary_content
-                            else {}
-                        ),
-                    }
-                )
+                body.setdefault('content', []).append({
+                    'kind': 'binary',
+                    'media_type': part.content.media_type,
+                    **(
+                        {'binary_content': part.content.base64}
+                        if settings.include_content and settings.include_binary_content
+                        else {}
+                    ),
+                })
 
         if content := body.get('content'):
             text_content = content[0].get('text')
