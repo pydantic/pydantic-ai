@@ -1288,6 +1288,7 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                        items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
                         # Optionally opt-in to expose raw annotation output in provider_details
                         # NOTE: can be removed after https://github.com/pydantic/pydantic-ai/issues/3126
                         # TODO: handle opt-in via model settings
