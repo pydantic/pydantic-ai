@@ -629,18 +629,24 @@ class BinaryContent:
             pass
 
         # Fallback to python-magic (required dependency)
-        from magic import Magic
+        try:
+            from magic import Magic
 
-        if _magic_instance is None:
-            _magic_instance = Magic(mime=True)
-        self._media_type = _magic_instance.from_buffer(self.data)
-        warnings.warn(
-            'Using magic to identify media_type may result in incorrect identification of some document types. '
-            'To improve identification, please install the "magika" package.',
-            category=UserWarning,
-            stacklevel=1,
-        )
-        return self._media_type
+            if _magic_instance is None:
+                _magic_instance = Magic(mime=True)
+            self._media_type = _magic_instance.from_buffer(self.data)
+            warnings.warn(
+                'Using magic to identify media_type may result in incorrect identification of some document types. '
+                'To improve identification, please install the "magika" package or provide the media_type explicitly.',
+                category=UserWarning,
+                stacklevel=1,
+            )
+            return self._media_type
+        except ImportError:
+            raise ImportError(
+                'Could not infer media type: please install either "magika" or "python-magic" package, '
+                'or provide the media_type explicitly.'
+            ) from None
 
     @property
     def data_uri(self) -> str:
