@@ -65,6 +65,10 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
+# Shared instances for media type detection to avoid repeated initialization overhead
+_magika_instance: Any = None
+_magic_instance: Any = None
+
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
@@ -184,12 +188,12 @@ class FileUrl(ABC):
 
     def _infer_media_type(self) -> str:
         """Infer the media type of the file based on the URL."""
-        type = guess_type(self.url)[0]
-        if type is None:
+        media_type = guess_type(self.url)[0]
+        if media_type is None:
             raise ValueError(
                 f'Could not infer media type from URL: {self.url}. Explicitly provide a `media_type` instead.'
             )
-        return type
+        return media_type
 
     @property
     def format(self) -> str:
@@ -605,16 +609,16 @@ class BinaryContent:
         return self._media_type or self._infer_media_type()
 
     def _infer_media_type(self) -> str:
-        """Infer the media type of the binary content.
+        """Infer the media type of the binary content."""
+        global _magika_instance, _magic_instance
 
-        This method is deprecated. Use `self.media_type` property instead.
-        """
+        # Try Magika first (more accurate, especially for documents)
         try:
-            # Try Magika first (more accurate, especially for documents)
             from magika import Magika
 
-            magika = Magika()
-            result = magika.identify_bytes(self.data).output
+            if _magika_instance is None:
+                _magika_instance = Magika()
+            result = _magika_instance.identify_bytes(self.data).output
             self._media_type = result.mime_type
             self._type = result.group
             self._extension = result.extensions[0] if result.extensions else None
@@ -622,23 +626,20 @@ class BinaryContent:
         except ImportError:
             pass
 
-        # Fallback to python-magic
-        try:
-            from magic import Magic
+        # Fallback to python-magic (required dependency)
+        from magic import Magic
 
-            magic = Magic(mime=True)
-            self._media_type = magic.from_buffer(self.data)
+        if _magic_instance is None:
+            _magic_instance = Magic(mime=True)
+        self._media_type = _magic_instance.from_buffer(self.data)
+        if _magika_instance is None:  # Only warn if magika is not available
             warnings.warn(
                 'Using magic to identify media_type may result in incorrect identification of some document types. '
                 'To improve identification, please install the "magika" package.',
                 category=UserWarning,
-                stacklevel=2,
+                stacklevel=1,
             )
-            return self._media_type
-        except ImportError as e:
-            raise ImportError(
-                'To use BinaryContent without providing media_type, please install the "python-magic" or "magika" package.'
-            ) from e
+        return self._media_type
 
     @property
     def data_uri(self) -> str:
@@ -684,20 +685,17 @@ class BinaryContent:
             return self._extension
 
         # Combine all format lookups
-        type_map = _image_format_lookup | _audio_format_lookup | _document_format_lookup | _video_format_lookup
 
-        if self.media_type in type_map:
-            self._extension = type_map[self.media_type]
-            return self._extension
+        if self.media_type in _type_map:
+            return _type_map[self.media_type]
 
         # Fallback to mimetypes.guess_extension
         ext = guess_extension(self.media_type)
         if ext is None:
             raise ValueError(f'Unknown media type: {self.media_type}')
 
-        # Cache and return (strip the leading dot)
-        self._extension = ext[1:]
-        return self._extension
+        # Return the extension (strip the leading dot)
+        return ext[1:]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -727,7 +725,6 @@ class BinaryImage(BinaryContent):
             media_type=effective_media_type,
             identifier=identifier or _identifier,
             vendor_metadata=vendor_metadata,
-            _media_type=_media_type,
             _type=_type,
             _extension=_extension,
         )
@@ -825,6 +822,7 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
+_type_map = _image_format_lookup | _audio_format_lookup | _document_format_lookup | _video_format_lookup
 
 
 @dataclass(repr=False)
