@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Any
 
+from pydantic_ai._tool_arg_descriptions import ToolArgDescriptions
 from pydantic_ai.prompt_config import ToolConfig
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_arg_descriptions import ToolArgDescriptions
 from ..exceptions import UserError
-from ..tools import ToolsPrepareFunc
+from ..tools import ToolDefinition, ToolsPrepareFunc
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -38,28 +39,65 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             for name, tool_def in prepared_tool_defs_by_name.items()
         }
 
+    @staticmethod
+    def create_tool_config_prepare_func(tool_config: dict[str, ToolConfig]) -> ToolsPrepareFunc[AgentDepsT]:
+        async def prepare_func(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            # Given a ctx, which I am not sure is useful for our case, and tool_defs let us update these tool_defs using ToolConfig and return the updated list
+            updated_tool_defs: list[ToolDefinition] = []
 
-@dataclass
-class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that prepares the tools it contains using a ToolConfig."""
+            for tool_def in tool_defs:
+                # get_tool_config is it exists for this current_tool
+                tool_name = tool_def.name
+                if tool_name not in tool_config:
+                    updated_tool_defs.append(tool_def)
+                    continue  # Nothing to be done here, no configuration_present
 
-    tool_config: dict[str, ToolConfig]
+                config = tool_config[tool_name]
+                parameters_json_schema = tool_def.parameters_json_schema
 
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        original_tools = await super().get_tools(ctx)
+                if config.parameters_descriptions:
+                    parameters_json_schema = ToolArgDescriptions.update_in_json_schema(
+                        parameters_json_schema, config.parameters_descriptions, tool_name
+                    )
 
-        # Start with a shallow copy to avoid mutating the parent's dict
-        result_tools = dict(original_tools)
+                updated_tool_def = replace(
+                    tool_def,
+                    parameters_json_schema=parameters_json_schema,
+                    **{
+                        k: v
+                        for k, v in {
+                            # 'name': config.name,
+                            # Not changing the name part here, will delegate this work to RenamedToolset
+                            'description': config.description,
+                            'strict': config.strict,
+                        }.items()
+                        if v is not None
+                    },
+                )
 
-        # Iterate tool_config - skip tools that don't exist in this toolset
-        # (tool_config may be shared across multiple toolsets, e.g. function tools + output tools)
-        for tool_name, config in self.tool_config.items():
-            if tool_name not in original_tools:
-                continue
+                updated_tool_defs.append(updated_tool_def)
 
-            tool = original_tools[tool_name]
-            original_tool_def = tool.tool_def
-            parameters_json_schema = original_tool_def.parameters_json_schema
+            return updated_tool_defs
+
+        return prepare_func
+
+
+def tool_config_prepare_func(tool_config: dict[str, ToolConfig]):
+    """Create prepare_func using tool_config to be used with PreparedToolset."""
+
+    async def prepare_func(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        # Given a ctx, which I am not sure is useful for our case, and tool_defs let us update these tool_defs using ToolConfig and return the updated list
+        updated_tool_defs: list[ToolDefinition] = []
+
+        for tool_def in tool_defs:
+            # get_tool_config is it exists for this current_tool
+            tool_name = tool_def.name
+            if tool_name not in tool_config:
+                updated_tool_defs.append(tool_def)
+                continue  # Nothing to be done here, no configuration_present
+
+            config = tool_config[tool_name]
+            parameters_json_schema = tool_def.parameters_json_schema
 
             if config.parameters_descriptions:
                 parameters_json_schema = ToolArgDescriptions.update_in_json_schema(
@@ -67,12 +105,13 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
                 )
 
             updated_tool_def = replace(
-                original_tool_def,
+                tool_def,
                 parameters_json_schema=parameters_json_schema,
                 **{
                     k: v
                     for k, v in {
-                        'name': config.name,
+                        # 'name': config.name,
+                        # Not changing the name part here, will delegate this work to RenamedToolset
                         'description': config.description,
                         'strict': config.strict,
                     }.items()
@@ -80,12 +119,8 @@ class ToolConfigPreparedToolset(WrapperToolset[AgentDepsT]):
                 },
             )
 
-            updated_tool = replace(tool, tool_def=updated_tool_def)
+            updated_tool_defs.append(updated_tool_def)
 
-            # Handle renaming: remove old key if renamed, then add with final name
-            final_tool_name = config.name if config.name is not None else tool_name
-            if final_tool_name != tool_name:
-                del result_tools[tool_name]
-            result_tools[final_tool_name] = updated_tool
+        return updated_tool_defs
 
-        return result_tools
+    return prepare_func

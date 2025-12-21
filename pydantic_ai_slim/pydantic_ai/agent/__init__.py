@@ -57,14 +57,14 @@ from ..tools import (
     ToolPrepareFunc,
     ToolsPrepareFunc,
 )
-from ..toolsets import AbstractToolset
+from ..toolsets import AbstractToolset, RenamedToolset
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
-from ..toolsets.prepared import PreparedToolset, ToolConfigPreparedToolset
+from ..toolsets.prepared import PreparedToolset, tool_config_prepare_func
 from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
@@ -1483,7 +1483,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset = CombinedToolset([output_toolset, toolset])
 
         if tool_config:
-            toolset = ToolConfigPreparedToolset(toolset, tool_config)
+            toolset = PreparedToolset(toolset, tool_config_prepare_func(tool_config))
+            # Create a name_map and use RenamedToolset on this as well?
+            name_map: dict[str, str] = {}
+            for tool_name, config in tool_config.items():
+                if config.name:
+                    name_map[tool_name] = config.name
+
+            toolset = RenamedToolset(toolset, name_map=name_map)
 
         return toolset
 

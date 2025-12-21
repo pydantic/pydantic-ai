@@ -815,7 +815,7 @@ def test_prompt_config_tool_config_descriptions_at_runtime():
 
 
 def test_prompt_config_tool_config_output_tool_descriptions():
-    """Test that ToolConfig.description updates output tool descriptions (covers ToolConfigPreparedToolset for output_toolset)."""
+    """Test that ToolConfig.description updates output tool descriptions."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Verify the output tool description was updated

@@ -35,7 +35,7 @@ from pydantic_ai.prompt_config import (
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.prepared import ToolConfigPreparedToolset
+from pydantic_ai.toolsets.prepared import tool_config_prepare_func
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -524,7 +524,7 @@ async def test_comprehensive_toolset_composition():
             }
         )
     }
-    prepared_partial = ToolConfigPreparedToolset(partial_args_toolset, partial_tool_config)
+    prepared_partial = PreparedToolset(partial_args_toolset, tool_config_prepare_func(partial_tool_config))
     partial_context = build_run_context(None)
     tool_config_prepared_toolset = await ToolManager[None](prepared_partial).for_run_step(partial_context)
 
@@ -596,8 +596,8 @@ async def test_comprehensive_toolset_composition():
         )
     }
 
-    prepared_partial_incorrect = ToolConfigPreparedToolset(
-        partial_args_toolset, partial_tool_config_with_incorrect_paths
+    prepared_partial_incorrect = PreparedToolset(
+        partial_args_toolset, tool_config_prepare_func(partial_tool_config_with_incorrect_paths)
     )
 
     with pytest.raises(
@@ -607,11 +607,6 @@ async def test_comprehensive_toolset_composition():
         ),
     ):
         await ToolManager[None](prepared_partial_incorrect).for_run_step(partial_context)
-
-    renamed_tool_config = {'calc': ToolConfig(name='calc_renamed')}
-    prepared_renamed = ToolConfigPreparedToolset(partial_args_toolset, renamed_tool_config)
-    toolset_renamed = await ToolManager[None](prepared_renamed).for_run_step(partial_context)
-    assert [t.name for t in toolset_renamed.tool_defs] == ['calc_renamed']
 
     async def prepare_missing_ref(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         [tool_def] = tool_defs
@@ -632,9 +627,9 @@ async def test_comprehensive_toolset_composition():
         UserError,
         match=re.escape("Invalid path 'arg.b' for tool 'calc': undefined $ref '#/$defs/Missing'."),
     ):
-        await ToolManager[None](ToolConfigPreparedToolset(missing_ref_toolset, missing_ref_config)).for_run_step(
-            partial_context
-        )
+        await ToolManager[None](
+            PreparedToolset(missing_ref_toolset, tool_config_prepare_func(missing_ref_config))
+        ).for_run_step(partial_context)
 
     async def prepare_circular_ref(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         [tool_def] = tool_defs
@@ -655,9 +650,9 @@ async def test_comprehensive_toolset_composition():
         UserError,
         match=re.escape("Circular reference detected in schema at 'arg.b': #/$defs/A"),
     ):
-        await ToolManager[None](ToolConfigPreparedToolset(circular_ref_toolset, circular_ref_config)).for_run_step(
-            partial_context
-        )
+        await ToolManager[None](
+            PreparedToolset(circular_ref_toolset, tool_config_prepare_func(circular_ref_config))
+        ).for_run_step(partial_context)
 
 
 async def test_context_manager():
