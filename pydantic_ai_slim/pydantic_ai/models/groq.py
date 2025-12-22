@@ -52,7 +52,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
+    from groq import APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -109,7 +109,16 @@ class GroqModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    reasoning_effort: Literal["none", "default", "low", "medium", "high"]
+    # The reasoning_effort parameter controls the level of effort the model will put into reasoning.
+    # For Qwen 3 32B: "none" disables reasoning, "default" enables reasoning.
+    # For GPT-OSS 20B/120B: "low", "medium", "high" adjust the reasoning token usage.
+    groq_reasoning_effort: Literal["none", "default", "low", "medium", "high"]
+
+    # Controls whether reasoning is included in the response.
+    # If True (the default), a dedicated `message.reasoning` field is present in the response.
+    # If False, reasoning is excluded.
+    # Note: `include_reasoning` cannot be used together with `groq_reasoning_format`—these settings are mutually exclusive.
+    groq_include_reasoning: bool
 
     groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
     """The format of the reasoning output.
@@ -294,24 +303,25 @@ class GroqModel(Model):
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-                tools=tools or NOT_GIVEN,
-                tool_choice=tool_choice or NOT_GIVEN,
-                stop=model_settings.get('stop_sequences', NOT_GIVEN),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls'),
+                tools=tools,
+                tool_choice=tool_choice,
+                stop=model_settings.get('stop_sequences'),
                 stream=stream,
-                response_format=response_format or NOT_GIVEN,
-                max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                seed=model_settings.get('seed', NOT_GIVEN),
-                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                reasoning_format=model_settings.get(
-                    'groq_reasoning_format', NOT_GIVEN),
-                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                response_format=response_format,
+                max_tokens=model_settings.get('max_tokens'),
+                temperature=model_settings.get('temperature'),
+                top_p=model_settings.get('top_p'),
+                timeout=model_settings.get('timeout'),
+                seed=model_settings.get('seed'),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
+                logit_bias=model_settings.get('logit_bias'),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
+                reasoning_format=model_settings.get('groq_reasoning_format'),
+                reasoning_effort=model_settings.get("groq_reasoning_effort"),
+                include_reasoning=model_settings.get('groq_include_reasoning')
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
