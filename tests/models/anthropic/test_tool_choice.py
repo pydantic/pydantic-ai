@@ -643,7 +643,12 @@ class TestToolChoiceList:
     """
 
     async def test_single_tool_in_list(self, anthropic_model: AnthropicModel, allow_model_requests: None):
-        """Model uses the specified tool when given a single-item list."""
+        """Model uses the specified tool when given a single-item list.
+
+        Note: For single-tool lists, Anthropic uses {type: 'tool', name: X} format which
+        forces that specific tool, but ALL tool definitions are still sent to the API.
+        See [test_tool_choice_translation.py](./test_tool_choice_translation.py) for the exact API format.
+        """
         weather_tool = make_tool_def('get_weather', 'Get weather for a city', 'city')
         time_tool = make_tool_def('get_time', 'Get current time in a timezone', 'timezone')
         population_tool = make_tool_def('get_population', 'Get population of a city', 'city')
@@ -703,7 +708,12 @@ class TestToolChoiceList:
         )
 
     async def test_excluded_tool_not_called(self, anthropic_model: AnthropicModel, allow_model_requests: None):
-        """Tools not in the list are not called."""
+        """Tools not in the list are not called.
+
+        Note: For single-tool lists, Anthropic uses {type: 'tool', name: X} which forces
+        that specific tool to be called first. All tool definitions are still sent to the
+        API. See [test_tool_choice_translation.py](./test_tool_choice_translation.py) for the exact API format.
+        """
         weather_tool = make_tool_def('get_weather', 'Get weather for a city', 'city')
         population_tool = make_tool_def('get_population', 'Get population of a city', 'city')
         settings: ModelSettings = {'tool_choice': ['get_weather']}
@@ -718,7 +728,6 @@ class TestToolChoiceList:
             params,
         )
 
-        # Model must use get_weather since get_population is excluded
         assert response.parts == snapshot(
             [
                 ToolCallPart(
