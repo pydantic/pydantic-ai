@@ -61,6 +61,7 @@ from .conftest import IsDatetime, IsInt, IsSameStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
+        ActivityMessage,
         AssistantMessage,
         BaseEvent,
         BinaryInputContent,
@@ -338,6 +339,13 @@ async def test_multiple_messages() -> None:
         UserMessage(
             id='msg_5',
             content='Second message',
+        ),
+        ActivityMessage(
+            id="msg_6",
+            activity_type="testing",
+            content={
+                "test_field": None,
+            },
         ),
     )
 
