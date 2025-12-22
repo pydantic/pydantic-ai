@@ -34,7 +34,7 @@ _mime_types.read_windows_registry()
 for file in mimetypes.knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)
-
+# TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
