@@ -408,6 +408,23 @@ class TestPartialOutput:
         assert result.output == Foo(a=42, b='foo')
         assert call_log == snapshot([(Foo(a=42, b='foo'), False)])
 
+    def test_output_function_text(self):
+        """Test that output functions receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
+
+        def process_output(ctx: RunContext[None], text: str) -> str:
+            call_log.append((text, ctx.partial_output))
+            return text.upper()
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('Hello world!')])
+
+        agent = Agent(FunctionModel(return_model), output_type=TextOutput(process_output))
+        result = agent.run_sync('test')
+
+        assert result.output == 'HELLO WORLD!'
+        assert call_log == snapshot([('Hello world!', False)])
+
     def test_output_function_structured(self):
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []

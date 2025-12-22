@@ -817,6 +817,26 @@ class TestPartialOutput:
             ]
         )
 
+    async def test_output_function_text(self):
+        """Test that output functions receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
+
+        def process_output(ctx: RunContext[None], text: str) -> str:
+            call_log.append((text, ctx.partial_output))
+            return text.upper()
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for chunk in ['Hello', ' ', 'world', '!']:
+                yield chunk
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=TextOutput(process_output))
+
+        async with agent.run_stream('test') as result:
+            text_parts = [text_part async for text_part in result.stream_text(debounce_by=None)]
+
+        assert text_parts[-1] == 'Hello world!'  # TODO: ISSUE
+        assert call_log == snapshot([('Hello world!', False)])
+
     async def test_output_function_structured(self):
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []
