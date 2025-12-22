@@ -109,8 +109,7 @@ class GroqModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    reasoning_effort: Literal["none", "default",
-                              "low", "medium", "high"] = 'medium'
+    reasoning_effort: Literal["none", "default", "low", "medium", "high"]
 
     groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
     """The format of the reasoning output.
