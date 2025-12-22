@@ -1,3 +1,4 @@
+from importlib.util import find_spec
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -668,6 +669,10 @@ def test_file_url_format_error():
         _ = image_url.format
 
 
+@pytest.mark.skipif(
+    find_spec('magika') is None,
+    reason='Magika library is not installed, skipping tests that require it.',
+)
 def test_binary_content_infer_media_type_with_magika(tmp_path: Path):
     """Test BinaryContent._infer_media_type using Magika library (lines 601-612)."""
     # Create a simple PDF-like binary content
@@ -682,18 +687,12 @@ def test_binary_content_infer_media_type_with_magika(tmp_path: Path):
     assert binary_content.format == 'pdf'
 
 
+@pytest.mark.skipif(
+    find_spec('magika') is not None,
+    reason='Magika library is installed, skipping tests that require it to be absent.',
+)
 def test_binary_content_magika_not_installed(monkeypatch: pytest.MonkeyPatch):
     """Test BinaryContent._infer_media_type when Magika is not installed (lines 611-614)."""
-
-    # Mock the import of magika to raise ImportError
-    def mock_import_magika(*args, **kwargs):  # type: ignore
-        raise ImportError('No module named magika')
-
-    # Replace the magika module in sys.modules to simulate it not being installed
-    monkeypatch.setitem(__import__('sys').modules, 'magika', None)
-    monkeypatch.setattr('pydantic_ai.messages.Magika', mock_import_magika, raising=False)  # type: ignore[attr-defined]
-
-    # Create a binary content without providing media_type
     binary_content = BinaryContent(data=b'some data')
 
     # Accessing media_type should raise ImportError with a helpful message
