@@ -531,7 +531,7 @@ def _openrouter_settings_to_openai_settings(
         extra_body['usage'] = usage
 
     for builtin_tool in model_request_parameters.builtin_tools:
-        if isinstance(builtin_tool, ImageGenerationTool):
+        if isinstance(builtin_tool, ImageGenerationTool):  # pragma: lax no cover
             extra_body['modalities'] = ['text', 'image']
 
             image_config: dict[str, str] = {}
