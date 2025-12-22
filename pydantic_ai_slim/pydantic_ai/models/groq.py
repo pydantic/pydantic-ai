@@ -112,7 +112,7 @@ class GroqModelSettings(ModelSettings, total=False):
     # The reasoning_effort parameter controls the level of effort the model will put into reasoning.
     # For Qwen 3 32B: "none" disables reasoning, "default" enables reasoning.
     # For GPT-OSS 20B/120B: "low", "medium", "high" adjust the reasoning token usage.
-    groq_reasoning_effort: Literal["none", "default", "low", "medium", "high"]
+    groq_reasoning_effort: Literal['none', 'default', 'low', 'medium', 'high']
 
     # Controls whether reasoning is included in the response.
     # If True (the default), a dedicated `message.reasoning` field is present in the response.
@@ -320,8 +320,8 @@ class GroqModel(Model):
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
                 reasoning_format=model_settings.get('groq_reasoning_format'),
-                reasoning_effort=model_settings.get("groq_reasoning_effort"),
-                include_reasoning=model_settings.get('groq_include_reasoning')
+                reasoning_effort=model_settings.get('groq_reasoning_effort'),
+                include_reasoning=model_settings.get('groq_include_reasoning'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
