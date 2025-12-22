@@ -4687,7 +4687,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
 
 async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
-    """HTTP VideoUrls are downloaded on google-gla (cannot access arbitrary URLs via file_uri)."""
+    """HTTP VideoUrls are downloaded on google-gla with video_metadata preserved."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
     mock_download = mocker.patch(
@@ -4695,7 +4695,6 @@ async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
         return_value={'data': b'fake video data', 'data_type': 'video/mp4'},
     )
 
-    # Note: vendor_metadata is lost when downloading (FileUrl doesn't support it)
     video = VideoUrl(
         url='https://example.com/video.mp4',
         vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},
@@ -4706,20 +4705,25 @@ async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
     assert len(content) == 1
     assert 'inline_data' in content[0]
     assert 'file_data' not in content[0]
-    assert 'video_metadata' not in content[0]  # Lost on download
+    # video_metadata is preserved even when video is downloaded
+    assert content[0]['video_metadata'] == {'start_offset': '10s', 'end_offset': '20s'}
 
 
 async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
-    """HTTP VideoUrls use file_uri directly on google-vertex (no download)."""
+    """HTTP VideoUrls use file_uri directly on google-vertex with video_metadata."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
-    video = VideoUrl(url='https://example.com/video.mp4')
+    video = VideoUrl(
+        url='https://example.com/video.mp4',
+        vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},
+    )
     content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
     assert len(content) == 1
     assert content[0] == {
         'file_data': {'file_uri': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '10s', 'end_offset': '20s'},
     }
 
 
