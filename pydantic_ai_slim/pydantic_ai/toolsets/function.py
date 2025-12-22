@@ -394,9 +394,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 retry=ctx.retries.get(original_name, 0),
                 max_retries=max_retries,
             )
-            tool_def = await tool.prepare_tool_def(run_context)
-            if not tool_def:
-                continue
+            tool_def = await tool.prepare_tool_def(run_context) or tool.tool_def
+            # Let us apply prepare_tool_def but not allow it to remove the tool_def falling back to the original tool_def
             tool_definitions.append(tool_def)
 
         return tool_definitions
