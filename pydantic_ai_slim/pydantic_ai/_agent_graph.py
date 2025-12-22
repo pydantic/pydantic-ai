@@ -137,7 +137,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model_settings: ModelSettings | None
     usage_limits: _usage.UsageLimits
     max_result_retries: int
-    max_tool_calls: int | None
+    max_tool_uses: int | None
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
@@ -823,7 +823,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
         tool_usage=ctx.state.tool_usage,
-        max_tool_calls=ctx.deps.max_tool_calls,
+        max_tool_uses=ctx.deps.max_tool_uses,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

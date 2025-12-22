@@ -1431,8 +1431,8 @@ def test_tool_max_uses():
     )
 
 
-def test_max_tool_calls():
-    agent = Agent(TestModel(), max_tool_calls=0)
+def test_max_tool_uses():
+    agent = Agent(TestModel(), max_tool_uses=0)
 
     @agent.tool_plain
     def my_tool(x: int) -> int:
