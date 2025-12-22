@@ -1190,7 +1190,7 @@ class TestTextAndStructuredUnion:
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content="""Seattle is a major city in the Pacific Northwest on the shores of Puget Sound, Washington. Known as the "Emerald City," it's famous for landmarks like the Space Needle and Pike Place Market, and for views of Mount Rainier on clear days. Seattle is a tech and innovation hub (home to Amazon and near Microsoft), with a strong coffee culture, vibrant music and arts scenes, and abundant outdoor recreation from city parks to nearby mountains and waterways. The climate is mild with cool, wet winters and relatively dry summers.""",
+                            content='Seattle is a major city in the Pacific Northwest on the shores of Puget Sound, Washington. Known as the "Emerald City," it\'s famous for landmarks like the Space Needle and Pike Place Market, and for views of Mount Rainier on clear days. Seattle is a tech and innovation hub (home to Amazon and near Microsoft), with a strong coffee culture, vibrant music and arts scenes, and abundant outdoor recreation from city parks to nearby mountains and waterways. The climate is mild with cool, wet winters and relatively dry summers.',
                         )
                     ],
                     usage=RequestUsage(
