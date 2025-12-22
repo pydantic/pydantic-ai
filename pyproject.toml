@@ -264,7 +264,8 @@ include = [
 omit = [
     "tests/test_live.py",
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
