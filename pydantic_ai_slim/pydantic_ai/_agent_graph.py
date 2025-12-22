@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 import uuid
 from asyncio import Task
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -1026,17 +1026,6 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-def _projection_count_of_tool_usage(
-    tool_call_counts: defaultdict[str, int], tool_calls: list[_messages.ToolCallPart]
-) -> None:
-    """Populate a count of tool usage based on the provided tool calls for this run step.
-
-    We will use this to make sure the calls do not exceed tool usage limits.
-    """
-    for call in tool_calls:
-        tool_call_counts[call.tool_name] += 1
-
-
 async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1064,8 +1053,7 @@ async def _call_tools(
     calls_to_run: list[_messages.ToolCallPart] = []
 
     # For each tool, check how many calls are going to be made
-    tool_call_counts: defaultdict[str, int] = defaultdict(int)
-    _projection_count_of_tool_usage(tool_call_counts, tool_calls)
+    tool_call_counts = Counter(call.tool_name for call in tool_calls)
 
     for call in tool_calls:
         current_tool_use = tool_manager.get_current_use_of_tool(call.tool_name)

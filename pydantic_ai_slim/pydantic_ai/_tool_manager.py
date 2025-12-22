@@ -73,15 +73,11 @@ class ToolManager(Generic[AgentDepsT]):
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        result: list[ToolDefinition] = []
-        for tool in self.tools.values():
-            # Filter out tools that have reached their max_uses limit (based on successful calls)
-            if tool.max_uses is not None:
-                current_uses = self.ctx.tool_usage.get(tool.tool_def.name, 0)
-                if current_uses >= tool.max_uses:
-                    continue
-            result.append(tool.tool_def)
-        return result
+        return [
+            tool.tool_def
+            for tool in self.tools.values()
+            if tool.max_uses is None or self.get_current_use_of_tool(tool.tool_def.name) < tool.max_uses
+        ]
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
         """Whether to require sequential tool calls for a list of tool calls."""
