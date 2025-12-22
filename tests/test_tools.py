@@ -1432,7 +1432,7 @@ def test_tool_max_uses():
 
 
 def test_max_tool_uses():
-    agent = Agent(TestModel(), max_tool_uses=0)
+    agent = Agent(TestModel(), max_tools_uses=0)
 
     @agent.tool_plain
     def my_tool(x: int) -> int:

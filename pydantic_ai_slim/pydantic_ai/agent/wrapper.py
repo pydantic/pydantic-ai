@@ -85,7 +85,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        max_tool_uses: int | None = None,
+        max_tools_uses: int | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -105,7 +105,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        max_tool_uses: int | None = None,
+        max_tools_uses: int | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -125,7 +125,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        max_tool_uses: int | None = None,
+        max_tools_uses: int | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -202,7 +202,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            max_tool_uses: The maximum number of successful tool uses to allow across all tools for this run.
+            max_tools_uses: The maximum number of successful tool uses to allow across all tools for this run.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -221,7 +221,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
-            max_tool_uses=max_tool_uses,
+            max_tools_uses=max_tools_uses,
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
