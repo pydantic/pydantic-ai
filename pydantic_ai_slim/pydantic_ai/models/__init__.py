@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -21,7 +21,7 @@ from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition, PromptedOutputSchema
+from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
@@ -227,33 +227,27 @@ KnownModelName = TypeAliasType(
         'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
         'gateway/google-vertex:gemini-2.5-flash',
         'gateway/google-vertex:gemini-2.5-pro',
+        'gateway/google-vertex:gemini-3-flash-preview',
         'gateway/google-vertex:gemini-3-pro-image-preview',
         'gateway/google-vertex:gemini-3-pro-preview',
         'gateway/google-vertex:gemini-flash-latest',
         'gateway/google-vertex:gemini-flash-lite-latest',
-        'gateway/groq:deepseek-r1-distill-llama-70b',
-        'gateway/groq:deepseek-r1-distill-qwen-32b',
-        'gateway/groq:distil-whisper-large-v3-en',
-        'gateway/groq:gemma2-9b-it',
         'gateway/groq:llama-3.1-8b-instant',
-        'gateway/groq:llama-3.2-11b-vision-preview',
-        'gateway/groq:llama-3.2-1b-preview',
-        'gateway/groq:llama-3.2-3b-preview',
-        'gateway/groq:llama-3.2-90b-vision-preview',
-        'gateway/groq:llama-3.3-70b-specdec',
         'gateway/groq:llama-3.3-70b-versatile',
-        'gateway/groq:llama-guard-3-8b',
-        'gateway/groq:llama3-70b-8192',
-        'gateway/groq:llama3-8b-8192',
-        'gateway/groq:mistral-saba-24b',
-        'gateway/groq:moonshotai/kimi-k2-instruct',
-        'gateway/groq:playai-tts-arabic',
-        'gateway/groq:playai-tts',
-        'gateway/groq:qwen-2.5-32b',
-        'gateway/groq:qwen-2.5-coder-32b',
-        'gateway/groq:qwen-qwq-32b',
-        'gateway/groq:whisper-large-v3-turbo',
+        'gateway/groq:meta-llama/llama-guard-4-12b',
+        'gateway/groq:openai/gpt-oss-120b',
+        'gateway/groq:openai/gpt-oss-20b',
         'gateway/groq:whisper-large-v3',
+        'gateway/groq:whisper-large-v3-turbo',
+        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
+        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+        'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
+        'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
+        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
+        'gateway/groq:openai/gpt-oss-safeguard-20b',
+        'gateway/groq:playai-tts',
+        'gateway/groq:playai-tts-arabic',
+        'gateway/groq:qwen/qwen-3-32b',
         'gateway/openai:chatgpt-4o-latest',
         'gateway/openai:codex-mini-latest',
         'gateway/openai:computer-use-preview-2025-03-11',
@@ -348,6 +342,7 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.5-flash-preview-09-2025',
         'google-gla:gemini-2.5-flash',
         'google-gla:gemini-2.5-pro',
+        'google-gla:gemini-3-flash-preview',
         'google-gla:gemini-3-pro-image-preview',
         'google-gla:gemini-3-pro-preview',
         'google-gla:gemini-flash-latest',
@@ -360,6 +355,7 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-2.5-flash-preview-09-2025',
         'google-vertex:gemini-2.5-flash',
         'google-vertex:gemini-2.5-pro',
+        'google-vertex:gemini-3-flash-preview',
         'google-vertex:gemini-3-pro-image-preview',
         'google-vertex:gemini-3-pro-preview',
         'google-vertex:gemini-flash-latest',
@@ -379,29 +375,22 @@ KnownModelName = TypeAliasType(
         'grok:grok-4-fast',
         'grok:grok-4',
         'grok:grok-code-fast-1',
-        'groq:deepseek-r1-distill-llama-70b',
-        'groq:deepseek-r1-distill-qwen-32b',
-        'groq:distil-whisper-large-v3-en',
-        'groq:gemma2-9b-it',
         'groq:llama-3.1-8b-instant',
-        'groq:llama-3.2-11b-vision-preview',
-        'groq:llama-3.2-1b-preview',
-        'groq:llama-3.2-3b-preview',
-        'groq:llama-3.2-90b-vision-preview',
-        'groq:llama-3.3-70b-specdec',
         'groq:llama-3.3-70b-versatile',
-        'groq:llama-guard-3-8b',
-        'groq:llama3-70b-8192',
-        'groq:llama3-8b-8192',
-        'groq:mistral-saba-24b',
-        'groq:moonshotai/kimi-k2-instruct',
-        'groq:playai-tts-arabic',
-        'groq:playai-tts',
-        'groq:qwen-2.5-32b',
-        'groq:qwen-2.5-coder-32b',
-        'groq:qwen-qwq-32b',
-        'groq:whisper-large-v3-turbo',
+        'groq:meta-llama/llama-guard-4-12b',
+        'groq:openai/gpt-oss-120b',
+        'groq:openai/gpt-oss-20b',
         'groq:whisper-large-v3',
+        'groq:whisper-large-v3-turbo',
+        'groq:meta-llama/llama-4-maverick-17b-128e-instruct',
+        'groq:meta-llama/llama-4-scout-17b-16e-instruct',
+        'groq:meta-llama/llama-prompt-guard-2-22m',
+        'groq:meta-llama/llama-prompt-guard-2-86m',
+        'groq:moonshotai/kimi-k2-instruct-0905',
+        'groq:openai/gpt-oss-safeguard-20b',
+        'groq:playai-tts',
+        'groq:playai-tts-arabic',
+        'groq:qwen/qwen-3-32b',
         'heroku:amazon-rerank-1-0',
         'heroku:claude-3-5-haiku',
         'heroku:claude-3-5-sonnet-latest',
@@ -550,8 +539,8 @@ class ModelRequestParameters:
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
-        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
-            return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+        if self.prompted_output_template and self.output_object:
+            return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -679,11 +668,14 @@ class Model(ABC):
             params = replace(params, output_tools=[])
         if params.output_object and params.output_mode not in ('native', 'prompted'):
             params = replace(params, output_object=None)
-        if params.prompted_output_template and params.output_mode != 'prompted':
+        if params.prompted_output_template and params.output_mode not in ('prompted', 'native'):
             params = replace(params, prompted_output_template=None)  # pragma: no cover
 
         # Set default prompted output template
-        if params.output_mode == 'prompted' and not params.prompted_output_template:
+        if (
+            params.output_mode == 'prompted'
+            or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
+        ) and not params.prompted_output_template:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
         # Check if output mode is supported
@@ -797,7 +789,7 @@ class Model(ABC):
 
     @staticmethod
     def _get_instructions(
-        messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
     ) -> str | None:
         """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
@@ -1095,6 +1087,7 @@ def infer_model(  # noqa: C901
         'litellm',
         'nebius',
         'ovhcloud',
+        'alibaba',
     ):
         model_kind = 'openai-chat'
     elif model_kind in ('google-gla', 'google-vertex'):

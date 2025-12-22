@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union
 
@@ -18,6 +19,7 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
+    'FileSearchTool',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -293,12 +295,14 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    output_compression: int = 100
+    output_compression: int | None = None
     """Compression level for the output image.
 
     Supported by:
 
-    * OpenAI Responses. Only supported for 'png' and 'webp' output formats.
+    * OpenAI Responses. Only supported for 'jpeg' and 'webp' output formats. Default: 100.
+    * Google (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
+      Setting this will default `output_format` to 'jpeg' if not specified.
     """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None = None
@@ -307,6 +311,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses. Default: 'png'.
+    * Google (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
     """
 
     partial_images: int = 0
@@ -326,12 +331,11 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    size: Literal['1024x1024', '1024x1536', '1536x1024', 'auto'] = 'auto'
+    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '1K', '2K', '4K'] | None = None
     """The size of the generated image.
 
-    Supported by:
-
-    * OpenAI Responses
+    * OpenAI Responses: 'auto' (default: model selects the size based on the prompt), '1024x1024', '1024x1536', '1536x1024'
+    * Google (Gemini 3 Pro Image and later): '1K' (default), '2K', '4K'
     """
 
     aspect_ratio: ImageAspectRatio | None = None
@@ -424,6 +428,30 @@ class MCPServerTool(AbstractBuiltinTool):
     @property
     def label(self) -> str:
         return f'MCP: {self.id}'
+
+
+@dataclass(kw_only=True)
+class FileSearchTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to search through uploaded files using vector search.
+
+    This tool provides a fully managed Retrieval-Augmented Generation (RAG) system that handles
+    file storage, chunking, embedding generation, and context injection into prompts.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Google (Gemini)
+    """
+
+    file_store_ids: Sequence[str]
+    """The file store IDs to search through.
+
+    For OpenAI, these are the IDs of vector stores created via the OpenAI API.
+    For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
+    """
+
+    kind: str = 'file_search'
+    """The kind of tool."""
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:

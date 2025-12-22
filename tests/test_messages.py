@@ -309,6 +309,13 @@ def test_binary_content_is_methods():
     assert document_content.format == 'pdf'
 
 
+def test_binary_content_base64():
+    bc = BinaryContent(data=b'Hello, world!', media_type='image/png')
+    assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
+    assert not bc.base64.startswith('data:')
+    assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -331,6 +338,16 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 def test_video_url_invalid():
     with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+)
+def test_url_with_query_parameters() -> None:
+    """Test that Url types correctly infer media type from URLs with query parameters"""
+    video_url = VideoUrl('https://example.com/video.mp4?query=param')
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
@@ -666,7 +683,8 @@ def test_binary_content_from_path(tmp_path: Path):
     test_xml_file = tmp_path / 'test.xml'
     test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_xml_file)
-    assert binary_content == snapshot(BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
+    assert binary_content.data == b'<think>about trains</think>'
+    assert binary_content.media_type in ('application/xml', 'text/xml')  # Depends on the platform
 
     # test non-existent file
     non_existent_file = tmp_path / 'non-existent.txt'
