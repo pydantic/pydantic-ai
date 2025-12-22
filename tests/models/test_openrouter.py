@@ -26,7 +26,7 @@ from pydantic_ai import (
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 
-from ..conftest import try_import
+from ..conftest import IsBytes, IsStr, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
@@ -643,3 +643,16 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     result = model._process_response(response)  # type: ignore[reportPrivateUsage]
     text_part = cast(TextPart, result.parts[0])
     assert text_part.content == 'According to the source, this is the answer.'
+
+
+async def test_openrouter_image_and_text_output(allow_model_requests: None, openrouter_api_key: str):
+    model = OpenRouterModel(
+        'google/gemini-2.5-flash-image-preview', provider=OpenRouterProvider(api_key=openrouter_api_key)
+    )
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
+    assert result.output == snapshot(IsStr())
+    assert result.response.files == snapshot(
+        [BinaryImage(data=IsBytes(), media_type='image/png', _identifier='976e9d')]
+    )

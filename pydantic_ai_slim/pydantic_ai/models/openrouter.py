@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
-from ..builtin_tools import ImageGenerationTool
+from ..builtin_tools import AbstractBuiltinTool, ImageGenerationTool
 from ..exceptions import ModelHTTPError
 from ..messages import (
     BinaryImage,
@@ -531,7 +531,7 @@ def _openrouter_settings_to_openai_settings(
         extra_body['usage'] = usage
 
     for builtin_tool in model_request_parameters.builtin_tools:
-        if isinstance(builtin_tool, ImageGenerationTool):  # pragma: lax no cover
+        if isinstance(builtin_tool, ImageGenerationTool):
             extra_body['modalities'] = ['text', 'image']
 
             image_config: dict[str, str] = {}
@@ -539,7 +539,7 @@ def _openrouter_settings_to_openai_settings(
                 image_config['aspect_ratio'] = aspect_ratio
             extra_body['image_config'] = image_config
 
-    if isinstance(model_request_parameters.output_object, BinaryImage):  # pragma: lax no cover
+    if model_request_parameters.allow_image_output:
         extra_body['modalities'] = ['text', 'image']
 
     model_settings['extra_body'] = extra_body
@@ -674,6 +674,12 @@ class OpenRouterModel(OpenAIChatModel):
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
     ) -> FinishReason | None:
         return _CHAT_FINISH_REASON_MAP.get(key)
+
+    @override
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({ImageGenerationTool})
 
 
 class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
