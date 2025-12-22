@@ -307,52 +307,6 @@ def vcr_config():
     }
 
 
-@pytest.fixture(autouse=True, scope='session')
-def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
-    """Patch VCR's httpcore stubs to bypass localhost requests entirely.
-
-    VCR patches httpcore.AsyncConnectionPool.handle_async_request at the class level,
-    meaning ALL requests go through VCR's wrapper - even 'ignored' localhost ones.
-    This can corrupt httpcore's connection pool state when using cached HTTP clients,
-    causing subsequent requests to hang. This patch makes localhost requests bypass
-    VCR's wrapper entirely.
-
-    This is safe for all tests since it only affects localhost requests, which VCR
-    is configured to ignore anyway via ignore_localhost=True.
-    """
-    try:
-        import httpcore
-        import vcr.stubs.httpcore_stubs as httpcore_stubs
-    except ImportError:
-        yield
-        return
-
-    from urllib.parse import urlparse
-
-    def _is_localhost_request(request: httpcore.Request) -> bool:
-        url = bytes(request.url).decode('ascii')
-        parsed = urlparse(url)
-        return parsed.hostname in {'localhost', '127.0.0.1', '0.0.0.0'}
-
-    original: Any = httpcore_stubs.vcr_handle_async_request  # pyright: ignore[reportUnknownVariableType]
-
-    def patched(cassette: Any, real_handle_async_request: Any) -> Any:
-        vcr_wrapper: Any = original(cassette, real_handle_async_request)
-
-        def localhost_aware_wrapper(self: httpcore.AsyncConnectionPool, real_request: httpcore.Request) -> Any:
-            if _is_localhost_request(real_request):
-                return real_handle_async_request(self, real_request)
-            return vcr_wrapper(self, real_request)
-
-        return localhost_aware_wrapper
-
-    httpcore_stubs.vcr_handle_async_request = patched
-    try:
-        yield
-    finally:
-        httpcore_stubs.vcr_handle_async_request = original
-
-
 @pytest.fixture(autouse=True)
 async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     from pydantic_ai.models import _used_async_http_client_providers  # pyright: ignore[reportPrivateUsage]

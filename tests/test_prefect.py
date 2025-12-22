@@ -77,6 +77,52 @@ pytestmark = [
 ]
 
 
+def _patch_vcr_httpcore_for_localhost() -> None:
+    """Patch VCR's httpcore stubs to bypass localhost requests entirely.
+
+    VCR patches httpcore.AsyncConnectionPool.handle_async_request at the class level,
+    meaning ALL requests go through VCR's wrapper - even 'ignored' localhost ones.
+    This can corrupt httpcore's connection pool state when using cached HTTP clients,
+    causing subsequent requests to hang. This patch makes localhost requests bypass
+    VCR's wrapper entirely.
+
+    This patch is applied at module import time so it runs before VCR is initialized.
+    With pytest-xdist, each worker is a separate process, so this only affects the
+    worker running prefect tests (via xdist_group marker).
+    """
+    from typing import Any
+    from urllib.parse import urlparse
+
+    try:
+        import httpcore
+        import vcr.stubs.httpcore_stubs as httpcore_stubs
+    except ImportError:
+        return
+
+    def _is_localhost_request(request: httpcore.Request) -> bool:
+        url = bytes(request.url).decode('ascii')
+        parsed = urlparse(url)
+        return parsed.hostname in {'localhost', '127.0.0.1', '0.0.0.0'}
+
+    original: Any = httpcore_stubs.vcr_handle_async_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+    def patched(cassette: Any, real_handle_async_request: Any) -> Any:
+        vcr_wrapper: Any = original(cassette, real_handle_async_request)
+
+        def localhost_aware_wrapper(self: httpcore.AsyncConnectionPool, real_request: httpcore.Request) -> Any:
+            if _is_localhost_request(real_request):
+                return real_handle_async_request(self, real_request)
+            return vcr_wrapper(self, real_request)
+
+        return localhost_aware_wrapper
+
+    httpcore_stubs.vcr_handle_async_request = patched
+
+
+# Apply patch at module import time, before any fixtures run
+_patch_vcr_httpcore_for_localhost()
+
+
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
 http_client = cached_async_http_client(provider='prefect')
