@@ -7,6 +7,8 @@ from typing import Any, TypeAlias
 
 from typing_extensions import Self
 
+from pydantic_ai.tools import ToolDefinition
+
 from .._run_context import AgentDepsT, RunContext
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -65,6 +67,26 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             return {}
 
         return await self._toolset.get_tools(ctx)
+
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        if self._toolset is None or (self.per_run_step and ctx.run_step != self._run_step):
+            if self._toolset is not None:
+                await self._toolset.__aexit__()
+
+            toolset = self.toolset_func(ctx)
+            if inspect.isawaitable(toolset):
+                toolset = await toolset
+
+            if toolset is not None:
+                await toolset.__aenter__()
+
+            self._toolset = toolset
+            self._run_step = ctx.run_step
+
+        if self._toolset is None:
+            return []
+
+        return await self._toolset.get_all_tool_definitions(ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
