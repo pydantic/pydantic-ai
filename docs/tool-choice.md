@@ -17,8 +17,19 @@ The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSetting
 
 The model decides whether to use tools. All function tools and output tools are available.
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
+
+
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f'Weather in {city}: sunny'
+
+
+def get_time(city: str) -> str:
+    """Get current time for a city."""
+    return f'Current time in {city}: 12:00'
+
 
 agent = Agent('openai:gpt-4o', tools=[get_weather, get_time])
 
@@ -31,8 +42,14 @@ result = agent.run_sync('What is the weather in Paris?', model_settings={'tool_c
 
 Disables function tools. The model can only respond with text (or use output tools for structured output).
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
+
+
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f'Weather in {city}: sunny'
+
 
 agent = Agent('openai:gpt-4o', tools=[get_weather])
 
@@ -55,7 +72,7 @@ Forces the model to use a function tool. No output tools are sent.
 !!! warning "For direct model requests only"
     Use `'required'` only with [direct model requests](direct.md), not with agent runs. Since output tools are excluded, an agent cannot complete normally.
 
-```python
+```python {test="skip"}
 from pydantic_ai import ModelRequest, ToolDefinition
 from pydantic_ai.direct import model_request_sync
 from pydantic_ai.models import ModelRequestParameters
@@ -92,11 +109,27 @@ Restricts the model to specific function tools by name. The model must use one o
 !!! warning "For direct model requests only"
     Like `'required'`, use tool lists only with [direct model requests](direct.md).
 
-```python
+```python {test="skip"}
 from pydantic_ai import ModelRequest, ToolDefinition
 from pydantic_ai.direct import model_request_sync
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
+
+weather_tool = ToolDefinition(
+    name='get_weather',
+    description='Get weather for a city',
+    parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+)
+time_tool = ToolDefinition(
+    name='get_time',
+    description='Get current time for a city',
+    parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+)
+population_tool = ToolDefinition(
+    name='get_population',
+    description='Get population for a city',
+    parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+)
 
 settings: ModelSettings = {'tool_choice': ['get_weather']}  # Only allow get_weather
 params = ModelRequestParameters(
@@ -117,11 +150,26 @@ response = model_request_sync(
 
 Restricts function tools while keeping output tools available. This is the recommended way to control tool choice in agent runs with structured output.
 
-```python
+```python {test="skip"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
+
+
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f'Weather in {city}: sunny'
+
+
+def get_time(city: str) -> str:
+    """Get current time for a city."""
+    return f'Current time in {city}: 12:00'
+
+
+def get_population(city: str) -> str:
+    """Get population for a city."""
+    return f'Population of {city}: 1 million'
 
 
 class CityInfo(BaseModel):
@@ -166,6 +214,12 @@ Full support for all tool choice options. When specifying multiple tools, OpenAI
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
+
+def my_tool(query: str) -> str:
+    """A custom tool."""
+    return f'Result for {query}'
+
+
 agent = Agent('anthropic:claude-sonnet-4-5', tools=[my_tool])
 
 # This will raise UserError if thinking is enabled
@@ -202,9 +256,15 @@ Full support using Gemini's `allowed_function_names` for tool restrictions.
 
 Disable tools when approaching token limits to prevent `UsageLimitExceeded` errors:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
+
+
+def expensive_tool(data: str) -> str:
+    """An expensive tool that uses many tokens."""
+    return f'Analysis of {data}'
+
 
 agent = Agent('openai:gpt-4o', tools=[expensive_tool])
 
@@ -223,7 +283,7 @@ result = agent.run_sync(
 
 Force specific tools in sequence for controlled workflows:
 
-```python
+```python {test="skip" lint="skip"}
 from pydantic_ai.direct import model_request_sync
 from pydantic_ai.settings import ModelSettings
 
@@ -244,11 +304,26 @@ response = model_request_sync('openai:gpt-4o', final_messages, model_settings=se
 
 Use `ToolsPlusOutput` when you need both tool restrictions and structured output:
 
-```python
+```python {test="skip"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ToolsPlusOutput
+
+
+def fetch_data(source: str) -> str:
+    """Fetch data from a source."""
+    return f'Data from {source}'
+
+
+def analyze_data(data: str) -> str:
+    """Analyze the provided data."""
+    return f'Analysis of {data}'
+
+
+def format_report(content: str) -> str:
+    """Format content into a report."""
+    return f'Report: {content}'
 
 
 class Report(BaseModel):
