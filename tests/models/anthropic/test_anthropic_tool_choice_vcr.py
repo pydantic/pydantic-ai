@@ -1274,7 +1274,7 @@ class TestThinkingModeRestrictions:
             allow_text_output=True,
         )
 
-        with pytest.raises(UserError, match="Anthropic does not support `tool_choice='required'` with thinking mode"):
+        with pytest.raises(UserError, match="tool_choice='required'.*thinking mode"):
             await anthropic_model.request(
                 [ModelRequest.user_text_prompt('Hello')],
                 settings,

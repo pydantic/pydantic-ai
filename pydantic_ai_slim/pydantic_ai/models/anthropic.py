@@ -684,7 +684,7 @@ class AnthropicModel(Model):
         if validated_tool_choice == 'auto':
             tool_choice = {'type': 'auto'}
         elif validated_tool_choice == 'required':
-            _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
+            _raise_incompatible_thinking_and_tool_forcing(thinking_enabled, "tool_choice='required'")
             tool_choice = {'type': 'any'}
         elif validated_tool_choice == 'none':
             tool_choice = {'type': 'none'}
@@ -1461,9 +1461,8 @@ def _map_mcp_server_result_block(
     )
 
 
-def _raise_incompatible_thinking_and_tool_forcing(thinking_enabled: bool):
+def _raise_incompatible_thinking_and_tool_forcing(thinking_enabled: bool, context: str = 'forcing specific tools'):
     if thinking_enabled:
         raise UserError(
-            'Anthropic does not support forcing specific tools with thinking mode. '
-            "Disable thinking or use `tool_choice='auto'`."
+            f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
         )
