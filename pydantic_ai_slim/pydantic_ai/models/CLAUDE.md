@@ -50,8 +50,10 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryImage
 
+model = 'test'
+
 def get_weather(city: str) -> str:
-    '''Get weather for a city.'''
+    """Get weather for a city."""
     return f'Sunny in {city}'
 
 class StructuredOutput(BaseModel):
