@@ -1661,18 +1661,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         run_ctx = RunContext(deps=deps, model=model_used, usage=_usage.RunUsage())
 
-        # Include both regular and output tools
-        from ..toolsets import CombinedToolset
+        toolset = self._get_toolset()
 
-        all_toolsets = [*self.toolsets]
-        if output_toolset := getattr(self, '_output_toolset', None):
-            all_toolsets.append(output_toolset)
+        all_tool_defs = await toolset.get_all_tool_definitions(run_ctx)
 
-        toolset = CombinedToolset(all_toolsets)
-        tools = await toolset.get_tools(run_ctx)
-
-        for tool_name, toolset_tool in tools.items():
-            tool_def = toolset_tool.tool_def
+        for tool_def in all_tool_defs:
+            tool_name = tool_def.name
             tool_config[tool_name] = _prompt_config.ToolConfig(
                 name=tool_name,
                 description=tool_def.description,

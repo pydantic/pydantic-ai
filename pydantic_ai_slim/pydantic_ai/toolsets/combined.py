@@ -9,6 +9,8 @@ from typing import Any
 
 from typing_extensions import Self
 
+from pydantic_ai.tools import ToolDefinition
+
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from .abstract import AbstractToolset, ToolsetTool
@@ -83,12 +85,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 )
         return all_tools
 
-    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
         toolset_tool_definitions = await asyncio.gather(
             *(toolset.get_all_tool_definitions(ctx) for toolset in self.toolsets)
         )
 
-        return toolset_tool_definitions
+        return [
+            tool_def for toolset_tool_definitions in toolset_tool_definitions for tool_def in toolset_tool_definitions
+        ]
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
