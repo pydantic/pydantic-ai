@@ -57,7 +57,8 @@ class ToolManager(Generic[AgentDepsT]):
                 failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1
                 for failed_tool_name in self.failed_tools
             }
-            ctx = replace(ctx, retries=retries)
+            tool_usage = self.ctx.tool_usage.copy()
+            ctx = replace(ctx, retries=retries, tool_usage=tool_usage)
 
         return self.__class__(
             toolset=self.toolset,

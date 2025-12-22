@@ -822,7 +822,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
-        # tool_usage=ctx.state.tool_usage,
         max_tools_uses=ctx.deps.max_tools_uses,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
