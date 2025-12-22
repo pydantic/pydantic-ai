@@ -673,7 +673,7 @@ except UsageLimitExceeded as e:
 
 If you want to limit tool calls but let the model decide how to proceed instead of raising an error, use the `max_tool_calls` parameter. This is a "soft" limit that returns a message to the model when exceeded, rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
 
-```py {test="skip"}
+```py
 from pydantic_ai import Agent
 
 agent = Agent('anthropic:claude-sonnet-4-5', max_tool_calls=2)  # (1)!
@@ -694,7 +694,7 @@ When `max_tool_calls` is exceeded, instead of executing the tool, the agent retu
 
 You can also override `max_tool_calls` at run time:
 
-```py {test="skip"}
+```
 from pydantic_ai import Agent
 
 agent = Agent('anthropic:claude-sonnet-4-5', max_tool_calls=5)  # Default limit
