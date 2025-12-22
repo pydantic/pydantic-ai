@@ -228,7 +228,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
 
-                case ActivityMessage():  # pragma: no cover
+                case ActivityMessage():
                     pass
 
         return builder.messages

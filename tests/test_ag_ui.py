@@ -341,10 +341,10 @@ async def test_multiple_messages() -> None:
             content='Second message',
         ),
         ActivityMessage(
-            id="msg_6",
-            activity_type="testing",
+            id='msg_6',
+            activity_type='testing',
             content={
-                "test_field": None,
+                'test_field': None,
             },
         ),
     )
