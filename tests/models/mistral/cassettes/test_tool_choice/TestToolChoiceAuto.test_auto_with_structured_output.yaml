@@ -63,7 +63,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-d091-7e0b-8dbc-f4cdd2444255
+      - 019b466e-5845-7f12-b93e-35204e81e8b4
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -79,10 +79,10 @@ interactions:
           - function:
               arguments: '{"city": "Tokyo"}'
               name: get_weather
-            id: zjAXZbBms
+            id: dKE8phQYQ
             index: 0
-      created: 1766185816
-      id: efed5ae7a3bd44d0a704d837d389bcce
+      created: 1766413195
+      id: 843276e476d04ab9bbbc6e36d285ce3b
       model: mistral-large-latest
       object: chat.completion
       usage:
@@ -105,8 +105,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=dB0QdN3uT.Mx033z95NNb5fOGJVfK.FQ01081_x_CEc-1766185816-1.0.1.1-gKzPfOAKWorbh8PVFnGNnBKefiMKYebS1F9UPycOUPm_Xvfts7Sx4tjCcHJ1rt4v2Gqq6I8RnnZG8dsIjJLmzRxeubc84hii6gvtEZkz_s4;
-        _cfuvid=DB5eZgepBXaDwc5WqOdO2t.YJjwKgvS4e3b5.9sEECM-1766185816697-0.0.1.1-604800000
+      - __cf_bm=6z_qmGYLxJqqc2SrPxxVxkWEmv57xGmwasM1sG4ulIc-1766413195-1.0.1.1-w3SIM8aweXWAj53zYRXuItER2vwtdChhrX.QHaR06G7ZPeoKiUuT6ReHo8JiQeIWGGcDE1xtmjg09UaCXzkfUIANcLFFCGWW8br.iAiVVaI;
+        _cfuvid=PqOJyfoh1ligWZmqkojIB1J0YrkZjyq1wWcLobY88Uc-1766413195853-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
@@ -121,12 +121,12 @@ interactions:
         - function:
             arguments: '{"city": "Tokyo"}'
             name: get_weather
-          id: zjAXZbBms
+          id: dKE8phQYQ
           index: 0
           type: function
       - content: Sunny, 22C in Tokyo
         role: tool
-        tool_call_id: zjAXZbBms
+        tool_call_id: dKE8phQYQ
       model: mistral-large-latest
       n: 1
       stream: false
@@ -172,7 +172,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-d2f5-79e0-a793-80fe57113238
+      - 019b466e-5ae0-788e-bbcd-7e8bf2d8936d
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -188,10 +188,10 @@ interactions:
           - function:
               arguments: '{"city": "Tokyo", "summary": "The current weather in Tokyo is sunny with a temperature of 22°C."}'
               name: final_result
-            id: XBODJfZsN
+            id: Zm2jqOwWa
             index: 0
-      created: 1766185816
-      id: 0b59697c289446d3911550917a5d2d29
+      created: 1766413196
+      id: 69a04f8becb74e65ad817a7309e11321
       model: mistral-large-latest
       object: chat.completion
       usage:

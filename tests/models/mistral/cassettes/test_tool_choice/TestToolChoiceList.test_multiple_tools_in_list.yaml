@@ -58,7 +58,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-feab-7351-a73d-43eea052e332
+      - 019b466e-75c4-7605-bf2b-70dea41d12b2
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -74,10 +74,10 @@ interactions:
           - function:
               arguments: '{"timezone": "Asia/Tokyo"}'
               name: get_time
-            id: 6Zd8OwzHU
+            id: B4aonuKWf
             index: 0
-      created: 1766185828
-      id: 5df4051c706d45338f59c20a9ed04d23
+      created: 1766413202
+      id: 75614b897bad4e0ba87e38bcee257f1e
       model: mistral-large-latest
       object: chat.completion
       usage:

@@ -52,7 +52,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e1-3d23-700e-ad45-18967c761dda
+      - 019b466e-b828-7a67-ad96-cb9ca6da9ecd
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -68,10 +68,10 @@ interactions:
           - function:
               arguments: '{"city": "Seattle", "summary": "A brief overview of the city."}'
               name: final_result
-            id: RwG6Mj9ll
+            id: QGVN6nMrO
             index: 0
-      created: 1766185844
-      id: 648f3fc0ba944749a3a518dcdb6688d9
+      created: 1766413219
+      id: e027441d4f6940ce880a32e8c8e4b350
       model: mistral-large-latest
       object: chat.completion
       usage:

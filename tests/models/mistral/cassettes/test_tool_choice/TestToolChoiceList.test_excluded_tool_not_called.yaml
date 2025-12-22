@@ -48,7 +48,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e1-0296-7a79-81ac-9dbd567a09b1
+      - 019b466e-7a20-7bd3-b3fa-80949ce53cb4
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -64,10 +64,10 @@ interactions:
           - function:
               arguments: '{"city": "London"}'
               name: get_weather
-            id: rSFR5s2er
+            id: fjE67l0q3
             index: 0
-      created: 1766185829
-      id: a5f9a60f9b36446e8c19d4cde64d5835
+      created: 1766413204
+      id: 8cee5dd754ad42f694cf9d8cc9e2eb0f
       model: mistral-large-latest
       object: chat.completion
       usage:

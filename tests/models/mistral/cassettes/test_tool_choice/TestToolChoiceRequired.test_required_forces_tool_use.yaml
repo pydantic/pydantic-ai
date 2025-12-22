@@ -48,7 +48,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-f450-723d-a2af-64ad771f8ece
+      - 019b466e-6916-75c4-92d0-d92904b92f4e
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -64,10 +64,10 @@ interactions:
           - function:
               arguments: '{"city": "Paris"}'
               name: get_weather
-            id: AdgHigVqa
+            id: YFSMyukN7
             index: 0
-      created: 1766185825
-      id: 0d9c4a494b0446d5b8a9a3d856fdb090
+      created: 1766413199
+      id: d32a2330c862421fa9a4ccb51a2784e2
       model: mistral-large-latest
       object: chat.completion
       usage:

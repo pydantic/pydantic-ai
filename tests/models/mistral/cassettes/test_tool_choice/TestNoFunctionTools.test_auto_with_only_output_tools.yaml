@@ -48,11 +48,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1641'
+      - '1292'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e1-14fd-7589-b3d1-785f5d121e4d
+      - 019b466e-8dbb-7433-8d43-4e99b2cce98a
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -70,25 +70,22 @@ interactions:
                 in the state of New York. It is a global hub for finance, culture, art, fashion, and entertainment. NYC is
                 composed of five boroughs: Manhattan, Brooklyn, Queens, The Bronx, and Staten Island. \n\nKey highlights include:\n1.
                 **Iconic Landmarks**: Times Square, Statue of Liberty, Empire State Building, Central Park, and Broadway.\n2.
-                **Cultural Diversity**: Home to people from all over the world, offering a rich tapestry of cultures, cuisines,
-                and languages.\n3. **Economic Hub**: Wall Street, located in Lower Manhattan, is the heart of the financial
-                world.\n4. **Arts and Entertainment**: World-class museums like the Metropolitan Museum of Art, MoMA, and
-                the American Museum of Natural History. Broadway is famous for its theater productions.\n5. **Transportation**:
-                An extensive subway system, buses, and iconic yellow taxis make it easy to navigate the city.\n6. **Education
-                and Research**: Home to prestigious institutions like Columbia University, New York University (NYU), and
-                The Juilliard School.\n7. **History**: Played a significant role in the history of the United States, from
-                early colonial times to the present day."}'
+                **Cultural Diversity**: Home to people from all over the world, with over 800 languages spoken.\n3. **Economy**:
+                A major center for banking, finance, media, and technology.\n4. **Arts and Entertainment**: World-class museums
+                like the Metropolitan Museum of Art, theaters, music venues, and galleries.\n5. **History**: Founded in 1624
+                as a trading post by the Dutch, it played a pivotal role in the American Revolution and the growth of the
+                United States."}'
               name: final_result
-            id: rUlHHlegW
+            id: 8IdErjooG
             index: 0
-      created: 1766185833
-      id: 69a9386fcfe34b1e9791d543bf0d1495
+      created: 1766413209
+      id: 435bbfc6c9ac483ebecb00b8c2ef9539
       model: mistral-large-latest
       object: chat.completion
       usage:
-        completion_tokens: 290
+        completion_tokens: 223
         prompt_tokens: 84
-        total_tokens: 374
+        total_tokens: 307
     status:
       code: 200
       message: OK

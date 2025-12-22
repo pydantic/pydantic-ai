@@ -54,10 +54,12 @@ from ._tool_choice import validate_tool_choice
 try:
     from mistralai import (
         UNSET,
+        AudioChunk as MistralAudioChunk,
         CompletionChunk as MistralCompletionChunk,
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
         DocumentURLChunk as MistralDocumentURLChunk,
+        FileChunk as MistralFileChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
@@ -809,10 +811,16 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
                 for thought in chunk.thinking:
                     if thought.type == 'text':  # pragma: no branch
                         thinking.append(thought.text)
+            elif isinstance(chunk, MistralReferenceChunk):  # pragma: no cover
+                # References are not yet supported
+                pass
+            elif isinstance(
+                chunk, MistralImageURLChunk | MistralDocumentURLChunk | MistralFileChunk | MistralAudioChunk
+            ):  # pragma: no cover
+                # Media is not yet supported
+                pass
             else:
-                assert False, (  # pragma: no cover
-                    f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
-                )
+                assert_never(chunk)
     elif isinstance(content, str):
         text = content
 

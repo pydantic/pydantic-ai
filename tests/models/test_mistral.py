@@ -1934,14 +1934,14 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='GJYBCIkcS')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='k6TCh2fdA')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'tool_calls'},
-                provider_response_id='412174432ea945889703eac58b44ae35',
+                provider_response_id='e52fbed4da1041fcb50b5c87400da122',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1950,7 +1950,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='GJYBCIkcS',
+                        tool_call_id='k6TCh2fdA',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1975,7 +1975,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='049b5c7704554d3396e727a95cb6d947',
+                provider_response_id='005f5f5d976e4e67a019372efa8efe05',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2350,37 +2350,41 @@ async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mist
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='Okay, the user is asking how to cross the street. I know that crossing the street safely involves a few key steps: first, look both ways to check for oncoming traffic; second, use a crosswalk if one is available; third, obey any traffic signals or signs that may be present; and finally, proceed with caution until you have safely reached the other side. Let me compile this information into a clear and concise response.'
+                        content="Okay, the user is asking how to cross the street. This is a basic safety question. I should provide clear and concise instructions on how to safely cross the street. Let's recall the basic steps: first, look both ways to check for oncoming traffic; second, use a crosswalk if available; third, obey traffic signals if they are present; and finally, cross the street carefully and quickly."
                     ),
                     TextPart(
                         content="""\
 To cross the street safely, follow these steps:
 
-1. Look both ways to check for oncoming traffic.
-2. Use a crosswalk if one is available.
-3. Obey any traffic signals or signs that may be present.
-4. Proceed with caution until you have safely reached the other side.
+1. Stop at the edge of the street and look both ways to check for oncoming traffic.
+2. If there is a crosswalk, use it.
+3. Obey any traffic signals or signs that are present.
+4. When it is safe, cross the street carefully and quickly.
+
+Always be aware of your surroundings and make sure drivers see you before you cross.
 
 ```markdown
 To cross the street safely, follow these steps:
 
-1. Look both ways to check for oncoming traffic.
-2. Use a crosswalk if one is available.
-3. Obey any traffic signals or signs that may be present.
-4. Proceed with caution until you have safely reached the other side.
+1. Stop at the edge of the street and look both ways to check for oncoming traffic.
+2. If there is a crosswalk, use it.
+3. Obey any traffic signals or signs that are present.
+4. When it is safe, cross the street carefully and quickly.
+
+Always be aware of your surroundings and make sure drivers see you before you cross.
 ```
 
-By following these steps, you can ensure a safe crossing.\
+If you have any specific context or additional details, feel free to share!\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=232),
+                usage=RequestUsage(input_tokens=10, output_tokens=275),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='9f9d90210f194076abeee223863eaaf0',
+                provider_response_id='1474ffaa42904bf3b040345bc85c775b',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

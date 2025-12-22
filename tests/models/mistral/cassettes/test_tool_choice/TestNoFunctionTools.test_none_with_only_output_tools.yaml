@@ -52,7 +52,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e1-2b7a-7911-9d5b-81593383bfc5
+      - 019b466e-a3f6-717a-99ab-749ee6a5db45
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -68,10 +68,10 @@ interactions:
           - function:
               arguments: '{"city": "Boston", "summary": "Overview"}'
               name: final_result
-            id: YOXltgX0e
+            id: 4m4MYUhpn
             index: 0
-      created: 1766185839
-      id: 2bba8e3d4c2f4e7096ffd6c6e71de3c1
+      created: 1766413214
+      id: 89ba595064c1465aae48e1fd6e998eba
       model: mistral-large-latest
       object: chat.completion
       usage:

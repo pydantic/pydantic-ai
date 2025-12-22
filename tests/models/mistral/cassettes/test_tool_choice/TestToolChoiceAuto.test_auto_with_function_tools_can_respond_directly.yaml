@@ -49,7 +49,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-c746-7f83-91aa-a38c5aa6ed62
+      - 019b466e-4d97-7a7c-86ad-8091f050f584
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -62,8 +62,8 @@ interactions:
           content: Hi!
           role: assistant
           tool_calls: null
-      created: 1766185813
-      id: 988d2b5faff746c2b9ab5989ac6bdc80
+      created: 1766413192
+      id: 6389b447fe3a41e3b5c07d9a0e0bfe47
       model: mistral-large-latest
       object: chat.completion
       usage:

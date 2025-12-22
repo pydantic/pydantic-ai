@@ -48,11 +48,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '628'
+      - '683'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-edcf-7e5d-8bf8-0831d409e4bd
+      - 019b466e-600e-7aa8-b0ab-08c3449371c8
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -67,19 +67,19 @@ interactions:
           tool_calls:
           - function:
               arguments: '{"city": "Madrid", "summary": "Madrid is the capital and largest city of Spain, located in the heart
-                of the Iberian Peninsula. It is known for its rich history, vibrant culture, and significant influence in
-                art, politics, and economics."}'
+                of the Iberian Peninsula. It is known for its rich history, vibrant culture, and stunning architecture. Madrid
+                is a major global city and a hub for politics, economics, and culture in Spain."}'
               name: final_result
-            id: YaQ6em3Ag
+            id: A82EnEevK
             index: 0
-      created: 1766185823
-      id: 8a0c7091edc04c8f9f56e4bda5da6b81
+      created: 1766413197
+      id: 3162fbbad2a448518cf2d00d7f779968
       model: mistral-large-latest
       object: chat.completion
       usage:
-        completion_tokens: 58
+        completion_tokens: 70
         prompt_tokens: 83
-        total_tokens: 141
+        total_tokens: 153
     status:
       code: 200
       message: OK

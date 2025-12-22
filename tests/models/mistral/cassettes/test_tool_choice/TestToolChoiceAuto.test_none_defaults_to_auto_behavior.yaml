@@ -49,7 +49,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-ca6d-7643-ad02-16ebf8d98c0a
+      - 019b466e-515f-7e16-b787-e0288832dc7c
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -65,10 +65,10 @@ interactions:
           - function:
               arguments: '{"city": "London"}'
               name: get_weather
-            id: UHzAInrxV
+            id: TCWfTKJco
             index: 0
-      created: 1766185814
-      id: 151cbc95f74d407bb6601d3275936337
+      created: 1766413193
+      id: 499301667a084844bc3e57ca629e57d1
       model: mistral-large-latest
       object: chat.completion
       usage:
@@ -91,8 +91,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=PStqjQqLrKwF1HmFN_sqwMhFBPgrBf6AI_wvpORMSlw-1766185815-1.0.1.1-BBUHY0t_Jq4_XgChc7MmUUrMvmVl0.WHkfhTOWo9gqWkL.NAABG6_4H1oFgktBPTXRmTXrazCiYbJklqh6NRIB980mlCrfYjgxnLDrqL_x8;
-        _cfuvid=gqzXWZA2TCApcctiPxQLd2kyYUxmkwH5KmZF3SmZEvc-1766185815107-0.0.1.1-604800000
+      - __cf_bm=XVeDUv_y._3i7wYuQ_ouP37d.90zg89aCdNSYgvex.0-1766413194-1.0.1.1-qe2OHxiJ0A3t5MO3bPWjhFCHkNjEBCYwCxfNzruGlHkWMimwROCOtBXaM3DpYLKkLxaLderggAyuP0yTwEPMwlHL4wjNY8rjhkvekU_dNGQ;
+        _cfuvid=oGzjZ1CUhQk4GAZBPfgeKsSraVJ6ns3jPTQhah9Dloo-1766413194077-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
@@ -107,12 +107,12 @@ interactions:
         - function:
             arguments: '{"city": "London"}'
             name: get_weather
-          id: UHzAInrxV
+          id: TCWfTKJco
           index: 0
           type: function
       - content: Sunny, 22C in London
         role: tool
-        tool_call_id: UHzAInrxV
+        tool_call_id: TCWfTKJco
       model: mistral-large-latest
       n: 1
       stream: false
@@ -144,7 +144,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e0-ccc4-7761-97af-cca91fc33a6a
+      - 019b466e-53f6-74ff-bf22-5fc6dc1537f8
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -157,8 +157,8 @@ interactions:
           content: The current weather in **London** is **sunny** with a temperature of **22°C**.
           role: assistant
           tool_calls: null
-      created: 1766185815
-      id: ac1e3a26b804474fb2982b3d4578a877
+      created: 1766413194
+      id: 9eedeb3a702a4560bfa0f58b0082fcc8
       model: mistral-large-latest
       object: chat.completion
       usage:
