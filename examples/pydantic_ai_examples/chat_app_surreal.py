@@ -46,6 +46,8 @@ from pydantic_ai import (
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
+# TODO: enable this once https://github.com/pydantic/logfire/pull/1573 is released
+# logfire.instrument_surrealdb()
 
 agent = Agent('openai:gpt-5')
 THIS_DIR = Path(__file__).parent
