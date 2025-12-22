@@ -109,22 +109,8 @@ class GroqModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # The groq_reasoning_effort parameter controls the level of effort the model will put into reasoning.
-    # For Qwen 3 32B: "none" disables reasoning, "default" enables reasoning.
-    # For GPT-OSS 20B/120B: "low", "medium", "high" adjust the reasoning token usage.
-    groq_reasoning_effort: Literal[
-        "none",     # Qwen: Disable reasoning
-        "default",  # Qwen: Enable reasoning
-        "low",      # GPT-OSS: Low effort
-        "medium",   # GPT-OSS: Medium effort
-        "high"      # GPT-OSS: High effort
-    ]
-
-    # Controls whether reasoning is included in the response.
-    # If True (the default), a dedicated `message.reasoning` field is present in the response.
-    # If False, reasoning is excluded.
-    # Note: `groq_include_reasoning` cannot be used together with `groq_reasoning_format`—these settings are mutually exclusive.
-    groq_include_reasoning: bool
+    reasoning_effort: Literal["none", "default",
+                              "low", "medium", "high"] = 'medium'
 
     groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
     """The format of the reasoning output.
@@ -321,13 +307,12 @@ class GroqModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                reasoning_format=model_settings.get(
+                    'groq_reasoning_format', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body', NOT_GIVEN),
-                reasoning_format=model_settings.get('groq_reasoning_format', NOT_GIVEN),
-                reasoning_effort=model_settings.get('groq_reasoning_effort', NOT_GIVEN),
-                include_reasoning=model_settings.get('groq_include_reasoning', NOT_GIVEN),
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
