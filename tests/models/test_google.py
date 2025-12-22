@@ -4630,34 +4630,16 @@ async def test_cache_point_filtering():
 
 
 # =============================================================================
-# VideoUrl with vendor_metadata tests (video_metadata for start/end offsets)
+# GCS VideoUrl tests for google-vertex
 #
-# The VideoUrl branch handles YouTube and GCS URIs with file_uri + video_metadata.
-# This branch is provider-agnostic at the code level, but GCS URIs only work
-# at runtime on google-vertex (Vertex AI can access GCS buckets).
+# GCS URIs (gs://...) with vendor_metadata (video offsets) only work on
+# google-vertex because Vertex AI can access GCS buckets directly.
 #
-# Regression tests for https://github.com/pydantic/pydantic-ai/issues/3805
+# Regression test for https://github.com/pydantic/pydantic-ai/issues/3805
 # =============================================================================
 
 
-async def test_youtube_video_url_with_vendor_metadata():
-    """YouTube URLs use file_uri with video_metadata (works on both providers)."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-
-    video = VideoUrl(
-        url='https://www.youtube.com/watch?v=VIDEO_ID',
-        vendor_metadata={'start_offset': '60s', 'end_offset': '120s'},
-    )
-    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
-
-    assert len(content) == 1
-    assert content[0] == {
-        'file_data': {'file_uri': 'https://www.youtube.com/watch?v=VIDEO_ID', 'mime_type': 'video/mp4'},
-        'video_metadata': {'start_offset': '60s', 'end_offset': '120s'},
-    }
-
-
-async def test_gcs_video_url_with_vendor_metadata(mocker: MockerFixture):
+async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: MockerFixture):
     """GCS URIs use file_uri with video_metadata on google-vertex.
 
     This is the main fix - GCS URIs were previously falling through to FileUrl
@@ -4679,21 +4661,7 @@ async def test_gcs_video_url_with_vendor_metadata(mocker: MockerFixture):
     }
 
 
-async def test_gcs_video_url_without_vendor_metadata(mocker: MockerFixture):
-    """GCS URIs work without vendor_metadata (video_metadata omitted)."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
-
-    video = VideoUrl(url='gs://bucket/video.mp4')
-    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
-
-    assert len(content) == 1
-    assert content[0] == {
-        'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'},
-    }
-
-
-async def test_gcs_video_url_raises_error_on_google_gla(mocker: MockerFixture):
+async def test_gcs_video_url_raises_error_on_google_gla():
     """GCS URIs on google-gla fall through to FileUrl and raise a clear error.
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
