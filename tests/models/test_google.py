@@ -4629,37 +4629,26 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
-async def test_video_url_vendor_metadata_passed_for_gcs():
-    """Test that vendor_metadata is passed as video_metadata for GCS URIs, not just YouTube.
+# =============================================================================
+# VideoUrl with vendor_metadata tests (video_metadata for start/end offsets)
+#
+# The VideoUrl branch handles YouTube and GCS URIs with file_uri + video_metadata.
+# This branch is provider-agnostic at the code level, but GCS URIs only work
+# at runtime on google-vertex (Vertex AI can access GCS buckets).
+#
+# Regression tests for https://github.com/pydantic/pydantic-ai/issues/3805
+# =============================================================================
 
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/3805
-    """
+
+async def test_youtube_video_url_with_vendor_metadata():
+    """YouTube URLs use file_uri with video_metadata (works on both providers)."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
-    # Test GCS URI with vendor_metadata
-    gcs_video = VideoUrl(
-        url='gs://bucket/video.mp4',
-        vendor_metadata={'start_offset': '300s', 'end_offset': '330s'},
-    )
-    content = await model._map_user_prompt(UserPromptPart(content=[gcs_video]))  # pyright: ignore[reportPrivateUsage]
-
-    assert len(content) == 1
-    assert content[0] == {
-        'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'},
-        'video_metadata': {'start_offset': '300s', 'end_offset': '330s'},
-    }
-
-
-async def test_video_url_vendor_metadata_passed_for_youtube():
-    """Test that vendor_metadata is still passed for YouTube URLs."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-
-    # Test YouTube URL with vendor_metadata
-    youtube_video = VideoUrl(
+    video = VideoUrl(
         url='https://www.youtube.com/watch?v=VIDEO_ID',
         vendor_metadata={'start_offset': '60s', 'end_offset': '120s'},
     )
-    content = await model._map_user_prompt(UserPromptPart(content=[youtube_video]))  # pyright: ignore[reportPrivateUsage]
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
     assert len(content) == 1
     assert content[0] == {
@@ -4668,13 +4657,35 @@ async def test_video_url_vendor_metadata_passed_for_youtube():
     }
 
 
-async def test_video_url_without_vendor_metadata():
-    """Test that VideoUrl without vendor_metadata doesn't include video_metadata."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+async def test_gcs_video_url_with_vendor_metadata(mocker: MockerFixture):
+    """GCS URIs use file_uri with video_metadata on google-vertex.
 
-    # Test GCS URI without vendor_metadata
-    gcs_video = VideoUrl(url='gs://bucket/video.mp4')
-    content = await model._map_user_prompt(UserPromptPart(content=[gcs_video]))  # pyright: ignore[reportPrivateUsage]
+    This is the main fix - GCS URIs were previously falling through to FileUrl
+    handling which doesn't pass vendor_metadata as video_metadata.
+    """
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    video = VideoUrl(
+        url='gs://bucket/video.mp4',
+        vendor_metadata={'start_offset': '300s', 'end_offset': '330s'},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '300s', 'end_offset': '330s'},
+    }
+
+
+async def test_gcs_video_url_without_vendor_metadata(mocker: MockerFixture):
+    """GCS URIs work without vendor_metadata (video_metadata omitted)."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    video = VideoUrl(url='gs://bucket/video.mp4')
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
     assert len(content) == 1
     assert content[0] == {
@@ -4682,47 +4693,46 @@ async def test_video_url_without_vendor_metadata():
     }
 
 
-async def test_http_video_url_falls_through_to_download_on_google_gla(mocker: MockerFixture):
-    """Test that HTTP VideoUrls (not YouTube/GCS) fall through to FileUrl handling on google-gla.
+# =============================================================================
+# HTTP VideoUrl fallback tests (not YouTube, not GCS)
+#
+# HTTP VideoUrls fall through to FileUrl handling, which is provider-specific:
+# - google-gla: downloads the video and sends inline_data
+# - google-vertex: uses file_uri directly (no download)
+# =============================================================================
 
-    google-gla cannot access arbitrary HTTP URLs via file_uri, so they must be downloaded.
-    """
+
+async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
+    """HTTP VideoUrls are downloaded on google-gla (cannot access arbitrary URLs via file_uri)."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
 
-    # Mock download_item to avoid actual HTTP request
     mock_download = mocker.patch(
         'pydantic_ai.models.google.download_item',
         return_value={'data': b'fake video data', 'data_type': 'video/mp4'},
     )
 
-    # HTTP VideoUrl (not YouTube, not GCS) should fall through to FileUrl handling
-    http_video = VideoUrl(
+    # Note: vendor_metadata is lost when downloading (FileUrl doesn't support it)
+    video = VideoUrl(
         url='https://example.com/video.mp4',
-        vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},  # This will be lost on download
+        vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},
     )
-    content = await model._map_user_prompt(UserPromptPart(content=[http_video]))  # pyright: ignore[reportPrivateUsage]
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
-    # Should have called download_item (fell through to FileUrl handling)
     mock_download.assert_called_once()
-
-    # Result should be inline_data (downloaded), not file_data
     assert len(content) == 1
     assert 'inline_data' in content[0]
     assert 'file_data' not in content[0]
+    assert 'video_metadata' not in content[0]  # Lost on download
 
 
 async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
-    """Test that HTTP VideoUrls use file_uri directly on google-vertex (no download needed)."""
+    """HTTP VideoUrls use file_uri directly on google-vertex (no download)."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
-
-    # Mock system to be google-vertex
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
-    # HTTP VideoUrl on google-vertex should use file_uri directly (FileUrl branch, no download)
-    http_video = VideoUrl(url='https://example.com/video.mp4')
-    content = await model._map_user_prompt(UserPromptPart(content=[http_video]))  # pyright: ignore[reportPrivateUsage]
+    video = VideoUrl(url='https://example.com/video.mp4')
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
-    # Should use file_data (no download on vertex)
     assert len(content) == 1
     assert content[0] == {
         'file_data': {'file_uri': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
