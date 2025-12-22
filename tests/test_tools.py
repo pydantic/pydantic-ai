@@ -1413,7 +1413,7 @@ def test_tool_max_uses():
                 parts=[
                     ToolReturnPart(
                         tool_name='tool_with_max_use',
-                        content='Tool call limit reached for tool "tool_with_max_use".',
+                        content='Tool use limit reached for tool "tool_with_max_use".',
                         tool_call_id='call_3',
                         timestamp=IsDatetime(),
                     ),

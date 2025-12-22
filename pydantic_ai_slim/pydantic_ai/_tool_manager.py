@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -285,7 +284,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         return tool_result
 
-    def get_max_use_of_tool(self, tool_name: str) -> int | None:
+    def get_max_uses_of_tool(self, tool_name: str) -> int | None:
         """Get the maximum number of uses allowed for a given tool, or `None` if unlimited."""
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -296,7 +295,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         return tool.max_uses
 
-    def get_current_use_of_tool(self, tool_name: str) -> int:
+    def get_current_uses_of_tool(self, tool_name: str) -> int:
         """Get the current number of uses of a given tool."""
         ctx = self._assert_ctx()
 
@@ -313,10 +312,11 @@ class ToolManager(Generic[AgentDepsT]):
                 return False
         return True
 
-    def can_call_tool(self, tool_name: str, tool_call_counts: Counter[str]) -> bool:
-        current_tool_use = self.get_current_use_of_tool(tool_name)
-        max_tools_uses = self.get_max_use_of_tool(tool_name)
-        if max_tools_uses is not None and current_tool_use + tool_call_counts[tool_name] > max_tools_uses:
+    def can_use_tool(self, tool_name: str, tool_use_count: int) -> bool:
+        """Check if a tool can be used within the max_uses limit."""
+        current_tool_uses = self.get_current_uses_of_tool(tool_name)
+        max_uses = self.get_max_uses_of_tool(tool_name)
+        if max_uses is not None and current_tool_uses + tool_use_count > max_uses:
             return False
         return True
 

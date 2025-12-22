@@ -1045,7 +1045,7 @@ async def _call_tools(
         projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
-    # Checks for soft limits(if any set on total tools)
+    # Checks for total tool calls limit
     can_make_tool_calls = tool_manager.can_make_tool_calls(len(tool_calls), deepcopy(usage))
 
     calls_to_run: list[_messages.ToolCallPart] = []
@@ -1054,14 +1054,20 @@ async def _call_tools(
     tool_call_counts = Counter(call.tool_name for call in tool_calls)
 
     for call in tool_calls:
-        current_tool_use = tool_manager.get_current_use_of_tool(call.tool_name)
-        max_tools_uses = tool_manager.get_max_use_of_tool(call.tool_name)
-        if (
-            max_tools_uses is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tools_uses
-        ) or not can_make_tool_calls:
+        # Seprarating to allow for different return parts for each case(When supported by #3656)
+        if not can_make_tool_calls:
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content=f'Tool call limit reached for tool "{call.tool_name}".',
+                content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
+                tool_call_id=call.tool_call_id,
+                # TODO: Add return kind and prompt_config here once supported by #3656
+            )
+            output_parts.append(return_part)
+            yield _messages.FunctionToolResultEvent(return_part)
+        elif not tool_manager.can_use_tool(call.tool_name, tool_call_counts[call.tool_name]):
+            return_part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=f'Tool use limit reached for tool "{call.tool_name}".',
                 tool_call_id=call.tool_call_id,
                 # TODO: Add return kind and prompt_config here once supported by #3656
             )
