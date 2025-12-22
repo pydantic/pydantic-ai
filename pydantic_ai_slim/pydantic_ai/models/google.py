@@ -693,6 +693,8 @@ class GoogleModel(Model):
                     # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
                     # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
                     # Other URLs fall through to FileUrl handling (download for google-gla)
+                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
+                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
                     if item.vendor_metadata:
