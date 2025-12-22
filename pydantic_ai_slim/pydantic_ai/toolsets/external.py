@@ -46,6 +46,9 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         raise NotImplementedError('External tools cannot be called directly')
 
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        return self.tool_defs
+
 
 @deprecated('`DeferredToolset` is deprecated, use `ExternalToolset` instead')
 class DeferredToolset(ExternalToolset):

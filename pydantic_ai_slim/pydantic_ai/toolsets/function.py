@@ -398,5 +398,5 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             if not tool_def:
                 continue
             tool_definitions.append(tool_def)
-        
+
         return tool_definitions
