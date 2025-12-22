@@ -645,6 +645,19 @@ async def test_prefect_agent():
     assert external_toolset.id == 'external'
 
 
+def test_prefect_wrapper_visit_and_replace():
+    """Prefect wrapper toolsets should not be replaced by visit_and_replace."""
+    toolsets = complex_prefect_agent.toolsets
+    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
+    assert len(prefect_function_toolsets) >= 1
+
+    prefect_toolset = prefect_function_toolsets[0]
+
+    # visit_and_replace should return self for Prefect wrappers
+    result = prefect_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is prefect_toolset
+
+
 async def test_prefect_agent_run(allow_model_requests: None) -> None:
     """Test that agent.run() works (auto-wrapped as flow)."""
     result = await simple_prefect_agent.run('What is the capital of Mexico?')

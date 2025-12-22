@@ -598,7 +598,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 ):
                                     pass
 
-                                # For backwards compatibility, append a new ModelRequest using the tool returns and retries
+                                # To allow this message history to be used in a future run without dangling tool calls,
+                                # append a new ModelRequest using the tool returns and retries
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts, run_id=graph_ctx.state.run_id))
 

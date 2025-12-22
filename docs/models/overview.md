@@ -18,6 +18,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
 
+- [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)

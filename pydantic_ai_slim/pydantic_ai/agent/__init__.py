@@ -68,7 +68,11 @@ from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutput
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
+    from starlette.applications import Starlette
+
+    from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..ui._web import ModelsParam
 
 __all__ = (
     'Agent',
@@ -1286,6 +1290,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         per_run_step: bool = True,
+        id: str | None = None,
     ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]]: ...
 
     def toolset(
@@ -1294,6 +1299,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         per_run_step: bool = True,
+        id: str | None = None,
     ) -> Any:
         """Decorator to register a toolset function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
 
@@ -1315,10 +1321,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The toolset function to register.
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
+            id: An optional unique ID for the dynamic toolset. Required for use with durable execution
+                environments like Temporal, where the ID identifies the toolset's activities within the workflow.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
-            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step))
+            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step, id=id))
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
@@ -1419,10 +1427,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = CombinedToolset(toolsets)
 
-        # Copy the dynamic toolsets to ensure each run has its own instances
         def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             if isinstance(toolset, DynamicToolset):
-                return dataclasses.replace(toolset)
+                return toolset.copy()
             else:
                 return toolset
 
@@ -1525,6 +1532,71 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 toolset.sampling_model = sampling_model
 
         self._get_toolset().apply(_set_sampling_model)
+
+    def to_web(
+        self,
+        *,
+        models: ModelsParam = None,
+        builtin_tools: list[AbstractBuiltinTool] | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
+    ) -> Starlette:
+        """Create a Starlette app that serves a web chat UI for this agent.
+
+        This method returns a pre-configured Starlette application that provides a web-based
+        chat interface for interacting with the agent. The UI is downloaded and cached on
+        first use, and includes support for model selection and builtin tool configuration.
+
+        The returned Starlette application can be mounted into a FastAPI app or run directly
+        with any ASGI server (uvicorn, hypercorn, etc.).
+
+        Note that the `deps` and `model_settings` will be the same for each request.
+        To provide different `deps` for each request use the lower-level adapters directly.
+
+        Args:
+            models: Additional models to make available in the UI. Can be:
+                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
+                - A dict mapping display labels to model names/instances
+                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                The agent's model is always included. Builtin tool support is automatically
+                determined from each model's profile.
+            builtin_tools: Additional builtin tools to make available in the UI.
+                The agent's configured builtin tools are always included. Tool labels
+                in the UI are derived from the tool's `label` property.
+            deps: Optional dependencies to use for all requests.
+            model_settings: Optional settings to use for all model requests.
+            instructions: Optional extra instructions to pass to each agent run.
+
+        Returns:
+            A configured Starlette application ready to be served (e.g., with uvicorn)
+
+        Example:
+            ```python
+            from pydantic_ai import Agent
+            from pydantic_ai.builtin_tools import WebSearchTool
+
+            agent = Agent('openai:gpt-5', builtin_tools=[WebSearchTool()])
+
+            # Simple usage - uses agent's model and builtin tools
+            app = agent.to_web()
+
+            # Or provide additional models for UI selection
+            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+
+            # Then run with: uvicorn app:app --reload
+            ```
+        """
+        from ..ui._web import create_web_app
+
+        return create_web_app(
+            self,
+            models=models,
+            builtin_tools=builtin_tools,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+        )
 
     @asynccontextmanager
     @deprecated(

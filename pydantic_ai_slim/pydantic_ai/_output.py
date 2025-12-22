@@ -265,6 +265,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 )
 
             return NativeOutputSchema(
+                template=output.template,
                 processor=cls._build_processor(
                     flattened_outputs,
                     name=output.name,
@@ -439,27 +440,6 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
-
-    def __init__(
-        self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool, allows_image: bool
-    ):
-        super().__init__(
-            text_processor=processor,
-            object_def=processor.object_def,
-            allows_deferred_tools=allows_deferred_tools,
-            allows_image=allows_image,
-        )
-        self.processor = processor
-
-
-class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
-    @property
-    def mode(self) -> OutputMode:
-        return 'native'
-
-
-@dataclass(init=False)
-class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     template: str | None
 
     def __init__(
@@ -471,15 +451,13 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         allows_image: bool,
     ):
         super().__init__(
-            processor=processor,
+            text_processor=processor,
+            object_def=processor.object_def,
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
+        self.processor = processor
         self.template = template
-
-    @property
-    def mode(self) -> OutputMode:
-        return 'prompted'
 
     @classmethod
     def build_instructions(cls, template: str, object_def: OutputObjectDefinition) -> str:
@@ -494,6 +472,19 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
             template = '\n\n'.join([template, '{schema}'])
 
         return template.format(schema=json.dumps(schema))
+
+
+class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'native'
+
+
+@dataclass(init=False)
+class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'prompted'
 
 
 @dataclass(init=False)

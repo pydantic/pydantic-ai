@@ -474,7 +474,10 @@ class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
     data: bytes
-    """The binary data."""
+    """The binary file data.
+
+    Use `.base64` to get the base64-encoded string.
+    """
 
     _: KW_ONLY
 
@@ -574,7 +577,12 @@ class BinaryContent:
     @property
     def data_uri(self) -> str:
         """Convert the `BinaryContent` to a data URI."""
-        return f'data:{self.media_type};base64,{base64.b64encode(self.data).decode()}'
+        return f'data:{self.media_type};base64,{self.base64}'
+
+    @property
+    def base64(self) -> str:
+        """Return the binary data as a base64-encoded string. Default encoding is UTF-8."""
+        return base64.b64encode(self.data).decode()
 
     @property
     def is_audio(self) -> bool:
@@ -776,7 +784,7 @@ class UserPromptPart:
             elif isinstance(part, BinaryContent):
                 converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
                 if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = base64.b64encode(part.data).decode()
+                    converted_part['content'] = part.base64
                 parts.append(converted_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
@@ -1396,7 +1404,7 @@ class ModelResponse:
                         'kind': 'binary',
                         'media_type': part.content.media_type,
                         **(
-                            {'binary_content': base64.b64encode(part.content.data).decode()}
+                            {'binary_content': part.content.base64}
                             if settings.include_content and settings.include_binary_content
                             else {}
                         ),
@@ -1430,7 +1438,7 @@ class ModelResponse:
             elif isinstance(part, FilePart):
                 converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
                 if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = base64.b64encode(part.content.data).decode()
+                    converted_part['content'] = part.content.base64
                 parts.append(converted_part)
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)

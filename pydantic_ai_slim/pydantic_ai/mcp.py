@@ -779,7 +779,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     pass
             return text
         elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
         elif isinstance(part, mcp_types.AudioContent):
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
@@ -800,8 +800,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         if isinstance(resource, mcp_types.TextResourceContents):
             return resource.text
         elif isinstance(resource, mcp_types.BlobResourceContents):
-            return messages.BinaryContent(
-                data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+            return messages.BinaryContent.narrow_type(
+                messages.BinaryContent(
+                    data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+                )
             )
         else:
             assert_never(resource)

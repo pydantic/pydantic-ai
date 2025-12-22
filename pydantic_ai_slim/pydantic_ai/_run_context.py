@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Generic
 
@@ -77,3 +79,36 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return self.retry == self.max_retries
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
+    'pydantic_ai.current_run_context',
+    default=None,
+)
+"""Context variable storing the current [`RunContext`][pydantic_ai.tools.RunContext]."""
+
+
+def get_current_run_context() -> RunContext[Any] | None:
+    """Get the current run context, if one is set.
+
+    Returns:
+        The current [`RunContext`][pydantic_ai.tools.RunContext], or `None` if not in an agent run.
+    """
+    return _CURRENT_RUN_CONTEXT.get()
+
+
+@contextmanager
+def set_current_run_context(run_context: RunContext[Any]) -> Iterator[None]:
+    """Context manager to set the current run context.
+
+    Args:
+        run_context: The run context to set as current.
+
+    Yields:
+        None
+    """
+    token = _CURRENT_RUN_CONTEXT.set(run_context)
+    try:
+        yield
+    finally:
+        _CURRENT_RUN_CONTEXT.reset(token)
