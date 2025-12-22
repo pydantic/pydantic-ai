@@ -453,32 +453,26 @@ class TestToolChoiceNone:
                     parts=[
                         ThinkingPart(
                             content='',
-                            id='rs_039a5882b50f882b006945afe42624819192ba6b0b7c201b70',
+                            id='rs_0763586dde7c4ff1006949709476dc81a3bee08ca99902ab94',
                             signature=IsStr(),
                             provider_name='openai',
                         ),
                         TextPart(
                             content="""\
-Sorry—I can't fetch live weather data at the moment. I can, however, help with general conditions and how to get an up-to-the-minute forecast.
+I can't fetch live weather data right now, so I can't give a current, up-to-the-minute forecast for Berlin. I can, however:
 
-Quick summary for Berlin in late December:
-- Typical temperatures: around 0–5 °C (low often near or below freezing at night).
-- Conditions: often cloudy, damp, with rain, sleet or occasional snow; it can be windy.
-- Time zone: Central European Time (CET, UTC+1) at this time of year.
-- Practical advice: wear warm layers, a waterproof outer layer and closed shoes; keep a hat/gloves handy.
+- Give an approximate idea of what to expect in late December: generally cold (roughly around -2°C to +5°C on average), often cloudy, with frequent rain/sleet and occasional snow. Short daylight hours and sometimes breezy conditions—dress in warm layers, a waterproof outer layer, and sturdy shoes.
+- Tell you where to check a real-time forecast: German national weather service (Deutscher Wetterdienst), major weather sites/apps (e.g., Weather.com, AccuWeather), or a quick web/mobile search for "Berlin weather" or "Berlin forecast."
+- Help you interpret a forecast (what "wind chill," precipitation chances, or warnings mean) or make a packing/travel checklist based on expected winter conditions.
 
-How to get the current weather now:
-- Check your phone's weather app or search "Berlin weather" in a web search.
-- Trusted sources: the German Weather Service (DWD), Weather.com, BBC Weather, or AccuWeather.
-
-If you want, tell me whether you need the current temperature, an hourly forecast, or a 7-day outlook and I'll fetch the exact live data for you if you'd like me to.\
+Which would you like me to do? If you want a live forecast, tell me and I'll fetch it as soon as I can.\
 """,
-                            id='msg_039a5882b50f882b006945afedd1cc819181c805111b252ba8',
+                            id='msg_0763586dde7c4ff1006949709d5d0481a38272138c77a63683',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=50, output_tokens=862, details={'reasoning_tokens': 640}),
+                    usage=RequestUsage(input_tokens=50, output_tokens=918, details={'reasoning_tokens': 704}),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 20, 4, 51, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 23, 47, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'completed'},
@@ -517,30 +511,33 @@ If you want, tell me whether you need the current temperature, an hourly forecas
                     parts=[
                         ThinkingPart(
                             content='',
-                            id='rs_0362cfe909ecac94006945aff6c3288192bf7f0cb8bf75a1fa',
+                            id='rs_00721c11dd0b759000694970a48c3881978d478a0b5f41d72c',
                             signature=IsStr(),
                             provider_name='openai',
                         ),
                         TextPart(
                             content="""\
-I can't fetch live weather right now, but I can tell you typical conditions for Rome this time of year and how to get a current forecast.
+I can't access live weather data right now, so I can't give the current conditions or an up‑to‑the‑minute forecast for Rome. I can, however, help in a few other ways — tell me which you prefer:
 
-Right now (mid‑December) Rome's usual climate:
-- Average high: about 12–14°C (54–57°F)  \n\
-- Average low: about 4–7°C (39–45°F)  \n\
-- Rain: December often has several rainy days; expect occasional showers or overcast skies  \n\
-- Wind: generally light to moderate; occasional chilly breezes or cold fronts
+- I can give typical/climatological weather for Rome by month (what to expect in winter/summer).
+- I can tell you what to pack and how to plan for travel in Rome right now.
+- I can show how to check current weather yourself (recommended websites/apps and what to look for).
+- If you want a current forecast, I can fetch it for you if you'd like me to try (note: I'll need to access live data).
 
-Clothing/packing tip: layers (sweater + light coat), a waterproof jacket or umbrella, and a scarf for cooler nights.
+Quick climatological summary for Rome (central Italy):
+- Late December (winter): mild compared with northern Europe. Typical daytime highs ~10–14°C (50–57°F), nighttime lows ~3–8°C (37–46°F).  \n\
+- Rain: December is one of the wetter months—expect several rainy days in the month; occasional heavy showers but prolonged storms are less common.  \n\
+- Snow: Rare in central Rome, but not impossible in cold winters.  \n\
+- What to pack: a warm layer (sweater/coat), a light waterproof jacket or umbrella, comfortable walking shoes.
 
-If you want the actual current conditions or an hourly forecast, open your phone's weather app or search "Rome weather" on the web. If you paste the current temperature/forecast you find here, I can help interpret it and give recommendations. Do you want that?\
+If you want a live current temperature/forecast right now, tell me and I'll retrieve it (or I can point you to reliable sources to check immediately: e.g., local meteorological service, Weather.com, AccuWeather, or your phone's weather app). Which would you like?\
 """,
-                            id='msg_0362cfe909ecac94006945affd7d708192b50284bba0b1d2df',
+                            id='msg_00721c11dd0b759000694970a9d24881978ee190fd84c23adb',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=50, output_tokens=774, details={'reasoning_tokens': 576}),
+                    usage=RequestUsage(input_tokens=50, output_tokens=713, details={'reasoning_tokens': 384}),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 20, 5, 10, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 24, 3, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'completed'},
@@ -576,20 +573,20 @@ If you want the actual current conditions or an hourly forecast, open your phone
                     parts=[
                         ThinkingPart(
                             content='',
-                            id='rs_0f49e2c2e5f4f700006945ad9b7e608193907cfc65989f5e82',
+                            id='rs_0a616518bc428cc800694970b035fc81a18a7feb8a31e554e2',
                             signature=IsStr(),
                             provider_name='openai',
                         ),
                         ToolCallPart(
                             tool_name='final_result',
-                            args='{"city":"Madrid","summary":"Madrid is Spain\'s capital and largest city, located near the geographic center of the Iberian Peninsula. It\'s famous for world‑class art museums (Prado, Reina Sofía, Thyssen), grand boulevards (Gran Vía), historic plazas (Plaza Mayor, Puerta del Sol), the Royal Palace, large parks like El Retiro, a lively tapas and nightlife scene, and easy day‑trip access to historic towns such as Toledo and Segovia."}',
-                            tool_call_id='call_ZKcJLIGBda4NlWJ5no0xPy6d',
-                            id='fc_0f49e2c2e5f4f700006945ada47e4881938c882570c14c40a2',
+                            args='{"city":"Madrid","summary":"Capital of Spain and its largest city. Major cultural, political, and economic center with world-class museums (Prado, Reina Sofía, Thyssen), historic sites (Royal Palace, Plaza Mayor), lively neighborhoods (La Latina, Malasaña, Chueca), famous food and nightlife, extensive metro and rail connections, and proximity to day trips like Toledo and Segovia."}',
+                            tool_call_id='call_IFFJBFsZGfXDEnYEW2JmHWKb',
+                            id='fc_0a616518bc428cc800694970b782cc81a1b3e227a49294c9ff',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=71, output_tokens=566, details={'reasoning_tokens': 448}),
+                    usage=RequestUsage(input_tokens=71, output_tokens=611, details={'reasoning_tokens': 512}),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 19, 55, 6, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 24, 15, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'completed'},
@@ -602,7 +599,7 @@ If you want the actual current conditions or an hourly forecast, open your phone
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_ZKcJLIGBda4NlWJ5no0xPy6d',
+                            tool_call_id='call_IFFJBFsZGfXDEnYEW2JmHWKb',
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
@@ -1138,20 +1135,20 @@ class TestNoFunctionTools:
                     parts=[
                         ThinkingPart(
                             content='',
-                            id='rs_0a3de6f9c3c28af7006945ade6e8048194bc3e6c78157ee9c8',
+                            id='rs_02ad497d03a52ccb00694970bab54081928ba836685f5b8aee',
                             signature=IsStr(),
                             provider_name='openai',
                         ),
                         ToolCallPart(
                             tool_name='final_result',
-                            args='{"city":"Boston","summary":"Boston is the capital and largest city of Massachusetts, founded in 1630 and a major center of American history, culture, education, and innovation. Key historic sites include the Freedom Trail, Boston Common, Faneuil Hall, and the North End. Prominent neighborhoods: Back Bay (Victorian brownstones and Newbury Street), Beacon Hill (historic streets), South End (restaurants and galleries), Fenway/Kenmore (Fenway Park), and the Seaport District (modern waterfront development). Major institutions: Harvard and MIT (just across the Charles River in Cambridge), numerous hospitals and universities (e.g., Boston University, Northeastern, Tufts). Economy: strong in education, healthcare, finance, biotech, and technology. Transportation: Logan International Airport, MBTA subway (the "T"), commuter rail and ferries; Boston is compact and walkable. Culture and sports: world-class museums (Museum of Fine Arts, Isabella Stewart Gardner), vibrant music and theater scenes, passionate sports fans (Red Sox, Celtics, Bruins, Patriots played in nearby Foxborough). Climate: humid continental - cold snowy winters, warm summers. Travel tips: bring comfortable shoes for walking the city and cobblestones, use the T or walk instead of driving (traffic and parking are difficult), book Fenway tours or Red Sox tickets in advance, visit in spring or fall for milder weather and fewer tourists."}',
-                            tool_call_id='call_IUcMIrMvIy80BPfbBf6gzo9c',
-                            id='fc_0a3de6f9c3c28af7006945adec0c588194be9a95467592db7a',
+                            args='{"city":"Boston","summary":"Boston, Massachusetts — the state capital and largest city in New England — is a historic, compact, and walkable metropolis known for its colonial history, world-class universities (Harvard, MIT nearby), strong healthcare and tech sectors, cultural institutions, and distinct neighborhoods like Back Bay, Beacon Hill, and the North End."}',
+                            tool_call_id='call_yjgor0xdbgQJz9wt3H7pmcjR',
+                            id='fc_02ad497d03a52ccb00694970bd5640819290c7bae53b9ed421',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=49, output_tokens=496, details={'reasoning_tokens': 192}),
+                    usage=RequestUsage(input_tokens=49, output_tokens=279, details={'reasoning_tokens': 192}),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 19, 56, 22, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 24, 26, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'completed'},
@@ -1164,7 +1161,7 @@ class TestNoFunctionTools:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_IUcMIrMvIy80BPfbBf6gzo9c',
+                            tool_call_id='call_yjgor0xdbgQJz9wt3H7pmcjR',
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
