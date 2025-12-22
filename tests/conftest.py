@@ -241,7 +241,7 @@ def event_loop() -> Iterator[None]:
     new_loop.close()
 
 
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
 
