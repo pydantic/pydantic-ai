@@ -169,7 +169,6 @@ class ToolManager(Generic[AgentDepsT]):
                 max_uses=tool.max_uses,
             )
 
-            self.ctx.tool_usage[name] = self.ctx.tool_usage.get(name, 0) + 1
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
@@ -182,7 +181,9 @@ class ToolManager(Generic[AgentDepsT]):
                     call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
 
-            return await self.toolset.call_tool(name, args_dict, ctx, tool)
+            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+            self.ctx.tool_usage[name] = self.ctx.tool_usage.get(name, 0) + 1
+            return result
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
             current_retry = self.ctx.retries.get(name, 0)
