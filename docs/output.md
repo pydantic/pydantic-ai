@@ -258,22 +258,17 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling partial output in output functions
+#### Handling partial output
 
-!!! warning "Output functions are called multiple times during streaming"
-    When using streaming mode (`run_stream()`), output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+When streaming with `run_stream()`, output validators and output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
 
-    For output functions with **side effects** (e.g., sending notifications, logging, database updates), you should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag to avoid executing side effects on partial data.
+For output validators or functions with **side effects** (e.g., sending notifications, logging, database updates), you should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag to avoid executing side effects on partial data.
 
-**How `partial_output` works:**
+`partial_output` is `True` for each partial output when streaming with `run_stream()` and `False` for the final complete output. For all other run methods (`run()`, `run_sync()`, `run_stream_sync()`, `iter()`, `run_stream_events()`), `partial_output` is always `False` as the validator/function is only called once with the complete output.
 
-- **In sync mode** (`run_sync()`):
-    - `partial_output=False` always (function called once)
-- **In streaming mode** (`run_stream()`):
-    - `partial_output=True` for each partial call
-    - `partial_output=False` for the final complete call
+**Example with output functions:**
 
-**Example with side effects:**
+When using output functions with side effects, you should check `partial_output` to avoid executing those side effects on partial data:
 
 ```python {title="output_function_with_side_effects.py"}
 from pydantic import BaseModel
@@ -283,7 +278,7 @@ from pydantic_ai import Agent, RunContext
 
 class DatabaseRecord(BaseModel):
     name: str
-    value: int
+    value: int | None = None  # Make optional to allow partial output
 
 
 def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
@@ -300,47 +295,53 @@ def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
 
 agent = Agent('openai:gpt-5', output_type=save_to_database)
 
-result = agent.run_sync('Create a record with name "test" and value 42')
-print(result.output)
-#> name='test' value=42
+
+async def main():
+    async with agent.run_stream('Create a record with name "test" and value 42') as result:
+        async for output in result.stream_output(debounce_by=None):
+            print(output)
+            #> name='test' value=None
+            #> name='test' value=42
 ```
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-**Example without side effects (transformation only):**
+**Example with output validators:**
 
-```python {title="output_function_transformation.py"}
-from pydantic import BaseModel
+The same pattern applies to output validators. You can use `partial_output` to skip validation for partial outputs during streaming:
 
-from pydantic_ai import Agent
+```python {title="partial_validation_streaming.py" line_length="120"}
+from pydantic_ai import Agent, ModelRetry, RunContext
 
-
-class UserData(BaseModel):
-    username: str
-    email: str
+agent = Agent('openai:gpt-5')
 
 
-def normalize_user_data(user: UserData) -> UserData:
-    """Output function without side effects - safe to call multiple times."""
-    # Pure transformation is safe for multiple calls
-    user.username = user.username.lower()
-    user.email = user.email.lower()
-    return user
+@agent.output_validator
+def validate_output(ctx: RunContext, output: str) -> str:
+    if ctx.partial_output:
+        return output
+
+    if len(output) < 50:
+        raise ModelRetry('Output is too short.')
+    return output
 
 
-agent = Agent('openai:gpt-5', output_type=normalize_user_data)
-
-result = agent.run_sync('Create user with username "JohnDoe" and email "JOHN@EXAMPLE.COM"')
-print(result.output)
-#> username='johndoe' email='john@example.com'
+async def main():
+    async with agent.run_stream('Write a long story about a cat') as result:
+        async for message in result.stream_text():
+            print(message)
+            #> Once upon a
+            #> Once upon a time, there was
+            #> Once upon a time, there was a curious cat
+            #> Once upon a time, there was a curious cat named Whiskers who
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
 ```
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-**Best practices:**
-
-- If your output function **has** side effects (database writes, API calls, notifications) → use `ctx.partial_output` to guard them
-- If your output function only **transforms** data (formatting, validation, normalization) → no need to check the flag
+If your output validator or function only **transforms** data (formatting, validation, normalization) without side effects, you typically don't need to check the `partial_output` flag
 
 ### Output modes
 
@@ -619,39 +620,6 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling partial output in output validators {#partial-output}
-
-You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
-
-```python {title="partial_validation_streaming.py" line_length="120"}
-from pydantic_ai import Agent, ModelRetry, RunContext
-
-agent = Agent('openai:gpt-5')
-
-@agent.output_validator
-def validate_output(ctx: RunContext, output: str) -> str:
-    if ctx.partial_output:
-        return output
-    else:
-        if len(output) < 50:
-            raise ModelRetry('Output is too short.')
-        return output
-
-
-async def main():
-    async with agent.run_stream('Write a long story about a cat') as result:
-        async for message in result.stream_text():
-            print(message)
-            #> Once upon a
-            #> Once upon a time, there was
-            #> Once upon a time, there was a curious cat
-            #> Once upon a time, there was a curious cat named Whiskers who
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
-```
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Image output
 

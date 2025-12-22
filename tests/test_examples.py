@@ -545,11 +545,6 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
-    'Create user with username "JohnDoe" and email "JOHN@EXAMPLE.COM"': ToolCallPart(
-        tool_name='final_result',
-        args={'username': 'JohnDoe', 'email': 'JOHN@EXAMPLE.COM'},
-        tool_call_id='pyd_ai_tool_call_id',
-    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
