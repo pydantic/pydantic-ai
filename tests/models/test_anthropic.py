@@ -8879,7 +8879,7 @@ async def test_tool_choice_required_with_thinking_raises_error(allow_model_reque
     def my_tool(x: int) -> str:
         return str(x)  # pragma: no cover
 
-    with pytest.raises(UserError, match="Anthropic does not support `tool_choice='required'` with thinking mode"):
+    with pytest.raises(UserError, match="Anthropic does not support tool_choice='required' with thinking mode"):
         await agent.run(
             'hello',
             model_settings={

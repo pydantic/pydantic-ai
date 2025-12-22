@@ -198,7 +198,7 @@ result = agent.run_sync('Get weather for Tokyo and summarize', model_settings=se
 | Bedrock | ✓ | ✓ | ✓ | ⚠️ | Single tool only; no native `'none'` |
 | Groq | ✓ | ✓ | ✓ | ⚠️ | Single tool only |
 | HuggingFace | ✓ | ✓ | ✓ | ⚠️ | Single tool only |
-| Mistral | ✓ | ✓ | ✓ | ⚠️ | Limited specific tool support |
+| Mistral | ✓ | ✓ | ✓ | ⚠️ | No native `'none'`; limited specific tool support |
 
 ### Provider-Specific Notes
 
@@ -208,7 +208,9 @@ Full support for all tool choice options. When specifying multiple tools, OpenAI
 
 #### Anthropic
 
-`'required'` and specific tool lists are **not supported** when thinking is enabled. Using these options with thinking will raise a `UserError`:
+- **Single tool forcing**: Uses `{type: 'tool', name: X}` for single-tool lists
+- **Multiple tools**: Falls back to `{type: 'any'}` mode (must use one of the available tools)
+- **Thinking mode restriction**: `'required'` and specific tool lists are **not supported** when thinking is enabled:
 
 ```python
 from pydantic_ai import Agent
@@ -248,6 +250,7 @@ Full support using Gemini's `allowed_function_names` for tool restrictions.
 
 #### Mistral
 
+- **No native `'none'` support**: Handled by filtering tools from the request (Mistral doesn't support caching, so there's no benefit to keeping tools)
 - **Limited specific tool support**: Tool lists use `'required'` mode without native filtering
 
 ## Common Patterns

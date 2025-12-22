@@ -2419,8 +2419,8 @@ def test_tool_choice_string_values(tool_choice: str, expected_tool_choice: str) 
     assert result_tool_choice == expected_tool_choice
 
 
-def test_tool_choice_none_sends_tools_with_none_mode() -> None:
-    """tool_choice='none' sends tools with 'none' mode to keep definitions cached."""
+def test_tool_choice_none_sends_no_tools() -> None:
+    """tool_choice='none' sends no tools to avoid garbled responses."""
     my_tool = ToolDefinition(
         name='my_tool',
         description='Test tool',
@@ -2433,10 +2433,9 @@ def test_tool_choice_none_sends_tools_with_none_mode() -> None:
     settings: MistralModelSettings = {'tool_choice': 'none'}
     tools, result_tool_choice = model._get_tool_choice(mrp, settings)  # pyright: ignore[reportPrivateUsage]
 
-    assert tools is not None
-    assert len(tools) == 1
-    assert tools[0].function.name == 'my_tool'
-    assert result_tool_choice == 'none'
+    # Mistral returns garbled responses when tool_choice='none' with tools present
+    assert tools is None
+    assert result_tool_choice is None
 
 
 def test_tool_choice_specific_tool_filters_to_requested() -> None:
