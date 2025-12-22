@@ -1553,6 +1553,11 @@ class MyModelWDictAttrs(BaseModel):
     bar: dict[str, str]
 
 
+class MyModelWNestedDictAttrs(BaseModel):
+    foo: str
+    bar: MyModelWDictAttrs
+
+
 class MyDc(BaseModel):
     foo: str
 
@@ -3649,6 +3654,27 @@ async def test_warn_on_dict_typed_params_nested(allow_model_requests: None):
 
     @agent.tool_plain
     async def tool_w_nested_dict(data: MyModelWDictAttrs):
+        pass
+
+    with pytest.warns(
+        UserWarning,
+        match=r"has `dict`-typed parameters that OpenAI's API will silently ignore",
+    ):
+        await agent.run('test prompt')
+
+
+async def test_warn_on_dict_typed_params_double_nested(allow_model_requests: None):
+    """Test detection of dict types nested inside model inside a model."""
+
+    c = completion_message(
+        ChatCompletionMessage(content='test response', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_w_double_nested_dict(data: MyModelWNestedDictAttrs):
         pass
 
     with pytest.warns(

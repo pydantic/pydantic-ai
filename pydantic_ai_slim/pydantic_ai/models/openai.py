@@ -2854,28 +2854,30 @@ def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: 
 
     has_dict_params = False
 
-    properties: dict[str, Any] = json_schema.get('properties', {})
+    properties: dict[str, dict[str, Any]] = json_schema.get('properties', {})
     for prop_schema in properties.values():
-        if isinstance(prop_schema, dict):
-            # Check for object type with additionalProperties
-            if prop_schema.get('type') == 'object':  # type: ignore[reportUnknownMemberType]
-                additional_props: Any = prop_schema.get('additionalProperties')  # type: ignore[reportUnknownMemberType]
-                # If additionalProperties is True or a schema object (not False/absent)
-                if additional_props not in (False, None):
+        # Check for object type with additionalProperties
+        if prop_schema.get('type') == 'object':
+            additional_props: Any = prop_schema.get('additionalProperties')
+            # If additionalProperties is True or a schema object (not False/absent)
+            if additional_props not in (False, None):
+                has_dict_params = True
+
+        # Check arrays of objects with additionalProperties
+        if prop_schema.get('type') == 'array':
+            items: Any = prop_schema.get('items', {})
+            if isinstance(items, dict) and items.get('type') == 'object':  # type: ignore[reportUnknownMemberType]
+                if items.get('additionalProperties') not in (False, None):  # type: ignore[reportUnknownMemberType]
                     has_dict_params = True
 
-            # Check arrays of objects with additionalProperties
-            if prop_schema.get('type') == 'array':  # type: ignore[reportUnknownMemberType]
-                items: Any = prop_schema.get('items', {})  # type: ignore[reportUnknownMemberType]
-                if isinstance(items, dict) and items.get('type') == 'object':  # type: ignore[reportUnknownMemberType]
-                    if items.get('additionalProperties') not in (False, None):  # type: ignore[reportUnknownMemberType]
-                        has_dict_params = True
-
-            # Recursively check nested objects
-            # by default python's warnings module will filter out repeated warnings
-            # so even with recursion we'll emit a single warning
-            if 'properties' in prop_schema and _warn_on_dict_typed_params(provider_name, tool_name, prop_schema):  # type: ignore[reportUnknownArgumentType]
-                has_dict_params = True
+    # Check $defs for nested model definitions (Pydantic uses $ref to reference these)
+    defs: dict[str, Any] = json_schema.get('$defs', {})
+    for def_schema in defs.values():
+        # Recursively check nested objects
+        # by default python's warnings module will filter out repeated warnings
+        # so even with recursion we'll emit a single warning
+        if isinstance(def_schema, dict) and _warn_on_dict_typed_params(provider_name, tool_name, def_schema):  # type: ignore[reportUnknownArgumentType]
+            has_dict_params = True
 
     if has_dict_params:
         warnings.warn(
