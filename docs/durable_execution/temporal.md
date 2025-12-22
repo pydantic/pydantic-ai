@@ -385,8 +385,6 @@ async def main():
 5. Pass the wrapped toolset at runtime to any agent that needs it.
 6. Register the shared toolset's activities once with the worker. Agent activities are automatically registered via `__pydantic_ai_agents__`.
 
-6. Register the shared toolset's activities once with the worker. Agent activities are automatically registered via `__pydantic_ai_agents__`.
-
 ### Using Named Toolsets
 
 You can also pre-register toolsets with names and reference them by name at runtime:
