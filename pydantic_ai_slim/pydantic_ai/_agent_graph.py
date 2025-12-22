@@ -91,7 +91,6 @@ class GraphAgentState:
     retries: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
-    tool_usage: dict[str, int] = dataclasses.field(default_factory=dict)
 
     def increment_retries(
         self,
