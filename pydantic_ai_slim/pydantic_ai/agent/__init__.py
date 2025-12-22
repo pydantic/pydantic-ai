@@ -827,7 +827,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = InstrumentedModel.serialize_any(metadata)
+            attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
 
         return {
             **usage.opentelemetry_attributes(),
