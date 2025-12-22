@@ -334,8 +334,7 @@ def test_video_url_invalid():
 
 
 @pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason="'Python 3.10's mimetypes module does not support query parameters'"
+    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
 )
 def test_url_with_query_parameters() -> None:
     """Test that Url types correctly infer media type from URLs with query parameters"""
