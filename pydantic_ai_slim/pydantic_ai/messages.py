@@ -396,6 +396,25 @@ class ImageUrl(FileUrl):
         """
         return _image_format_lookup[self.media_type]
 
+def _is_text_like_media_type(media_type: str) -> bool:
+    return (
+        media_type.startswith('text/')
+        or media_type == 'application/json'
+        or media_type.endswith('+json')
+        or media_type == 'application/xml'
+        or media_type.endswith('+xml')
+        or media_type in ('application/x-yaml', 'application/yaml')
+    )
+
+def _inline_text_file(text: str, *, media_type: str, identifier: str):
+    text = '\n'.join(
+        [
+            f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+            text,
+            f'-----END FILE id="{identifier}"-----',
+        ]
+    )
+    return {"type": "text", "text":text}
 
 @dataclass(init=False, repr=False)
 class DocumentUrl(FileUrl):
@@ -451,6 +470,14 @@ class DocumentUrl(FileUrl):
             return _document_format_lookup[media_type]
         except KeyError as e:
             raise ValueError(f'Unknown document media type: {media_type}') from e
+    
+    @staticmethod
+    def is_text_like_media_type(media_type: str) -> bool:
+        return _is_text_like_media_type(media_type)
+
+    @staticmethod
+    def inline_text_file_part(text: str, *, media_type: str, identifier: str) -> dict[str, str]:
+        return _inline_text_file(text, media_type=media_type, identifier=identifier)
 
 
 @dataclass(init=False, repr=False)
@@ -510,9 +537,17 @@ class BinaryContent:
                 identifier=bc.identifier,
                 vendor_metadata=bc.vendor_metadata,
             )
-        else:
+        else:          
             return bc
 
+    @staticmethod  
+    def is_text_like_media_type(media_type: str) -> bool:
+        return _is_text_like_media_type(media_type)
+
+    @staticmethod
+    def inline_text_file_part(text: str, *, media_type: str, identifier: str) -> dict[str, str]:
+        return _inline_text_file(text, media_type=media_type, identifier=identifier)
+        
     @classmethod
     def from_data_uri(cls, data_uri: str) -> BinaryContent:
         """Create a `BinaryContent` from a data URI."""
