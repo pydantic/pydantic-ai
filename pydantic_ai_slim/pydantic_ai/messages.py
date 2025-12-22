@@ -43,6 +43,7 @@ _mime_types.add_type('application/vnd.ms-excel', '.xls')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 _mime_types.add_type('text/markdown', '.mdx')
+_mime_types.add_type('text/markdown', '.md')
 _mime_types.add_type('text/plain', '.txt')
 _mime_types.add_type('text/x-asciidoc', '.asciidoc')
 
