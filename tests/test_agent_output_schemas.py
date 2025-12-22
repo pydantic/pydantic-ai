@@ -242,12 +242,7 @@ async def test_image_output_json_schema():
                     'description': """\
 The media type of the binary content.
 
-Automatically detects the media type using:
-1. Magika (preferred, more accurate for documents)
-2. python-magic (fallback)
-
-Raises:
-    ImportError: If neither magika nor python-magic is installed.\
+Automatically detects the media type using Magika if not provided.\
 """,
                     'readOnly': True,
                     'title': 'Media Type',
@@ -298,12 +293,7 @@ distinguish multiple files.\
                             'description': """\
 The media type of the binary content.
 
-Automatically detects the media type using:
-1. Magika (preferred, more accurate for documents)
-2. python-magic (fallback)
-
-Raises:
-    ImportError: If neither magika nor python-magic is installed.\
+Automatically detects the media type using Magika if not provided.\
 """,
                             'readOnly': True,
                             'title': 'Media Type',
@@ -418,12 +408,7 @@ async def test_deferred_output_json_schema():
                             'description': """\
 The media type of the binary content.
 
-Automatically detects the media type using:
-1. Magika (preferred, more accurate for documents)
-2. python-magic (fallback)
-
-Raises:
-    ImportError: If neither magika nor python-magic is installed.\
+Automatically detects the media type using Magika if not provided.\
 """,
                             'readOnly': True,
                             'title': 'Media Type',
