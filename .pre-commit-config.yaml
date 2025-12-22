@@ -27,9 +27,15 @@ repos:
         args: ["--skip", "tests/models/cassettes/*"]
         additional_dependencies:
           - tomli
-
   - repo: local
     hooks:
+      - id: clai-help
+        name: clai help output
+        entry: uv
+        args: [run, pytest, "clai/update_readme.py"]
+        language: system
+        types_or: [python, markdown]
+        pass_filenames: false
       - id: format
         name: Format
         entry: make
@@ -43,13 +49,6 @@ repos:
         args: [lint]
         types: [python]
         language: system
-        pass_filenames: false
-      - id: clai-help
-        name: clai help output
-        entry: uv
-        args: [run, pytest, "clai/update_readme.py"]
-        language: system
-        types_or: [python, markdown]
         pass_filenames: false
       - id: typecheck
         name: Typecheck

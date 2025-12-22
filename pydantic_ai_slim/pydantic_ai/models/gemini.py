@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import base64
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -365,7 +364,7 @@ class GeminiModel(Model):
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            sys_prompt_parts.insert(0, _GeminiTextPart(text=instructions))
+            sys_prompt_parts.append(_GeminiTextPart(text=instructions))
         return sys_prompt_parts, contents
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[_GeminiPartUnion]:
@@ -377,9 +376,8 @@ class GeminiModel(Model):
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
-                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append(
-                        _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
+                        _GeminiInlineDataPart(inline_data={'data': item.base64, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
