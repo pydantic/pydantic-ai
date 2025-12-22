@@ -51,6 +51,8 @@ try:
 
     from dbos import DBOS, DBOSConfig, SetWorkflowID
     from packaging.version import Version
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
 
@@ -120,13 +122,17 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
     assert str(exc_info.value) == exc_message
 
 
-DBOS_SQLITE_FILE = 'dbostest.sqlite'
+in_memory_engine = create_engine(
+    'sqlite:///:memory:?cache=shared', connect_args={'check_same_thread': False}, poolclass=StaticPool
+)
+
 DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
-    'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
+    'system_database_url': 'sqlite:///:memory:?cache=shared',
     'run_admin_server': False,
     # enable_otlp requires dbos>1.14
     'enable_otlp': True,
+    'system_database_engine': in_memory_engine,
 }
 
 
@@ -138,18 +144,6 @@ def dbos() -> Generator[DBOS, Any, None]:
         yield dbos
     finally:
         DBOS.destroy()
-
-
-# Automatically clean up old DBOS sqlite files
-@pytest.fixture(autouse=True, scope='module')
-def cleanup_test_sqlite_file() -> Iterator[None]:
-    if os.path.exists(DBOS_SQLITE_FILE):
-        os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
-    try:
-        yield
-    finally:
-        if os.path.exists(DBOS_SQLITE_FILE):
-            os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
 
 
 model = OpenAIChatModel(
