@@ -320,3 +320,16 @@ The original graph API (documented in the [main graph page](../../graph.md)) use
 - Less object-oriented, more functional style
 
 Both APIs are fully supported and can even be integrated together when needed.
+
+## Persistence and Resumability
+
+!!! info "No Native Persistence"
+    Unlike the [original Graph API](../../graph.md#state-persistence), the beta graph API does not include built-in state persistence. This is due to the complexity of achieving consistent snapshotting with parallel execution.
+
+For workflows that need to preserve progress across failures, restarts, or long-running operations, use one of the supported [durable execution](../../durable_execution/overview.md) solutions:
+
+- [Temporal](../../durable_execution/temporal.md)
+- [DBOS](../../durable_execution/dbos.md)
+- [Prefect](../../durable_execution/prefect.md)
+
+These integrations provide production-grade reliability with full support for streaming and MCP, handling the complexities of checkpointing parallel execution automatically.
