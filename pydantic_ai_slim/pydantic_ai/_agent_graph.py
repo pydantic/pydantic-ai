@@ -659,6 +659,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
+                    elif isinstance(part, _messages.FileUrl):  # pragma: no cover
+                        # URL types in model responses are passed through as-is
+                        pass
                     else:
                         assert_never(part)
 

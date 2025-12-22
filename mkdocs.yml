@@ -137,6 +137,7 @@ nav:
           - api/output.md
           - api/result.md
           - api/messages.md
+          - api/file_store.md
           - api/exceptions.md
           - api/settings.md
           - api/usage.md

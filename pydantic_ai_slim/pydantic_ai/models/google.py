@@ -806,6 +806,10 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
     thinking_part_signature: str | None = None
     function_call_requires_signature: bool = True
     for item in m.parts:
+        # URL types in model responses are passed through as-is
+        if isinstance(item, FileUrl):  # pragma: no cover
+            continue
+
         part: PartDict = {}
         if (
             item.provider_details

@@ -259,7 +259,11 @@ def test_result_pydantic_model_validation_error():
     result = agent.run_sync('Hello')
     assert isinstance(result.output, Bar)
     assert result.output.model_dump() == snapshot({'a': 1, 'b': 'bar'})
-    messages_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result.all_messages()]
+    # Use getattr since URL types in ModelResponsePart use 'kind' not 'part_kind'
+    messages_part_kinds = [
+        (m.kind, [getattr(p, 'part_kind', None) or getattr(p, 'kind', 'unknown') for p in m.parts])
+        for m in result.all_messages()
+    ]
     assert messages_part_kinds == snapshot(
         [
             ('request', ['user-prompt']),
@@ -2140,7 +2144,11 @@ def test_run_with_history_new():
     assert result2.output == snapshot('{"ret_a":"a-apple"}')
     assert result2._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
-    new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
+    # Use getattr since URL types in ModelResponsePart use 'kind' not 'part_kind'
+    new_msg_part_kinds = [
+        (m.kind, [getattr(p, 'part_kind', None) or getattr(p, 'kind', 'unknown') for p in m.parts])
+        for m in result2.all_messages()
+    ]
     assert new_msg_part_kinds == snapshot(
         [
             ('request', ['system-prompt', 'user-prompt']),
@@ -2346,7 +2354,11 @@ def test_run_with_history_new_structured():
     assert result2.new_messages() == result2.all_messages()[-3:]
     assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13))
-    new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
+    # Use getattr since URL types in ModelResponsePart use 'kind' not 'part_kind'
+    new_msg_part_kinds = [
+        (m.kind, [getattr(p, 'part_kind', None) or getattr(p, 'kind', 'unknown') for p in m.parts])
+        for m in result2.all_messages()
+    ]
     assert new_msg_part_kinds == snapshot(
         [
             ('request', ['system-prompt', 'user-prompt']),

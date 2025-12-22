@@ -18,7 +18,7 @@ from . import __version__
 from ._run_context import AgentDepsT
 from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage, ModelResponse
+from .messages import FileUrl, ModelMessage, ModelResponse
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
@@ -327,6 +327,9 @@ def handle_slash_command(
         else:
             console.print('[dim]Markdown output of last question:[/dim]\n')
             for part in parts:
+                if isinstance(part, FileUrl):
+                    # URL types don't have text content to display
+                    continue
                 if part.part_kind == 'text':
                     console.print(
                         Syntax(

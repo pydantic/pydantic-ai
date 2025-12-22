@@ -19,9 +19,11 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from ..exceptions import UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
     ImageUrl,
     ModelMessage,
@@ -36,6 +38,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -485,6 +488,9 @@ class OutlinesModel(Model):
                             raise UserError(
                                 'File parts other than `BinaryImage` are not supported for Outlines models yet.'
                             )
+                    elif isinstance(part, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):  # pragma: no cover
+                        # URL types in model responses are passed through as-is
+                        pass
                     else:
                         assert_never(part)
                 if len(text_parts) == 1 and len(image_parts) == 0:

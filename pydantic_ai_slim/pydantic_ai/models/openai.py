@@ -783,6 +783,9 @@ class OpenAIChatModel(Model):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
+                elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):  # pragma: no cover
+                    # URL types in model responses are passed through as-is
+                    pass
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1806,6 +1809,9 @@ class OpenAIResponsesModel(Model):
                                     role='assistant', content='\n'.join([start_tag, item.content, end_tag])
                                 )
                             )
+                    elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):  # pragma: no cover
+                        # URL types in model responses are passed through as-is
+                        pass
                     else:
                         assert_never(item)
             else:

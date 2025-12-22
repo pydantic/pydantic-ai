@@ -545,6 +545,227 @@ agent = Agent('openai:gpt-5', history_processors=[filter_responses, summarize_ol
 In this case, the `filter_responses` processor will be applied first, and the
 `summarize_old_messages` processor will be applied second.
 
+## Storing Binary Content
+
+When working with multi-modal agents that generate or process images, audio, video, or documents, binary content in message history can become problematic:
+
+- **Database storage**: Binary data (especially images/videos) can be too large to store efficiently in databases
+- **Observability**: Sending large binary payloads to OpenTelemetry or logging systems adds overhead
+- **Token costs**: Some models charge for image URLs differently than raw bytes
+- **Model compatibility**: Different models have different requirements (some need URLs, others need bytes)
+
+The [`file_store_processor`][pydantic_ai.file_store.file_store_processor] solves these problems by automatically uploading binary content to external storage (like S3) and converting between URLs and bytes based on each model's capabilities.
+
+### Basic Usage
+
+To use file storage, you need:
+
+1. A [`FileStore`][pydantic_ai.file_store.FileStore] implementation (e.g., [`S3FileStore`][pydantic_ai.file_store.S3FileStore])
+2. The [`file_store_processor`][pydantic_ai.file_store.file_store_processor] added to your agent's `history_processors`
+
+```python {title="basic_file_store.py"}
+from pydantic_ai import Agent
+from pydantic_ai.file_store import S3FileStore, file_store_processor
+
+# Create an S3-compatible file store
+store = S3FileStore(
+    bucket='my-agent-files',
+    # Credentials can be passed explicitly or via environment variables:
+    # S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_REGION
+)
+
+# Create processor and add to agent
+processor = file_store_processor(store)
+agent = Agent(
+    'openai:gpt-4o',
+    history_processors=[processor]
+)
+
+# Binary content is automatically stored and converted
+result = agent.run_sync('Generate an image of a sunset')
+# The FilePart in the response is uploaded to S3 and converted to ImageUrl
+```
+
+### How It Works
+
+The `file_store_processor` performs bidirectional conversion based on the model being used:
+
+**Store Direction** (saving to history):
+
+1. Detects [`BinaryContent`][pydantic_ai.messages.BinaryContent] and [`FilePart`][pydantic_ai.messages.FilePart] in messages
+2. Uploads content to the file store using a content-based key (format: `{identifier}.{extension}`)
+3. Converts to URL types ([`ImageUrl`][pydantic_ai.messages.ImageUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl], [`VideoUrl`][pydantic_ai.messages.VideoUrl], [`DocumentUrl`][pydantic_ai.messages.DocumentUrl]) **if the model supports URLs**
+4. Leaves as `FilePart`/`BinaryContent` if the model requires bytes
+
+**Load Direction** (replaying from history):
+
+1. Detects URL types that were uploaded by the processor
+2. Converts back to `FilePart`/`BinaryContent` **if the new model requires bytes**
+3. Refreshes URLs for models that support them (handles expiring presigned URLs)
+
+**Deduplication**:
+
+- Content with the same data gets the same identifier (content-addressable)
+- Each unique file is only uploaded once, even if it appears in multiple messages
+
+**Model-Aware Conversion**:
+
+The processor knows which models support URLs for different media types:
+
+| Provider | Image URLs | Audio URLs | Video URLs | Document URLs |
+|----------|------------|------------|------------|---------------|
+| OpenAI | Yes | No | No | No |
+| Anthropic | Yes | No | No | Yes |
+| Google Vertex | Yes | Yes | Yes | Yes |
+| Google Gemini | No | No | No | No |
+
+### Cross-Model Scenario
+
+A powerful feature is the ability to store messages with one model and replay them with a different model:
+
+```python {title="cross_model_file_store.py"}
+from pydantic_ai import Agent
+from pydantic_ai.file_store import S3FileStore, file_store_processor
+
+store = S3FileStore(bucket='my-agent-files')
+processor = file_store_processor(store)
+
+# Create agent with file storage
+agent = Agent('openai:gpt-4o', history_processors=[processor])
+
+# Run with OpenAI (supports image URLs)
+result1 = agent.run_sync('Generate an image of a cat')
+# FilePart → uploaded to S3 → converted to ImageUrl
+
+# Save the message history
+messages = result1.all_messages()
+# ImageUrl is stored (lightweight, just a URL string)
+
+# Later, replay with a different model
+result2 = agent.run_sync(
+    'Make it more realistic',
+    model='google-gla:gemini-2.5-flash',  # Gemini needs bytes
+    message_history=messages,
+)
+# ImageUrl → retrieved from S3 → converted back to BinaryContent
+# Gemini receives the bytes it needs
+```
+
+In this example:
+
+1. OpenAI generates an image (as `FilePart`)
+2. The processor uploads it to S3 and converts to `ImageUrl` (since OpenAI supports URLs)
+3. You store the `ImageUrl` in your database (small JSON payload)
+4. When replaying to Gemini, the processor detects it needs bytes
+5. It downloads from S3 and converts back to `BinaryContent`
+
+### S3FileStore Configuration
+
+The [`S3FileStore`][pydantic_ai.file_store.S3FileStore] works with any S3-compatible storage:
+
+**Using Environment Variables** (recommended):
+
+```python {title="file_store_env_vars.py"}
+from pydantic_ai.file_store import S3FileStore
+
+# Set environment variables:
+# S3_ENDPOINT=https://s3.us-east-1.amazonaws.com
+# S3_ACCESS_KEY_ID=your-access-key
+# S3_SECRET_ACCESS_KEY=your-secret-key
+# S3_REGION=us-east-1
+
+store = S3FileStore(bucket='my-bucket')
+```
+
+**Explicit Configuration**:
+
+```python {title="file_store_explicit.py"}
+from pydantic_ai.file_store import S3FileStore
+
+store = S3FileStore(
+    bucket='my-bucket',
+    endpoint='https://s3.us-east-1.amazonaws.com',
+    access_key_id='your-access-key',
+    secret_access_key='your-secret-key',
+    region='us-east-1',
+)
+```
+
+**S3-Compatible Providers**:
+
+```python {title="file_store_providers.py"}
+from pydantic_ai.file_store import S3FileStore
+
+# Cloudflare R2
+r2_store = S3FileStore(
+    bucket='my-bucket',
+    endpoint='https://accountid.r2.cloudflarestorage.com',
+    access_key_id='...',
+    secret_access_key='...',
+    region='auto',  # R2 uses 'auto'
+)
+
+# MinIO
+minio_store = S3FileStore(
+    bucket='my-bucket',
+    endpoint='https://minio.example.com',
+    access_key_id='...',
+    secret_access_key='...',
+    region='us-east-1',  # MinIO typically uses 'us-east-1'
+)
+```
+
+**Public Buckets with CDN**:
+
+If your bucket is public or behind a CDN, use `public_url` to avoid generating presigned URLs:
+
+```python {title="file_store_cdn.py"}
+from pydantic_ai.file_store import S3FileStore
+
+store = S3FileStore(
+    bucket='my-bucket',
+    endpoint='https://s3.us-east-1.amazonaws.com',
+    access_key_id='...',
+    secret_access_key='...',
+    region='us-east-1',
+    public_url='https://cdn.example.com',  # Your CDN/public URL
+)
+
+# URLs will be: https://cdn.example.com/{key}
+# Instead of presigned URLs with signatures
+```
+
+**Custom URL Generation**:
+
+For advanced use cases, provide a custom callback:
+
+```python {title="file_store_custom_uri.py"}
+from pydantic_ai.file_store import S3FileStore
+
+def custom_download_uri(key: str) -> str:
+    # Your custom logic (e.g., signed URLs from your API)
+    return f'https://api.example.com/files/{key}?token=...'
+
+store = S3FileStore(
+    bucket='my-bucket',
+    endpoint='...',
+    access_key_id='...',
+    secret_access_key='...',
+    region='...',
+    custom_download_uri=custom_download_uri,
+)
+```
+
+!!! tip "Presigned URL TTL"
+    By default, presigned URLs expire after 1 hour (3600 seconds). You can customize this with the `ttl` parameter:
+    ```python
+    store = S3FileStore(bucket='my-bucket', ttl=7200)  # 2 hours
+    ```
+    The processor automatically refreshes URLs when replaying messages, so expired URLs are regenerated.
+
+!!! warning "External URLs"
+    The processor only manages files it uploads. External URLs (e.g., from user input or other sources) are passed through unchanged. This is safe because the processor tracks files using the `identifier` field in URL types.
+
 ## Examples
 
 For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.

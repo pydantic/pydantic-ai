@@ -1328,8 +1328,8 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     )
 
     # Ensure the tool call IDs match between the tool calls and the tool returns
-    tool_call_part_ids = [part.tool_call_id for part in first_response.parts if part.part_kind == 'tool-call']
-    tool_return_part_ids = [part.tool_call_id for part in second_request.parts if part.part_kind == 'tool-return']
+    tool_call_part_ids = [part.tool_call_id for part in first_response.parts if isinstance(part, ToolCallPart)]
+    tool_return_part_ids = [part.tool_call_id for part in second_request.parts if isinstance(part, ToolReturnPart)]
     assert len(set(tool_call_part_ids)) == 4  # ensure they are all unique
     assert tool_call_part_ids == tool_return_part_ids
 

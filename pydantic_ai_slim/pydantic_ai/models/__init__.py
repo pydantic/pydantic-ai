@@ -841,10 +841,12 @@ class StreamedResponse(ABC):
                         # Parts other than these 3 don't have deltas, so don't need an end part.
                         return None
 
+                    # URL types use 'kind' instead of 'part_kind', and aren't included in the part_kind literals
+                    next_kind = getattr(next_part, 'part_kind', None) if next_part else None
                     return PartEndEvent(
                         index=index,
                         part=part,
-                        next_part_kind=next_part.part_kind if next_part else None,
+                        next_part_kind=next_kind,
                     )
 
                 async for event in iterator:
@@ -854,7 +856,8 @@ class StreamedResponse(ABC):
                             if end_event:
                                 yield end_event
 
-                            event.previous_part_kind = last_start_event.part.part_kind
+                            # URL types use 'kind' instead of 'part_kind'
+                            event.previous_part_kind = getattr(last_start_event.part, 'part_kind', None)
                         last_start_event = event
 
                     yield event
