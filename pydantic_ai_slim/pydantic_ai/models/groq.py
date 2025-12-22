@@ -115,7 +115,6 @@ class GroqModelSettings(ModelSettings, total=False):
     groq_reasoning_effort: Literal[
         "none",     # Qwen: Disable reasoning
         "default",  # Qwen: Enable reasoning
-
         "low",      # GPT-OSS: Low effort
         "medium",   # GPT-OSS: Medium effort
         "high"      # GPT-OSS: High effort
@@ -326,10 +325,9 @@ class GroqModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body', NOT_GIVEN),
-                
                 reasoning_format=model_settings.get('groq_reasoning_format', NOT_GIVEN),
                 reasoning_effort=model_settings.get('groq_reasoning_effort', NOT_GIVEN),
-                include_reasoning=model_settings.get('groq_include_reasoning', NOT_GIVEN)
+                include_reasoning=model_settings.get('groq_include_reasoning', NOT_GIVEN),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
