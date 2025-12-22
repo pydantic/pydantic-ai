@@ -267,3 +267,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             prompt_config=prompt_config,
         ):
             yield
+
+    async def generate_prompt_config_from_agent(
+        self, *, deps: AgentDepsT, model: models.Model | models.KnownModelName | str | None = None
+    ) -> _prompt_config.PromptConfig:
+        """Generate a PromptConfig instance based on the wrapped agent."""
+        return await self.wrapped.generate_prompt_config_from_agent(deps=deps, model=model)

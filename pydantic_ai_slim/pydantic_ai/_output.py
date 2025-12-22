@@ -986,6 +986,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             output = await validator.validate(output, ctx, wrap_validation_errors=False)
         return output
 
+    async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        return self._tool_defs
+
 
 @overload
 def _flatten_output_spec(

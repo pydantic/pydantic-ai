@@ -935,6 +935,9 @@ async def test_dynamic_toolset():
         ) -> Any:
             return None  # pragma: no cover
 
+        async def get_all_tool_definitions(self, ctx: RunContext[None]) -> list[ToolDefinition]:
+            return []
+
     def toolset_factory(ctx: RunContext[None]) -> AbstractToolset[None]:
         return EnterableToolset()
 

@@ -367,22 +367,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             )
         return tools
 
-    async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
-    ) -> Any:
-        assert isinstance(tool, FunctionToolsetTool)
-
-        # Per-tool timeout takes precedence over toolset timeout
-        timeout = tool.timeout if tool.timeout is not None else self.timeout
-        if timeout is not None:
-            try:
-                with anyio.fail_after(timeout):
-                    return await tool.call_func(tool_args, ctx)
-            except TimeoutError:
-                raise ModelRetry(f'Timed out after {timeout} seconds.') from None
-        else:
-            return await tool.call_func(tool_args, ctx)
-
     async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
         """The list of tool definitions available(including deferred ones)."""
         tool_definitions: list[ToolDefinition] = []
@@ -399,3 +383,19 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool_definitions.append(tool_def)
 
         return tool_definitions
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        assert isinstance(tool, FunctionToolsetTool)
+
+        # Per-tool timeout takes precedence over toolset timeout
+        timeout = tool.timeout if tool.timeout is not None else self.timeout
+        if timeout is not None:
+            try:
+                with anyio.fail_after(timeout):
+                    return await tool.call_func(tool_args, ctx)
+            except TimeoutError:
+                raise ModelRetry(f'Timed out after {timeout} seconds.') from None
+        else:
+            return await tool.call_func(tool_args, ctx)

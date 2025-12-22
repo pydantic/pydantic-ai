@@ -32,6 +32,7 @@ from pydantic_ai import (
     RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolDefinition,
     ToolReturnPart,
     ToolsetTool,
     UserPromptPart,
@@ -322,6 +323,9 @@ class MockMCPServer(AbstractToolset[Any]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
     ) -> Any:
         return None  # pragma: lax no cover
+
+    async def get_all_tool_definitions(self, ctx: RunContext[Any]) -> list[ToolDefinition]:
+        return []
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {

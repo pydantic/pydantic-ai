@@ -1392,16 +1392,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The values that are not present in the override falls back to the call and then falls back to the agent default.
 
         Returns None if no prompt_config is configured at any level.
+
+        Priority order (highest to lowest): override > call/runtime > agent default
         """
         effective_prompt_config: _prompt_config.PromptConfig | None = None
 
-        if some_prompt_config := self._override_prompt_config.get():
-            effective_prompt_config = some_prompt_config.value.merge_prompt_config(effective_prompt_config)
+        # Start with lowest priority (agent default) as base
+        if self.prompt_config:
+            effective_prompt_config = self.prompt_config.merge_prompt_config(effective_prompt_config)
+
+        # Call/runtime prompt_config overrides agent default
         if prompt_config:
             effective_prompt_config = prompt_config.merge_prompt_config(effective_prompt_config)
 
-        if self.prompt_config:
-            effective_prompt_config = self.prompt_config.merge_prompt_config(effective_prompt_config)
+        # Override has highest priority
+        if some_prompt_config := self._override_prompt_config.get():
+            effective_prompt_config = some_prompt_config.value.merge_prompt_config(effective_prompt_config)
 
         return effective_prompt_config
 

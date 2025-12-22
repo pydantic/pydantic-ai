@@ -553,22 +553,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         mapped = [await self._map_tool_result_part(part) for part in result.content]
         return mapped[0] if len(mapped) == 1 else mapped
 
-    async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[Any],
-        tool: ToolsetTool[Any],
-    ) -> ToolResult:
-        if self.tool_prefix:
-            name = name.removeprefix(f'{self.tool_prefix}_')
-            ctx = replace(ctx, tool_name=name)
-
-        if self.process_tool_call is not None:
-            return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
-        else:
-            return await self.direct_call_tool(name, tool_args)
-
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         return {
             name: self.tool_for_tool_def(
@@ -586,6 +570,37 @@ class MCPServer(AbstractToolset[Any], ABC):
             for mcp_tool in await self.list_tools()
             if (name := f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name)
         }
+
+    async def get_all_tool_definitions(self, ctx: RunContext[Any]) -> list[ToolDefinition]:
+        return [
+            ToolDefinition(
+                name=f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name,
+                description=mcp_tool.description,
+                parameters_json_schema=mcp_tool.inputSchema,
+                metadata={
+                    'meta': mcp_tool.meta,
+                    'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                    'output_schema': mcp_tool.outputSchema or None,
+                },
+            )
+            for mcp_tool in await self.list_tools()
+        ]
+
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+    ) -> ToolResult:
+        if self.tool_prefix:
+            name = name.removeprefix(f'{self.tool_prefix}_')
+            ctx = replace(ctx, tool_name=name)
+
+        if self.process_tool_call is not None:
+            return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
+        else:
+            return await self.direct_call_tool(name, tool_args)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]:
         return ToolsetTool(
