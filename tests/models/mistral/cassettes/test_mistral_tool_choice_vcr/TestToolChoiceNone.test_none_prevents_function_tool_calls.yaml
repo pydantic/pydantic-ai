@@ -45,11 +45,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1076'
+      - '1073'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b38e1-aa13-7487-8b84-389e72ff700d
+      - 019b4822-317b-76cb-8113-6c3e186e4ff5
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -69,18 +69,18 @@ interactions:
               {
                 "city": "Berlin"
               }
-              ```​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
+              ```​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
             type: text
           role: assistant
           tool_calls: null
-      created: 1766185871
-      id: de76628300ac45089ef1ca286b345629
+      created: 1766441759
+      id: 3ea21c8e84fd43c28a65944e6041f143
       model: mistral-large-latest
       object: chat.completion
       usage:
-        completion_tokens: 225
+        completion_tokens: 224
         prompt_tokens: 77
-        total_tokens: 302
+        total_tokens: 301
     status:
       code: 200
       message: OK
