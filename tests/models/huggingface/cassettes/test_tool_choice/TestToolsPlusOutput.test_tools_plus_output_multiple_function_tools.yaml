@@ -17,7 +17,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"46c-fRnVIj8l7uwEAqBCYilRvd3A1fE"
+      - W/"462-VROLk57uS4V9vPcNuq0PTVzOOAo"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -40,27 +40,27 @@ interactions:
           - function:
               arguments: '{"city":"Denver"}'
               name: get_weather
-            id: call_nycsfyh5qhhkz4t49m3vcg46
+            id: call_yxd2o7y1dj6wnpjkcvewbbum
             index: 0
             type: function
           - function:
-              arguments: '{"city":"Denver","summary":"weather summary for Denver"}'
+              arguments: '{"city":"Denver","summary":"weather summary"}'
               name: final_result
-            id: call_n6197dew35ec29r6bvp6m6z8
+            id: call_xja0kznyv967t4emgk7qiu03
             index: 1
             type: function
         seed: null
-      created: 1766290033
-      id: oQ417Br-z1gNr-9b1482e1fe8a7ff4
+      created: 1766420877
+      id: oQFZiZA-3pDw3Z-9b20fd509edeef62
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
       object: chat.completion
       prompt: []
       usage:
-        completion_tokens: 67
+        completion_tokens: 65
         prompt_tokens: 973
-        total_tokens: 1040
+        total_tokens: 1038
     status:
       code: 200
       message: OK

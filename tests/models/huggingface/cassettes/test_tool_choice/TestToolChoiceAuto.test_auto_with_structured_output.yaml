@@ -17,11 +17,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"45f-QgJ+42PiNxH//WPbHiYb+ePMfAw"
+      - W/"45e-i/G7muKXQa84TEtfAMxSBAZ1oQo"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
-      - '2'
+      - '1'
       strict-transport-security:
       - max-age=15552000; includeSubDomains
       transfer-encoding:
@@ -40,18 +40,18 @@ interactions:
           - function:
               arguments: '{"city":"Tokyo"}'
               name: get_weather
-            id: call_yriz1tydjscsvnsytw354i0a
+            id: call_hkh5cm1mdj44gu0tmk2r4pyy
             index: 0
             type: function
           - function:
               arguments: '{"city":"Tokyo","summary":"weather summary"}'
               name: final_result
-            id: call_qbu72noklg7hj7l1qe89fbov
+            id: call_4jc2lqunzd54sw7qcq8p9bev
             index: 1
             type: function
         seed: null
-      created: 1766290020
-      id: oQ413FD-3pDw3Z-9b14828e2edd0936
+      created: 1766420903
+      id: oQFZrAR-z1gNr-9b20fdf0d83a2064
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct

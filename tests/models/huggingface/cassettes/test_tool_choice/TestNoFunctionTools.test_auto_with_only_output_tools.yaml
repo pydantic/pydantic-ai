@@ -17,11 +17,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"4d9-qLNNWl74Xvt5mJpgAFiSjqYLJWM"
+      - W/"513-oXU0QqTWP5sGcSTyCXwNMy1ADC4"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
-      - '2'
+      - '1'
       strict-transport-security:
       - max-age=15552000; includeSubDomains
       transfer-encoding:
@@ -39,25 +39,26 @@ interactions:
           tool_calls:
           - function:
               arguments: '{"city":"New York","summary":"New York is a state in the northeastern United States. It is one of
-                the most populous states and is known for its diverse culture, iconic cities, and natural beauty. The state
-                capital is Albany, while New York City is the largest city and a global hub for finance, media, and entertainment.
-                New York is also famous for its historical landmarks, such as the Statue of Liberty and Central Park."}'
+                the most populous states and is often referred to as \"The Empire State\". The state is known for its diverse
+                geography, including mountains, forests, and coastlines along the Atlantic Ocean and Lake Ontario. New York
+                City, the most populous city in the United States, is located in the southeastern part of the state and is
+                a global hub for finance, culture, and entertainment."}'
               name: final_result
-            id: call_956g1vy0rvpbqmwm6y9wd794
+            id: call_fua91omx53wxt8k2lyh4xw50
             index: 0
             type: function
         seed: null
-      created: 1766290035
-      id: oQ417XV-3pDw3Z-9b1482e84b2405b9
+      created: 1766420879
+      id: oQFZiw8-3pDw3Z-9b20fd589cfc8be3
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
       object: chat.completion
       prompt: []
       usage:
-        completion_tokens: 118
+        completion_tokens: 128
         prompt_tokens: 788
-        total_tokens: 906
+        total_tokens: 916
     status:
       code: 200
       message: OK

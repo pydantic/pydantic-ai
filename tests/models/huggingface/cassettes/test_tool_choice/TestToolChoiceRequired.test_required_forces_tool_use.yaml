@@ -17,7 +17,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"33b-G18SFP3nTjCCunR6X7yXMt/LUzo"
+      - W/"33a-grUdi2T6fA5g/YaaU5ZAC59rv0Y"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -40,12 +40,12 @@ interactions:
           - function:
               arguments: '{"city":"Paris"}'
               name: get_weather
-            id: call_gihofucdc84ah6xxwh23i3na
+            id: call_kv9xh65ghrljbxclmz4xcuzh
             index: 0
             type: function
         seed: null
-      created: 1766290027
-      id: oQ415Sd-3pDw3Z-9b1482bc9c0bc5ce
+      created: 1766420869
+      id: oQFZgFe-z1gNr-9b20fd204ffc0650
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct

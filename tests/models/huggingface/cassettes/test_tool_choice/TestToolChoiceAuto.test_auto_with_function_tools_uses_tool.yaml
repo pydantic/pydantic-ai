@@ -29,7 +29,7 @@ interactions:
       etag:
       - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
       ratelimit:
-      - '"api";r=999;t=94'
+      - '"api";r=999;t=276'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -91,7 +91,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"33a-l6xwNeTbG5QyeGsFZzR7wpyOisA"
+      - W/"33a-Dp4YHPaXikuvVowTI/ENpOBzNiU"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -114,12 +114,12 @@ interactions:
           - function:
               arguments: '{"city":"Paris"}'
               name: get_weather
-            id: call_f766mdwhj0oq0z0v375b5gpo
+            id: call_mgvl52du237y4xpaykoc611g
             index: 0
             type: function
         seed: null
-      created: 1766289981
-      id: oQ3zqcd-z1gNr-9b14819a6bbf9c5b
+      created: 1766420899
+      id: oQFZq9H-z1gNr-9b20fddb88712d10
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
@@ -150,11 +150,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"23e-Gnjc7CAi74ZumU7lkbKEx8JSeBM"
+      - W/"24c-oCzNiho9Zg+nDVRrvl1pXj68+tY"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
-      - '1'
+      - '2'
       strict-transport-security:
       - max-age=15552000; includeSubDomains
       transfer-encoding:
@@ -167,21 +167,21 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: '[get_weather("Paris")]'
+          content: '[get_weather, {"city": "Paris"}]'
           role: assistant
           tool_calls: []
         seed: null
-      created: 1766289981
-      id: oQ3zqsF-z1gNr-9b14819fb8a9d6c7
+      created: 1766420900
+      id: oQFZqS7-3pDw3Z-9b20fde1399f2064
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
       object: chat.completion
       prompt: []
       usage:
-        completion_tokens: 6
+        completion_tokens: 11
         prompt_tokens: 797
-        total_tokens: 803
+        total_tokens: 808
     status:
       code: 200
       message: OK

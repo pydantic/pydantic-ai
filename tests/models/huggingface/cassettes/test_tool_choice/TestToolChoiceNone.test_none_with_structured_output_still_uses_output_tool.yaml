@@ -1,6 +1,80 @@
 interactions:
 - request:
     body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/meta-llama/Llama-4-Scout-17B-16E-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-length:
+      - '904'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"388-myb6zbS3leJ0g7Gjjeu5p4iBNkw"
+      ratelimit:
+      - '"api";r=998;t=209'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 67ed3cd9290a7f9d3301f9c1
+      id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      inferenceProviderMapping:
+        fireworks-ai:
+          isModelAuthor: false
+          providerId: accounts/fireworks/models/llama4-scout-instruct-basic
+          status: error
+          task: conversational
+        groq:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        novita:
+          isModelAuthor: false
+          providerId: meta-llama/llama-4-scout-17b-16e-instruct
+          status: live
+          task: conversational
+        nscale:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+        sambanova:
+          isModelAuthor: false
+          providerId: Llama-4-Scout-17B-16E-Instruct
+          status: error
+          task: conversational
+        together:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-4-Scout-17B-16E-Instruct
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
     headers: {}
     method: POST
     uri: https://router.huggingface.co/together/v1/chat/completions
@@ -17,7 +91,7 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"48c-/jxMtz1B7j2i6kI3zDB0ZTeNB+U"
+      - W/"545-t22Zq1DFxJWtnndTeE9iaKccPp4"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
@@ -39,25 +113,26 @@ interactions:
           tool_calls:
           - function:
               arguments: '{"city":"Madrid","summary":"Madrid, the capital of Spain, is known for its vibrant culture, rich
-                history, and beautiful architecture. The city is home to many famous landmarks such as the Royal Palace of
-                Madrid, the Prado Museum, and the Retana Park. Madrid is also famous for its nightlife, with many bars, clubs,
-                and restaurants to choose from."}'
+                history, and beautiful architecture. The city is home to many world-class museums, including the Prado Museum,
+                which features an extensive collection of European art. Madrid is also famous for its lively nightlife, with
+                many bars, clubs, and restaurants to choose from. The city''s historic center is filled with picturesque plazas,
+                such as the Puerta del Sol and Plaza Mayor, and the Royal Palace of Madrid is a must-visit attraction."}'
               name: final_result
-            id: call_6n5q5145abxn90lj0iptzbyy
+            id: call_93nzyeobxbthyrrr1xxsy67y
             index: 0
             type: function
         seed: null
-      created: 1766290026
-      id: oQ414zu-z1gNr-9b1482b3ed14c5ce
+      created: 1766420968
+      id: oQFaAyM-z1gNr-9b20ff7c3efcc5a2
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct
       object: chat.completion
       prompt: []
       usage:
-        completion_tokens: 101
+        completion_tokens: 134
         prompt_tokens: 787
-        total_tokens: 888
+        total_tokens: 921
     status:
       code: 200
       message: OK

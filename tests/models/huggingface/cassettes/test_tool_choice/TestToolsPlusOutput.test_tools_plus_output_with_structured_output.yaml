@@ -17,11 +17,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       etag:
-      - W/"460-6Jjus0KqNnwDYmI5seJcEh3tPBo"
+      - W/"461-2JWfYwMNTKVSfWbBrdhL54+FA6o"
       referrer-policy:
       - strict-origin-when-cross-origin
       retry-after:
-      - '0'
+      - '1'
       strict-transport-security:
       - max-age=15552000; includeSubDomains
       transfer-encoding:
@@ -40,18 +40,18 @@ interactions:
           - function:
               arguments: '{"city":"Sydney"}'
               name: get_weather
-            id: call_3mswl7o9n2zlk60jpibwseec
+            id: call_o0znvkn2csjm46xsqb1cvydx
             index: 0
             type: function
           - function:
               arguments: '{"city":"Sydney","summary":"weather summary"}'
               name: final_result
-            id: call_rdto0toj7y3o4juwnkyow18i
+            id: call_o7r2bzt63k9mez3xi7cuc64i
             index: 1
             type: function
         seed: null
-      created: 1766290032
-      id: oQ416tS-z1gNr-9b1482db8e67d62d
+      created: 1766420876
+      id: oQFZi8i-3pDw3Z-9b20fd47ce295a1c
       metadata:
         weight_version: default
       model: meta-llama/Llama-4-Scout-17B-16E-Instruct

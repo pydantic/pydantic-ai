@@ -147,12 +147,12 @@ class TestToolChoiceAuto:
                         ToolCallPart(
                             tool_name='get_weather',
                             args='{"city":"Paris"}',
-                            tool_call_id='call_f766mdwhj0oq0z0v375b5gpo',
+                            tool_call_id='call_mgvl52du237y4xpaykoc611g',
                         )
                     ],
                     usage=RequestUsage(input_tokens=773, output_tokens=29),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 6, 21, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 19, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
@@ -163,17 +163,17 @@ class TestToolChoiceAuto:
                         ToolReturnPart(
                             tool_name='get_weather',
                             content='Sunny, 22C in Paris',
-                            tool_call_id='call_f766mdwhj0oq0z0v375b5gpo',
+                            tool_call_id='call_mgvl52du237y4xpaykoc611g',
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='[get_weather("Paris")]')],
-                    usage=RequestUsage(input_tokens=797, output_tokens=6),
+                    parts=[TextPart(content='[get_weather, {"city": "Paris"}]')],
+                    usage=RequestUsage(input_tokens=797, output_tokens=11),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 6, 21, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 20, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
@@ -207,10 +207,10 @@ class TestToolChoiceAuto:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='Hello')],
-                    usage=RequestUsage(input_tokens=772, output_tokens=2),
+                    parts=[TextPart(content='Hello!')],
+                    usage=RequestUsage(input_tokens=772, output_tokens=3),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 6, 22, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 21, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
@@ -242,10 +242,10 @@ class TestToolChoiceAuto:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='Hello!')],
-                    usage=RequestUsage(input_tokens=769, output_tokens=3),
+                    parts=[TextPart(content='Hello! How can I assist you today?')],
+                    usage=RequestUsage(input_tokens=769, output_tokens=10),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 32, 31, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 22, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
@@ -277,17 +277,17 @@ class TestToolChoiceAuto:
                         ToolCallPart(
                             tool_name='get_weather',
                             args='{"city":"Tokyo"}',
-                            tool_call_id='call_yriz1tydjscsvnsytw354i0a',
+                            tool_call_id='call_hkh5cm1mdj44gu0tmk2r4pyy',
                         ),
                         ToolCallPart(
                             tool_name='final_result',
                             args='{"city":"Tokyo","summary":"weather summary"}',
-                            tool_call_id='call_qbu72noklg7hj7l1qe89fbov',
+                            tool_call_id='call_4jc2lqunzd54sw7qcq8p9bev',
                         ),
                     ],
                     usage=RequestUsage(input_tokens=881, output_tokens=63),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 23, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
@@ -298,13 +298,13 @@ class TestToolChoiceAuto:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_qbu72noklg7hj7l1qe89fbov',
+                            tool_call_id='call_4jc2lqunzd54sw7qcq8p9bev',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
                             tool_name='get_weather',
                             content='Tool not executed - a final result was already processed.',
-                            tool_call_id='call_yriz1tydjscsvnsytw354i0a',
+                            tool_call_id='call_hkh5cm1mdj44gu0tmk2r4pyy',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
@@ -348,21 +348,28 @@ class TestToolChoiceNone:
                     parts=[
                         TextPart(
                             content="""\
-I'm not able to provide real-time information, but I can suggest some ways for you to find out the current weather in Berlin:
+Berlin! As a virtual assistant, I don't have real-time access to current weather conditions. However, I can suggest a few ways for you to find out the current weather in Berlin:
 
-1. Check a weather website or app: You can check websites like weather.com, accuweather.com, or wunderground.com for current weather conditions and forecasts in Berlin.
-2. Use a search engine: Simply type "Berlin weather" or "weather in Berlin" into a search engine like Google, and you'll get the current weather conditions and forecast.
-3. Check a weather service: You can also check the website of a national weather service, such as the German Weather Service (Deutscher Wetterdienst) or the European Centre for Medium-Range Weather Forecasts (ECMWF).
+1. **Check a weather website or app**: You can visit websites like AccuWeather, Weather.com, or Deutsche Wetterdienst (DWD) to get the current weather conditions and forecast for Berlin.
+2. **Use a search engine**: Simply type "Berlin weather" or "weather Berlin" in a search engine like Google, and you'll get the current weather conditions and forecast.
+3. **Check a weather service**: You can also check services like Dark Sky (for iOS or Android) or Weather Underground (for iOS or Android) for hyperlocal weather forecasts.
 
-As of my knowledge cutoff, Berlin has a temperate climate with four distinct seasons. The city experiences cold winters, with average temperatures ranging from -2°C to 2°C (28°F to 36°F) in January, the coldest month. Summers are mild, with average temperatures ranging from 18°C to 23°C (64°F to 73°F) in July, the warmest month.
+That being said, Berlin has a temperate climate with four distinct seasons. Here's a rough idea of what you can expect:
 
-Please note that weather conditions can change quickly, so it's always a good idea to check a reliable weather source for the most up-to-date information.\
+* **Spring (March to May)**: Mild temperatures (around 10-20°C/50-68°F) with occasional rain showers.
+* **Summer (June to August)**: Warm temperatures (around 20-25°C/68-77°F) with occasional heatwaves.
+* **Autumn (September to November)**: Cooler temperatures (around 10-15°C/50-59°F) with some rain.
+* **Winter (December to February)**: Cold temperatures (around 0-5°C/32-41°F) with occasional snowfall.
+
+Keep in mind that these are general temperature ranges, and actual weather conditions can vary from year to year.
+
+If you have a specific question about Berlin's weather or need more information, feel free to ask!\
 """
                         )
                     ],
-                    usage=RequestUsage(input_tokens=17, output_tokens=255),
+                    usage=RequestUsage(input_tokens=17, output_tokens=335),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 3, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 26, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
@@ -397,21 +404,30 @@ Please note that weather conditions can change quickly, so it's always a good id
                     parts=[
                         TextPart(
                             content="""\
-I'm not able to provide real-time information, but I can give you a general overview of Rome's climate. Rome has a Mediterranean climate, characterized by warm summers and mild winters. \n\
+Rome! The Eternal City!
 
-- **Summer (June to August):** Expect high temperatures, often reaching above 30°C (86°F), and occasional heatwaves.
+I'm a large language model, I don't have real-time access to current weather conditions. However, I can suggest some ways for you to find out the current weather in Rome:
 
-- **Winter (December to February):** It's mild, with temperatures ranging from 2°C to 12°C (36°F to 54°F). \n\
+1. **Check a weather website or app**: You can visit websites like AccuWeather, Weather.com, or Rome's official website to get the current weather conditions and forecast.
+2. **Use a weather API**: If you're looking for a more programmatic way to get the weather, you can use a weather API like OpenWeatherMap or Dark Sky.
+3. **Ask a voice assistant**: If you have a voice assistant like Siri, Google Assistant, or Alexa, you can ask them "What's the weather in Rome?" and they'll provide you with the current conditions.
 
-- **Spring (March to May) and Autumn (September to November):** These seasons are generally pleasant, with temperatures ranging from 10°C to 25°C (50°F to 77°F), making them ideal times to visit.
+That being said, Rome has a Mediterranean climate with warm summers and mild winters. Here's a general idea of what you can expect:
 
-For the most accurate and up-to-date weather forecast, I recommend checking a reliable weather website or app.\
+* **Summer (June to August)**: Hot and dry, with average highs around 32°C (90°F) and lows around 18°C (64°F).
+* **Autumn (September to November)**: Mild and pleasant, with average highs around 22°C (72°F) and lows around 12°C (54°F).
+* **Winter (December to February)**: Cool and wet, with average highs around 12°C (54°F) and lows around 2°C (36°F).
+* **Spring (March to May)**: Mild and sunny, with average highs around 20°C (68°F) and lows around 10°C (50°F).
+
+Keep in mind that these are general temperature ranges, and actual weather conditions can vary from year to year.
+
+Hope this helps!\
 """
                         )
                     ],
-                    usage=RequestUsage(input_tokens=17, output_tokens=167),
+                    usage=RequestUsage(input_tokens=17, output_tokens=345),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 5, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 32, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
@@ -445,13 +461,13 @@ For the most accurate and up-to-date weather forecast, I recommend checking a re
                     parts=[
                         ToolCallPart(
                             tool_name='final_result',
-                            args='{"city":"Madrid","summary":"Madrid, the capital of Spain, is known for its vibrant culture, rich history, and beautiful architecture. The city is home to many famous landmarks such as the Royal Palace of Madrid, the Prado Museum, and the Retana Park. Madrid is also famous for its nightlife, with many bars, clubs, and restaurants to choose from."}',
-                            tool_call_id='call_6n5q5145abxn90lj0iptzbyy',
+                            args='{"city":"Madrid","summary":"Madrid, the capital of Spain, is known for its vibrant culture, rich history, and beautiful architecture. The city is home to many world-class museums, including the Prado Museum, which features an extensive collection of European art. Madrid is also famous for its lively nightlife, with many bars, clubs, and restaurants to choose from. The city\'s historic center is filled with picturesque plazas, such as the Puerta del Sol and Plaza Mayor, and the Royal Palace of Madrid is a must-visit attraction."}',
+                            tool_call_id='call_93nzyeobxbthyrrr1xxsy67y',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=787, output_tokens=101),
+                    usage=RequestUsage(input_tokens=787, output_tokens=134),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 6, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 29, 28, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
@@ -462,7 +478,7 @@ For the most accurate and up-to-date weather forecast, I recommend checking a re
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_6n5q5145abxn90lj0iptzbyy',
+                            tool_call_id='call_93nzyeobxbthyrrr1xxsy67y',
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
@@ -498,7 +514,7 @@ class TestToolChoiceRequired:
         assert response.parts == snapshot(
             [
                 ToolCallPart(
-                    tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='call_gihofucdc84ah6xxwh23i3na'
+                    tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='call_kv9xh65ghrljbxclmz4xcuzh'
                 )
             ]
         )
@@ -524,7 +540,7 @@ class TestToolChoiceRequired:
                 ToolCallPart(
                     tool_name='get_time',
                     args='{"timezone":"Europe/London"}',
-                    tool_call_id='call_4zpadw1mg6gsyj5tuqzhflu4',
+                    tool_call_id='call_p72l9inf42dt3a39z3focfkq',
                 )
             ]
         )
@@ -559,9 +575,9 @@ class TestToolChoiceList:
             [
                 TextPart(
                     content="""\
-Paris, the capital of France, is known as the "City of Light" for its role in the Enlightenment and its many famous intellectuals and artists. It's famous for its stunning architecture, art museums, fashion industry, and romantic atmosphere. Some must-see attractions include the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral. \n\
+Paris, the capital of France, is known as the "City of Light" for its historical and cultural significance. The city is famous for its iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, which houses the Mona Lisa. Paris is also renowned for its fashion industry, art museums, and romantic atmosphere. \n\
 
-Would you like to know more about Paris, or perhaps check the current weather there?\
+Would you like to know more about a specific aspect of Paris or perhaps the current weather there?\
 """
                 )
             ]
@@ -587,7 +603,7 @@ Would you like to know more about Paris, or perhaps check the current weather th
         assert response.parts == snapshot(
             [
                 ToolCallPart(
-                    tool_name='get_time', args='{"timezone":"Tokyo"}', tool_call_id='call_dvvajjk9h4b675ascgmxjq79'
+                    tool_name='get_time', args='{"timezone":"Tokyo"}', tool_call_id='call_pxec3y1ko9fx2l0l9dtxgm0z'
                 )
             ]
         )
@@ -612,7 +628,7 @@ Would you like to know more about Paris, or perhaps check the current weather th
         assert response.parts == snapshot(
             [
                 ToolCallPart(
-                    tool_name='get_weather', args='{"city":"London"}', tool_call_id='call_dj8h707vyzy6oxkuqsv6o32n'
+                    tool_name='get_weather', args='{"city":"London"}', tool_call_id='call_awshb3sadh758srpz3mx4c2f'
                 )
             ]
         )
@@ -652,17 +668,17 @@ class TestToolsPlusOutput:
                         ToolCallPart(
                             tool_name='get_weather',
                             args='{"city":"Sydney"}',
-                            tool_call_id='call_3mswl7o9n2zlk60jpibwseec',
+                            tool_call_id='call_o0znvkn2csjm46xsqb1cvydx',
                         ),
                         ToolCallPart(
                             tool_name='final_result',
                             args='{"city":"Sydney","summary":"weather summary"}',
-                            tool_call_id='call_rdto0toj7y3o4juwnkyow18i',
+                            tool_call_id='call_o7r2bzt63k9mez3xi7cuc64i',
                         ),
                     ],
                     usage=RequestUsage(input_tokens=881, output_tokens=65),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 12, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 27, 56, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
@@ -673,13 +689,13 @@ class TestToolsPlusOutput:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_rdto0toj7y3o4juwnkyow18i',
+                            tool_call_id='call_o7r2bzt63k9mez3xi7cuc64i',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
                             tool_name='get_weather',
                             content='Tool not executed - a final result was already processed.',
-                            tool_call_id='call_3mswl7o9n2zlk60jpibwseec',
+                            tool_call_id='call_o0znvkn2csjm46xsqb1cvydx',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
@@ -715,17 +731,17 @@ class TestToolsPlusOutput:
                         ToolCallPart(
                             tool_name='get_weather',
                             args='{"city":"Denver"}',
-                            tool_call_id='call_nycsfyh5qhhkz4t49m3vcg46',
+                            tool_call_id='call_yxd2o7y1dj6wnpjkcvewbbum',
                         ),
                         ToolCallPart(
                             tool_name='final_result',
-                            args='{"city":"Denver","summary":"weather summary for Denver"}',
-                            tool_call_id='call_n6197dew35ec29r6bvp6m6z8',
+                            args='{"city":"Denver","summary":"weather summary"}',
+                            tool_call_id='call_xja0kznyv967t4emgk7qiu03',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=973, output_tokens=67),
+                    usage=RequestUsage(input_tokens=973, output_tokens=65),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 13, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 27, 57, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
@@ -736,13 +752,13 @@ class TestToolsPlusOutput:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_n6197dew35ec29r6bvp6m6z8',
+                            tool_call_id='call_xja0kznyv967t4emgk7qiu03',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
                             tool_name='get_weather',
                             content='Tool not executed - a final result was already processed.',
-                            tool_call_id='call_nycsfyh5qhhkz4t49m3vcg46',
+                            tool_call_id='call_yxd2o7y1dj6wnpjkcvewbbum',
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
@@ -779,13 +795,13 @@ class TestNoFunctionTools:
                     parts=[
                         ToolCallPart(
                             tool_name='final_result',
-                            args='{"city":"New York","summary":"New York is a state in the northeastern United States. It is one of the most populous states and is known for its diverse culture, iconic cities, and natural beauty. The state capital is Albany, while New York City is the largest city and a global hub for finance, media, and entertainment. New York is also famous for its historical landmarks, such as the Statue of Liberty and Central Park."}',
-                            tool_call_id='call_956g1vy0rvpbqmwm6y9wd794',
+                            args='{"city":"New York","summary":"New York is a state in the northeastern United States. It is one of the most populous states and is often referred to as \\"The Empire State\\". The state is known for its diverse geography, including mountains, forests, and coastlines along the Atlantic Ocean and Lake Ontario. New York City, the most populous city in the United States, is located in the southeastern part of the state and is a global hub for finance, culture, and entertainment."}',
+                            tool_call_id='call_fua91omx53wxt8k2lyh4xw50',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=788, output_tokens=118),
+                    usage=RequestUsage(input_tokens=788, output_tokens=128),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 15, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 27, 59, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
@@ -796,7 +812,7 @@ class TestNoFunctionTools:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_956g1vy0rvpbqmwm6y9wd794',
+                            tool_call_id='call_fua91omx53wxt8k2lyh4xw50',
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
@@ -828,13 +844,13 @@ class TestNoFunctionTools:
                     parts=[
                         ToolCallPart(
                             tool_name='final_result',
-                            args='{"city":"Boston","summary":"Boston is the capital and most populous city of the Commonwealth of Massachusetts in the United States. Boston is also the seat of Suffolk County, although the county government was disbanded on July 1, 1997. The city proper covers 48.4 square miles (125.4 km²) with an estimated 694,583 residents in 2023, making it the 24th most populous city in the United States, and the 118th most populous city in the world. The city is the economic and cultural anchor of a substantially larger metropolitan area known as Greater Boston, which has a population of 4,896,149 and ranks as the 10th most populous metropolitan area in the United States. Boston is a global center of education, research, medical care and higher education. The city is known for its academic institutions, including Harvard University and the Massachusetts Institute of Technology.  Boston was the site of several key events of the American Revolution, including the Boston Massacre, the Boston Tea Party, the Siege of Boston, and the Battles of Lexington and Concord."}',
-                            tool_call_id='call_yyrfsjevuwaw937eo4orgumq',
+                            args='{"city":"Boston","summary":"Boston is the capital and most populous city of the Commonwealth of Massachusetts in the United States. Boston is also the seat of Suffolk County, although the county government was disbanded on July 1, 1997. The city proper covers 48.4 square miles (125.4 km²), with an adjacent inner harbor. Boston is one of the oldest municipalities in the United States, founded on the Shawmut Peninsula in 1630 by Puritan settlers. It was named after Boston, Lincolnshire, England; the area was called Trimountain by the local Tawahe Indigenous people."}',
+                            tool_call_id='call_3u767fywqob9o3q7wr8op7c7',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=787, output_tokens=260),
+                    usage=RequestUsage(input_tokens=787, output_tokens=156),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 18, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 1, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
@@ -845,7 +861,7 @@ class TestNoFunctionTools:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
-                            tool_call_id='call_yyrfsjevuwaw937eo4orgumq',
+                            tool_call_id='call_3u767fywqob9o3q7wr8op7c7',
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
@@ -891,7 +907,7 @@ class TestTextAndStructuredUnion:
                     ],
                     usage=RequestUsage(input_tokens=880, output_tokens=37),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 32, 32, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 2, tzinfo=timezone.utc),
                     provider_name='huggingface',
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
@@ -925,16 +941,29 @@ class TestTextAndStructuredUnion:
                 ),
                 ModelResponse(
                     parts=[
-                        TextPart(
-                            content='Seattle is a vibrant city located in the Pacific Northwest region of the United States. It is known for its stunning natural beauty, with mountains, forests, and waterways surrounding the city. Seattle is home to iconic landmarks such as the Space Needle, Pike Place Market, and the Seattle Waterfront. The city is also famous for its coffee culture, being the birthplace of Starbucks, and is a hub for technology and innovation, with companies like Amazon and Microsoft headquartered there. With a thriving arts and music scene, Seattle is a popular destination for tourists and a great place to live for its residents.'
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"city":"Seattle","summary":"Seattle is a major city in the U.S. state of Washington."}',
+                            tool_call_id='call_i1bfus9kj6jgy1wvhxhpl59i',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=786, output_tokens=121),
+                    usage=RequestUsage(input_tokens=786, output_tokens=63),
                     model_name='meta-llama/Llama-4-Scout-17B-16E-Instruct',
-                    timestamp=datetime(2025, 12, 21, 4, 7, 59, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 16, 28, 4, tzinfo=timezone.utc),
                     provider_name='huggingface',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='call_i1bfus9kj6jgy1wvhxhpl59i',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
                     run_id=IsStr(),
                 ),
             ]
