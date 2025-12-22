@@ -1246,7 +1246,6 @@ class OpenAIResponsesModel(Model):
         self, response: responses.Response, model_request_parameters: ModelRequestParameters
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = _now_utc()
         items: list[ModelResponsePart] = []
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
@@ -1353,7 +1352,7 @@ class OpenAIResponsesModel(Model):
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
-            timestamp=timestamp,
+            timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
@@ -2196,6 +2195,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
+
         async for chunk in self._response:
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
@@ -2204,13 +2206,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                 )
-                provider_details: dict[str, Any] = {}
                 if raw_finish_reason:  # pragma: no branch
-                    provider_details['finish_reason'] = raw_finish_reason
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
-                if self._provider_timestamp is not None:  # pragma: no branch
-                    provider_details['timestamp'] = self._provider_timestamp
-                self.provider_details = provider_details or None
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
