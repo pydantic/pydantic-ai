@@ -385,4 +385,18 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
         """The list of tool definitions available(including deferred ones)."""
-        return [tool_def for tool_def in (await super().get_all_tool_definitions(ctx))]
+        tool_definitions: list[ToolDefinition] = []
+        for original_name, tool in self.tools.items():
+            max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            run_context = replace(
+                ctx,
+                tool_name=original_name,
+                retry=ctx.retries.get(original_name, 0),
+                max_retries=max_retries,
+            )
+            tool_def = await tool.prepare_tool_def(run_context)
+            if not tool_def:
+                continue
+            tool_definitions.append(tool_def)
+        
+        return tool_definitions
