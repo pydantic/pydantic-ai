@@ -2,9 +2,15 @@
 
 Uses SurrealDB with HNSW vector indexes for persistent storage.
 
-Start SurrealDB locally with:
+Install SurrealDB from the optional dependency included in pydantic-ai-examples:
 
-    surreal start -u root -p root rocksdb:database
+    uv sync --package pydantic-ai-examples --extra surrealdb
+
+Set up your OpenAI API key:
+
+    export OPENAI_API_KEY=your-api-key
+
+Or, store it in a .env file, and add `--env-file .env` to your `uv run` commands.
 
 Build the search DB with:
 
@@ -13,6 +19,10 @@ Build the search DB with:
 Ask the agent a question with:
 
     uv run -m pydantic_ai_examples.rag_surrealdb search "How do I configure logfire to work with FastAPI?"
+
+This example runs SurrealDB embedded. If you want to run it in a separate process (useful to explore the db using Surrealist) you can start it with (or with docker):
+
+    surreal start -u root -p root rocksdb:database
 """
 
 from __future__ import annotations as _annotations
@@ -23,18 +33,20 @@ import sys
 import unicodedata
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 import httpx
 import logfire
-import ollama
 from anyio import create_task_group
+from openai import AsyncOpenAI
 from pydantic import TypeAdapter
 from surrealdb import (
     AsyncHttpSurrealConnection,
     AsyncSurreal,
     AsyncWsSurrealConnection,
     RecordID,
+    Value,
 )
 from typing_extensions import AsyncGenerator
 
@@ -44,15 +56,16 @@ from pydantic_ai import Agent, RunContext
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
+THIS_DIR = Path(__file__).parent
+
 
 @dataclass
 class Deps:
-    # openai: AsyncOpenAI
+    openai: AsyncOpenAI
     db: AsyncWsSurrealConnection | AsyncHttpSurrealConnection
 
 
-# agent = Agent('openai:gpt-5', deps_type=Deps)
-agent = Agent('ollama:llama3.2', deps_type=Deps)
+agent = Agent('openai:gpt-5', deps_type=Deps)
 
 
 @agent.tool
@@ -66,17 +79,15 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
     with logfire.span(
         'create embedding for {search_query=}', search_query=search_query
     ):
-        embedding = ollama.embed(
+        embedding = await context.deps.openai.embeddings.create(
             input=search_query,
-            # model='text-embedding-3-small',
-            model='all-minilm:22m',
-            truncate=True,
+            model='text-embedding-3-small',
         )
 
-    assert len(embedding.embeddings) == 1, (
-        f'Expected 1 embedding, got {len(embedding.embeddings)}, doc query: {search_query!r}'
+    assert len(embedding.data) == 1, (
+        f'Expected 1 embedding, got {len(embedding.data)}, doc query: {search_query!r}'
     )
-    embedding_vector = list(embedding.embeddings[0])
+    embedding_vector = embedding.data[0].embedding
 
     # SurrealDB vector search using HNSW index
     result = await context.deps.db.query(
@@ -87,7 +98,7 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
         ORDER BY dist ASC
         LIMIT 8;
         """,
-        {'vector': embedding_vector},
+        {'vector': cast(Value, embedding_vector)},
     )
 
     # Process SurrealDB query result
@@ -105,13 +116,13 @@ async def retrieve(context: RunContext[Deps], search_query: str) -> str:
 
 async def run_agent(question: str):
     """Entry point to run the agent and perform RAG based question answering."""
-    # openai = AsyncOpenAI()
-    # logfire.instrument_openai(openai)
+    openai = AsyncOpenAI()
+    logfire.instrument_openai(openai)
 
     logfire.info('Asking "{question}"', question=question)
 
     async with database_connect(False) as db:
-        deps = Deps(db=db)
+        deps = Deps(openai=openai, db=db)
         answer = await agent.run(question, deps=deps)
     print(answer.output)
 
@@ -137,8 +148,8 @@ async def build_search_db():
         response.raise_for_status()
     sections = sections_ta.validate_json(response.content)
 
-    # openai = AsyncOpenAI()
-    # logfire.instrument_openai(openai)
+    openai = AsyncOpenAI()
+    logfire.instrument_openai(openai)
 
     async with database_connect(True) as db:
         with logfire.span('create schema'):
@@ -147,12 +158,12 @@ async def build_search_db():
         sem = asyncio.Semaphore(10)
         async with create_task_group() as tg:
             for section in sections:
-                tg.start_soon(insert_doc_section, sem, db, section)
+                tg.start_soon(insert_doc_section, sem, openai, db, section)
 
 
 async def insert_doc_section(
     sem: asyncio.Semaphore,
-    # openai: AsyncOpenAI,
+    openai: AsyncOpenAI,
     db: AsyncWsSurrealConnection | AsyncHttpSurrealConnection,
     section: DocsSection,
 ) -> None:
@@ -170,15 +181,15 @@ async def insert_doc_section(
             return
 
         with logfire.span('create embedding for {url=}', url=url):
-            embedding = ollama.embed(
+            embedding = await openai.embeddings.create(
                 input=section.embedding_content(),
-                # model='text-embedding-3-small',
-                model='all-minilm:22m',
+                model='text-embedding-3-small',
             )
-        assert len(embedding.embeddings) == 1, (
-            f'Expected 1 embedding, got {len(embedding.embeddings)}, doc section: {section}'
+        assert len(embedding.data) == 1, (
+            f'Expected 1 embedding, got {len(embedding.data)}, doc section: {section}'
         )
-        embedding_vector = embedding.embeddings[0]
+        embedding_vector = embedding.data[0].embedding
+        # embedding_json = pydantic_core.to_json(embedding).decode()
 
         # Create record with embedding as array, using record ID directly
         _res = await db.create(
@@ -227,15 +238,26 @@ async def database_connect(
     Connects to a local SurrealDB server running on localhost:8000.
     Make sure to start SurrealDB with: surreal start -u root -p root rocksdb:database
     """
-    db_url = 'ws://localhost:8000/rpc'
-    namespace = 'rag'
-    database = 'docs'
+    namespace = 'pydantic_ai_examples'
+    database = 'rag_surrealdb'
     username = 'root'
     password = 'root'
 
+    # Running SurrealDB embedded
+    db_path = THIS_DIR / f'.{database}'
+    db_url = f'file://{db_path}'
+    requires_auth = False
+
+    # Running SurrealDB in a separate process, connect with URL
+    # db_url = 'ws://localhost:8000/rpc'
+    # namespace = 'pydantic_ai_examples'
+    # database = 'rag_surrealdb'
+    # requires_auth = True
+
     async with AsyncSurreal(db_url) as db:
         # Sign in to the database
-        await db.signin({'username': username, 'password': password})
+        if requires_auth:
+            await db.signin({'username': username, 'password': password})
 
         # Set namespace and database
         await db.use(namespace, database)

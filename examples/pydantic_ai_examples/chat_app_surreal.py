@@ -1,5 +1,15 @@
 """Simple chat app example build with FastAPI using SurrealDB embedded.
 
+Install SurrealDB from the optional dependency included in pydantic-ai-examples:
+
+    uv sync --package pydantic-ai-examples --extra surrealdb
+
+Set up your OpenAI API key:
+
+    export OPENAI_API_KEY=your-api-key
+
+Or, store it in a .env file, and add `--env-file .env` to your `uv run` commands.
+
 Run with:
 
     uv run -m pydantic_ai_examples.chat_app_surreal
@@ -37,8 +47,7 @@ from pydantic_ai import (
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-# agent = Agent('openai:gpt-5')
-agent = Agent('ollama:llama3.2')
+agent = Agent('openai:gpt-5')
 THIS_DIR = Path(__file__).parent
 
 
@@ -151,7 +160,7 @@ class Database:
     @classmethod
     @asynccontextmanager
     async def connect(
-        cls, db_path: Path = THIS_DIR / '.chat_app_messages_surreal'
+        cls, db_path: Path = THIS_DIR / '.chat_app_messages_surrealdb'
     ) -> AsyncIterator[Database]:
         """Connect to SurrealDB embedded database.
 
@@ -163,7 +172,9 @@ class Database:
             # The connection stays open for the entire lifespan of the FastAPI app
             async with AsyncSurreal(db_url) as db:
                 if not isinstance(db, AsyncEmbeddedSurrealConnection):
-                    raise ValueError(f'Expected AsyncEmbeddedSurrealConnection, got {type(db)}')
+                    raise ValueError(
+                        f'Expected AsyncEmbeddedSurrealConnection, got {type(db)}'
+                    )
                 slf = cls(db)
                 # Set namespace and database
                 await slf.db.use(slf.namespace, slf.database)
@@ -189,7 +200,7 @@ class Database:
         messages_json = messages.decode('utf-8')
         # Validate it's valid JSON (will raise if invalid)
         json.loads(messages_json)
-        
+
         # Create a record with the message list
         # Using a timestamp-based ID and created_at field for proper ordering
         now = datetime.now(timezone.utc)
@@ -198,7 +209,7 @@ class Database:
             {
                 'message_list': messages_json,
                 'created_at': now.isoformat(),
-            }
+            },
         )
 
     async def get_messages(self) -> list[ModelMessage]:
@@ -207,18 +218,20 @@ class Database:
         result = await self.db.query(
             'SELECT message_list, created_at FROM message ORDER BY created_at ASC;'
         )
-        
+
         messages: list[ModelMessage] = []
         if isinstance(result, list):
             for record in result:
                 if isinstance(record, dict) and 'message_list' in record:
                     # Parse the JSON string and extend the messages list
                     messages.extend(
-                        ModelMessagesTypeAdapter.validate_json(str(record['message_list']))
+                        ModelMessagesTypeAdapter.validate_json(
+                            str(record['message_list'])
+                        )
                     )
         else:
             raise ValueError(f'Expected list, got {type(result)}')
-        
+
         return messages
 
 
@@ -230,4 +243,3 @@ if __name__ == '__main__':
         reload=True,
         reload_dirs=[str(THIS_DIR)],
     )
-

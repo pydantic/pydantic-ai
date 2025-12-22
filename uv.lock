@@ -5514,8 +5514,12 @@ dependencies = [
     { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
-    { name = "surrealdb" },
     { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+surrealdb = [
+    { name = "surrealdb" },
 ]
 
 [package.metadata]
@@ -5534,9 +5538,10 @@ requires-dist = [
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
-    { name = "surrealdb", git = "https://github.com/surrealdb/surrealdb.py.git" },
+    { name = "surrealdb", marker = "extra == 'surrealdb'", specifier = ">=1.0.7" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
+provides-extras = ["surrealdb"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -7339,14 +7344,22 @@ dependencies = [
 
 [[package]]
 name = "surrealdb"
-version = "1.0.6"
-source = { git = "https://github.com/surrealdb/surrealdb.py.git#479f47dd996592f216a891a67605b3bf0c230d84" }
+version = "1.0.7"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "cerberus" },
     { name = "requests" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
     { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/32/f3d02ec13a31b07d98914162df85d5e4dc1dfdcfd45d3d470a6dbb56f9db/surrealdb-1.0.7.tar.gz", hash = "sha256:8fde07e45f5067bdf68fbef80e02c005b97a91fa50f5bb54524e99f71693d958", size = 274337, upload-time = "2025-12-03T18:05:43.107Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/b4/087f7186b670c61ef429e1c4b59321c5ee55e9639bd32c5e8835ebb677f4/surrealdb-1.0.7-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a002f4dcbd155676332b7e12f50069ed15e61136d0722398b320aa9836eff6b8", size = 5165634, upload-time = "2025-12-03T18:05:33.3Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/cb/6e179ef22b8d71c35913d838631c789b86d46a00ca5281e9d4ed83e72215/surrealdb-1.0.7-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:3fde813f3beb33e4250ce03bfd9be1d58b2f7a1f7b4dd9aa5748d5cf49fe65f1", size = 5021433, upload-time = "2025-12-03T18:05:35.23Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/da/ac284ee51399d09e1ddda86cba5a4fd2c943a4086d147f439dc78b188068/surrealdb-1.0.7-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:152c7293d0b93164891ee1ad8ca684292f325a8ce26bc35eac7ed872beb02131", size = 5841075, upload-time = "2025-12-03T18:05:37.439Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/54/0b2dc145d5826c86b345f8975f8bc2f0b6b9cb5c3ffeb0189105adda02bc/surrealdb-1.0.7-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:33107cbe7b63adb285358ae7d19c0ff3f0990b3e9f7e3fbb5c26a4dd9eec0a91", size = 5739267, upload-time = "2025-12-03T18:05:39.605Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/9e/6d5ea76b689d1d49b3349d9c2adb592df09598449263faf88f1b1ed9b0dd/surrealdb-1.0.7-cp39-abi3-win_amd64.whl", hash = "sha256:1c38be8343fd22e6f287d63f9410ba984cd0bef34a3327676ed08d99fe24f61a", size = 5092188, upload-time = "2025-12-03T18:05:41.472Z" },
 ]
 
 [[package]]

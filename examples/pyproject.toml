@@ -12,7 +12,7 @@ bump = true
 
 [project]
 name = "pydantic-ai-examples"
-dynamic = ["version", "dependencies"]
+dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Examples of how to use Pydantic AI and what it can do."
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -65,8 +65,10 @@ dependencies = [
     "duckdb>=1.3.2",
     "datasets>=4.0.0",
     "pandas>=2.2.3",
-    "surrealdb @ git+https://github.com/surrealdb/surrealdb.py.git",
 ]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+surrealdb = ["surrealdb>=1.0.7"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai_examples"]
