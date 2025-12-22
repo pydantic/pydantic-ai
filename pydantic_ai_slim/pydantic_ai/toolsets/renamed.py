@@ -46,6 +46,6 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
     async def get_all_tool_definitions(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
         original_to_new_name_map = {v: k for k, v in self.name_map.items()}
         return [
-            replace(tool_def, name=original_to_new_name_map[tool_def.name])
+            replace(tool_def, name=original_to_new_name_map.get(tool_def.name, tool_def.name))
             for tool_def in (await super().get_all_tool_definitions(ctx))
         ]
