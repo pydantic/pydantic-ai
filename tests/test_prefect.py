@@ -8,9 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from unittest.mock import MagicMock
-from urllib.parse import urlparse
 
-import httpcore
 import pytest
 from pydantic import BaseModel
 
@@ -78,32 +76,50 @@ pytestmark = [
     pytest.mark.xdist_group(name='prefect'),
 ]
 
-LOCALHOST_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0'}
+
+def _clear_httpcore_pool_state(client: Any) -> None:
+    """Clear httpcore pool state for a given httpx client.
+
+    VCR's httpcore stubs can leave orphaned requests in the connection pool when
+    returning cached responses. This causes subsequent requests to hang waiting
+    for connections that will never be released.
+    """
+    try:
+        transport = client._transport
+        if transport is not None:
+            pool = getattr(transport, '_pool', None)
+            if pool is not None and hasattr(pool, '_requests'):
+                pool._requests.clear()
+    except Exception:
+        pass
 
 
-def _is_localhost_request(request: httpcore.Request) -> bool:
-    """Check if an httpcore request is to localhost."""
-    url = bytes(request.url).decode('ascii')
-    parsed = urlparse(url)
-    return parsed.hostname in LOCALHOST_HOSTS
+# Expose as module-level function for use within tests
+clear_http_client_pool = lambda: _clear_httpcore_pool_state(http_client)  # noqa: E731
 
 
 @pytest.fixture(autouse=True, scope='module')
 def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
-    """Patch VCR's httpcore stubs to completely bypass localhost requests.
+    """Patch VCR's httpcore stubs to bypass localhost requests entirely.
 
     VCR patches httpcore.AsyncConnectionPool.handle_async_request at the class level,
-    meaning ALL requests go through VCR's wrapper - even 'ignored' localhost ones.
-    This can corrupt httpcore's connection pool state when using cached HTTP clients.
-
-    This patch makes localhost requests bypass VCR's wrapper entirely, preventing
-    httpcore pool corruption that causes hangs in tests with multiple agent runs.
+    meaning ALL requests go through VCR's wrapper. This patch makes localhost requests
+    (to Prefect's test server) bypass VCR's wrapper entirely.
     """
+    import httpcore
+
     try:
         import vcr.stubs.httpcore_stubs as httpcore_stubs
     except ImportError:
         yield
         return
+
+    def _is_localhost_request(request: httpcore.Request) -> bool:
+        url = bytes(request.url).decode('ascii')
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        return parsed.hostname in {'localhost', '127.0.0.1', '0.0.0.0'}
 
     original: Any = httpcore_stubs.vcr_handle_async_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
@@ -111,7 +127,6 @@ def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
         vcr_wrapper: Any = original(cassette, real_handle_async_request)
 
         def localhost_aware_wrapper(self: httpcore.AsyncConnectionPool, real_request: httpcore.Request) -> Any:
-            # Bypass VCR entirely for localhost requests
             if _is_localhost_request(real_request):
                 return real_handle_async_request(self, real_request)
             return vcr_wrapper(self, real_request)
@@ -122,8 +137,15 @@ def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
     try:
         yield
     finally:
-        # Restore original to avoid affecting other test modules
         httpcore_stubs.vcr_handle_async_request = original
+
+
+@pytest.fixture(autouse=True)
+async def clear_httpcore_pool_state(anyio_backend: str) -> AsyncIterator[None]:
+    """Clear httpcore pool state before and after each test."""
+    _clear_httpcore_pool_state(http_client)
+    yield
+    _clear_httpcore_pool_state(http_client)
 
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
