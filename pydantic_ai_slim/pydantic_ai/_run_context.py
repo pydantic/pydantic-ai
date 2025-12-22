@@ -51,7 +51,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
     tool_usage: dict[str, int] = field(default_factory=dict)
-    """Number of calls for each tool so far."""
+    """Number of successful calls for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -61,7 +61,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     max_retries: int = 0
     """The maximum number of retries of this tool."""
     max_uses: int = 0
-    """The maximum number of times this tool can be used in the run."""
+    """The maximum number of successful calls allowed for this tool in the run."""
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False
@@ -71,7 +71,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     run_id: str | None = None
     """"Unique identifier for the agent run."""
     max_tool_calls: int | None = None
-    """The maximum number of tool calls allowed during this run, or `None` if unlimited."""
+    """The maximum number of successful tool calls allowed during this run, or `None` if unlimited."""
 
     @property
     def last_attempt(self) -> bool:

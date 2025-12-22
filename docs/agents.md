@@ -671,7 +671,7 @@ except UsageLimitExceeded as e:
 
 ##### Soft Tool Call Limits with `max_tool_calls`
 
-If you want to limit tool calls but let the model decide how to proceed instead of raising an error, use the `max_tool_calls` parameter. This is a "soft" limit that returns a message to the model when exceeded, rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
+If you want to limit successful tool calls but let the model decide how to proceed instead of raising an error, use the `max_tool_calls` parameter. This is a "soft" limit that returns a message to the model when exceeded, rather than raising a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] exception.
 
 ```py
 from pydantic_ai import Agent
@@ -688,7 +688,7 @@ print(result.output)
 #> I was able to call the tool twice, but the third call reached the limit.
 ```
 
-1. Set the maximum number of tool calls allowed during runs. This can also be set per-run.
+1. Set the maximum number of successful tool calls allowed during runs. This can also be set per-run.
 
 When `max_tool_calls` is exceeded, instead of executing the tool, the agent returns a message to the model: `'Tool call limit reached for tool "{tool_name}".'`. The model then decides how to respond based on this information.
 
@@ -708,6 +708,8 @@ result = agent.run_sync('Calculate something', max_tool_calls=1)
 ```
 
 **When to use `max_tool_calls` vs `tool_calls_limit`:**
+
+Both `max_tool_calls` and `tool_calls_limit` count only **successful** tool invocations.
 
 | Parameter | Behavior | Use Case |
 | --------- | -------- | -------- |

@@ -130,7 +130,7 @@ agent = Agent(
             ),
             blocked_domains=['example.com', 'spam-site.net'],
             allowed_domains=None,  # Cannot use both blocked_domains and allowed_domains with Anthropic
-            max_uses=5,  # Anthropic only: limit tool usage
+            max_uses=5,  # Anthropic only: limit successful tool calls
         )
     ],
 )
@@ -436,7 +436,7 @@ agent = Agent(
     builtin_tools=[
         WebFetchTool(
             allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
-            max_uses=10,
+            max_uses=10,  # Limit to 10 successful calls
             enable_citations=True,
             max_content_tokens=50000,
         )

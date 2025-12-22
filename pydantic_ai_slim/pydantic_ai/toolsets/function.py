@@ -71,7 +71,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
                 Applies to all tools, unless overridden when adding a tool.
-            max_uses: The maximum number of uses allowed for each tool during a run.
+            max_uses: The maximum number of successful calls allowed for each tool during a run.
                 Applies to all tools, unless overridden when adding a tool.
             timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
@@ -196,7 +196,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             description: The description of the tool,defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
-            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
+            max_uses: The maximum number of successful calls allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -277,7 +277,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
-            max_uses: The maximum number of uses allowed for this tool during a run. Defaults to None (unlimited).
+            max_uses: The maximum number of successful calls allowed for this tool during a run. Defaults to None (unlimited).
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].

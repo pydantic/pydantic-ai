@@ -68,14 +68,14 @@ class ToolManager(Generic[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         """The tool definitions for the tools in this tool manager.
 
-        Tools that have reached their `max_uses` limit are filtered out.
+        Tools that have reached their `max_uses` limit (based on successful calls) are filtered out.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         result: list[ToolDefinition] = []
         for tool in self.tools.values():
-            # Filter out tools that have reached their max_uses limit
+            # Filter out tools that have reached their max_uses limit (based on successful calls)
             if tool.max_uses is not None:
                 current_uses = self.ctx.tool_usage.get(tool.tool_def.name, 0)
                 if current_uses >= tool.max_uses:
@@ -306,14 +306,14 @@ class ToolManager(Generic[AgentDepsT]):
         return self.ctx.tool_usage.get(tool_name, 0)
 
     def _get_max_tool_calls(self) -> int | None:
-        """Get the maximum number of tool calls allowed during this run, or `None` if unlimited."""
+        """Get the maximum number of successful tool calls allowed during this run, or `None` if unlimited."""
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         return self.ctx.max_tool_calls
 
     def can_make_tool_calls(self, num_tool_calls: int, usage: RunUsage) -> bool:
-        """Check if the tool calls can be made within max_tool_calls limit if it is set."""
+        """Check if the tool calls can be made within successful max_tool_calls limit if it is set."""
         max_tool_calls = self._get_max_tool_calls()
         if max_tool_calls is not None:
             usage.tool_calls += num_tool_calls
