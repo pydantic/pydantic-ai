@@ -4706,7 +4706,7 @@ async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
     assert 'inline_data' in content[0]
     assert 'file_data' not in content[0]
     # video_metadata is preserved even when video is downloaded
-    assert content[0]['video_metadata'] == {'start_offset': '10s', 'end_offset': '20s'}
+    assert content[0].get('video_metadata') == {'start_offset': '10s', 'end_offset': '20s'}
 
 
 async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
