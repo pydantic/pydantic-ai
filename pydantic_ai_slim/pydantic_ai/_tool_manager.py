@@ -169,7 +169,6 @@ class ToolManager(Generic[AgentDepsT]):
                 max_uses=tool.max_uses,
             )
 
-
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
