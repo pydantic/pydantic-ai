@@ -77,7 +77,7 @@ class ToolManager(Generic[AgentDepsT]):
         return [
             tool.tool_def
             for tool in self.tools.values()
-            if tool.max_uses is None or self.get_current_use_of_tool(tool.tool_def.name) < tool.max_uses
+            if tool.max_uses is None or self.get_current_uses_of_tool(tool.tool_def.name) < tool.max_uses
         ]
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:

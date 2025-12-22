@@ -1431,7 +1431,7 @@ def test_tool_max_uses():
     )
 
 
-def test_max_tool_uses():
+def test_max_tools_uses():
     agent = Agent(TestModel(), max_tools_uses=0)
 
     @agent.tool_plain
@@ -1461,7 +1461,7 @@ def test_max_tool_uses():
                 parts=[
                     ToolReturnPart(
                         tool_name='my_tool',
-                        content='Tool call limit reached for tool "my_tool".',
+                        content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -1469,8 +1469,12 @@ def test_max_tool_uses():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='{"my_tool":"Tool call limit reached for tool \\"my_tool\\"."}')],
-                usage=RequestUsage(input_tokens=59, output_tokens=15),
+                parts=[
+                    TextPart(
+                        content='{"my_tool":"Tool use limit reached for all tools. Please produce an output without calling any tools."}'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=67, output_tokens=22),
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
