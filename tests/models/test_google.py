@@ -4682,6 +4682,53 @@ async def test_video_url_without_vendor_metadata():
     }
 
 
+async def test_http_video_url_falls_through_to_download_on_google_gla(mocker: MockerFixture):
+    """Test that HTTP VideoUrls (not YouTube/GCS) fall through to FileUrl handling on google-gla.
+
+    google-gla cannot access arbitrary HTTP URLs via file_uri, so they must be downloaded.
+    """
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Mock download_item to avoid actual HTTP request
+    mock_download = mocker.patch(
+        'pydantic_ai.models.google.download_item',
+        return_value={'data': b'fake video data', 'data_type': 'video/mp4'},
+    )
+
+    # HTTP VideoUrl (not YouTube, not GCS) should fall through to FileUrl handling
+    http_video = VideoUrl(
+        url='https://example.com/video.mp4',
+        vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},  # This will be lost on download
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[http_video]))  # pyright: ignore[reportPrivateUsage]
+
+    # Should have called download_item (fell through to FileUrl handling)
+    mock_download.assert_called_once()
+
+    # Result should be inline_data (downloaded), not file_data
+    assert len(content) == 1
+    assert 'inline_data' in content[0]
+    assert 'file_data' not in content[0]
+
+
+async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
+    """Test that HTTP VideoUrls use file_uri directly on google-vertex (no download needed)."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Mock system to be google-vertex
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    # HTTP VideoUrl on google-vertex should use file_uri directly (FileUrl branch, no download)
+    http_video = VideoUrl(url='https://example.com/video.mp4')
+    content = await model._map_user_prompt(UserPromptPart(content=[http_video]))  # pyright: ignore[reportPrivateUsage]
+
+    # Should use file_data (no download on vertex)
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
+    }
+
+
 async def test_thinking_with_tool_calls_from_other_model(
     allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
 ):
