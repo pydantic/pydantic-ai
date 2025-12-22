@@ -301,16 +301,12 @@ class ToolManager(Generic[AgentDepsT]):
 
         return ctx.tool_usage.get(tool_name, 0)
 
-    def can_make_tool_calls(self, num_tool_calls: int, usage: RunUsage) -> bool:
+    def can_make_tool_calls(self, projected_usage: RunUsage) -> bool:
         """Check if tool calls can proceed within the max_tools_uses limit."""
         ctx = self._assert_ctx()
 
         max_tools_uses = ctx.max_tools_uses
-        if max_tools_uses is not None:
-            usage.tool_calls += num_tool_calls
-            if usage.tool_calls > max_tools_uses:
-                return False
-        return True
+        return max_tools_uses is None or projected_usage.tool_calls <= max_tools_uses
 
     def can_use_tool(self, tool_name: str, tool_use_count: int) -> bool:
         """Check if a tool can be used within the max_uses limit."""

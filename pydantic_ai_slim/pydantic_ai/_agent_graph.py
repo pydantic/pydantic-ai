@@ -1040,13 +1040,14 @@ async def _call_tools(
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+    projected_usage = deepcopy(usage)
+    projected_usage.tool_calls += len(tool_calls)
+
     if usage_limits.tool_calls_limit is not None:
-        projected_usage = deepcopy(usage)
-        projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
     # Checks for total tool calls limit
-    can_make_tool_calls = tool_manager.can_make_tool_calls(len(tool_calls), deepcopy(usage))
+    can_make_tool_calls = tool_manager.can_make_tool_calls(projected_usage)
 
     calls_to_run: list[_messages.ToolCallPart] = []
 
@@ -1055,7 +1056,7 @@ async def _call_tools(
 
     for call in tool_calls:
         # Seprarating to allow for different return parts for each case(When supported by #3656)
-        if not can_make_tool_calls:
+        if not can_make_tool_calls: # We cannot use any tools because of the max_tools_uses limit
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Tool use limit reached for all tools. Please produce an output without calling any tools.',
@@ -1064,7 +1065,7 @@ async def _call_tools(
             )
             output_parts.append(return_part)
             yield _messages.FunctionToolResultEvent(return_part)
-        elif not tool_manager.can_use_tool(call.tool_name, tool_call_counts[call.tool_name]):
+        elif not tool_manager.can_use_tool(call.tool_name, tool_call_counts[call.tool_name]): # We cannot use this tool because of the max_uses limit
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content=f'Tool use limit reached for tool "{call.tool_name}".',
