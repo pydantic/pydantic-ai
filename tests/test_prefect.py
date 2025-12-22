@@ -101,7 +101,7 @@ def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
     """
     try:
         import vcr.stubs.httpcore_stubs as httpcore_stubs
-    except ImportError:
+    except ImportError:  # pragma: no cover
         yield
         return
 
@@ -127,7 +127,7 @@ def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
         def localhost_aware_wrapper(self: httpcore.ConnectionPool, real_request: httpcore.Request) -> Any:
             if _is_localhost_request(real_request):
                 return real_handle_request(self, real_request)
-            return vcr_wrapper(self, real_request)
+            return vcr_wrapper(self, real_request)  # pragma: no cover
 
         return localhost_aware_wrapper
 
