@@ -203,7 +203,7 @@ class FileUrl(ABC):
         ext = guess_extension(self.media_type)
         if ext is None:
             raise ValueError(f'Could not infer file format from media type: {self.media_type}')
-        return ext[1:]  # Strip the leading dot
+        return ext.lstrip('.')  # Strip the leading dot
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -653,21 +653,13 @@ class BinaryContent:
         Raises:
             ValueError: If file format cannot be inferred from media type.
         """
-        if self._extension is not None:
-            return self._extension
-
-        # Combine all format lookups
-
-        if self.media_type in _type_map:
-            return _type_map[self.media_type]
+        ext = self._extension or _type_map.get(self.media_type) or guess_extension(self.media_type)
 
         # Fallback to mimetypes.guess_extension
-        ext = guess_extension(self.media_type)
         if ext is None:
             raise ValueError(f'Unknown media type: {self.media_type}')
-
         # Return the extension (strip the leading dot)
-        return ext[1:]
+        return ext.lstrip('.')
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
