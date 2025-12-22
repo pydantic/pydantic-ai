@@ -310,7 +310,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`AgentRun.metadata`][pydantic_ai.agent.AgentRun],
                 [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], and
                 [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult],
-                and is attached to telemetry when instrumentation is enabled.
+                and is attached to the agent run span when instrumentation is enabled.
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
