@@ -445,30 +445,28 @@ def test_pre_usage_refactor_messages_deserializable():
         },
     ]
     messages = ModelMessagesTypeAdapter.validate_python(data)
-    assert messages == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is the capital of Mexico?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ]
+    assert messages == snapshot([
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content='What is the capital of Mexico?',
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Mexico City.')],
+            usage=RequestUsage(
+                input_tokens=13,
+                output_tokens=76,
+                details={},
             ),
-            ModelResponse(
-                parts=[TextPart(content='Mexico City.')],
-                usage=RequestUsage(
-                    input_tokens=13,
-                    output_tokens=76,
-                    details={},
-                ),
-                model_name='gpt-5-2025-08-07',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
-            ),
-        ]
-    )
+            model_name='gpt-5-2025-08-07',
+            timestamp=IsNow(tz=timezone.utc),
+            provider_details={'finish_reason': 'STOP'},
+            provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
+        ),
+    ])
 
 
 def test_file_part_has_content():
@@ -485,47 +483,45 @@ def test_file_part_serialization_roundtrip():
         ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg'))])
     ]
     serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
-    assert serialized == snapshot(
-        [
-            {
-                'parts': [
-                    {
-                        'content': {
-                            'data': 'ZmFrZQ==',
-                            'media_type': 'image/jpeg',
-                            'identifier': 'c053ec',
-                            'vendor_metadata': None,
-                            'kind': 'binary',
-                        },
-                        'id': None,
-                        'provider_name': None,
-                        'part_kind': 'file',
-                        'provider_details': None,
-                    }
-                ],
-                'usage': {
-                    'input_tokens': 0,
-                    'cache_write_tokens': 0,
-                    'cache_read_tokens': 0,
-                    'output_tokens': 0,
-                    'input_audio_tokens': 0,
-                    'cache_audio_read_tokens': 0,
-                    'output_audio_tokens': 0,
-                    'details': {},
-                },
-                'model_name': None,
-                'timestamp': IsStr(),
-                'kind': 'response',
-                'provider_name': None,
-                'provider_url': None,
-                'provider_details': None,
-                'provider_response_id': None,
-                'finish_reason': None,
-                'run_id': None,
-                'metadata': None,
-            }
-        ]
-    )
+    assert serialized == snapshot([
+        {
+            'parts': [
+                {
+                    'content': {
+                        'data': 'ZmFrZQ==',
+                        'media_type': 'image/jpeg',
+                        'identifier': 'c053ec',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                    },
+                    'id': None,
+                    'provider_name': None,
+                    'part_kind': 'file',
+                    'provider_details': None,
+                }
+            ],
+            'usage': {
+                'input_tokens': 0,
+                'cache_write_tokens': 0,
+                'cache_read_tokens': 0,
+                'output_tokens': 0,
+                'input_audio_tokens': 0,
+                'cache_audio_read_tokens': 0,
+                'output_audio_tokens': 0,
+                'details': {},
+            },
+            'model_name': None,
+            'timestamp': IsStr(),
+            'kind': 'response',
+            'provider_name': None,
+            'provider_url': None,
+            'provider_details': None,
+            'provider_response_id': None,
+            'finish_reason': None,
+            'run_id': None,
+            'metadata': None,
+        }
+    ])
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
     assert deserialized == messages
 
@@ -579,26 +575,24 @@ Let's generate an image
 
 And then, call the 'hello_world' tool\
 """)
-    assert response.files == snapshot(
-        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
-    )
-    assert response.images == snapshot(
-        [BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')]
-    )
+    assert response.files == snapshot([
+        BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')
+    ])
+    assert response.images == snapshot([
+        BinaryImage(data=b'fake', _media_type='image/jpeg', media_type='image/jpeg', identifier='c053ec')
+    ])
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
-    assert response.builtin_tool_calls == snapshot(
-        [
-            (
-                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
-                BuiltinToolReturnPart(
-                    tool_name='image_generation',
-                    content={},
-                    tool_call_id='123',
-                    timestamp=IsDatetime(),
-                ),
-            )
-        ]
-    )
+    assert response.builtin_tool_calls == snapshot([
+        (
+            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            BuiltinToolReturnPart(
+                tool_name='image_generation',
+                content={},
+                tool_call_id='123',
+                timestamp=IsDatetime(),
+            ),
+        )
+    ])
 
 
 def test_image_url_validation_with_optional_identifier():
@@ -607,37 +601,31 @@ def test_image_url_validation_with_optional_identifier():
     assert image.url == snapshot('https://example.com/image.jpg')
     assert image.identifier == snapshot('39cfc4')
     assert image.media_type == snapshot('image/jpeg')
-    assert image_url_ta.dump_python(image) == snapshot(
-        {
-            'url': 'https://example.com/image.jpg',
-            'force_download': False,
-            'vendor_metadata': None,
-            'kind': 'image-url',
-            'media_type': 'image/jpeg',
-            'identifier': '39cfc4',
-        }
-    )
+    assert image_url_ta.dump_python(image) == snapshot({
+        'url': 'https://example.com/image.jpg',
+        'force_download': False,
+        'vendor_metadata': None,
+        'kind': 'image-url',
+        'media_type': 'image/jpeg',
+        'identifier': '39cfc4',
+    })
 
-    image = image_url_ta.validate_python(
-        {
-            'url': 'https://example.com/image.jpg',
-            'identifier': 'foo',
-            'media_type': 'image/png',
-        }
-    )
+    image = image_url_ta.validate_python({
+        'url': 'https://example.com/image.jpg',
+        'identifier': 'foo',
+        'media_type': 'image/png',
+    })
     assert image.url == snapshot('https://example.com/image.jpg')
     assert image.identifier == snapshot('foo')
     assert image.media_type == snapshot('image/png')
-    assert image_url_ta.dump_python(image) == snapshot(
-        {
-            'url': 'https://example.com/image.jpg',
-            'force_download': False,
-            'vendor_metadata': None,
-            'kind': 'image-url',
-            'media_type': 'image/png',
-            'identifier': 'foo',
-        }
-    )
+    assert image_url_ta.dump_python(image) == snapshot({
+        'url': 'https://example.com/image.jpg',
+        'force_download': False,
+        'vendor_metadata': None,
+        'kind': 'image-url',
+        'media_type': 'image/png',
+        'identifier': 'foo',
+    })
 
 
 def test_binary_content_validation_with_optional_identifier():
@@ -646,35 +634,71 @@ def test_binary_content_validation_with_optional_identifier():
     assert binary_content.data == b'fake'
     assert binary_content.identifier == snapshot('c053ec')
     assert binary_content.media_type == snapshot('image/jpeg')
-    assert binary_content_ta.dump_python(binary_content) == snapshot(
-        {
-            'data': b'fake',
-            'vendor_metadata': None,
-            'kind': 'binary',
-            'media_type': 'image/jpeg',
-            'identifier': 'c053ec',
-        }
-    )
+    assert binary_content_ta.dump_python(binary_content) == snapshot({
+        'data': b'fake',
+        'vendor_metadata': None,
+        'kind': 'binary',
+        'media_type': 'image/jpeg',
+        'identifier': 'c053ec',
+    })
 
-    binary_content = binary_content_ta.validate_python(
-        {
-            'data': b'fake',
-            'identifier': 'foo',
-            'media_type': 'image/png',
-        }
-    )
+    binary_content = binary_content_ta.validate_python({
+        'data': b'fake',
+        'identifier': 'foo',
+        'media_type': 'image/png',
+    })
     assert binary_content.data == b'fake'
     assert binary_content.identifier == snapshot('foo')
     assert binary_content.media_type == snapshot('image/png')
-    assert binary_content_ta.dump_python(binary_content) == snapshot(
-        {
-            'data': b'fake',
-            'vendor_metadata': None,
-            'kind': 'binary',
-            'media_type': 'image/png',
-            'identifier': 'foo',
-        }
-    )
+    assert binary_content_ta.dump_python(binary_content) == snapshot({
+        'data': b'fake',
+        'vendor_metadata': None,
+        'kind': 'binary',
+        'media_type': 'image/png',
+        'identifier': 'foo',
+    })
+
+
+def test_file_url_format_error():
+    """Test FileUrl.format property error when media type cannot be inferred (lines 203-206)."""
+    # Create an ImageUrl with an unknown media type
+    image_url = ImageUrl(url='https://example.com/image', media_type='image/unknown-format')
+
+    with pytest.raises(ValueError, match='Could not infer file format from media type: image/unknown-format'):
+        _ = image_url.format
+
+
+def test_binary_content_infer_media_type_with_magika(tmp_path: Path):
+    """Test BinaryContent._infer_media_type using Magika library (lines 601-612)."""
+    # Create a simple PDF-like binary content
+    # PDF magic bytes: %PDF-
+    pdf_data = b'%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n>>\nendobj\n%%EOF'
+
+    binary_content = BinaryContent(data=pdf_data)
+
+    # The media type should be inferred via Magika
+    assert binary_content.media_type == 'application/pdf'
+    assert binary_content.is_document
+    assert binary_content.format == 'pdf'
+
+
+def test_binary_content_magika_not_installed(monkeypatch: pytest.MonkeyPatch):
+    """Test BinaryContent._infer_media_type when Magika is not installed (lines 611-614)."""
+
+    # Mock the import of magika to raise ImportError
+    def mock_import_magika(*args, **kwargs):  # type: ignore
+        raise ImportError('No module named magika')
+
+    # Replace the magika module in sys.modules to simulate it not being installed
+    monkeypatch.setitem(__import__('sys').modules, 'magika', None)
+    monkeypatch.setattr('pydantic_ai.messages.Magika', mock_import_magika, raising=False)  # type: ignore[attr-defined]
+
+    # Create a binary content without providing media_type
+    binary_content = BinaryContent(data=b'some data')
+
+    # Accessing media_type should raise ImportError with a helpful message
+    with pytest.raises(ImportError, match='Magika is not installed. Please install magika'):
+        _ = binary_content.media_type
 
 
 def test_binary_content_from_path(tmp_path: Path):
