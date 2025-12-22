@@ -453,26 +453,34 @@ class TestToolChoiceNone:
                     parts=[
                         ThinkingPart(
                             content='',
-                            id='rs_0763586dde7c4ff1006949709476dc81a3bee08ca99902ab94',
+                            id='rs_00110cd4adb840e600694980b4bb288197a8c9371e2ba5e87b',
                             signature=IsStr(),
                             provider_name='openai',
                         ),
                         TextPart(
                             content="""\
-I can't fetch live weather data right now, so I can't give a current, up-to-the-minute forecast for Berlin. I can, however:
+I can't fetch live weather data right now. I can, however, give a quick summary of what to expect in Berlin this time of year and point you to reliable ways to get the current conditions.
 
-- Give an approximate idea of what to expect in late December: generally cold (roughly around -2°C to +5°C on average), often cloudy, with frequent rain/sleet and occasional snow. Short daylight hours and sometimes breezy conditions—dress in warm layers, a waterproof outer layer, and sturdy shoes.
-- Tell you where to check a real-time forecast: German national weather service (Deutscher Wetterdienst), major weather sites/apps (e.g., Weather.com, AccuWeather), or a quick web/mobile search for "Berlin weather" or "Berlin forecast."
-- Help you interpret a forecast (what "wind chill," precipitation chances, or warnings mean) or make a packing/travel checklist based on expected winter conditions.
+Quick seasonal summary (late December):
+- Typical daytime temps: around 0-5 °C (32-41 °F). Nighttime often near or slightly below freezing.
+- Conditions: often cloudy, with frequent rain, sleet or occasional snow--cold spells can bring sustained sub‐freezing temperatures.
+- Wind: generally light to moderate; gusts can make it feel colder.
+- Daylight: short -- dress in warm layers, waterproof outerwear, and a warm hat/gloves.
 
-Which would you like me to do? If you want a live forecast, tell me and I'll fetch it as soon as I can.\
+To get the exact current weather and short-term forecast now:
+- Ask a smart assistant or search "weather in Berlin" in your browser.
+- Use a weather app (Apple/Google Weather, Weather.com, AccuWeather, Weather Underground).
+- For official German information, check the German Meteorological Service (DWD).
+- For aviation-style current conditions, search for the BER METAR/TAF.
+
+If you want, tell me whether you need: an expected temperature/forecast for a specific date or time, packing/advice for outdoor plans in Berlin, or help interpreting a weather report you paste here.\
 """,
-                            id='msg_0763586dde7c4ff1006949709d5d0481a38272138c77a63683',
+                            id='msg_00110cd4adb840e600694980ba0f288197bbc05d5303bbc4f7',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=50, output_tokens=918, details={'reasoning_tokens': 704}),
+                    usage=RequestUsage(input_tokens=50, output_tokens=846, details={'reasoning_tokens': 576}),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 22, 16, 23, 47, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 17, 32, 36, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'completed'},
@@ -511,33 +519,30 @@ Which would you like me to do? If you want a live forecast, tell me and I'll fet
                     parts=[
                         ThinkingPart(
                             content='',
-                            id='rs_00721c11dd0b759000694970a48c3881978d478a0b5f41d72c',
+                            id='rs_07ba037521aba2f200694980bd9288819698d34f51580d6ffe',
                             signature=IsStr(),
                             provider_name='openai',
                         ),
                         TextPart(
                             content="""\
-I can't access live weather data right now, so I can't give the current conditions or an up‑to‑the‑minute forecast for Rome. I can, however, help in a few other ways — tell me which you prefer:
+I don't have access to live weather data right now, so I can't fetch the current conditions for Rome. I can help in other ways though:
 
-- I can give typical/climatological weather for Rome by month (what to expect in winter/summer).
-- I can tell you what to pack and how to plan for travel in Rome right now.
-- I can show how to check current weather yourself (recommended websites/apps and what to look for).
-- If you want a current forecast, I can fetch it for you if you'd like me to try (note: I'll need to access live data).
+- Quick options to get the current weather now: search "weather in Rome" on Google, check a weather site/app (Weather.com, AccuWeather, Meteo.it), or use your phone's weather widget or voice assistant.
+- If you tell me the date/time you care about (right now, today, this weekend), I can explain typical conditions and what to expect or walk you through reading a forecast.
+- Quick climate notes for Rome (typical averages):
+  - Winter (Dec-Feb): mild/cool and often rainy -- lows ~5-8°C, highs ~12-15°C.
+  - Spring (Mar-May): mild, gradually warming -- highs ~15-22°C.
+  - Summer (Jun-Aug): warm to hot and mostly dry -- highs ~28-33°C.
+  - Autumn (Sep-Nov): mild with increasing rain -- highs ~15-24°C.
 
-Quick climatological summary for Rome (central Italy):
-- Late December (winter): mild compared with northern Europe. Typical daytime highs ~10–14°C (50–57°F), nighttime lows ~3–8°C (37–46°F).  \n\
-- Rain: December is one of the wetter months—expect several rainy days in the month; occasional heavy showers but prolonged storms are less common.  \n\
-- Snow: Rare in central Rome, but not impossible in cold winters.  \n\
-- What to pack: a warm layer (sweater/coat), a light waterproof jacket or umbrella, comfortable walking shoes.
-
-If you want a live current temperature/forecast right now, tell me and I'll retrieve it (or I can point you to reliable sources to check immediately: e.g., local meteorological service, Weather.com, AccuWeather, or your phone's weather app). Which would you like?\
+Which would you prefer -- I can explain what a forecast means, check a specific date's typical conditions, or guide you to a live source?\
 """,
-                            id='msg_00721c11dd0b759000694970a9d24881978ee190fd84c23adb',
+                            id='msg_07ba037521aba2f200694980c136e48196ab165ad66ae55c30',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=50, output_tokens=713, details={'reasoning_tokens': 384}),
+                    usage=RequestUsage(input_tokens=50, output_tokens=636, details={'reasoning_tokens': 384}),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 22, 16, 24, 3, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 17, 32, 45, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'completed'},

@@ -46,6 +46,7 @@ When handling tool_choice, these distinctions matter:
 
 ```python
 from pydantic import BaseModel
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryImage
 

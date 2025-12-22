@@ -884,10 +884,10 @@ class TestTextAndStructuredUnion:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Miami"}', tool_call_id='DQCS2PUWU')],
+                    parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Miami"}', tool_call_id='00Ec68tKC')],
                     usage=RequestUsage(input_tokens=150, output_tokens=13),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 16, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 17, 32, 52, tzinfo=timezone.utc),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
                     provider_details={'finish_reason': 'tool_calls'},
@@ -900,7 +900,7 @@ class TestTextAndStructuredUnion:
                         ToolReturnPart(
                             tool_name='get_weather',
                             content='Sunny, 22C in Miami',
-                            tool_call_id='DQCS2PUWU',
+                            tool_call_id='00Ec68tKC',
                             timestamp=IsNow(tz=timezone.utc),
                         )
                     ],
@@ -914,16 +914,16 @@ The current weather in **Miami** is **sunny** with a temperature of **22°C (72�
 
 Here's a brief description:
 - **Conditions**: Clear skies and plenty of sunshine.
-- **Temperature**: Warm and comfortable, typical for Miami.
-- **What to expect**: Great weather for outdoor activities like beach visits, walking, or enjoying a sunny day.
+- **Temperature**: Warm and comfortable, typical for Miami's tropical climate.
+- **What to expect**: Perfect weather for outdoor activities like beach visits, walking, or enjoying a café outdoors.
 
-Would you like more details or information about another city?\
+Would you like more details or recommendations for activities?\
 """
                         )
                     ],
-                    usage=RequestUsage(input_tokens=174, output_tokens=92),
+                    usage=RequestUsage(input_tokens=174, output_tokens=94),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 14, 20, 16, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 17, 32, 53, tzinfo=timezone.utc),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
                     provider_details={'finish_reason': 'stop'},

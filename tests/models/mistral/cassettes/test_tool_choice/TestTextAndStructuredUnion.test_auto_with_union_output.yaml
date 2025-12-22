@@ -63,7 +63,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b466e-a96d-7dff-9180-2e107bdb9291
+      - 019b471e-ff30-7e45-b5df-d4ec2e28d929
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -79,10 +79,10 @@ interactions:
           - function:
               arguments: '{"city": "Miami"}'
               name: get_weather
-            id: DQCS2PUWU
+            id: 00Ec68tKC
             index: 0
-      created: 1766413216
-      id: b1d737c395c54cd6a1c3604f40d04d86
+      created: 1766424772
+      id: 671ae799cc20426389768d62c4a8255c
       model: mistral-large-latest
       object: chat.completion
       usage:
@@ -105,8 +105,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=3YfQ6OsKtxonHhgJ.XLK9vX49Gt3q5WpooihedFVdN8-1766413216-1.0.1.1-OkH981E5RQgjUiDMQ9ASNy_3hvJsXZRE5fZTWeKgiPpauooK8jemW6UJ1c_kv4gAqbYvn1CIbveF3mjFFQc5rm.fNG5WyAHBtnP7t8F5Ydc;
-        _cfuvid=LqPgX4TaGS__MiktJmOye4EgjdJTa88.3s0oPyrmQEI-1766413216688-0.0.1.1-604800000
+      - __cf_bm=tOYe4s5CnmWJF2.K6aL8aV7iOTbWs_C0MgXCETyCKnk-1766424772-1.0.1.1-dEqAQjr0Ne.MNb2kmPKKBFMqM._olpGm8I56u8yhprOMmOlWpzKPA1stlJioWrPRsaDxrkwr4rAUCrNRjg3FwdM3ue5K8KyHzqZyvuB32ZI;
+        _cfuvid=jDi5fVAaWWCjM1DDVuK4Z.JFg9hMWhz6WyWuLfO_2aI-1766424772923-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
@@ -121,12 +121,12 @@ interactions:
         - function:
             arguments: '{"city": "Miami"}'
             name: get_weather
-          id: DQCS2PUWU
+          id: 00Ec68tKC
           index: 0
           type: function
       - content: Sunny, 22C in Miami
         role: tool
-        tool_call_id: DQCS2PUWU
+        tool_call_id: 00Ec68tKC
       model: mistral-large-latest
       n: 1
       stream: false
@@ -168,11 +168,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '715'
+      - '743'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b466e-ac74-74a1-83ea-f83f0fd45380
+      - 019b471f-0205-77f8-afe7-b07438444fed
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -185,22 +185,22 @@ interactions:
           content: |-
             The current weather in **Miami** is **sunny** with a temperature of **22°C (72°F)**.
 
-            Here’s a brief description:
+            Here's a brief description:
             - **Conditions**: Clear skies and plenty of sunshine.
-            - **Temperature**: Warm and comfortable, typical for Miami.
-            - **What to expect**: Great weather for outdoor activities like beach visits, walking, or enjoying a sunny day.
+            - **Temperature**: Warm and comfortable, typical for Miami's tropical climate.
+            - **What to expect**: Perfect weather for outdoor activities like beach visits, walking, or enjoying a café outdoors.
 
-            Would you like more details or information about another city?
+            Would you like more details or recommendations for activities?
           role: assistant
           tool_calls: null
-      created: 1766413216
-      id: ca0c66a4aeed43f0a2db90bf2f32c663
+      created: 1766424773
+      id: bfd24f3657904881985f965bf29d4b74
       model: mistral-large-latest
       object: chat.completion
       usage:
-        completion_tokens: 92
+        completion_tokens: 94
         prompt_tokens: 174
-        total_tokens: 266
+        total_tokens: 268
     status:
       code: 200
       message: OK

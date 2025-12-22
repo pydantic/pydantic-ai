@@ -438,30 +438,42 @@ class TestToolChoiceNone:
                     parts=[
                         TextPart(
                             content="""\
-I can't access live weather data right now, so I can't fetch the current conditions for Berlin. I can either:
+I don't have access to live weather data right now, so I can't give the current conditions in Berlin. I can:
 
-- Tell you how to check live weather quickly (websites/apps to use), or  \n\
-- Give a quick, general summary of typical December weather in Berlin and packing tips, or  \n\
-- Provide a sample (hypothetical) 3–7 day forecast if that helps.
+- Give a quick summary of Berlin's typical climate, or
+- Tell you where to get an up-to-date forecast (websites/apps and tips), or
+- Interpret a forecast you paste here, or
+- Provide a likely estimate for a specific date based on seasonal norms.
 
-Which would you prefer?
+Quick climate summary (typical conditions):
+- Climate type: temperate (between oceanic and continental).
+- Summer (Jun-Aug): warm -- average highs ~23-25°C, nighttime lows ~13-15°C; occasional hot spells above 30°C.
+- Autumn (Sep-Nov): cooling; rain increases, temperatures fall from ~18°C in September to single digits by November.
+- Winter (Dec-Feb): cold -- average highs around 0-4°C, lows often below freezing; snow is possible but not always heavy.
+- Spring (Mar-May): variable -- can be cool early, warming to pleasant by May.
+- Precipitation: moderate year-round, with slightly drier late winter/early spring and wetter summer thunderstorms possible.
 
-If you want to check right now yourself, try: search "Berlin weather" or open a weather app (Weather.com, AccuWeather, Google Weather, or the German Meteorological Service). They'll give current temperature, precipitation, wind, and an hourly forecast.\
+Where to check current weather:
+- Official German service: Deutscher Wetterdienst (DWD) website or app.
+- Popular options: Weather.com, AccuWeather, MeteoGroup (WeatherPro), BBC Weather, or your phone's built‐in weather app.
+- For very local detail: search "Berlin weather" in a search engine for hourly forecasts, radar, and alerts.
+
+Which would you like me to do next? (e.g., give a forecast estimate for a specific date, or walk you through checking the live forecast.)\
 """
                         )
                     ],
                     usage=RequestUsage(
                         input_tokens=132,
-                        output_tokens=596,
+                        output_tokens=612,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
-                            'reasoning_tokens': 448,
+                            'reasoning_tokens': 256,
                             'rejected_prediction_tokens': 0,
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 36, 31, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 17, 32, 16, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
@@ -493,29 +505,28 @@ If you want to check right now yourself, try: search "Berlin weather" or open a 
                     parts=[
                         TextPart(
                             content="""\
-I can't fetch live weather data right now. I can help in other ways — for example I can tell you how to check current conditions, give a typical climate summary for this time of year, or give packing/clothing advice.
+I can't access live real‐time weather data right now, so I can't give the current conditions for Rome. I can, however:
 
-Quick options:
-- To get the current weather now: check a phone weather app or a weather website (e.g., Weather.com, AccuWeather, or a local Italian weather site), or search "Rome weather" in your browser. You can also check METAR/TAF reports for Rome Fiumicino (if you want aviation-style observations).
-- Typical conditions for Rome in mid-December: average daytime high about 12–14°C (54–57°F), nighttime low about 3–6°C (37–43°F). December is one of Rome's wetter months — expect a fair chance of rain and generally mild but cool temperatures; occasional chilly days or brief cold snaps are possible.
-- If you tell me a specific date/time or what you're planning to do (walking around, sightseeing, evening out), I can give tailored clothing and activity advice based on typical conditions.
+- Give typical/climatological conditions for this time of year (December): average highs about 12-14°C (54-57°F), lows around 4-7°C (39-45°F), with occasional rain -- cool and often damp, so a warm coat and umbrella are useful.
+- Suggest how to get the current weather quickly: open your phone's weather app or search "Rome weather" in Google, or check sites/apps like Weather.com, AccuWeather, or the Italian service (Meteo.it).
+- If you want, I can provide a 7‐day climatological expectation for Rome, packing/clothing advice for travel, or explain how to interpret forecasts (temperature, precipitation probability, wind).
 
-Which would you like?\
+Which would you like me to do?\
 """
                         )
                     ],
                     usage=RequestUsage(
                         input_tokens=132,
-                        output_tokens=626,
+                        output_tokens=705,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
-                            'reasoning_tokens': 384,
+                            'reasoning_tokens': 512,
                             'rejected_prediction_tokens': 0,
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 18, 34, 12, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 17, 32, 25, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},
@@ -1190,21 +1201,21 @@ class TestTextAndStructuredUnion:
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='Seattle is a major city in the Pacific Northwest on the shores of Puget Sound, Washington. Known as the "Emerald City," it\'s famous for landmarks like the Space Needle and Pike Place Market, and for views of Mount Rainier on clear days. Seattle is a tech and innovation hub (home to Amazon and near Microsoft), with a strong coffee culture, vibrant music and arts scenes, and abundant outdoor recreation from city parks to nearby mountains and waterways. The climate is mild with cool, wet winters and relatively dry summers.',
+                            content="Seattle is the largest city in Washington state, located on the Puget Sound in the Pacific Northwest, framed by the Olympic and Cascade mountain ranges and nearby lakes. It's a major tech and innovation hub (home to companies like Amazon and close to Microsoft), with a strong coffee culture and lively arts and music scenes. Popular landmarks include the Space Needle, Pike Place Market, and the waterfront ferries. The climate is temperate and often gray and rainy in fall/winter, with mild, pleasant summers.",
                         )
                     ],
                     usage=RequestUsage(
                         input_tokens=152,
-                        output_tokens=179,
+                        output_tokens=237,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
-                            'reasoning_tokens': 64,
+                            'reasoning_tokens': 128,
                             'rejected_prediction_tokens': 0,
                         },
                     ),
                     model_name='gpt-5-mini-2025-08-07',
-                    timestamp=datetime(2025, 12, 19, 19, 1, 1, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 17, 32, 11, tzinfo=timezone.utc),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
                     provider_details={'finish_reason': 'stop'},

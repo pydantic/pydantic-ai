@@ -1,9 +1,42 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import json
+import unicodedata
 import urllib.parse
 from typing import TYPE_CHECKING, Any
 
 import yaml
+
+# Smart quote and special character normalization
+SMART_CHAR_MAP = {
+    '\u2018': "'",  # LEFT SINGLE QUOTATION MARK
+    '\u2019': "'",  # RIGHT SINGLE QUOTATION MARK
+    '\u201c': '"',  # LEFT DOUBLE QUOTATION MARK
+    '\u201d': '"',  # RIGHT DOUBLE QUOTATION MARK
+    '\u2013': '-',  # EN DASH
+    '\u2014': '--',  # EM DASH
+    '\u2026': '...',  # HORIZONTAL ELLIPSIS
+}
+SMART_CHAR_TRANS = str.maketrans(SMART_CHAR_MAP)
+
+
+def normalize_smart_chars(text: str) -> str:
+    """Normalize smart quotes and special characters to ASCII equivalents."""
+    # First use the translation table for known characters
+    text = text.translate(SMART_CHAR_TRANS)
+    # Then apply NFKC normalization for any remaining special chars
+    return unicodedata.normalize('NFKC', text)
+
+
+def normalize_body(obj: Any) -> Any:
+    """Recursively normalize smart characters in all strings within a data structure."""
+    if isinstance(obj, str):
+        return normalize_smart_chars(obj)
+    elif isinstance(obj, dict):
+        return {k: normalize_body(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [normalize_body(item) for item in obj]
+    return obj
+
 
 if TYPE_CHECKING:
     from yaml import Dumper
@@ -73,7 +106,9 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     body = body.get('string')
                 if body:
                     # NOTE(Marcelo): This doesn't handle gzip compression.
-                    data['parsed_body'] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
+                    parsed = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
+                    # Normalize smart quotes and special characters
+                    data['parsed_body'] = normalize_body(parsed)
                     if 'access_token' in data['parsed_body']:
                         data['parsed_body']['access_token'] = 'scrubbed'
                     del data['body']
