@@ -461,11 +461,11 @@ class TestAgentToolChoiceIntegration:
 
         @agent.tool_plain
         def tool_a(x: int) -> str:
-            return str(x)
+            return str(x)  # pragma: no cover
 
         @agent.tool_plain
         def tool_b(y: str) -> int:
-            return len(y)
+            return len(y)  # pragma: no cover
 
         model = TestModel(call_tools=[])
         agent.run_sync('hello', model=model)

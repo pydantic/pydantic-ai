@@ -49,12 +49,12 @@ def get_weather(city: str) -> str:
 
 def get_time(timezone: str) -> str:
     """Get the current time in a timezone."""
-    return f'14:30 in {timezone}'
+    return f'14:30 in {timezone}'  # pragma: no cover
 
 
 def get_population(city: str) -> str:
     """Get the population of a city."""
-    return f'{city} has 1 million people'
+    return f'{city} has 1 million people'  # pragma: no cover
 
 
 # =============================================================================
