@@ -389,6 +389,7 @@ async def test_complex_agent_run_in_workflow(
                                         BasicSpan(
                                             content='RunActivity:agent__complex_agent__model_request_stream',
                                             children=[
+                                                BasicSpan(content='POST api.openai.com/v1/chat/completions'),
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
@@ -508,6 +509,7 @@ async def test_complex_agent_run_in_workflow(
                                         BasicSpan(
                                             content='RunActivity:agent__complex_agent__model_request_stream',
                                             children=[
+                                                BasicSpan(content='POST api.openai.com/v1/chat/completions'),
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
@@ -602,6 +604,7 @@ async def test_complex_agent_run_in_workflow(
                                         BasicSpan(
                                             content='RunActivity:agent__complex_agent__model_request_stream',
                                             children=[
+                                                BasicSpan(content='POST api.openai.com/v1/chat/completions'),
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
                                                     content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
