@@ -954,7 +954,7 @@ class OpenAIChatModel(Model):
         )
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
-        _warn_on_dict_typed_params(o.name or DEFAULT_OUTPUT_TOOL_NAME, o.json_schema)
+        _warn_on_dict_typed_params(self.system, o.name or DEFAULT_OUTPUT_TOOL_NAME, o.json_schema)
 
         response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
             'type': 'json_schema',
@@ -967,7 +967,7 @@ class OpenAIChatModel(Model):
         return response_format_param
 
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        _warn_on_dict_typed_params(f.name, f.parameters_json_schema)
+        _warn_on_dict_typed_params(self.system, f.name, f.parameters_json_schema)
 
         tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
@@ -1605,7 +1605,7 @@ class OpenAIResponsesModel(Model):
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
-        _warn_on_dict_typed_params(f.name, f.parameters_json_schema)
+        _warn_on_dict_typed_params(self.system, f.name, f.parameters_json_schema)
 
         return {
             'name': f.name,
@@ -2838,7 +2838,7 @@ def _map_mcp_call(
     )
 
 
-def _warn_on_dict_typed_params(tool_name: str, json_schema: dict[str, Any]) -> bool:
+def _warn_on_dict_typed_params(provider_name: str, tool_name: str, json_schema: dict[str, Any]) -> bool:
     """Detect if a JSON schema contains dict-typed parameters and emit a warning if so.
 
     Dict types manifest as objects with additionalProperties that is:
@@ -2849,6 +2849,9 @@ def _warn_on_dict_typed_params(tool_name: str, json_schema: dict[str, Any]) -> b
 
     c.f. https://github.com/pydantic/pydantic-ai/issues/3654
     """
+    if provider_name != 'openai':
+        return False
+
     has_dict_params = False
 
     properties: dict[str, Any] = json_schema.get('properties', {})
@@ -2871,7 +2874,7 @@ def _warn_on_dict_typed_params(tool_name: str, json_schema: dict[str, Any]) -> b
             # Recursively check nested objects
             # by default python's warnings module will filter out repeated warnings
             # so even with recursion we'll emit a single warning
-            if 'properties' in prop_schema and _warn_on_dict_typed_params(tool_name, prop_schema):  # type: ignore[reportUnknownArgumentType]
+            if 'properties' in prop_schema and _warn_on_dict_typed_params(provider_name, tool_name, prop_schema):  # type: ignore[reportUnknownArgumentType]
                 has_dict_params = True
 
     if has_dict_params:
