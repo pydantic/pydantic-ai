@@ -5514,12 +5514,8 @@ dependencies = [
     { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
-    { name = "uvicorn" },
-]
-
-[package.optional-dependencies]
-surrealdb = [
     { name = "surrealdb" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -5538,10 +5534,9 @@ requires-dist = [
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
-    { name = "surrealdb", marker = "extra == 'surrealdb'", specifier = ">=1.0.7" },
+    { name = "surrealdb", specifier = ">=1.0.7" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
-provides-extras = ["surrealdb"]
 
 [[package]]
 name = "pydantic-ai-slim"

@@ -2,10 +2,6 @@
 
 Uses SurrealDB with HNSW vector indexes for persistent storage.
 
-Install SurrealDB from the optional dependency included in pydantic-ai-examples:
-
-    uv sync --package pydantic-ai-examples --extra surrealdb
-
 Set up your OpenAI API key:
 
     export OPENAI_API_KEY=your-api-key

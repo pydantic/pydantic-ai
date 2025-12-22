@@ -1,9 +1,5 @@
 """Simple chat app example build with FastAPI using SurrealDB embedded.
 
-Install SurrealDB from the optional dependency included in pydantic-ai-examples:
-
-    uv sync --package pydantic-ai-examples --extra surrealdb
-
 Set up your OpenAI API key:
 
     export OPENAI_API_KEY=your-api-key
