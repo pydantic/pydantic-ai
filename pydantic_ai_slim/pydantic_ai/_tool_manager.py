@@ -314,8 +314,8 @@ class ToolManager(Generic[AgentDepsT]):
 
     def can_call_tool(self, tool_name: str, tool_call_counts: Counter[str]) -> bool:
         current_tool_use = self.get_current_use_of_tool(tool_name)
-        max_tool_use = self.get_max_use_of_tool(tool_name)
-        if max_tool_use is not None and current_tool_use + tool_call_counts[tool_name] > max_tool_use:
+        max_tools_uses = self.get_max_use_of_tool(tool_name)
+        if max_tools_uses is not None and current_tool_use + tool_call_counts[tool_name] > max_tools_uses:
             return False
         return True
 

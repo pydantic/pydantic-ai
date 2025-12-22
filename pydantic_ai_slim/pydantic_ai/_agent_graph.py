@@ -1057,9 +1057,9 @@ async def _call_tools(
 
     for call in tool_calls:
         current_tool_use = tool_manager.get_current_use_of_tool(call.tool_name)
-        max_tool_use = tool_manager.get_max_use_of_tool(call.tool_name)
+        max_tools_uses = tool_manager.get_max_use_of_tool(call.tool_name)
         if (
-            max_tool_use is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tool_use
+            max_tools_uses is not None and current_tool_use + tool_call_counts[call.tool_name] > max_tools_uses
         ) or not can_make_tool_calls:
             return_part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
