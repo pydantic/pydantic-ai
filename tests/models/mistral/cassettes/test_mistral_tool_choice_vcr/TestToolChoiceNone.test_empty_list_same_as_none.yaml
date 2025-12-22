@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '373'
+      - '134'
       content-type:
       - application/json
       host:
@@ -21,19 +21,6 @@ interactions:
       model: mistral-large-latest
       n: 1
       stream: false
-      tool_choice: none
-      tools:
-      - function:
-          description: Get the current weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -45,11 +32,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '343'
+      - '944'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b4826-fe2e-7570-b1db-94f3cd79e995
+      - 019b482a-1a9f-7a4f-bc7f-2a812c48a825
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -59,17 +46,22 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: 'ikuutaget_weather Την{"city": "Rome"}'
+          content: "To check the current weather in **Rome, Italy**, you can use reliable weather services like:\n\n- **[Weather.com
+            (The Weather Channel)](https://weather.com)**\n- **[AccuWeather](https://www.accuweather.com)**\n- **[Meteo.it
+            (Italian Meteorological Service)](https://www.meteo.it)**\n\n### **Quick Check (as of my last update):**\n- **Today's
+            Forecast:** Typically mild to warm, depending on the season.\n- **Current Conditions:** Check for real-time updates
+            (e.g., sunny, partly cloudy, rain).\n\nFor the most accurate and up-to-date information, I recommend checking
+            one of the links above. Would you like help interpreting a forecast? \U0001F60A"
           role: assistant
           tool_calls: null
-      created: 1766442073
-      id: 858ff79fb7604b64b856748731e46224
+      created: 1766442277
+      id: 5372395c54b441ebaa53219b18fdf7ab
       model: mistral-large-latest
       object: chat.completion
       usage:
-        completion_tokens: 12
-        prompt_tokens: 77
-        total_tokens: 89
+        completion_tokens: 150
+        prompt_tokens: 10
+        total_tokens: 160
     status:
       code: 200
       message: OK

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '375'
+      - '136'
       content-type:
       - application/json
       host:
@@ -21,19 +21,6 @@ interactions:
       model: mistral-large-latest
       n: 1
       stream: false
-      tool_choice: none
-      tools:
-      - function:
-          description: Get the current weather for a city.
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -45,11 +32,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1073'
+      - '1324'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019b4822-317b-76cb-8113-6c3e186e4ff5
+      - 019b4829-fe4c-7460-97db-56bb46a77f91
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -59,28 +46,31 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content:
-          - text: ikuutaget_weather
-            type: text
-          - reference_ids: []
-            type: reference
-          - text: |-
-              {"city": "Berlin"}```json
-              {
-                "city": "Berlin"
-              }
-              ```​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
-            type: text
+          content: |-
+            To check the current weather in **Berlin, Germany**, you can use reliable weather services like:
+
+            - **[Weather.com (The Weather Channel)](https://weather.com/weather/today/l/Berlin+Germany)**
+            - **[AccuWeather](https://www.accuweather.com/en/de/berlin/10178/weather-forecast/178087)**
+            - **[Windy.com](https://www.windy.com/?52.520,13.405,5)** (for detailed wind/rain maps)
+            - **[Meteoblue](https://www.meteoblue.com/en/weather/forecast/week/berlin_germany_2950159)** (for hourly/daily forecasts)
+
+            ### **Quick Check (as of my last update):**
+            - **Current conditions**: Likely around **10-20°C (50-68°F)** depending on the season.
+            - **Forecast**: Check for rain, wind, or sunshine (Berlin has a temperate climate with mild summers and cold winters).
+
+            For **real-time updates**, I recommend using one of the links above or asking a voice assistant like **Siri, Google Assistant, or Alexa**.
+
+            Would you like a **5-day forecast** or details on specific weather conditions (e.g., humidity, UV index)? Let me know!
           role: assistant
           tool_calls: null
-      created: 1766441759
-      id: 3ea21c8e84fd43c28a65944e6041f143
+      created: 1766442270
+      id: 965e295ba50a438c9cb6418f768ea713
       model: mistral-large-latest
       object: chat.completion
       usage:
-        completion_tokens: 224
-        prompt_tokens: 77
-        total_tokens: 301
+        completion_tokens: 287
+        prompt_tokens: 10
+        total_tokens: 297
     status:
       code: 200
       message: OK

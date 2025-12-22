@@ -377,10 +377,29 @@ class TestToolChoiceNone:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='ikuutaget_weather')],
-                    usage=RequestUsage(input_tokens=77, output_tokens=224),
+                    parts=[
+                        TextPart(
+                            content="""\
+To check the current weather in **Berlin, Germany**, you can use reliable weather services like:
+
+- **[Weather.com (The Weather Channel)](https://weather.com/weather/today/l/Berlin+Germany)**
+- **[AccuWeather](https://www.accuweather.com/en/de/berlin/10178/weather-forecast/178087)**
+- **[Windy.com](https://www.windy.com/?52.520,13.405,5)** (for detailed wind/rain maps)
+- **[Meteoblue](https://www.meteoblue.com/en/weather/forecast/week/berlin_germany_2950159)** (for hourly/daily forecasts)
+
+### **Quick Check (as of my last update):**
+- **Current conditions**: Likely around **10-20°C (50-68°F)** depending on the season.
+- **Forecast**: Check for rain, wind, or sunshine (Berlin has a temperate climate with mild summers and cold winters).
+
+For **real-time updates**, I recommend using one of the links above or asking a voice assistant like **Siri, Google Assistant, or Alexa**.
+
+Would you like a **5-day forecast** or details on specific weather conditions (e.g., humidity, UV index)? Let me know!\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=10, output_tokens=287),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 22, 15, 59, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 22, 24, 30, tzinfo=timezone.utc),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
                     provider_details={'finish_reason': 'stop'},
@@ -414,10 +433,26 @@ class TestToolChoiceNone:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='ikuutaget_weather Την{"city": "Rome"}')],
-                    usage=RequestUsage(input_tokens=77, output_tokens=12),
+                    parts=[
+                        TextPart(
+                            content="""\
+To check the current weather in **Rome, Italy**, you can use reliable weather services like:
+
+- **[Weather.com (The Weather Channel)](https://weather.com)**
+- **[AccuWeather](https://www.accuweather.com)**
+- **[Meteo.it (Italian Meteorological Service)](https://www.meteo.it)**
+
+### **Quick Check (as of my last update):**
+- **Today's Forecast:** Typically mild to warm, depending on the season.
+- **Current Conditions:** Check for real-time updates (e.g., sunny, partly cloudy, rain).
+
+For the most accurate and up-to-date information, I recommend checking one of the links above. Would you like help interpreting a forecast? 😊\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=10, output_tokens=150),
                     model_name='mistral-large-latest',
-                    timestamp=datetime(2025, 12, 22, 22, 21, 13, tzinfo=timezone.utc),
+                    timestamp=datetime(2025, 12, 22, 22, 24, 37, tzinfo=timezone.utc),
                     provider_name='mistral',
                     provider_url='https://api.mistral.ai',
                     provider_details={'finish_reason': 'stop'},
