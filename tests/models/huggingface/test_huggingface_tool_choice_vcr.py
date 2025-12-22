@@ -555,7 +555,7 @@ class TestToolChoiceList:
     """
 
     async def test_single_tool_in_list(self, huggingface_model: HuggingFaceModel, allow_model_requests: None):
-        """Model uses the specified tool when given a single-item list."""
+        """Model can use specified tool or respond with text when `allow_text_output=True`."""
         weather_tool = make_tool_def('get_weather', 'Get weather for a city', 'city')
         time_tool = make_tool_def('get_time', 'Get current time in a timezone', 'timezone')
         population_tool = make_tool_def('get_population', 'Get population of a city', 'city')

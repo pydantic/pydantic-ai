@@ -59,14 +59,15 @@ class TestToolChoiceTranslation:
         assert len(tools) == 1
 
     def test_none_format(self, mistral_model: MistralModel):
-        """tool_choice='none' passes 'none' string to API."""
+        """`tool_choice='none'` behaves the same as `None` -> returns no tools."""
         settings: ModelSettings = {'tool_choice': 'none'}
         params = ModelRequestParameters(function_tools=[make_tool('get_weather')])
 
         tools, tool_choice = mistral_model._get_tool_choice(params, settings)  # pyright: ignore[reportPrivateUsage]
 
-        assert tool_choice == 'none'
-        assert tools is not None
+        # Mistral doesn't support caching and returns garbled responses when tool_choice='none' with tools present
+        assert tool_choice is None
+        assert tools is None
 
     def test_required_format(self, mistral_model: MistralModel):
         """tool_choice='required' passes 'required' string to API."""

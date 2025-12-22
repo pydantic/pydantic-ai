@@ -340,8 +340,8 @@ class MistralModel(Model):
         if validated_tool_choice in ('auto', 'required'):
             tool_choice = validated_tool_choice
         elif validated_tool_choice == 'none':
-            # Mistral doesn't have tool caching, and returns garbled responses when
-            # tool_choice='none' with tools present. Don't send tools at all.
+            # Mistral returns garbled responses when tool_choice='none' with tools present.
+            # Don't send tools at all.
             return None, None
         elif isinstance(validated_tool_choice, tuple):
             tool_names, tool_choice_mode = validated_tool_choice
