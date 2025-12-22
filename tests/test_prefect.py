@@ -88,7 +88,7 @@ def _is_localhost_request(request: httpcore.Request) -> bool:
     return parsed.hostname in LOCALHOST_HOSTS
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope='module')
 def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
     """Patch VCR's httpcore stubs to completely bypass localhost requests.
 
