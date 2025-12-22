@@ -297,24 +297,15 @@ class ToolManager(Generic[AgentDepsT]):
 
     def get_current_use_of_tool(self, tool_name: str) -> int:
         """Get the current number of uses of a given tool."""
-        ctx = self._assert_ctx()            
-        if ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        ctx = self._assert_ctx()
 
         return ctx.tool_usage.get(tool_name, 0)
 
-    def _get_max_tool_uses(self) -> int | None:
-        """Get the maximum number of successful tool uses allowed, or `None` if unlimited."""
-        ctx = self._assert_ctx()
-        if ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        return ctx.max_tool_uses
-
     def can_make_tool_calls(self, num_tool_calls: int, usage: RunUsage) -> bool:
         """Check if tool calls can proceed within the max_tool_uses limit."""
-        max_tool_uses = self._get_max_tool_uses()
-        if max_tool_uses is not None:
+        ctx = self._assert_ctx()
+
+        if max_tool_uses := ctx.max_tool_uses:
             usage.tool_calls += num_tool_calls
             if usage.tool_calls > max_tool_uses:
                 return False
@@ -327,7 +318,7 @@ class ToolManager(Generic[AgentDepsT]):
             return False
         return True
 
-    def _assert_ctx(self) -> RunContext[AgentDepsT] | None:
-        if not self.ctx:
-            return None
+    def _assert_ctx(self) -> RunContext[AgentDepsT]:
+        if self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
         return self.ctx
