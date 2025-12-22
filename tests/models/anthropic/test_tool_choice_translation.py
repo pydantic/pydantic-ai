@@ -83,7 +83,7 @@ class TestToolChoiceTranslation:
         assert len(tools) == 1
 
     def test_single_tool_in_list_format(self, anthropic_model: AnthropicModel):
-        """Single tool in list uses {type: 'tool', name: X} format."""
+        """Single tool in list uses {type: 'tool', name: X} format with filtered tools."""
         settings: AnthropicModelSettings = {'tool_choice': ['get_weather']}
         params = ModelRequestParameters(function_tools=[make_tool('get_weather'), make_tool('get_time')])
 
@@ -91,8 +91,8 @@ class TestToolChoiceTranslation:
 
         # Single tool uses named format which forces that specific tool
         assert tool_choice == snapshot({'type': 'tool', 'name': 'get_weather'})
-        # All tools are sent - the {type: 'tool', name: X} enforces the restriction
-        assert {t['name'] for t in tools if 'name' in t} == {'get_weather', 'get_time'}
+        # Only the specified tool is sent
+        assert {t['name'] for t in tools if 'name' in t} == {'get_weather'}
 
     def test_multiple_tools_in_list_format(self, anthropic_model: AnthropicModel):
         """Multiple tools in list uses {type: 'any'} with filtered tools."""

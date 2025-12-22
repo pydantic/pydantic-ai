@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '709'
+      - '381'
       content-type:
       - application/json
       host:
@@ -36,31 +36,13 @@ interactions:
           - city
           type: object
         name: get_weather
-      - description: Get current time in a timezone
-        input_schema:
-          properties:
-            timezone:
-              type: string
-          required:
-          - timezone
-          type: object
-        name: get_time
-      - description: Get population of a city
-        input_schema:
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_population
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '703'
+      - '483'
       content-type:
       - application/json
       strict-transport-security:
@@ -69,22 +51,12 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01QW4RLuAsiA6ULWBdAGtAHB
+      - id: toolu_01CPwh9F7nXxiEjVT4Gh5sSw
         input:
           city: Paris
         name: get_weather
         type: tool_use
-      - id: toolu_0136CCBY7wvVS5XwkvE87bwo
-        input:
-          city: Paris
-        name: get_population
-        type: tool_use
-      - id: toolu_01U5oE5fAVMqK7GViGeGtYZE
-        input:
-          timezone: Europe/Paris
-        name: get_time
-        type: tool_use
-      id: msg_01FMWfwE8U6geQ6RTLm4XMTc
+      id: msg_014iWHg76GSmaWybLcpsD64V
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: tool_use
@@ -96,8 +68,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 493
-        output_tokens: 107
+        input_tokens: 386
+        output_tokens: 33
         service_tier: standard
     status:
       code: 200

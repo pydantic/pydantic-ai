@@ -645,8 +645,8 @@ class TestToolChoiceList:
     async def test_single_tool_in_list(self, anthropic_model: AnthropicModel, allow_model_requests: None):
         """Model uses the specified tool when given a single-item list.
 
-        Note: For single-tool lists, Anthropic uses {type: 'tool', name: X} format which
-        forces that specific tool, but ALL tool definitions are still sent to the API.
+        Only the specified tool is sent to the API (other tools are filtered out).
+        Anthropic uses {type: 'tool', name: X} format to force that specific tool.
         See [test_tool_choice_translation.py](./test_tool_choice_translation.py) for the exact API format.
         """
         weather_tool = make_tool_def('get_weather', 'Get weather for a city', 'city')
@@ -664,18 +664,11 @@ class TestToolChoiceList:
             params,
         )
 
+        # Only get_weather is called since it's the only tool sent to the API
         assert response.parts == snapshot(
             [
                 ToolCallPart(
-                    tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='toolu_01QW4RLuAsiA6ULWBdAGtAHB'
-                ),
-                ToolCallPart(
-                    tool_name='get_population', args={'city': 'Paris'}, tool_call_id='toolu_0136CCBY7wvVS5XwkvE87bwo'
-                ),
-                ToolCallPart(
-                    tool_name='get_time',
-                    args={'timezone': 'Europe/Paris'},
-                    tool_call_id='toolu_01U5oE5fAVMqK7GViGeGtYZE',
+                    tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='toolu_01CPwh9F7nXxiEjVT4Gh5sSw'
                 ),
             ]
         )
@@ -708,11 +701,10 @@ class TestToolChoiceList:
         )
 
     async def test_excluded_tool_not_called(self, anthropic_model: AnthropicModel, allow_model_requests: None):
-        """Tools not in the list are not called.
+        """Only the specified tool is available when tool_choice restricts to one tool.
 
-        Note: For single-tool lists, Anthropic uses {type: 'tool', name: X} which forces
-        that specific tool to be called first. All tool definitions are still sent to the
-        API. See [test_tool_choice_translation.py](./test_tool_choice_translation.py) for the exact API format.
+        When tool_choice=['get_weather'], only get_weather is sent to the API.
+        The model can only call get_weather, even if asked about something else.
         """
         weather_tool = make_tool_def('get_weather', 'Get weather for a city', 'city')
         population_tool = make_tool_def('get_population', 'Get population of a city', 'city')
@@ -728,13 +720,11 @@ class TestToolChoiceList:
             params,
         )
 
+        # Only get_weather is called since it's the only tool available
         assert response.parts == snapshot(
             [
                 ToolCallPart(
-                    tool_name='get_weather', args={'city': 'London'}, tool_call_id='toolu_01Mwwq1TDTkfnaQn9YweCBj1'
-                ),
-                ToolCallPart(
-                    tool_name='get_population', args={'city': 'London'}, tool_call_id='toolu_01TLoZJe8FkmD6DU1SVowAwF'
+                    tool_name='get_weather', args={'city': 'London'}, tool_call_id='toolu_019jABB3DLTEtziFq4XCrEo5'
                 ),
             ]
         )

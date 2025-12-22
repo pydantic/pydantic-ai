@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '545'
+      - '385'
       content-type:
       - application/json
       host:
@@ -36,22 +36,13 @@ interactions:
           - city
           type: object
         name: get_weather
-      - description: Get population of a city
-        input_schema:
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_population
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '592'
+      - '484'
       content-type:
       - application/json
       strict-transport-security:
@@ -60,17 +51,12 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - id: toolu_01Mwwq1TDTkfnaQn9YweCBj1
+      - id: toolu_019jABB3DLTEtziFq4XCrEo5
         input:
           city: London
         name: get_weather
         type: tool_use
-      - id: toolu_01TLoZJe8FkmD6DU1SVowAwF
-        input:
-          city: London
-        name: get_population
-        type: tool_use
-      id: msg_0184NRzN6Y5XAnSYmXiwzvfn
+      id: msg_01Q2T4dz3DGVNjF3WK9ricvC
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: tool_use
@@ -82,8 +68,8 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 440
-        output_tokens: 69
+        input_tokens: 387
+        output_tokens: 33
         service_tier: standard
     status:
       code: 200

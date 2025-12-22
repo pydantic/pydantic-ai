@@ -684,12 +684,7 @@ class AnthropicModel(Model):
         if validated_tool_choice == 'auto':
             tool_choice = {'type': 'auto'}
         elif validated_tool_choice == 'required':
-            if thinking_enabled:
-                # TODO: come back to this
-                raise UserError(
-                    "Anthropic does not support `tool_choice='required'` with thinking mode. "
-                    "Disable thinking or use `tool_choice='auto'`."
-                )
+            _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
             tool_choice = {'type': 'any'}
         elif validated_tool_choice == 'none':
             tool_choice = {'type': 'none'}
@@ -699,17 +694,12 @@ class AnthropicModel(Model):
                 tool_choice = {'type': 'auto'}
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
-                if thinking_enabled:
-                    # TODO: come back to this
-                    raise UserError(
-                        'Anthropic does not support forcing specific tools with thinking mode. '
-                        "Disable thinking or use `tool_choice='auto'`."
-                    )
+                _raise_incompatible_thinking_and_tool_forcing(thinking_enabled)
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 if len(tool_names) == 1:
                     tool_choice = {'type': 'tool', 'name': tool_names[0]}
                 else:
                     tool_choice = {'type': 'any'}
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
         else:
             assert_never(validated_tool_choice)
 
@@ -1469,3 +1459,11 @@ def _map_mcp_server_result_block(
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )
+
+
+def _raise_incompatible_thinking_and_tool_forcing(thinking_enabled: bool):
+    if thinking_enabled:
+        raise UserError(
+            'Anthropic does not support forcing specific tools with thinking mode. '
+            "Disable thinking or use `tool_choice='auto'`."
+        )
