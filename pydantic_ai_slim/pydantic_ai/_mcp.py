@@ -91,7 +91,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                                     'user',
                                     mcp_types.ImageContent(
                                         type='image',
-                                        data=base64.b64encode(chunk.data).decode(),
+                                        data=chunk.base64,
                                         mimeType=chunk.media_type,
                                     ),
                                 )

@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -298,12 +298,9 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[Chat, JsonSchema | None, dict[str, Any]]:
         """Build the generation arguments for the model."""
-        if (
-            model_request_parameters.function_tools
-            or model_request_parameters.builtin_tools
-            or model_request_parameters.output_tools
-        ):
-            raise UserError('Outlines does not support function tools and builtin tools yet.')
+        # the builtin_tool check now happens in `Model.prepare_request()`
+        if model_request_parameters.function_tools or model_request_parameters.output_tools:
+            raise UserError('Outlines does not support function tools yet.')
 
         if model_request_parameters.output_object:
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)
@@ -527,14 +524,6 @@ class OutlinesModel(Model):
             _timestamp=timestamp,
             _provider_name='outlines',
         )
-
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        """Customize the model request parameters for the model."""
-        if model_request_parameters.output_mode in ('auto', 'native'):
-            # This way the JSON schema will be included in the instructions.
-            return replace(model_request_parameters, output_mode='prompted')
-        else:
-            return model_request_parameters
 
 
 @dataclass

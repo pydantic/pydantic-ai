@@ -13,6 +13,7 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
+    FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -23,6 +24,7 @@ from ...messages import (
     ToolCallPartDelta,
 )
 from ...output import OutputDataT
+from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT
 from .. import UIEventStream
 from .request_types import RequestData
@@ -32,6 +34,7 @@ from .response_types import (
     ErrorChunk,
     FileChunk,
     FinishChunk,
+    FinishReason,
     FinishStepChunk,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
@@ -47,6 +50,15 @@ from .response_types import (
     ToolOutputAvailableChunk,
     ToolOutputErrorChunk,
 )
+
+# Map Pydantic AI finish reasons to Vercel AI format
+_FINISH_REASON_MAP: dict[PydanticFinishReason, FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'content_filter': 'content-filter',
+    'tool_call': 'tool-calls',
+    'error': 'error',
+}
 
 __all__ = ['VercelAIEventStream']
 
@@ -64,6 +76,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     """UI event stream transformer for the Vercel AI protocol."""
 
     _step_started: bool = False
+    _finish_reason: FinishReason = None
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -85,10 +98,18 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         yield FinishStepChunk()
 
-        yield FinishChunk()
+        yield FinishChunk(finish_reason=self._finish_reason)
         yield DoneChunk()
 
+    async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
+        pydantic_reason = event.result.response.finish_reason
+        if pydantic_reason:
+            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason)
+        return
+        yield
+
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:

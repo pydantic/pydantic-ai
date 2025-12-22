@@ -12,11 +12,12 @@ from typing import (
     ClassVar,
     Generic,
     Protocol,
-    TypeVar,
+    cast,
     runtime_checkable,
 )
 
 from pydantic import BaseModel, ValidationError
+from typing_extensions import TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
@@ -43,7 +44,6 @@ __all__ = [
     'StateDeps',
 ]
 
-
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
 
@@ -53,9 +53,14 @@ MessageT = TypeVar('MessageT')
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
-
 StateT = TypeVar('StateT', bound=BaseModel)
 """Type variable for the state type, which must be a subclass of `BaseModel`."""
+
+DispatchDepsT = TypeVar('DispatchDepsT')
+"""TypeVar for deps to avoid awkwardness with unbound classvar deps."""
+
+DispatchOutputDataT = TypeVar('DispatchOutputDataT')
+"""TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
 
 @runtime_checkable
@@ -104,7 +109,7 @@ class StateDeps(Generic[StateT]):
 class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]):
     """Base class for UI adapters.
 
-    This class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`][pydantic_ai.Agent.run_stream_events], running the agent, and then transforming Pydantic AI events into protocol-specific events.
+    This class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], running the agent, and then transforming Pydantic AI events into protocol-specific events.
 
     The event stream transformation is handled by a protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass.
     """
@@ -336,19 +341,19 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         cls,
         request: Request,
         *,
-        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
+        instructions: Instructions[DispatchDepsT] = None,
+        deps: DispatchDepsT = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
+        metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> Response:
@@ -387,7 +392,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             ) from e
 
         try:
-            adapter = await cls.from_request(request, agent=agent)
+            # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
+            adapter = cast(
+                UIAdapter[RunInputT, MessageT, EventT, DispatchDepsT, DispatchOutputDataT],
+                await cls.from_request(request, agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent)),
+            )
         except ValidationError as e:  # pragma: no cover
             return Response(
                 content=e.json(),

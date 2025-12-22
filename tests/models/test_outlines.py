@@ -250,8 +250,10 @@ def test_init(model_loading_function_name: str, args: Callable[[], tuple[Any]]) 
         supports_json_schema_output=True,
         supports_json_object_output=True,
         default_structured_output_mode='native',
+        native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
+        supported_builtin_tools=frozenset(),
     )
 
 
@@ -308,8 +310,10 @@ def test_model_loading_methods(model_loading_function_name: str, args: Callable[
         supports_json_schema_output=True,
         supports_json_object_output=True,
         default_structured_output_mode='native',
+        native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
+        supported_builtin_tools=frozenset(),
     )
 
 
@@ -479,12 +483,12 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None
 
 @skip_if_llama_cpp_imports_unsuccessful
 def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
-    # function tools
+    # builtin tools
     agent = Agent(llamacpp_model, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match='Outlines does not support function tools and builtin tools yet.'):
+    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
         agent.run_sync('Hello')
 
-    # built-in tools
+    # function tools
     agent = Agent(llamacpp_model)
 
     @agent.tool_plain
@@ -494,7 +498,7 @@ def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
         else:
             raise ModelRetry('Wrong location, please try again')
 
-    with pytest.raises(UserError, match='Outlines does not support function tools and builtin tools yet.'):
+    with pytest.raises(UserError, match='Outlines does not support function tools yet.'):
         agent.run_sync('Hello')
 
     # output tools

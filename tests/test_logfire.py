@@ -552,6 +552,7 @@ def test_logfire(
                                 'sequential': False,
                                 'kind': 'function',
                                 'metadata': None,
+                                'timeout': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -1033,6 +1034,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'sequential': False,
                                 'kind': 'output',
                                 'metadata': None,
+                                'timeout': None,
                             }
                         ],
                         'prompted_output_template': None,
