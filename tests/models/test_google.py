@@ -4629,6 +4629,59 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
+async def test_video_url_vendor_metadata_passed_for_gcs():
+    """Test that vendor_metadata is passed as video_metadata for GCS URIs, not just YouTube.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3805
+    """
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Test GCS URI with vendor_metadata
+    gcs_video = VideoUrl(
+        url='gs://bucket/video.mp4',
+        vendor_metadata={'start_offset': '300s', 'end_offset': '330s'},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[gcs_video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '300s', 'end_offset': '330s'},
+    }
+
+
+async def test_video_url_vendor_metadata_passed_for_youtube():
+    """Test that vendor_metadata is still passed for YouTube URLs."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Test YouTube URL with vendor_metadata
+    youtube_video = VideoUrl(
+        url='https://www.youtube.com/watch?v=VIDEO_ID',
+        vendor_metadata={'start_offset': '60s', 'end_offset': '120s'},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[youtube_video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': 'https://www.youtube.com/watch?v=VIDEO_ID', 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '60s', 'end_offset': '120s'},
+    }
+
+
+async def test_video_url_without_vendor_metadata():
+    """Test that VideoUrl without vendor_metadata doesn't include video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Test GCS URI without vendor_metadata
+    gcs_video = VideoUrl(url='gs://bucket/video.mp4')
+    content = await model._map_user_prompt(UserPromptPart(content=[gcs_video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'},
+    }
+
+
 async def test_thinking_with_tool_calls_from_other_model(
     allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
 ):
