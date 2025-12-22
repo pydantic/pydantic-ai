@@ -1335,27 +1335,20 @@ def test_tool_max_uses():
         call_count += 1
 
         if call_count == 1:
-            # First round: call the tool twice (will succeed, uses up the limit)
+            # First round: call the tool twice(should fail we only have 1 use left)
             return ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_1'),
                     ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_2'),
                 ]
             )
-        elif call_count == 2:
-            # Second round: try to call the tool again (should be rejected)
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_3'),
-                ]
-            )
         else:
-            # Third round: return final output
+            # Second round: return final output
             return ModelResponse(parts=[TextPart(content='Done')])
 
     agent = Agent(FunctionModel(my_model), output_type=str)
 
-    @agent.tool(max_uses=2)
+    @agent.tool(max_uses=1)
     def tool_with_max_use(ctx: RunContext[None]) -> str:
         return 'Used'
 
@@ -1387,13 +1380,13 @@ def test_tool_max_uses():
                 parts=[
                     ToolReturnPart(
                         tool_name='tool_with_max_use',
-                        content='Used',
+                        content='Tool use limit reached for tool "tool_with_max_use".',
                         tool_call_id='call_1',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
                         tool_name='tool_with_max_use',
-                        content='Used',
+                        content='Tool use limit reached for tool "tool_with_max_use".',
                         tool_call_id='call_2',
                         timestamp=IsDatetime(),
                     ),
@@ -1401,29 +1394,9 @@ def test_tool_max_uses():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='tool_with_max_use', args={}, tool_call_id='call_3'),
-                ],
-                usage=RequestUsage(input_tokens=53, output_tokens=6),
-                model_name=IsStr(),
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='tool_with_max_use',
-                        content='Tool use limit reached for tool "tool_with_max_use".',
-                        tool_call_id='call_3',
-                        timestamp=IsDatetime(),
-                    ),
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(input_tokens=61, output_tokens=7),
-                model_name=IsStr(),
+                usage=RequestUsage(input_tokens=67, output_tokens=5),
+                model_name='function:my_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
