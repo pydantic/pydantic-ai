@@ -15,7 +15,7 @@ from pydantic_ai.tools import Tool
 
 try:
     from exa_py import AsyncExa
-except ImportError as _import_error:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install `exa-py` to use the Exa tools, '
         'you can use the `exa` optional group — `pip install "pydantic-ai-slim[exa]"`'
@@ -94,7 +94,7 @@ class ExaSearchTool:
     max_characters: int | None
     """Maximum characters of text content per result, or None for no limit."""
 
-    async def __call__(
+    async def __call__(  # pragma: no cover
         self,
         query: str,
         search_type: Literal['auto', 'keyword', 'neural', 'fast', 'deep'] = 'auto',
@@ -141,7 +141,7 @@ class ExaFindSimilarTool:
     num_results: int
     """The number of results to return."""
 
-    async def __call__(
+    async def __call__(  # pragma: no cover
         self,
         url: str,
         exclude_source_domain: bool = True,
@@ -182,7 +182,7 @@ class ExaGetContentsTool:
     client: AsyncExa
     """The Exa async client."""
 
-    async def __call__(
+    async def __call__(  # pragma: no cover
         self,
         urls: list[str],
     ) -> list[ExaContentResult]:
@@ -215,7 +215,7 @@ class ExaAnswerTool:
     client: AsyncExa
     """The Exa async client."""
 
-    async def __call__(
+    async def __call__(  # pragma: no cover
         self,
         query: str,
     ) -> ExaAnswerResult:
