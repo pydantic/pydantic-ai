@@ -589,18 +589,13 @@ class BinaryContent:
     def media_type(self) -> str:
         """The media type of the binary content.
 
-        Automatically detects the media type using:
-        1. Magika (preferred, more accurate for documents)
-        2. python-magic (fallback)
-
-        Raises:
-            ImportError: If neither magika nor python-magic is installed.
+        Automatically detects the media type using Magika if not provided.
         """
         return self._media_type or self._infer_media_type()
 
     def _infer_media_type(self) -> str:
         """Infer the media type of the binary content."""
-        global _magika_instance, _magic_instance
+        global _magika_instance
 
         # Try Magika first (more accurate, especially for documents)
         try:
