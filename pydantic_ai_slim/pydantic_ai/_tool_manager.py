@@ -305,7 +305,8 @@ class ToolManager(Generic[AgentDepsT]):
         """Check if tool calls can proceed within the max_tool_uses limit."""
         ctx = self._assert_ctx()
 
-        if max_tool_uses := ctx.max_tool_uses:
+        max_tool_uses = ctx.max_tool_uses
+        if max_tool_uses is not None:
             usage.tool_calls += num_tool_calls
             if usage.tool_calls > max_tool_uses:
                 return False
