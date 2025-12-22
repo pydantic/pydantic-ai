@@ -686,9 +686,12 @@ class GoogleModel(Model):
                     if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
-                elif isinstance(item, VideoUrl) and (item.is_youtube or item.url.startswith('gs://')):
+                elif isinstance(item, VideoUrl) and (
+                    item.is_youtube or (item.url.startswith('gs://') and self.system != 'google-gla')
+                ):
                     # YouTube URLs work on both google-gla and google-vertex
-                    # GCS URIs (gs://...) work on google-vertex (same Google Cloud ecosystem)
+                    # GCS URIs (gs://...) only work on google-vertex (can access GCS buckets)
+                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
                     # Other URLs fall through to FileUrl handling (download for google-gla)
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}

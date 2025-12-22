@@ -4693,6 +4693,22 @@ async def test_gcs_video_url_without_vendor_metadata(mocker: MockerFixture):
     }
 
 
+async def test_gcs_video_url_raises_error_on_google_gla(mocker: MockerFixture):
+    """GCS URIs on google-gla fall through to FileUrl and raise a clear error.
+
+    google-gla cannot access GCS buckets, so attempting to use gs:// URLs
+    should fail with a helpful error message rather than a cryptic API error.
+    """
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    # google-gla is the default for GoogleProvider with api_key, but be explicit
+    assert model.system == 'google-gla'
+
+    video = VideoUrl(url='gs://bucket/video.mp4')
+
+    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported'):
+        await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+
 # =============================================================================
 # HTTP VideoUrl fallback tests (not YouTube, not GCS)
 #
