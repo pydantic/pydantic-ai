@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
-import warnings
 from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -24,10 +23,12 @@ from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
-    from magic import Magic
     from magika import Magika
 
     from .models.instrumented import InstrumentationSettings
+
+
+_magika_instance: Magika | None = None
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -69,8 +70,6 @@ FinishReason: TypeAlias = Literal[
 
 # Shared instances for media type detection to avoid repeated initialization overhead
 
-_magika_instance: Magika | None = None
-_magic_instance: Magic | None = None
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
@@ -280,10 +279,7 @@ class VideoUrl(FileUrl):
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        if self.media_type in _video_format_lookup:
-            return _video_format_lookup[self.media_type]
-        else:
-            return super().format
+        return _video_format_lookup.get(self.media_type) or super().format
 
 
 @dataclass(init=False, repr=False)
@@ -344,10 +340,7 @@ class AudioUrl(FileUrl):
     @property
     def format(self) -> AudioFormat | str:
         """The file format of the audio file."""
-        if self.media_type in _audio_format_lookup:
-            return _audio_format_lookup[self.media_type]
-        else:
-            return super().format
+        return _audio_format_lookup.get(self.media_type) or super().format
 
 
 @dataclass(init=False, repr=False)
@@ -402,10 +395,7 @@ class ImageUrl(FileUrl):
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        if self.media_type in _image_format_lookup:
-            return _image_format_lookup[self.media_type]
-        else:
-            return super().format
+        return _image_format_lookup.get(self.media_type) or super().format
 
 
 @dataclass(init=False, repr=False)
@@ -473,10 +463,7 @@ class DocumentUrl(FileUrl):
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        if self.media_type in _document_format_lookup:
-            return _document_format_lookup[self.media_type]
-        else:
-            return super().format
+        return _document_format_lookup.get(self.media_type) or super().format
 
 
 @dataclass(init=False, repr=False)
@@ -626,28 +613,10 @@ class BinaryContent:
             self._type = result.group
             self._extension = result.extensions[0] if result.extensions else None
             return self._media_type
-        except ImportError:
-            pass
-
-        # Fallback to python-magic (required dependency)
-        try:
-            from magic import Magic
-
-            if _magic_instance is None:
-                _magic_instance = Magic(mime=True)
-            self._media_type = _magic_instance.from_buffer(self.data)
-            warnings.warn(
-                'Using magic to identify media_type may result in incorrect identification of some document types. '
-                'To improve identification, please install the "magika" package or provide the media_type explicitly.',
-                category=UserWarning,
-                stacklevel=1,
-            )
-            return self._media_type
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
-                'Could not infer media type: please install either "magika" or "python-magic" package, '
-                'or provide the media_type explicitly.'
-            ) from None
+                'Magika is not installed. Please install magika to enable media type detection for BinaryContent.'
+            ) from e
 
     @property
     def data_uri(self) -> str:

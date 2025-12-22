@@ -116,7 +116,6 @@ dbos = ["dbos>=1.14.0"]
 prefect = ["prefect>=3.4.21"]
 
 magika = ["magika>=1.0.1"]
-magic = ["python-magic>=0.4.27"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
