@@ -320,9 +320,9 @@ When the model calls other tools in parallel with an output tool, you can contro
 The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
 !!! warning "Difference in choosing Final Result in Streaming Methods"
-    [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods select the first tool call that can produce a final result (both [output](#tool-output) and [deferred](deferred-tools.md)) as final output, while all [other](agents.md#running-agents) run methods prioritize [output tools](#tool-output) first.
+    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
 
-    See [Streaming Events and Final Output](agents.md#streaming-events-and-final-output) for a detailed explanation.
+    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agents.md#running-agents) would have prioritized the tool output.
 
 
 #### Native Output
