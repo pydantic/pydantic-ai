@@ -381,6 +381,10 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.examples = examples
+        # Flatten examples if the tool has a single argument that gets flattened in the schema
+        if self.examples and self.function_schema.single_arg_name:
+            arg_name = self.function_schema.single_arg_name
+            self.examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in self.examples]
         self.metadata = metadata
         self.timeout = timeout
 

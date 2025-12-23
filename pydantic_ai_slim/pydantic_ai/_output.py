@@ -906,6 +906,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict = default_strict
 
             processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            # Flatten examples if the output function has a single argument that gets flattened in the schema
+            if examples and processor._function_schema and processor._function_schema.single_arg_name:  # pyright: ignore[reportPrivateUsage]
+                arg_name = processor._function_schema.single_arg_name  # pyright: ignore[reportPrivateUsage]
+                examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples]
             object_def = processor.object_def
 
             if name is None:

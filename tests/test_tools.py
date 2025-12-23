@@ -2830,3 +2830,21 @@ def test_tool_output_examples():
     assert agent._output_toolset is not None
     tool_def = agent._output_toolset._tool_defs[0]
     assert tool_def.examples == examples
+
+
+def test_tool_examples_flattening():
+    class MyModel(BaseModel):
+        x: int
+
+    def my_tool(arg: MyModel) -> int:
+        return arg.x
+
+    # User provides examples matching the python signature (wrapped in the argument name)
+    examples = [{'arg': {'x': 1}}, {'arg': {'x': 2}}]
+
+    # The Tool logic should flatten this to match the JSON schema sent to the LLM
+    tool = Tool(my_tool, examples=examples)
+
+    # Expect flattened examples
+    assert tool.examples == [{'x': 1}, {'x': 2}]
+    assert tool.tool_def.examples == [{'x': 1}, {'x': 2}]

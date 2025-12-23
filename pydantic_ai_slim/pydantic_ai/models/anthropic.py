@@ -463,7 +463,7 @@ class AnthropicModel(Model):
         # Check if any tools use input_examples (tool use examples feature)
         has_input_examples = any('input_examples' in tool for tool in tools)
         if has_input_examples:
-            if isinstance(self.client, (AsyncAnthropicBedrock, AsyncAnthropicVertex)):
+            if isinstance(self.client, AsyncAnthropicBedrock | AsyncAnthropicVertex):
                 betas.add('tool-examples-2025-10-29')
             else:
                 betas.add('advanced-tool-use-2025-11-20')
