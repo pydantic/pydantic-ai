@@ -1,13 +1,11 @@
 import re
 from dataclasses import dataclass, field, replace
-
 from typing import Any
 
 from .._run_context import AgentDepsT, RunContext
-from ..tools import ToolDefinition, Tool
+from ..tools import Tool, ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
-
 
 _TOOL_SEARCH_METADATA_KEY = '__tool_search__'
 """ToolDefinition.metadata key to store runtime metadata."""
@@ -91,9 +89,7 @@ def _search_tool(toolset: SearchableToolset) -> tuple[Tool, ToolsetTool[AgentDep
     }
 
     desc = 'Search and load additional tools that defer tool loading'
-    tool = Tool.from_schema(
-        search, name='load_tools', description=desc, json_schema=schema, takes_ctx=True
-    )
+    tool = Tool.from_schema(search, name='load_tools', description=desc, json_schema=schema, takes_ctx=True)
 
     metadata = _update_metadata(tool.metadata, is_search_tool=True)
     tool = replace(tool, metadata=metadata)
@@ -102,7 +98,7 @@ def _search_tool(toolset: SearchableToolset) -> tuple[Tool, ToolsetTool[AgentDep
         toolset=toolset,
         tool_def=tool.tool_def,
         max_retries=tool.max_retries or 3,
-        args_validator=tool.function_schema.validator
+        args_validator=tool.function_schema.validator,
     )
 
 
@@ -143,18 +139,20 @@ def is_active(tool_def: ToolDefinition) -> bool:
         return True
 
     metadata = tool_def.metadata or {}
-    return bool(metadata.get(_TOOL_SEARCH_METADATA_KEY, {}).get("active"))
+    return bool(metadata.get(_TOOL_SEARCH_METADATA_KEY, {}).get('active'))
 
 
 def is_search_tool(tool_def: ToolDefinition) -> bool:
     """Check if this tool is a tool implementing search and loading."""
     metadata = tool_def.metadata or {}
-    return bool(metadata.get(_TOOL_SEARCH_METADATA_KEY, {}).get("search"))
+    return bool(metadata.get(_TOOL_SEARCH_METADATA_KEY, {}).get('search'))
 
 
 # TODO add a typed record for tool search metadata perhaps.
 def _update_tool_def_metadata(
-    tool_def: ToolDefinition, is_search_tool: bool = False, is_active: bool = False,
+    tool_def: ToolDefinition,
+    is_search_tool: bool = False,
+    is_active: bool = False,
 ) -> ToolDefinition:
     new_metadata: dict[str, Any] | None = None
     new_metadata = _update_metadata(tool_def.metadata, is_search_tool=is_search_tool, is_active=is_active)
@@ -162,13 +160,15 @@ def _update_tool_def_metadata(
 
 
 def _update_metadata(
-    metadata: dict[str, Any] | None = None, is_search_tool: bool = False, is_active: bool = False,
+    metadata: dict[str, Any] | None = None,
+    is_search_tool: bool = False,
+    is_active: bool = False,
 ) -> dict[str, Any] | None:
     updated_metadata = metadata.copy() if metadata else {}
     if is_search_tool or is_active:
         updated_metadata[_TOOL_SEARCH_METADATA_KEY] = {
-            "search": is_search_tool,
-            "active": is_active,
+            'search': is_search_tool,
+            'active': is_active,
         }
     elif _TOOL_SEARCH_METADATA_KEY in updated_metadata:
         del updated_metadata[_TOOL_SEARCH_METADATA_KEY]
