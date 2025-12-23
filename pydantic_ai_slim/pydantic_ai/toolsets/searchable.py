@@ -139,7 +139,7 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.toolset.__aexit__(*args)
 
-    def is_active(self, tool_def: ToolDefinition, run_id: str) -> bool:
+    def is_active(self, tool_def: ToolDefinition) -> bool:
         return tool_def.name in self._active_tool_names
 
 
@@ -173,7 +173,7 @@ class _SearchToolsetToolWrapper(ToolsetTool[AgentDepsT]):
         # execution, so storing a callable is not going to work I'm afraid.
 
         # Also overriding metadata is not going to work if something underneath is already having it.
-        metadata["active"] = lambda run_id: toolset.is_active(tool_def=tool)
+        metadata["active"] = lambda: toolset.is_active(tool_def=tool)
         return replace(self._tool_def, metadata=metadata)
 
     @tool_def.setter
