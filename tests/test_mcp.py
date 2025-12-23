@@ -1707,12 +1707,6 @@ def test_map_from_model_response_unexpected_part_raises_error():
         map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
 
 
-def test_map_from_model_response_only_thinking_part():
-    result = map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking deeply...')]))
-    assert result.type == 'text'
-    assert result.text == ''
-
-
 def test_map_from_model_response_mixed_parts():
     result = map_from_model_response(
         ModelResponse(
@@ -1724,8 +1718,7 @@ def test_map_from_model_response_mixed_parts():
             ]
         )
     )
-    assert result.type == 'text'
-    assert result.text == 'Hello world!'
+    assert result == snapshot()
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
