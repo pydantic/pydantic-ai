@@ -19,7 +19,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
+from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
@@ -490,6 +490,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
+        self.request.timestamp = now_utc()
         self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
@@ -784,7 +785,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
+            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id, timestamp=now_utc()))
 
         return End(final_result)
 
@@ -1335,6 +1336,10 @@ async def _process_message_history(
     if not isinstance(messages[-1], _messages.ModelRequest):
         raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
+    # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
+    if messages[-1].timestamp is None:
+        messages[-1].timestamp = now_utc()
+
     return messages
 
 
@@ -1363,6 +1368,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
+                    timestamp=message.timestamp or last_message.timestamp,
                 )
                 clean_messages[-1] = merged_message
             else:
