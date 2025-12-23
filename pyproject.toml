@@ -245,7 +245,6 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
-# addopts = ["--inline-snapshot=create,fix"]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
@@ -264,6 +263,9 @@ omit = [
     "tests/test_live.py",
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    # TODO(Marcelo): Enable prefect coverage again.
+    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
+    "tests/test_prefect.py",
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
