@@ -46,6 +46,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
@@ -3845,3 +3846,97 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
+
+
+async def test_defer_loading_tools_activated_explicitly(allow_model_requests: None):
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='1',
+                        function=Function(arguments='{"regex": "weather"}', name='load_tools'),
+                        type='function',
+                    )
+                ],
+            )
+        ),
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='2',
+                        function=Function(arguments='{"city": "San Francisco"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            )
+        ),
+        completion_message(
+            ChatCompletionMessage(content='The weather in San Francisco is sunny and 72°F', role='assistant')
+        ),
+    ]
+
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Create a toolset with a defer_loading tool
+    toolset = FunctionToolset()
+
+    @toolset.tool(defer_loading=True)
+    def get_weather(city: str) -> str:
+        return f'The weather in {city} is sunny and 72°F'
+
+    # Agent automatically wraps toolsets in SearchableToolset
+    agent = Agent(m, toolsets=[toolset], system_prompt='You are a helpful assistant.')
+
+    result = await agent.run("What's the weather like in San Francisco?")
+    assert result.output == 'The weather in San Francisco is sunny and 72°F'
+
+    # Verify the tool was initially not included, then activated
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    # First request should only have the search tool
+    first_tools = kwargs[0].get('tools', [])
+    tool_names = [t['function']['name'] for t in first_tools]
+    assert 'load_tools' in tool_names
+    assert 'get_weather' not in tool_names
+
+    # Second request should have both tools (get_weather was activated)
+    second_tools = kwargs[1].get('tools', [])
+    tool_names = [t['function']['name'] for t in second_tools]
+    assert 'load_tools' in tool_names
+    assert 'get_weather' in tool_names
+
+
+@pytest.mark.vcr
+async def test_defer_loading_tools_discovered(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIChatModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+
+    toolset = FunctionToolset()
+
+    @toolset.tool(defer_loading=True)
+    def list_database_tables() -> list[str]:
+        return ['users', 'orders', 'products', 'reviews']
+
+    @toolset.tool(defer_loading=True)
+    def fetch_user_data(user_id: int) -> dict:
+        return {'id': user_id, 'name': 'John Doe', 'email': 'john@example.com'}
+
+    agent = Agent(model=m, toolsets=[toolset])
+
+    result = await agent.run('Can you list the database tables and then fetch user 42?')
+    assert result.output == snapshot("""\
+Here are the results of your requests:
+
+1. Database tables: users, orders, products, reviews
+2. User 42 details: \n\
+   - Name: John Doe
+   - Email: john@example.com
+
+Let me know if you need more information!\
+""")
