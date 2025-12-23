@@ -196,6 +196,10 @@ def str_to_regex(text: str) -> re.Pattern[str]:
     return re.compile(text)
 
 
+def str_to_regex_with_ctx(ctx: RunContext[int], text: str) -> re.Pattern[str]:
+    return re.compile(text)
+
+
 class MyClass:
     def my_method(self) -> bool:
         return True
@@ -282,6 +286,16 @@ Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType,reportCa
 Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,reportCallIssue]
 # since deps are not set, they default to `None`, so can't be `int`
 Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
+
+# TextOutput with RunContext uses RunContext[Any], so deps_type is not checked.
+# This is intentional: type checking deps in output functions isn't feasible because
+# ToolOutput and plain output functions take arbitrary args, so the type checker
+# treats RunContext as just another arg rather than enforcing deps_type compatibility.
+text_output_with_ctx = TextOutput(str_to_regex_with_ctx)
+assert_type(text_output_with_ctx, TextOutput[re.Pattern[str]])
+Agent('test', output_type=text_output_with_ctx, deps_type=int)
+Agent('test', output_type=text_output_with_ctx, deps_type=str)
+Agent('test', output_type=text_output_with_ctx)
 
 # prepare example from docs:
 
