@@ -303,6 +303,7 @@ class ToolConfig:
 
         from pydantic_ai import ToolConfig
 
+
         class Address(BaseModel):
             city: str = Field(description='City name')
 
