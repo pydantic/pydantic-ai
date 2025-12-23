@@ -260,7 +260,6 @@ include = [
     "tests/**/*.py",
 ]
 omit = [
-    "tests/test_live.py",
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
     # TODO(Marcelo): Enable prefect coverage again.
