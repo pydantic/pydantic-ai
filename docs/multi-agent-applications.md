@@ -327,16 +327,16 @@ See the [graph](graph.md) documentation on when and how to use graphs.
 
 Deep agents are production-grade autonomous agents that go beyond simple tool use. They combine multiple architectural patterns to handle complex, multi-step tasks reliably:
 
-- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on
-- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers
-- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues
-- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents
-- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits
-- **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion
+- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [Task Management toolsets](toolsets.md#task-management).
+- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers.
+- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [Agent Delegation](#agent-delegation) above.
+- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents.
+- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Summarize Old Messages](message-history.md#summarize-old-messages).
+- **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
 
-These patterns emerged from teams building production agents (like [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) and [Manus](https://manus.im/)) and discovering what actually works at scale.
+These patterns can be implemented individually using Pydantic AI's built-in features and the third-party toolsets listed above.
 
-[Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) implements these deep agent patterns for Pydantic AI. See the [toolsets documentation](toolsets.md#pydantic-deep) for usage examples and the [full demo application](https://github.com/vstorm-co/pydantic-deepagents/tree/main/examples/full_app) for a complete example with a chat interface, file uploads, skills, and streaming responses.
+For a complete, opinionated implementation of these patterns, [Pydantic-Deep](https://github.com/vstorm-co/pydantic-deepagents) is a community framework that combines these capabilities into a cohesive deep agent system. See the [toolsets documentation](toolsets.md#deep-agent-frameworks) for details.
 
 ## Examples
 
