@@ -377,20 +377,40 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if toolsets is None:
             return None
 
+        # self._named_toolsets is always initialized in __init__, but type checkers might not know that
+        assert self._named_toolsets is not None
+
         resolved_toolsets: list[AbstractToolset[AgentDepsT]] = []
         for t in toolsets:
             if isinstance(t, str):
-                if (
-                    self._named_toolsets is None
-                ):  # pragma: no cover - defensive check, _named_toolsets is always initialized
-                    raise UserError(f"Unknown toolset name: '{t}'. No named toolsets registered.")
-                if t not in self._named_toolsets:
+                # String name: lookup in named toolsets
+                try:
+                    resolved_toolsets.append(self._named_toolsets[t])
+                except KeyError as e:
+                    if not self._named_toolsets:
+                        raise UserError(f"Unknown toolset name: '{t}'. No named toolsets registered.") from e
                     raise UserError(
                         f"Unknown toolset name: '{t}'. Available toolsets: {list(self._named_toolsets.keys())}"
-                    )
-                resolved_toolsets.append(self._named_toolsets[t])
-            else:
+                    ) from e
+            elif isinstance(t, TemporalWrapperToolset):
+                # Already a temporal wrapper: use as-is
                 resolved_toolsets.append(t)
+            else:
+                # Original toolset instance: find its temporal wrapper
+                # Check if this toolset instance is wrapped in any of our named toolsets
+                wrapper = next(
+                    (
+                        wrapper
+                        for wrapper in self._named_toolsets.values()
+                        if isinstance(wrapper, TemporalWrapperToolset) and wrapper.wrapped is t
+                    ),
+                    None,
+                )
+                if wrapper is not None:
+                    resolved_toolsets.append(wrapper)
+                else:
+                    # Not found in named toolsets, use as-is (will be validated later)
+                    resolved_toolsets.append(t)
         return resolved_toolsets
 
     @overload

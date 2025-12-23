@@ -3191,7 +3191,7 @@ async def test_unknown_toolset_name_when_no_named_toolsets(allow_model_requests:
             )
         assert isinstance(exc_info.value.__cause__, ApplicationError)
         assert 'Unknown toolset name' in exc_info.value.__cause__.message
-        assert 'Available toolsets: []' in exc_info.value.__cause__.message
+        assert 'No named toolsets registered' in exc_info.value.__cause__.message
 
 
 async def test_temporal_agent_run_with_toolsets_outside_workflow():
