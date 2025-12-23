@@ -2,14 +2,16 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
-from abc import ABC, abstractmethod
+import os
+from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
-from mimetypes import guess_type
+from mimetypes import MimeTypes, knownfiles
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
@@ -30,7 +32,7 @@ if TYPE_CHECKING:
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
 _mime_types.read_windows_registry()
-for file in mimetypes.knownfiles:
+for file in knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)
 # TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
@@ -44,7 +46,6 @@ _mime_types.add_type('text/x-asciidoc', '.asciidoc')
 
 # Image types
 _mime_types.add_type('image/webp', '.webp')
-
 # Video types
 _mime_types.add_type('video/3gpp', '.three_gp')
 _mime_types.add_type('video/x-matroska', '.mkv')
@@ -55,7 +56,7 @@ _mime_types.add_type('audio/aiff', '.aiff')
 _mime_types.add_type('audio/flac', '.flac')
 _mime_types.add_type('audio/ogg', '.oga')
 _mime_types.add_type('audio/wav', '.wav')
-
+_mime_types.add_type('audio/aac', '.aac')
 
 _magika_instance: Magika | None = None
 
@@ -222,14 +223,14 @@ class FileUrl(ABC):
         mime_type, _ = _mime_types.guess_type(self.url)
         if mime_type is None:
             raise ValueError(
-                f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
+                f'Could not infer media type from URL: {self.url}. Explicitly provide a `media_type` instead.'
             )
         return mime_type
 
     @property
     def format(self) -> str:
         """The file format."""
-        ext = guess_extension(self.media_type)
+        ext = _mime_types.guess_extension(self.media_type)
         if ext is None:
             raise ValueError(f'Could not infer file format from media type: {self.media_type}')
         return ext.lstrip('.')  # Strip the leading dot
@@ -271,7 +272,7 @@ class VideoUrl(FileUrl):
         )
         self.kind = kind
 
-    def _infer_media_type(self) -> VideoMediaType:
+    def _infer_media_type(self) -> str:
         """Return the media type of the video, based on the url."""
         # Assume that YouTube videos are mp4 because there would be no extension
         # to infer from. This should not be a problem, as Gemini disregards media
@@ -289,7 +290,7 @@ class VideoUrl(FileUrl):
         return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
 
     @property
-    def format(self) -> VideoFormat | str:
+    def format(self) -> str:
         """The file format of the video.
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
@@ -330,7 +331,6 @@ class AudioUrl(FileUrl):
             identifier=identifier or _identifier,
         )
         self.kind = kind
-
 
     @property
     def format(self) -> AudioFormat | str:
@@ -435,9 +435,6 @@ class BinaryContent:
     """
 
     _: KW_ONLY
-
-    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
-    """The media type of the binary data."""
 
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
@@ -612,7 +609,7 @@ class BinaryContent:
         Raises:
             ValueError: If file format cannot be inferred from media type.
         """
-        ext = self._extension or _type_map.get(self.media_type) or guess_extension(self.media_type)
+        ext = self._extension or _all_format_lookup.get(self.media_type) or _mime_types.guess_extension(self.media_type)
 
         # Fallback to mimetypes.guess_extension
         if ext is None:
@@ -641,7 +638,10 @@ class BinaryImage(BinaryContent):
         _extension: str | None = None,
     ):
         super().__init__(
-            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
+            data=data,
+            media_type=media_type or _media_type,
+            identifier=identifier or _identifier,
+            vendor_metadata=vendor_metadata,
         )
 
         if not self.is_image:
@@ -737,6 +737,8 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
+
+_all_format_lookup = _document_format_lookup | _audio_format_lookup | _image_format_lookup | _video_format_lookup
 
 
 @dataclass(repr=False)
