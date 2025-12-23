@@ -1718,7 +1718,9 @@ def test_map_from_model_response_mixed_parts():
             ]
         )
     )
-    assert result == snapshot()
+    assert result.model_dump(by_alias=True) == snapshot(
+        {'type': 'text', 'text': 'Hello world!', 'annotations': None, '_meta': None}
+    )
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
