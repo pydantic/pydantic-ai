@@ -364,7 +364,7 @@ _(This example is complete, it can be run "as is")_
 
 For more tool features and integrations, see:
 
-- [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, tool execution and retries
+- [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, tool execution, retries and deferred loading
 - [Toolsets](toolsets.md) - Managing collections of tools
 - [Builtin Tools](builtin-tools.md) - Native tools provided by LLM providers
 - [Common Tools](common-tools.md) - Ready-to-use tool implementations
