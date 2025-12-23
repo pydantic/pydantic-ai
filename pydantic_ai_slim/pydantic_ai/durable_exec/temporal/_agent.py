@@ -335,26 +335,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @contextmanager
     def _temporal_overrides(
         self,
-        toolsets: Sequence[AbstractToolset[AgentDepsT] | str] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         force: bool = False,
     ) -> Iterator[None]:
         in_workflow = workflow.in_workflow()
 
         if toolsets:
-            if workflow.in_workflow():
-                # If toolsets are provided as strings, we can't validate them directly here as they are resolved later.
-                # We only validate if they are already AbstractToolset instances.
-                try:
-                    _validate_temporal_toolsets([t for t in toolsets if not isinstance(t, str)])
-                except UserError as e:
-                    raise UserError(
-                        f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
-                    ) from e
-
-            resolved_toolsets = self._resolve_toolsets(toolsets)
-            assert resolved_toolsets is not None
-            overridden_toolsets = [*self._toolsets, *resolved_toolsets]
+            overridden_toolsets = [*self._toolsets, *toolsets]
         else:
             overridden_toolsets = list(self._toolsets)
 
@@ -502,6 +490,19 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        # Validate and resolve toolsets at callsite
+        resolved_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
+        if toolsets:
+            if workflow.in_workflow():
+                # Validate toolsets in workflow context
+                try:
+                    _validate_temporal_toolsets([t for t in toolsets if not isinstance(t, str)])
+                except UserError as e:
+                    raise UserError(
+                        f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
+                    ) from e
+            resolved_toolsets = self._resolve_toolsets(toolsets)
+
         if workflow.in_workflow():
             if event_stream_handler is not None:
                 raise UserError(
@@ -511,7 +512,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         else:
             resolved_model = self._temporal_model.resolve_model(model)
 
-        with self._temporal_overrides(toolsets=toolsets, model=model):
+        with self._temporal_overrides(toolsets=resolved_toolsets, model=model):
             return await super().run(
                 user_prompt,
                 output_type=output_type,
