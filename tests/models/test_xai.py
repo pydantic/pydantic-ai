@@ -153,6 +153,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -166,6 +167,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -232,6 +234,7 @@ async def test_xai_request_structured_response(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -258,6 +261,7 @@ async def test_xai_request_structured_response(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -296,6 +300,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -326,6 +331,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -356,6 +362,7 @@ async def test_xai_request_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -474,8 +481,8 @@ def _generate_tool_result_content(tool_call: chat_pb2.ToolCall) -> str:
             }
         )
 
-    # Document search tool
-    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_DOCUMENT_SEARCH_TOOL:
+    # Attachment search tool
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL:
         return json.dumps(
             {
                 'documents': [
@@ -599,6 +606,7 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
                         model_name=XAI_NON_REASONING_MODEL,
                         timestamp=IsDatetime(),
                         provider_name='xai',
+                        provider_url='https://api.x.ai/v1',
                         provider_response_id='grok-123',
                         finish_reason='stop',
                     )
@@ -836,6 +844,7 @@ async def test_xai_instructions(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -900,6 +909,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -929,6 +939,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -974,6 +985,7 @@ async def test_xai_image_as_binary_content_tool_response(allow_model_requests: N
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -989,18 +1001,19 @@ async def test_xai_image_as_binary_content_tool_response(allow_model_requests: N
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
+                        content='See file 241a70',
                         tool_call_id='tool_001',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1c8566:',
+                            'This is file 241a70:',
                             IsInstance(BinaryContent),
                         ],
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1140,6 +1153,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1282,6 +1296,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1416,6 +1431,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1477,6 +1493,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1543,6 +1560,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
@@ -1787,6 +1805,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is 2+2?', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1823,6 +1842,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is 2+2?', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1863,6 +1883,7 @@ async def test_xai_reasoning_without_summary(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1908,6 +1929,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is 2+2?', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1936,6 +1958,7 @@ async def test_xai_reasoning_with_tool_calls(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -1981,6 +2004,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
                 parts=[
                     UserPromptPart(content='What is the weather in San Francisco?', timestamp=IsNow(tz=timezone.utc))
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2009,6 +2033,7 @@ async def test_xai_reasoning_with_encrypted_and_tool_calls(allow_model_requests:
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2051,6 +2076,7 @@ async def test_xai_stream_with_reasoning(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2059,6 +2085,7 @@ async def test_xai_stream_with_reasoning(allow_model_requests: None):
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2093,6 +2120,7 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2104,6 +2132,7 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
+                provider_url='https://api.x.ai/v1',
                 provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2288,6 +2317,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2309,6 +2339,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(

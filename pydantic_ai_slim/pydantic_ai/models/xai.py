@@ -10,18 +10,6 @@ from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
 
-try:
-    import xai_sdk.chat as chat_types
-    from xai_sdk import AsyncClient
-    from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
-    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
-    from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `xai-sdk` to use the xAI model, '
-        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
-    ) from _import_error
-
 from .. import _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
@@ -62,9 +50,24 @@ from ..models import (
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
-from ..providers.xai import XaiModelName
 from ..settings import ModelSettings
 from ..usage import RequestUsage
+
+try:
+    import xai_sdk.chat as chat_types
+    from xai_sdk import AsyncClient
+    from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
+    from xai_sdk.proto.v6 import chat_pb2, usage_pb2
+    from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
+    from xai_sdk.types.model import AllModels
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `xai-sdk` to use the xAI model, '
+        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
+    ) from _import_error
+
+XaiModelName = str | AllModels
+"""Possible xAI model names."""
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     'stop': 'stop',
@@ -81,9 +84,6 @@ class XaiModelSettings(ModelSettings, total=False):
 
     See [xAI SDK documentation](https://docs.x.ai/docs) for more details on these parameters.
     """
-
-    xai_logprobs: bool
-    """Whether to return log probabilities of the output tokens or not."""
 
     xai_top_logprobs: int
     """An integer between 0 and 20 specifying the number of most likely tokens to return at each position."""
@@ -169,7 +169,7 @@ class XaiModel(Model):
         self._provider = provider
         self.client = provider.client
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
 
     @property
     def model_name(self) -> str:
@@ -180,6 +180,11 @@ class XaiModel(Model):
     def system(self) -> str:
         """The model provider."""
         return 'xai'
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool})
 
     async def _map_messages(
         self,
@@ -615,39 +620,31 @@ class XaiModel(Model):
                     )
                 )
 
-            # Add text content before tool calls (consistent with OpenAI)
-            if message.content:
+            # Add text content before tool calls
+            if message.content and message.role != chat_types.chat_pb2.MessageRole.ROLE_TOOL:
                 parts.append(TextPart(content=message.content))
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
-                is_server_side_tool = False
-                try:
-                    tool_type = get_tool_call_type(tool_call)
-                    is_server_side_tool = tool_type != 'client_side_tool'
-                except Exception:
-                    pass
-
+                is_server_side_tool = tool_call.type != chat_types.chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
                 if is_server_side_tool:
-                    # Server-side (builtin) tools
+                    # Server-side (builtin) tool call
                     builtin_tool_name = XaiModel.get_builtin_tool_name(tool_call)
-                    if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED:
-                        # Tool completed - add return part with result
-                        tool_result_content = XaiModel.get_tool_result_content(message.content)
+                    if tool_call.status == chat_types.chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS:
                         parts.append(
-                            BuiltinToolReturnPart(
+                            BuiltinToolCallPart(
                                 tool_name=builtin_tool_name,
-                                content=tool_result_content,
+                                args=self.parse_tool_args(tool_call.function.arguments),
                                 tool_call_id=tool_call.id,
                                 provider_name=self.system,
                             )
                         )
                     else:
-                        # Tool in progress - add call part
+                        # TODO: Handle error message
                         parts.append(
-                            BuiltinToolCallPart(
+                            BuiltinToolReturnPart(
                                 tool_name=builtin_tool_name,
-                                args=self.parse_tool_args(tool_call.function.arguments),
+                                content=self.get_tool_result_content(message.content),
                                 tool_call_id=tool_call.id,
                                 provider_name=self.system,
                             )
@@ -824,7 +821,6 @@ class XaiModel(Model):
             'parallel_tool_calls': 'parallel_tool_calls',
             'presence_penalty': 'presence_penalty',
             'frequency_penalty': 'frequency_penalty',
-            'logprobs': 'xai_logprobs',
             'top_logprobs': 'xai_top_logprobs',
             'user': 'xai_user',
             'store_messages': 'xai_store_messages',
@@ -905,6 +901,11 @@ class XaiStreamedResponse(StreamedResponse):
         """The model provider system name."""
         return self._provider.name
 
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider.base_url
+
     def _update_response_state(self, response: chat_types.Response) -> None:
         """Update response state including usage, response ID, and finish reason."""
         # Update usage
@@ -946,12 +947,10 @@ class XaiStreamedResponse(StreamedResponse):
     def _handle_text_delta(self, chunk: Any) -> Iterator[ModelResponseStreamEvent]:
         """Handle text content delta from chunk."""
         if chunk.content:
-            event = self._parts_manager.handle_text_delta(
+            yield from self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=chunk.content,
             )
-            if event is not None:
-                yield event
 
     def _handle_single_tool_call(
         self, tool_call: chat_types.chat_pb2.ToolCall, response: chat_types.Response
