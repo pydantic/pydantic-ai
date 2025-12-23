@@ -1216,9 +1216,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
+                provider_response_id='chatcmpl-CkZpBs2uAOr90Y3bazEGxLfYjrJgJ',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -1262,9 +1262,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
+                provider_response_id='chatcmpl-CkZpD3JSLa7qZKvU5yYhrf7L3wOxA',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

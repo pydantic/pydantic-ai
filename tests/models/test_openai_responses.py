@@ -1500,9 +1500,9 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 43, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+                provider_response_id='resp_04c1bf8ad3be7d27006937124c0f18819c8e3cfa2c478b5678',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1534,9 +1534,9 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 6, 10, 0, 40, 44, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
+                provider_response_id='resp_032b8ae48d9012e1006937124ef11c819dbf3ff33c3a91e4ae',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
