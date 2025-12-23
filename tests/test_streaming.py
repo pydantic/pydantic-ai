@@ -2896,6 +2896,7 @@ async def test_get_output_after_stream_output():
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsNow(tz=timezone.utc),
+                        return_kind='final-result-processed',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),

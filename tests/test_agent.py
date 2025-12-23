@@ -308,6 +308,7 @@ Please fix these validation errors and try again.\
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -350,6 +351,7 @@ Please fix these validation errors and try again.\
 """,
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -387,6 +389,7 @@ Please fix these validation errors and try again.\
                         return_kind='function-tool-not-executed',
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -488,6 +491,7 @@ Custom retry message""")
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -530,6 +534,7 @@ Custom retry message\
 """,
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -567,6 +572,7 @@ Custom retry message\
                         return_kind='function-tool-not-executed',
                     ),
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
@@ -630,6 +636,7 @@ Custom retry message override""")
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -653,6 +660,7 @@ Custom tool retry message\
 """,
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -695,6 +703,7 @@ Custom tool retry message\
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -718,6 +727,7 @@ Custom no-tool retry\
 """,
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7158,6 +7168,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7177,6 +7188,7 @@ async def test_hitl_tool_approval():
                         return_kind='tool-denied',
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
