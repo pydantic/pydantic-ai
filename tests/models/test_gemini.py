@@ -1220,7 +1220,7 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=74, details={'thoughts_tokens': 64, 'text_prompt_tokens': 33}
+                    input_tokens=33, output_tokens=163, details={'thoughts_tokens': 153, 'text_prompt_tokens': 33}
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1250,37 +1250,24 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='6'),
                     TextPart(
                         content="""\
- 1c8566
-The image shows a **kiwi** fruit that has been sliced in half.
+.
 
-You can see:
-*   The **bright green flesh**.
-*   The ring of tiny **black seeds**.
-*   The **white core** in the center.
-*   The fuzzy **brown skin** around the outside.
-
-It's positioned against a plain white background.\
 """
                     ),
                     TextPart(
                         content="""\
-The fruit in the image is a **kiwi** (specifically, a sliced green kiwifruit).
+Based on the image provided, the fruit is a **kiwi** (also known as a kiwifruit).
 
-You can clearly identify it by its signature features:
-*   **Green flesh** with a radial pattern.
-*   A ring of small **black seeds**.
-*   A cream-colored **white core** in the center.
-*   Fuzzy **brown skin** visible on the exterior edge.\
+The image clearly shows a cross-section of the fruit, displaying its characteristic bright green flesh, small black seeds arranged around a white center, and fuzzy brown skin on the edges.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1185,
-                    output_tokens=552,
-                    details={'thoughts_tokens': 381, 'image_prompt_tokens': 1107, 'text_prompt_tokens': 78},
+                    input_tokens=1166,
+                    output_tokens=293,
+                    details={'thoughts_tokens': 231, 'image_prompt_tokens': 1088, 'text_prompt_tokens': 78},
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
