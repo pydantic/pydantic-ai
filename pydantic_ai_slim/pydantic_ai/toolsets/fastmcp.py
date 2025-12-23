@@ -74,6 +74,12 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     max_retries: int
     """The maximum number of retries to attempt if a tool call fails."""
 
+    max_uses: int | None
+    """The maximum number of successful calls allowed for each tool during a run.
+
+    Defaults to None (unlimited).
+    """
+
     _id: str | None
 
     def __init__(
@@ -89,6 +95,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         | str,
         *,
         max_retries: int = 1,
+        max_uses: int | None = None,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         id: str | None = None,
     ) -> None:
@@ -99,6 +106,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         self._id = id
         self.max_retries = max_retries
+        self.max_uses = max_uses
         self.tool_error_behavior = tool_error_behavior
 
         self._enter_lock: Lock = Lock()
@@ -170,7 +178,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             tool_def=tool_def,
             toolset=self,
             max_retries=self.max_retries,
-            max_uses=None,
+            max_uses=self.max_uses,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

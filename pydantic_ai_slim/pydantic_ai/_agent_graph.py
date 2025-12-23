@@ -1033,7 +1033,7 @@ def _handle_tool_calls_parts(
     tool_call_counts: Counter[str],
     calls_to_run: list[_messages.ToolCallPart],
 ):
-    # Seperating the two scenarios to allow for granular overriding via prompt_templates
+    # Separating the two scenarios to allow for granular overriding via prompt_templates
     for call in tool_calls:
         if not can_make_tool_calls:  # We cannot use any tools because of the max_tools_uses limit
             return_part = _messages.ToolReturnPart(

@@ -34,6 +34,7 @@ class _ToolInfo:
 
     tool_def: ToolDefinition
     max_retries: int
+    max_uses: int | None
 
 
 class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -65,7 +66,11 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             async with self.wrapped:
                 tools = await self.wrapped.get_tools(ctx)
                 return {
-                    name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
+                    name: _ToolInfo(
+                        tool_def=tool.tool_def,
+                        max_retries=tool.max_retries,
+                        max_uses=tool.max_uses,
+                    )
                     for name, tool in tools.items()
                 }
 
@@ -157,5 +162,6 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             toolset=self,
             tool_def=tool_info.tool_def,
             max_retries=tool_info.max_retries,
+            max_uses=tool_info.max_uses,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
