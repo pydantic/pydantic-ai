@@ -116,7 +116,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         name: str | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | Mapping[str, AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Mapping[str, AbstractToolset[AgentDepsT]] | None = None,
         models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -145,9 +145,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             wrapped: The agent to wrap.
             name: Optional unique agent name to use in the Temporal activities' names. If not provided, the agent's `name` will be used.
             toolsets:
-                Optional additional toolsets to register with the agent, or a mapping of toolset names to toolset instances.
+                Optional mapping of toolset names to toolset instances to register with the agent.
                 Toolsets passed here will be temporalized and their activities registered alongside the wrapped agent's existing toolsets.
-                If a mapping is provided, toolsets can be referenced by name in `run(toolsets=['name'])`.
+                Registered toolsets can be referenced by name in `run(toolsets=['name'])`.
 
             models:
                 Optional mapping of model instances to register with the agent.
@@ -265,16 +265,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         # Process additional toolsets (if provided)
         if toolsets:
-            if isinstance(toolsets, Mapping):
-                # Temporalize named toolsets and store the mapping
-                self._named_toolsets = {
-                    name: toolset.visit_and_replace(temporalize_toolset) for name, toolset in toolsets.items()
-                }
-                # Named toolsets are not added to active toolsets by default
-            else:
-                # Temporalize and add to active toolsets
-                self._toolsets.extend([toolset.visit_and_replace(temporalize_toolset) for toolset in toolsets])
-                self._named_toolsets = {}
+            # Temporalize named toolsets and store the mapping
+            self._named_toolsets = {
+                name: toolset.visit_and_replace(temporalize_toolset) for name, toolset in toolsets.items()
+            }
+            # Named toolsets are not added to active toolsets by default
         else:
             self._named_toolsets = {}
 
@@ -503,7 +498,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
 
@@ -639,7 +635,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             event_stream_handler: Optional event stream handler to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
 
@@ -756,7 +753,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
 
@@ -893,7 +891,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional additional toolsets for this run.
+            toolsets: Optional additional toolsets for this run. Can be toolset instances or strings
+                referencing toolsets registered by name in the agent constructor's `toolsets` parameter.
             builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
 
