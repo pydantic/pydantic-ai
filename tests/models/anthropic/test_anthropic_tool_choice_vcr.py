@@ -24,7 +24,6 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.settings import ModelSettings, ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
@@ -32,7 +31,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from ...conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 

@@ -9,25 +9,6 @@ from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
-from huggingface_hub import (
-    AsyncInferenceClient,
-    ChatCompletionInputFunctionName,
-    ChatCompletionInputMessage,
-    ChatCompletionInputToolChoiceClass,
-    ChatCompletionOutput,
-    ChatCompletionOutputComplete,
-    ChatCompletionOutputFunctionDefinition,
-    ChatCompletionOutputMessage,
-    ChatCompletionOutputToolCall,
-    ChatCompletionOutputUsage,
-    ChatCompletionStreamOutput,
-    ChatCompletionStreamOutputChoice,
-    ChatCompletionStreamOutputDelta,
-    ChatCompletionStreamOutputDeltaToolCall,
-    ChatCompletionStreamOutputFunction,
-    ChatCompletionStreamOutputUsage,
-)
-from huggingface_hub.errors import HfHubHTTPError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -52,8 +33,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
-from pydantic_ai.providers.huggingface import HuggingFaceProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -67,7 +46,9 @@ with try_import() as imports_successful:
     import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
+        ChatCompletionInputFunctionName,
         ChatCompletionInputMessage,
+        ChatCompletionInputToolChoiceClass,
         ChatCompletionOutput,
         ChatCompletionOutputComplete,
         ChatCompletionOutputFunctionDefinition,
@@ -83,7 +64,7 @@ with try_import() as imports_successful:
     )
     from huggingface_hub.errors import HfHubHTTPError
 
-    from pydantic_ai.models.huggingface import HuggingFaceModel
+    from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     MockChatCompletion = ChatCompletionOutput | Exception

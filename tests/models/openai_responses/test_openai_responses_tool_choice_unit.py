@@ -16,7 +16,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.settings import ToolsPlusOutput
 from pydantic_ai.tools import ToolDefinition, ToolKind
@@ -24,7 +23,7 @@ from pydantic_ai.tools import ToolDefinition, ToolKind
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
