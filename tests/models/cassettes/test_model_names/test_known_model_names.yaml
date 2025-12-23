@@ -25,10 +25,6 @@ interactions:
     parsed_body:
       data:
       - created: 0
-        id: qwen-3-32b
-        object: model
-        owned_by: Cerebras
-      - created: 0
         id: zai-glm-4.6
         object: model
         owned_by: Cerebras
@@ -37,15 +33,19 @@ interactions:
         object: model
         owned_by: Cerebras
       - created: 0
-        id: llama3.1-8b
-        object: model
-        owned_by: Cerebras
-      - created: 0
         id: qwen-3-235b-a22b-instruct-2507
         object: model
         owned_by: Cerebras
       - created: 0
+        id: llama3.1-8b
+        object: model
+        owned_by: Cerebras
+      - created: 0
         id: gpt-oss-120b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-32b
         object: model
         owned_by: Cerebras
       object: list
