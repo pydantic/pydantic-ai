@@ -241,18 +241,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         activities.extend(temporal_model.temporal_activities)
         self._temporal_model = temporal_model
 
-        if toolsets:
-            if isinstance(toolsets, Mapping):
-                # Flatten the mapping for temporalization, but keep track of names
-                additional_toolsets = list(toolsets.values())
-                self._named_toolsets = toolsets
-            else:  # pragma: no cover - branch is covered but coverage is confused by the isinstance check
-                additional_toolsets = list(toolsets)
-                self._named_toolsets = {}
-        else:
-            additional_toolsets = []
-            self._named_toolsets = {}
-
         def temporalize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             id = toolset.id
             if id is None:
@@ -272,34 +260,23 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 activities.extend(toolset.temporal_activities)
             return toolset
 
-        all_toolsets = [*wrapped.toolsets, *additional_toolsets]
-        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in all_toolsets]
+        # Temporalize wrapped agent's toolsets
+        self._toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
 
-        # If we had named toolsets, we need to map the names to the temporalized versions
-        # We know that visit_and_replace returns a new instance (or the same one if no replacement needed)
-        # matching the structure of the input.
-        # However, since we flattened everything into `all_toolsets` and then mapped it to `temporal_toolsets`,
-        # we can reconstruct the named mapping by index.
-        # But wait, `wrapped.toolsets` are first.
-        if self._named_toolsets:
-            # The additional toolsets are at the end of `temporal_toolsets`
-            num_wrapped_toolsets = len(wrapped.toolsets)
-            # The temporalized additional toolsets
-            temporal_additional_toolsets = temporal_toolsets[num_wrapped_toolsets:]
-
-            # create a new mapping pointing to the temporalized versions
-            new_named_toolsets: dict[str, AbstractToolset[AgentDepsT]] = {}
-            for name, temporal_toolset in zip(self._named_toolsets, temporal_additional_toolsets):
-                new_named_toolsets[name] = temporal_toolset
-            self._named_toolsets = new_named_toolsets
-
-            # If toolsets were passed as a mapping, they are not added to the active toolsets by default
+        # Process additional toolsets (if provided)
+        if toolsets:
             if isinstance(toolsets, Mapping):
-                self._toolsets = temporal_toolsets[:num_wrapped_toolsets]
+                # Temporalize named toolsets and store the mapping
+                self._named_toolsets = {
+                    name: toolset.visit_and_replace(temporalize_toolset) for name, toolset in toolsets.items()
+                }
+                # Named toolsets are not added to active toolsets by default
             else:
-                self._toolsets = temporal_toolsets  # pragma: no cover
+                # Temporalize and add to active toolsets
+                self._toolsets.extend([toolset.visit_and_replace(temporalize_toolset) for toolset in toolsets])
+                self._named_toolsets = {}
         else:
-            self._toolsets = temporal_toolsets
+            self._named_toolsets = {}
 
         self._temporal_activities = activities
 
