@@ -196,7 +196,7 @@ quote-style = "single"
 "docs/**/*.py" = ["D"]
 
 [tool.pyright]
-pythonVersion = "3.12"
+pythonVersion = "3.10"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
