@@ -431,7 +431,7 @@ agent = Agent('test')
 async def raise_on_limit(
     ctx: RunContext[Any], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
-    if ctx.max_uses and ctx.tool_usage.get(tool_def.name, 0) >= ctx.max_uses:
+    if ctx.max_uses and ctx.tool_use >= ctx.max_uses:
         raise UsageLimitExceeded(
             f'Tool "{tool_def.name}" has reached its usage limit of {ctx.max_uses}.'
         )
@@ -444,6 +444,49 @@ def limited_tool(ctx: RunContext[None]) -> str:
 ```
 
 In this example, when `limited_tool` is called more than twice, a `UsageLimitExceeded` error will be raised instead of silently removing the tool.
+
+#### Soft Tool Usage Counter
+
+Instead of raising an error when a tool reaches its limit, you may want to inform the model how many more times it can call a tool. This provides a "soft" notification that helps the model plan its tool usage more effectively:
+
+```python {title="tool_usage_counter.py"}
+from dataclasses import replace
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+
+agent = Agent('test')
+
+
+async def add_usage_counter(
+    ctx: RunContext[Any], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    if ctx.max_uses:
+        remaining = ctx.max_uses - ctx.tool_use
+        if remaining > 0:
+            # Add a note to the tool description about remaining uses
+            counter_note = f'\n\nNote: This tool can only be called {remaining} more time{"s" if remaining != 1 else ""}.'
+            return replace(
+                tool_def,
+                description=(tool_def.description or '') + counter_note,
+            )
+    return tool_def
+
+
+@agent.tool(max_uses=3, prepare=add_usage_counter)
+def search_database(ctx: RunContext[None], query: str) -> str:
+    """Search the database for information."""
+    return f'Results for: {query}'
+
+
+result = agent.run_sync('Search for users named John, then Jane, then Bob')
+print(result.output)
+#> {"search_database":"Results for: a"}
+```
+
+_(This example is complete, it can be run "as is")_
+
+In this example, the model will see the tool description updated at each step to show how many more times it can call the tool. This approach works like a counter that increases during the run of the conversation, helping the model make informed decisions about tool usage without hitting hard limits unexpectedly.
 
 #### Output Tool Calls
 

@@ -78,6 +78,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
+    @property
+    def tool_use(self) -> int:
+        """Number of successful calls for this tool so far.
+
+        This is a convenience property that returns `tool_usage.get(tool_name, 0)`.
+        Only valid when `tool_name` is set (i.e., during tool preparation or execution).
+        """
+        if self.tool_name:
+            return self.tool_usage.get(self.tool_name, 0)
+        return 0
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
