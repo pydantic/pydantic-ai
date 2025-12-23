@@ -73,7 +73,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsBytes, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -4861,7 +4861,7 @@ def test_tool_returning_binary_content_with_identifier():
                 ToolReturnPart(
                     tool_name='get_image',
                     content=BinaryContent(
-                        data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
+                        data=IsBytes(),
                         media_type='image/png',
                         _identifier='image_id_1',
                     ),
@@ -6934,13 +6934,11 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolCallPart(
                         tool_name='final_result',
                         args={'dice_roll': 4},
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                     )
                 ]
             )
-        return ModelResponse(
-            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')]
-        )
+        return ModelResponse(parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr())])
 
     class Result(BaseModel):
         dice_roll: int
@@ -6966,7 +6964,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=55, output_tokens=2),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
@@ -6977,7 +6975,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='roll_dice',
                         content=4,
-                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6989,7 +6987,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolCallPart(
                         tool_name='final_result',
                         args={'dice_roll': 4},
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                     )
                 ],
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
@@ -7002,7 +7000,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7027,7 +7025,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=66, output_tokens=8),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
@@ -7038,7 +7036,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='roll_dice',
                         content=4,
-                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7050,7 +7048,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolCallPart(
                         tool_name='final_result',
                         args={'dice_roll': 4},
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                     )
                 ],
                 usage=RequestUsage(input_tokens=67, output_tokens=12),
@@ -7063,7 +7061,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],

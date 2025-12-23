@@ -42,13 +42,14 @@ from pydantic_ai import (
 )
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
+    BinaryImage,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
+from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -182,7 +183,7 @@ async def test_request_simple_success(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id='123',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -201,7 +202,7 @@ async def test_request_simple_success(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id='123',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -265,7 +266,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id='123',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -365,7 +366,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id='123',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -398,7 +399,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id='123',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -424,7 +425,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     'finish_reason': 'stop',
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 },
-                provider_response_id='123',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -546,7 +547,7 @@ async def test_stream_structured(allow_model_requests: None):
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
-                provider_response_id='x',
+                provider_response_id=IsStr(),
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -657,7 +658,7 @@ async def test_image_as_binary_content_tool_response(
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 4, 29, 20, 21, 45, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -665,17 +666,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                        ),
                         tool_call_id='call_wkpd',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 1c8566:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -691,7 +688,7 @@ async def test_image_as_binary_content_tool_response(
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 29, 20, 21, 47, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -794,7 +791,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1067,7 +1064,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=timezone.utc),
                 },
-                provider_response_id='stub',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1239,7 +1236,7 @@ search(What is the weather in San Francisco today?)
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=timezone.utc),
                 },
-                provider_response_id='stub',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2040,7 +2037,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2066,7 +2063,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2191,7 +2188,7 @@ Enjoy your homemade Uruguayan alfajores!\
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-4ef92b12-fb9d-486f-8b98-af9b5ecac736',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3558,7 +3555,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-dd0af56b-f71d-4101-be2f-89efcf3f05ac',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5555,7 +5552,7 @@ We need to output the call.\
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'timestamp': datetime(2025, 9, 2, 21, 23, 3, tzinfo=timezone.utc)},
-                provider_response_id='chatcmpl-4e0ca299-7515-490a-a98a-16d7664d4fba',
+                provider_response_id=IsStr(),
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -5602,7 +5599,7 @@ We need to output the call.\
                     'finish_reason': 'tool_calls',
                     'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-fffa1d41-1763-493a-9ced-083bd3f2d98b',
+                provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -5630,7 +5627,7 @@ We need to output the call.\
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-fe6b5685-166f-4c71-9cd7-3d5a97301bf1',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

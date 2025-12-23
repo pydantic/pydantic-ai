@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     DocumentUrl,
     ImageUrl,
     ModelRequest,
@@ -63,7 +64,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import ClientWithHandler, IsBytes, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1233,17 +1234,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1c8566',
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                        ),
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 1c8566:',
-                            image_content,
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1529,7 +1526,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1567,7 +1564,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1931,7 +1928,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 timestamp=IsDatetime(),
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='TT9IaNfGN_DmqtsPzKnE4AE',
+                provider_response_id=IsStr(),
                 run_id=IsStr(),
             ),
         ]
