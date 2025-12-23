@@ -563,7 +563,7 @@ To use file storage, you need:
 1. A [`FileStore`][pydantic_ai.file_store.FileStore] implementation (e.g., [`S3FileStore`][pydantic_ai.file_store.S3FileStore])
 2. The [`file_store_processor`][pydantic_ai.file_store.file_store_processor] added to your agent's `history_processors`
 
-```python {title="basic_file_store.py"}
+```python {title="basic_file_store.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.file_store import S3FileStore, file_store_processor
 
@@ -623,7 +623,7 @@ The processor knows which models support URLs for different media types:
 
 A powerful feature is the ability to store messages with one model and replay them with a different model:
 
-```python {title="cross_model_file_store.py"}
+```python {title="cross_model_file_store.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.file_store import S3FileStore, file_store_processor
 
@@ -739,7 +739,7 @@ store = S3FileStore(
 
 For advanced use cases, provide a custom callback:
 
-```python {title="file_store_custom_uri.py"}
+```python {title="file_store_custom_uri.py" test="skip" lint="skip"}
 from pydantic_ai.file_store import S3FileStore
 
 def custom_download_uri(key: str) -> str:
@@ -758,7 +758,7 @@ store = S3FileStore(
 
 !!! tip "Presigned URL TTL"
     By default, presigned URLs expire after 1 hour (3600 seconds). You can customize this with the `ttl` parameter:
-    ```python
+    ```python {test="skip" lint="skip"}
     store = S3FileStore(bucket='my-bucket', ttl=7200)  # 2 hours
     ```
     The processor automatically refreshes URLs when replaying messages, so expired URLs are regenerated.

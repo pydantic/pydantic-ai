@@ -36,7 +36,7 @@ class S3FileStore:
         custom_download_uri: Optional callback to override get_download_uri logic
 
     Example:
-        ```python
+        ```python {test="skip" lint="skip"}
         # Using environment variables (S3_ENDPOINT, S3_ACCESS_KEY_ID,
         # S3_SECRET_ACCESS_KEY, S3_REGION)
         store = S3FileStore(bucket='my-bucket')

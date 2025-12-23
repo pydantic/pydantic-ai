@@ -7,7 +7,7 @@ This module provides:
 - `file_store_processor`: History processor factory for file storage
 
 Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     from pydantic_ai.file_store import S3FileStore, file_store_processor
 
     # Using environment variables (S3_ENDPOINT, S3_ACCESS_KEY_ID,

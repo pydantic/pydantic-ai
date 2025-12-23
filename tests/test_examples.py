@@ -181,6 +181,10 @@ def test_docs_examples(
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
+    env.set('S3_ENDPOINT', 'https://test-bucket.s3.amazonaws.com')
+    env.set('S3_ACCESS_KEY_ID', 'testing')
+    env.set('S3_SECRET_ACCESS_KEY', 'testing')
+    env.set('S3_REGION', 'us-east-1')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
