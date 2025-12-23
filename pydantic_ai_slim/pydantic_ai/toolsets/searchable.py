@@ -1,121 +1,66 @@
-import logging
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, TypedDict, cast
 
-from pydantic import TypeAdapter
-from typing_extensions import Self
+from typing import Any
 
 from .._run_context import AgentDepsT, RunContext
-from ..tools import ToolDefinition
-from .abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
-
-_SEARCH_TOOL_NAME = 'load_tools'
-
-
-class _SearchToolArgs(TypedDict):
-    regex: str
+from ..tools import ToolDefinition, Tool
+from .abstract import ToolsetTool
+from .wrapper import WrapperToolset
 
 
-## TODO Check out Tool.from_schema and the Tool constructor that takes a function (as used by FunctionToolset) for easier
-## ways to construct a single tool. The function approach is the easiest by far
-def _search_tool_def() -> ToolDefinition:
-    return ToolDefinition(
-        name=_SEARCH_TOOL_NAME,
-
-## TODO Simplify the prompt.
-        description="""Search and load additional tools to make them available to the agent.
-
-DO call this to find and load more tools needed for a task.
-NEVER ask the user if you should try loading tools, just try.
-""",
-        parameters_json_schema={
-            'type': 'object',
-            'properties': {
-## TODO Check if pattern is a better name than regex.
-                'regex': {
-                    'type': 'string',
-                    'description': 'Regex pattern to search for relevant tools',
-                }
-            },
-            'required': ['regex'],
-        },
-    )
-
-
-## TODO Why is this a function? TypeAdapter is expensive to create.
-def _search_tool_validator() -> SchemaValidatorProt:
-    return TypeAdapter(_SearchToolArgs).validator
+_TOOL_SEARCH_METADATA_KEY = '__tool_search__'
+"""ToolDefinition.metadata key to store runtime metadata."""
 
 
 @dataclass
-class _SearchTool(ToolsetTool[AgentDepsT]):
-    """A tool that searches for more relevant tools from a SearchableToolSet."""
-
-    tool_def: ToolDefinition = field(default_factory=_search_tool_def)
-    args_validator: SchemaValidatorProt = field(default_factory=_search_tool_validator)
-
-
-@dataclass
-class SearchableToolset(AbstractToolset[AgentDepsT]):
+class SearchableToolset(WrapperToolset[AgentDepsT]):
     """A toolset that implements tool search and deferred tool loading."""
-
-    # TODO Have a look at Wrapper Toolset.
-    toolset: AbstractToolset[AgentDepsT]
 
     _active_tool_names: set[str] = field(default_factory=set)
     """Tracks activated tool names."""
 
-    @property
-    def id(self) -> str | None:
-        return None  # pragma: no cover
-
-    @property
-    def label(self) -> str:
-        return f'{self.__class__.__name__}({self.toolset.label})'  # pragma: no cover
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolset_tools = await self.toolset.get_tools(ctx)
+        tools = await self.wrapped.get_tools(ctx)
 
-        # TODO Should not expose search tool if there are no defer loading tools.
+        # No need to add a search tool if there are no defer_loading tools.
+        if not any(t.tool_def.defer_loading for t in tools.values()):
+            return tools
+
+        # If any nested SearchableToolset instances have added their own search tools, drop those so that only one
+        # search tool is exposed to the model.
+        tools = {name: tool for name, tool in tools.items() if not is_search_tool(tool.tool_def)}
+
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
-        all_tools[_SEARCH_TOOL_NAME] = _SearchTool(
-            toolset=self,
-            max_retries=3,
-        )
-
-        for tool_name, tool in toolset_tools.items():
-            # TODO proper error handling, checkout ModelRetry exception?
-            assert tool_name != _SEARCH_TOOL_NAME
+        for tool_name, tool in tools.items():
             defer = tool.tool_def.defer_loading
-            all_tools[tool_name] = _SearchToolsetToolWrapper(tool, self) if defer else tool
+            all_tools[tool_name] = _SearchToolsetToolWrapper[AgentDepsT](tool, self) if defer else tool
+
+        search_tool, search_toolset_tool = _search_tool(toolset=self)
+
+        # TODO how to handle this error, or should we automatically disambiguate this name?
+        assert search_tool.name not in all_tools
+        all_tools[search_tool.name] = search_toolset_tool
 
         return all_tools
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if isinstance(tool, _SearchTool):
-            adapter = TypeAdapter(_SearchToolArgs)
-            # TODO already validated, can cast.
-            typed_args = adapter.validate_python(tool_args)
-            result = await self.call_search_tool(typed_args, ctx)
-            logging.debug(f"SearchableToolset.call_tool({name}, {tool_args}) ==> {result}")
-            return result
+        if is_search_tool(tool.tool_def):
+            return await self._search_tools(ctx, tool_args['regex'])
+        elif isinstance(tool, _SearchToolsetToolWrapper):
+            return await self.wrapped.call_tool(name, tool_args, ctx, tool.wrapped)
         else:
-            assert isinstance(tool, _SearchToolsetToolWrapper)
-            result = await self.toolset.call_tool(name, tool_args, ctx, tool.wrapped)
-            logging.debug(f"SearchableToolset.call_tool({name}, {tool_args}) ==> {result}")
-            return result
+            return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def call_search_tool(self, args: _SearchToolArgs, ctx: RunContext[AgentDepsT]) -> list[str]:
+    async def _search_tools(self, ctx: RunContext[AgentDepsT], regex: str) -> list[str]:
         """Searches for tools matching the query, activates them and returns their names."""
-        toolset_tools = await self.toolset.get_tools(ctx)
+        toolset_tools = await self.wrapped.get_tools(ctx)
         matching_tool_names: list[str] = []
 
-        rx = re.compile(args['regex'])
+        rx = re.compile(regex)
 
         for _, tool in toolset_tools.items():
             if rx.search(tool.tool_def.name) or rx.search(tool.tool_def.description):
@@ -124,28 +69,46 @@ class SearchableToolset(AbstractToolset[AgentDepsT]):
         self._active_tool_names.update(matching_tool_names)
         return matching_tool_names
 
-    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        self.toolset.apply(visitor)
-
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
-    ) -> AbstractToolset[AgentDepsT]:
-        return replace(self, toolset=self.toolset.visit_and_replace(visitor))
-
-    async def __aenter__(self) -> Self:
-        await self.toolset.__aenter__()
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        return await self.toolset.__aexit__(*args)
-
     def is_active(self, tool_def: ToolDefinition) -> bool:
         return tool_def.name in self._active_tool_names
 
 
+def _search_tool(toolset: SearchableToolset) -> tuple[Tool, ToolsetTool[AgentDepsT]]:
+    async def search(ctx: RunContext[AgentDepsT], regex: str) -> list[str]:
+        return await toolset._search_tools(ctx, regex)
+
+    # TODO Check if pattern is a better name than regex.
+    # TODO Are examples allowed to be defined somewhere to expose to the model?
+    schema = {
+        'type': 'object',
+        'properties': {
+            'regex': {
+                'type': 'string',
+                'description': 'Regex pattern to search for relevant tools',
+            }
+        },
+        'required': ['regex'],
+    }
+
+    desc = 'Search and load additional tools that defer tool loading'
+    tool = Tool.from_schema(
+        search, name='load_tools', description=desc, json_schema=schema, takes_ctx=True
+    )
+
+    metadata = _update_metadata(tool.metadata, is_search_tool=True)
+    tool = replace(tool, metadata=metadata)
+
+    return tool, ToolsetTool(
+        toolset=toolset,
+        tool_def=tool.tool_def,
+        max_retries=tool.max_retries or 3,
+        args_validator=tool.function_schema.validator
+    )
+
+
 @dataclass(kw_only=True)
 class _SearchToolsetToolWrapper(ToolsetTool[AgentDepsT]):
-    """A ToolsetTool that tags its ToolDefinition to enable tool_is_active query."""
+    """A ToolsetTool that tags its ToolDefinition to enable is_active query."""
 
     wrapped: ToolsetTool[AgentDepsT]
     _tool_def: ToolDefinition
@@ -163,18 +126,11 @@ class _SearchToolsetToolWrapper(ToolsetTool[AgentDepsT]):
         self.max_retries = tool.max_retries
         self.args_validator = tool.args_validator
 
+    # TODO Mypy: Dataclass attribute may only be overridden by another attribute [misc]
     @property
     def tool_def(self) -> ToolDefinition:
-        metadata = (self._tool_def.metadata or {}).copy()
-        toolset = self._searchable_toolset
-        tool = self._tool_def
-
-        # ModelRequestParameters and its ToolDefinitions need to be serializable to work with Temporal durable
-        # execution, so storing a callable is not going to work I'm afraid.
-
-        # Also overriding metadata is not going to work if something underneath is already having it.
-        metadata["active"] = lambda: toolset.is_active(tool_def=tool)
-        return replace(self._tool_def, metadata=metadata)
+        is_active = self._searchable_toolset.is_active(tool_def=self._tool_def)
+        return _update_tool_def_metadata(self._tool_def, is_active=is_active)
 
     @tool_def.setter
     def tool_def(self, value: ToolDefinition) -> None:
@@ -182,14 +138,43 @@ class _SearchToolsetToolWrapper(ToolsetTool[AgentDepsT]):
 
 
 def is_active(tool_def: ToolDefinition) -> bool:
-    """Filters out not-yet-active defer_loading tools."""
+    """Check if a tool does not need defer_loading or else needs it but has been activated."""
     if not tool_def.defer_loading:
         return True
-    metadata = (tool_def.metadata or {}).copy()
-    predicate = metadata.get("active")
-    return predicate and predicate()
+
+    metadata = tool_def.metadata or {}
+    return bool(metadata.get(_TOOL_SEARCH_METADATA_KEY, {}).get("active"))
 
 
 def is_search_tool(tool_def: ToolDefinition) -> bool:
     """Check if this tool is a tool implementing search and loading."""
-    return tool_def.name == _SEARCH_TOOL_NAME
+    metadata = tool_def.metadata or {}
+    return bool(metadata.get(_TOOL_SEARCH_METADATA_KEY, {}).get("search"))
+
+
+# TODO add a typed record for tool search metadata perhaps.
+def _update_tool_def_metadata(
+    tool_def: ToolDefinition, is_search_tool: bool = False, is_active: bool = False,
+) -> ToolDefinition:
+    new_metadata: dict[str, Any] | None = None
+    new_metadata = _update_metadata(tool_def.metadata, is_search_tool=is_search_tool, is_active=is_active)
+    return replace(tool_def, metadata=new_metadata)
+
+
+def _update_metadata(
+    metadata: dict[str, Any] | None = None, is_search_tool: bool = False, is_active: bool = False,
+) -> dict[str, Any] | None:
+    updated_metadata = metadata.copy() if metadata else {}
+    if is_search_tool or is_active:
+        updated_metadata[_TOOL_SEARCH_METADATA_KEY] = {
+            "search": is_search_tool,
+            "active": is_active,
+        }
+    elif _TOOL_SEARCH_METADATA_KEY in updated_metadata:
+        del updated_metadata[_TOOL_SEARCH_METADATA_KEY]
+
+    # Avoid gratuitously changing None to {}.
+    if len(updated_metadata) == 0:
+        updated_metadata = metadata
+
+    return updated_metadata
