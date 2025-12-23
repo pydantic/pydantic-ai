@@ -56,6 +56,11 @@ from .conftest import IsDatetime, IsInt, IsNow, IsStr
 pytestmark = pytest.mark.anyio
 
 
+class Foo(BaseModel):
+    a: int
+    b: str
+
+
 async def test_streamed_text_response():
     m = TestModel()
 
@@ -764,6 +769,129 @@ async def test_call_tool_wrong_name():
             ),
         ]
     )
+
+
+class TestPartialOutput:
+    """Tests for `ctx.partial_output` flag in output validators and output functions."""
+
+    # NOTE: When changing these tests:
+    # 1. Follow the existing order
+    # 2. Update tests in `tests/test_agent.py::TestPartialOutput` as well
+
+    async def test_output_validator_text(self):
+        """Test that output validators receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for chunk in ['Hello', ' ', 'world', '!']:
+                yield chunk
+
+        agent = Agent(FunctionModel(stream_function=sf))
+
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: str) -> str:
+            call_log.append((output, ctx.partial_output))
+            return output
+
+        async with agent.run_stream('test') as result:
+            text_parts = [text_part async for text_part in result.stream_text(debounce_by=None)]
+
+        assert text_parts[-1] == 'Hello world!'
+        assert call_log == snapshot(
+            [
+                ('Hello', True),
+                ('Hello ', True),
+                ('Hello world', True),
+                ('Hello world!', True),
+                ('Hello world!', False),
+            ]
+        )
+
+    async def test_output_validator_structured(self):
+        """Test that output validators receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
+            yield {0: DeltaToolCall(json_args=', "b": "f')}
+            yield {0: DeltaToolCall(json_args='oo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
+
+        @agent.output_validator
+        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+            call_log.append((output, ctx.partial_output))
+            return output
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == Foo(a=42, b='foo')
+        assert call_log == snapshot(
+            [
+                (Foo(a=42, b='f'), True),
+                (Foo(a=42, b='foo'), True),
+                (Foo(a=42, b='foo'), False),
+            ]
+        )
+
+    @pytest.mark.xfail(reason='See https://github.com/pydantic/pydantic-ai/issues/3813')
+    async def test_output_function_text(self):
+        """Test that output functions receive correct value for `partial_output` with text output."""
+        call_log: list[tuple[str, bool]] = []
+
+        def process_output(ctx: RunContext[None], text: str) -> str:
+            call_log.append((text, ctx.partial_output))
+            return text.upper()
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            for chunk in ['Hello', ' ', 'world', '!']:
+                yield chunk
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=TextOutput(process_output))
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == 'HELLO WORLD!'
+        assert call_log == snapshot(
+            [
+                ('Hello', True),
+                ('Hello ', True),
+                ('Hello world', True),
+                ('Hello world!', True),
+                ('Hello world!', False),
+            ]
+        )
+
+    async def test_output_function_structured(self):
+        """Test that output functions receive correct value for `partial_output` with structured output."""
+        call_log: list[tuple[Foo, bool]] = []
+
+        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+            call_log.append((foo, ctx.partial_output))
+            return Foo(a=foo.a * 2, b=foo.b.upper())
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 21')}
+            yield {0: DeltaToolCall(json_args=', "b": "f')}
+            yield {0: DeltaToolCall(json_args='oo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=process_foo)
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+        assert outputs[-1] == Foo(a=42, b='FOO')
+        assert call_log == snapshot(
+            [
+                (Foo(a=21, b='f'), True),
+                (Foo(a=21, b='foo'), True),
+                (Foo(a=21, b='foo'), False),
+            ]
+        )
 
 
 class OutputType(BaseModel):
