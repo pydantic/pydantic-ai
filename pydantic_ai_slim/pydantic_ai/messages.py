@@ -605,6 +605,7 @@ class BinaryContent:
     @property
     def is_text(self) -> bool:
         """Return `True` if the media type is a text type."""
+        # TODO: consider to read text content and send as text in user_prompt to the model?
         return self._type == 'text' or self.media_type.startswith('text/')
 
     @property
