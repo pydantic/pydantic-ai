@@ -7,12 +7,13 @@ from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
+from importlib.util import find_spec
 from mimetypes import MimeTypes, knownfiles
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 from urllib.parse import urlparse
-from importlib.util import find_spec
+
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
