@@ -4,10 +4,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
+import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
-from ..exceptions import UserError
+from ..exceptions import ModelRetry, UserError
 from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -25,6 +26,12 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
+    timeout: float | None = None
+    """Timeout in seconds for tool execution.
+
+    If the tool takes longer than this, a retry prompt is returned to the model.
+    Defaults to None (no timeout).
+    """
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -35,6 +42,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     tools: dict[str, Tool[Any]]
     max_retries: int
+    timeout: float | None
     _id: str | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -46,6 +54,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,
+        timeout: float | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -62,6 +71,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
                 Applies to all tools, unless overridden when adding a tool.
+            timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
+                a retry prompt is returned to the model. Individual tools can override this with their own timeout.
+                Defaults to None (no timeout).
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
                 Applies to all tools, unless overridden when adding a tool.
@@ -83,6 +95,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading: If True, default to hiding each tool and only activate it when the model searches for tools.
         """
         self.max_retries = max_retries
+        self.timeout = timeout
         self._id = id
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
@@ -123,6 +136,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -142,6 +156,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         defer_loading: bool | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -198,6 +213,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout).
             defer_loading: If True, hide the tool by default and only activate it when the model searches for tools.
                 If `None`, the default value is determined by the toolset.
         """
@@ -221,6 +238,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 defer_loading=defer_loading,
+                timeout=timeout,
             )
             return func_
 
@@ -242,6 +260,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         defer_loading: bool | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -278,6 +297,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             defer_loading: If True, hide the tool by default and only activate it when the model searches for tools.
                 If `None`, the default value is determined by the toolset.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout).
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -309,6 +330,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval=requires_approval,
             metadata=metadata,
             defer_loading=defer_loading,
+            timeout=timeout,
         )
         self.add_tool(tool)
 
@@ -354,6 +376,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
+                timeout=tool_def.timeout,
             )
         return tools
 
@@ -361,4 +384,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
-        return await tool.call_func(tool_args, ctx)
+
+        # Per-tool timeout takes precedence over toolset timeout
+        timeout = tool.timeout if tool.timeout is not None else self.timeout
+        if timeout is not None:
+            try:
+                with anyio.fail_after(timeout):
+                    return await tool.call_func(tool_args, ctx)
+            except TimeoutError:
+                raise ModelRetry(f'Timed out after {timeout} seconds.') from None
+        else:
+            return await tool.call_func(tool_args, ctx)
