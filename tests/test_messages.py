@@ -759,16 +759,17 @@ def test_binary_content_from_path(tmp_path: Path):
             data=b'just some text', _media_type='text/plain', _type='text', _extension='txt', media_type='text/plain'
         )
     )
-
-    # test image file
-    test_jpg_file = tmp_path / 'test.jpg'
-    test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
-    binary_content = BinaryContent.from_path(test_jpg_file)
-    assert binary_content == snapshot(
-        BinaryContent(
-            data=b'\xff\xd8\xff\xe00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
-            _media_type='text/plain',
-            _type='text',
-            _extension='txt',
+    if find_spec('magika') is None:
+        # test image file
+        # magika will ignore fake jpeg data and detact it to text/plain
+        test_jpg_file = tmp_path / 'test.jpg'
+        test_jpg_file.write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 100)  # minimal JPEG header + padding
+        binary_content = BinaryContent.from_path(test_jpg_file)
+        assert binary_content == snapshot(
+            BinaryImage(
+                data=b'\xff\xd8\xff\xe0' + b'0' * 100,
+                media_type='image/jpeg',
+                _media_type='image/jpeg',
+                _identifier='bc8d49',
+            )
         )
-    )
