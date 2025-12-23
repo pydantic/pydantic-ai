@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ from pydantic_ai import Agent
 
 from .conftest import try_import
 
-with try_import() as starlette_import_successful:
+with try_import() as import_successful:
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
 
@@ -21,7 +22,7 @@ with try_import() as starlette_import_successful:
 
 
 pytestmark = [
-    pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
+    pytest.mark.skipif(not import_successful(), reason='starlette not installed'),
 ]
 
 
@@ -171,6 +172,9 @@ def test_chat_app_configure_endpoint_empty():
 def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.MonkeyPatch):
     """Test that openai-chat: and openai-responses: models are kept as separate entries."""
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
+
+    if not importlib.import_module('openai'):
+        pytest.skip('openai not installed')
 
     agent = Agent('test')
     app = create_web_app(
