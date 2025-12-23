@@ -334,8 +334,8 @@ def audio_content(assets_path: Path) -> BinaryContent:
 
 @pytest.fixture(scope='session')
 def image_content(assets_path: Path) -> BinaryImage:
-    image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
-    return BinaryImage(data=image_bytes, media_type='image/png')
+    image_bytes = assets_path.joinpath('kiwi.jpg').read_bytes()
+    return BinaryImage(data=image_bytes, media_type='image/jpeg')
 
 
 @pytest.fixture(scope='session')
