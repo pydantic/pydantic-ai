@@ -1332,7 +1332,14 @@ class OpenAIResponsesModel(Model):
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
-                        items.append(TextPart(content.text, id=item.id, provider_details=part_provider_details))
+                        items.append(
+                            TextPart(
+                                content.text,
+                                id=item.id,
+                                provider_name=self.system if part_provider_details else None,
+                                provider_details=part_provider_details,
+                            )
+                        )
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(
@@ -2429,6 +2436,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 for event in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=chunk.item_id,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                     provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
                 ):
                     yield event

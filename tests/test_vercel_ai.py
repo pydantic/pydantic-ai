@@ -3198,12 +3198,13 @@ async def test_adapter_dump_messages_with_cache_point():
 
 
 async def test_adapter_dump_messages_text_with_provider_details():
-    """Test dumping TextPart with provider_details preserves metadata."""
+    """Test dumping TextPart with provider_name and provider_details preserves metadata."""
     messages = [
         ModelResponse(
             parts=[
                 TextPart(
                     content='Hello with metadata',
+                    provider_name='openai',
                     provider_details={'model': 'gpt-4', 'finish_reason': 'stop'},
                 ),
             ]
@@ -3225,7 +3226,10 @@ async def test_adapter_dump_messages_text_with_provider_details():
                         'text': 'Hello with metadata',
                         'state': 'done',
                         'provider_metadata': {
-                            'pydantic_ai': {'provider_details': {'model': 'gpt-4', 'finish_reason': 'stop'}}
+                            'pydantic_ai': {
+                                'provider_name': 'openai',
+                                'provider_details': {'model': 'gpt-4', 'finish_reason': 'stop'},
+                            }
                         },
                     }
                 ],
@@ -3247,6 +3251,7 @@ async def test_adapter_load_messages_text_with_provider_metadata():
                     provider_metadata={
                         'pydantic_ai': {
                             'id': 'text_123',
+                            'provider_name': 'anthropic',
                             'provider_details': {'model': 'gpt-4', 'tokens': 50},
                         }
                     },
@@ -3261,7 +3266,10 @@ async def test_adapter_load_messages_text_with_provider_metadata():
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Hello with metadata', id='text_123', provider_details={'model': 'gpt-4', 'tokens': 50}
+                        content='Hello with metadata',
+                        id='text_123',
+                        provider_name='anthropic',
+                        provider_details={'model': 'gpt-4', 'tokens': 50},
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3271,13 +3279,14 @@ async def test_adapter_load_messages_text_with_provider_metadata():
 
 
 async def test_adapter_text_roundtrip_with_provider_details():
-    """Test TextPart with provider_details survives dump/load roundtrip."""
+    """Test TextPart with provider_name and provider_details survives dump/load roundtrip."""
     original_messages = [
         ModelResponse(
             parts=[
                 TextPart(
                     content='Roundtrip text',
                     id='text_456',
+                    provider_name='google',
                     provider_details={'completion_tokens': 100},
                 ),
             ]
@@ -3289,13 +3298,13 @@ async def test_adapter_text_roundtrip_with_provider_details():
 
     # Sync timestamps for comparison
     for orig_msg, new_msg in zip(original_messages, reloaded_messages):
-        new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+        new_msg.timestamp = orig_msg.timestamp
 
     assert reloaded_messages == original_messages
 
 
 async def test_adapter_dump_messages_tool_call_with_provider_details():
-    """Test dumping ToolCallPart with provider_details preserves metadata."""
+    """Test dumping ToolCallPart with provider_name and provider_details preserves metadata."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(
@@ -3305,6 +3314,7 @@ async def test_adapter_dump_messages_tool_call_with_provider_details():
                     args={'arg': 'value'},
                     tool_call_id='tool_abc',
                     id='call_123',
+                    provider_name='openai',
                     provider_details={'index': 0, 'type': 'function'},
                 ),
             ]
@@ -3346,6 +3356,7 @@ async def test_adapter_dump_messages_tool_call_with_provider_details():
                         'call_provider_metadata': {
                             'pydantic_ai': {
                                 'id': 'call_123',
+                                'provider_name': 'openai',
                                 'provider_details': {'index': 0, 'type': 'function'},
                             }
                         },
@@ -3373,6 +3384,7 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
                     state='input-available',
                     call_provider_metadata={
                         'pydantic_ai': {
+                            'provider_name': 'anthropic',
                             'provider_details': {'index': 0},
                         }
                     },
@@ -3390,6 +3402,7 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
                         tool_name='my_tool',
                         args={'key': 'value'},
                         tool_call_id='tc_123',
+                        provider_name='anthropic',
                         provider_details={'index': 0},
                     ),
                 ],
@@ -3400,7 +3413,7 @@ async def test_adapter_load_messages_tool_call_with_provider_metadata():
 
 
 async def test_adapter_tool_call_roundtrip_with_provider_details():
-    """Test ToolCallPart with provider_details survives dump/load roundtrip."""
+    """Test ToolCallPart with provider_name and provider_details survives dump/load roundtrip."""
     original_messages = [
         ModelResponse(
             parts=[
@@ -3408,6 +3421,7 @@ async def test_adapter_tool_call_roundtrip_with_provider_details():
                     tool_name='roundtrip_tool',
                     args={'param': 'val'},
                     tool_call_id='tc_roundtrip',
+                    provider_name='google',
                     provider_details={'model_internal_id': 'xyz'},
                 ),
             ]
@@ -3668,13 +3682,7 @@ async def test_adapter_load_messages_tool_input_streaming_part():
         [
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='my_tool',
-                        args={'query': 'test'},
-                        tool_call_id='tc_streaming',
-                        id=None,
-                        provider_details=None,
-                    ),
+                    ToolCallPart(tool_name='my_tool', args={'query': 'test'}, tool_call_id='tc_streaming'),
                 ],
                 timestamp=IsDatetime(),
             )
@@ -3706,13 +3714,7 @@ async def test_adapter_load_messages_dynamic_tool_input_streaming_part():
         [
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='dynamic_tool',
-                        args={'arg': 123},
-                        tool_call_id='tc_dyn_streaming',
-                        id=None,
-                        provider_details=None,
-                    ),
+                    ToolCallPart(tool_name='dynamic_tool', args={'arg': 123}, tool_call_id='tc_dyn_streaming'),
                 ],
                 timestamp=IsDatetime(),
             )
@@ -3721,7 +3723,7 @@ async def test_adapter_load_messages_dynamic_tool_input_streaming_part():
 
 
 async def test_adapter_dump_messages_tool_error_with_provider_metadata():
-    """Test dumping ToolCallPart with RetryPromptPart includes provider metadata."""
+    """Test dumping ToolCallPart with RetryPromptPart includes provider metadata with provider_name."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Do task')]),
         ModelResponse(
@@ -3731,6 +3733,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                     args={'x': 1},
                     tool_call_id='tc_fail',
                     id='call_fail_id',
+                    provider_name='google',
                     provider_details={'attempt': 1},
                 ),
             ]
@@ -3768,10 +3771,15 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                         'tool_call_id': 'tc_fail',
                         'state': 'output-error',
                         'input': '{"x":1}',
-                        'error_text': 'Tool execution failed\n\nFix the errors and try again.',
+                        'error_text': """\
+Tool execution failed
+
+Fix the errors and try again.\
+""",
                         'call_provider_metadata': {
                             'pydantic_ai': {
                                 'id': 'call_fail_id',
+                                'provider_name': 'google',
                                 'provider_details': {'attempt': 1},
                             }
                         },
@@ -3783,12 +3791,13 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
 
 
 async def test_event_stream_text_with_provider_metadata():
-    """Test that text events include provider_metadata when TextPart has provider_details."""
+    """Test that text events include provider_metadata when TextPart has provider_name and provider_details."""
 
     async def event_generator():
         part = TextPart(
             content='Hello with details',
             id='text_event_id',
+            provider_name='openai',
             provider_details={'model': 'gpt-4', 'tokens': 10},
         )
         yield PartStartEvent(index=0, part=part)
@@ -3820,6 +3829,7 @@ async def test_event_stream_text_with_provider_metadata():
                 'providerMetadata': {
                     'pydantic_ai': {
                         'id': 'text_event_id',
+                        'provider_name': 'openai',
                         'provider_details': {'model': 'gpt-4', 'tokens': 10},
                     }
                 },
@@ -3831,6 +3841,7 @@ async def test_event_stream_text_with_provider_metadata():
                 'providerMetadata': {
                     'pydantic_ai': {
                         'id': 'text_event_id',
+                        'provider_name': 'openai',
                         'provider_details': {'model': 'gpt-4', 'tokens': 10},
                     }
                 },
@@ -3841,6 +3852,7 @@ async def test_event_stream_text_with_provider_metadata():
                 'providerMetadata': {
                     'pydantic_ai': {
                         'id': 'text_event_id',
+                        'provider_name': 'openai',
                         'provider_details': {'model': 'gpt-4', 'tokens': 10},
                     }
                 },
@@ -3853,7 +3865,7 @@ async def test_event_stream_text_with_provider_metadata():
 
 
 async def test_event_stream_tool_call_end_with_provider_metadata():
-    """Test that tool-input-available events include provider_metadata."""
+    """Test that tool-input-available events include provider_metadata with provider_name."""
 
     async def event_generator():
         part = ToolCallPart(
@@ -3861,6 +3873,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata():
             tool_call_id='tc_meta',
             args={'key': 'value'},
             id='tool_call_id_123',
+            provider_name='anthropic',
             provider_details={'tool_index': 0},
         )
         yield PartStartEvent(index=0, part=part)
@@ -3893,7 +3906,13 @@ async def test_event_stream_tool_call_end_with_provider_metadata():
                 'toolCallId': 'tc_meta',
                 'toolName': 'my_tool',
                 'input': {'key': 'value'},
-                'providerMetadata': {'pydantic_ai': {'id': 'tool_call_id_123', 'provider_details': {'tool_index': 0}}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'tool_call_id_123',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'tool_index': 0},
+                    }
+                },
             },
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -4057,7 +4076,7 @@ def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> N
             if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                 new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-            new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
 
 class TestDumpProviderMetadata:

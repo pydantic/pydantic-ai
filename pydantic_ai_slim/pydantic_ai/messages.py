@@ -1041,6 +1041,9 @@ class TextPart:
     id: str | None = None
     """An optional identifier of the text part."""
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
@@ -1157,6 +1160,12 @@ class BaseToolCallPart:
 
     This is used by some APIs like OpenAI Responses."""
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+    
+    Tool calls are only sent back to the same provider.
+    """
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
@@ -1213,12 +1222,6 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """A tool call to a built-in tool."""
 
     _: KW_ONLY
-
-    provider_name: str | None = None
-    """The name of the provider that generated the response.
-
-    Built-in tool calls are only sent back to the same provider.
-    """
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1505,6 +1508,9 @@ class TextPartDelta:
 
     _: KW_ONLY
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
@@ -1530,6 +1536,7 @@ class TextPartDelta:
         return replace(
             part,
             content=part.content + self.content_delta,
+            provider_name=self.provider_name or part.provider_name,
             provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
         )
 
@@ -1662,6 +1669,9 @@ class ToolCallPartDelta:
     Note this is never treated as a delta — it can replace None, but otherwise if a
     non-matching value is provided an error will be raised."""
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
+
     provider_details: dict[str, Any] | None = None
     """Additional data returned by the provider that can't be mapped to standard fields.
 
@@ -1683,6 +1693,7 @@ class ToolCallPartDelta:
             self.tool_name_delta,
             self.args_delta,
             self.tool_call_id or _generate_tool_call_id(),
+            provider_name=self.provider_name,
             provider_details=self.provider_details,
         )
 
@@ -1744,6 +1755,9 @@ class ToolCallPartDelta:
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
+        if self.provider_name:
+            delta = replace(delta, provider_name=self.provider_name)
+
         if self.provider_details:
             merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
             delta = replace(delta, provider_details=merged_provider_details)
@@ -1754,6 +1768,7 @@ class ToolCallPartDelta:
                 delta.tool_name_delta,
                 delta.args_delta,
                 delta.tool_call_id or _generate_tool_call_id(),
+                provider_name=delta.provider_name,
                 provider_details=delta.provider_details,
             )
 
@@ -1779,6 +1794,9 @@ class ToolCallPartDelta:
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
+
+        if self.provider_name:
+            part = replace(part, provider_name=self.provider_name)
 
         if self.provider_details:
             merged_provider_details = {**(part.provider_details or {}), **self.provider_details}

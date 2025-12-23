@@ -114,7 +114,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield ErrorChunk(error_text=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
-        provider_metadata = dump_provider_metadata(id=part.id, provider_details=part.provider_details)
+        provider_metadata = dump_provider_metadata(
+            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+        )
         if follows_text:
             message_id = self.message_id
         else:
@@ -126,12 +128,16 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseChunk]:
         if delta.content_delta:  # pragma: no branch
-            provider_metadata = dump_provider_metadata(provider_details=delta.provider_details)
+            provider_metadata = dump_provider_metadata(
+                provider_name=delta.provider_name, provider_details=delta.provider_details
+            )
             yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
         if not followed_by_text:
-            provider_metadata = dump_provider_metadata(id=part.id, provider_details=part.provider_details)
+            provider_metadata = dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            )
             yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
     async def handle_thinking_start(
@@ -204,7 +210,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
             input=part.args_as_dict(),
-            provider_metadata=dump_provider_metadata(id=part.id, provider_details=part.provider_details),
+            provider_metadata=dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            ),
         )
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:

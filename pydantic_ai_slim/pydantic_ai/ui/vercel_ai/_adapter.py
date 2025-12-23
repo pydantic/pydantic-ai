@@ -139,6 +139,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             TextPart(
                                 content=part.text,
                                 id=provider_meta.get('id'),
+                                provider_name=provider_meta.get('provider_name'),
                                 provider_details=provider_meta.get('provider_details'),
                             )
                         )
@@ -250,6 +251,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     tool_call_id=tool_call_id,
                                     args=args,
                                     id=part_id,
+                                    provider_name=provider_name,
                                     provider_details=provider_details,
                                 )
                             )
@@ -343,7 +345,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if ui_parts and isinstance(ui_parts[-1], TextUIPart):
                     ui_parts[-1].text += part.content
                 else:
-                    provider_metadata = dump_provider_metadata(id=part.id, provider_details=part.provider_details)
+                    provider_metadata = dump_provider_metadata(
+                        id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                    )
                     ui_parts.append(TextUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
             elif isinstance(part, ThinkingPart):
                 provider_metadata = dump_provider_metadata(
@@ -415,7 +419,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
             elif isinstance(part, ToolCallPart):
                 tool_result = tool_results.get(part.tool_call_id)
-                call_provider_metadata = dump_provider_metadata(id=part.id, provider_details=part.provider_details)
+                call_provider_metadata = dump_provider_metadata(
+                    id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                )
 
                 if isinstance(tool_result, ToolReturnPart):
                     content = tool_result.model_response_str()
