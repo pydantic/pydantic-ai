@@ -61,7 +61,8 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         rx = re.compile(regex)
 
         for _, tool in toolset_tools.items():
-            if rx.search(tool.tool_def.name) or rx.search(tool.tool_def.description):
+            desc = tool.tool_def.description
+            if rx.search(tool.tool_def.name) or desc is not None and rx.search(desc):
                 matching_tool_names.append(tool.tool_def.name)
 
         self._active_tool_names.update(matching_tool_names)

@@ -17,6 +17,7 @@ from pydantic_ai import (
     FunctionToolset,
     PrefixedToolset,
     PreparedToolset,
+    SearchableToolset,
     ToolCallPart,
     ToolsetTool,
     WrapperToolset,
@@ -27,6 +28,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.searchable import is_active, is_search_tool
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -879,3 +881,114 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+
+async def test_searchable_toolset_get_tools_avoids_deferred_tools_initially():
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool
+    def square(x: int) -> int:
+        return x * 2
+
+    @base_toolset.tool(defer_loading=True)
+    def upper(y: str) -> str:
+        return y.upper()
+
+    searchable = SearchableToolset[None](base_toolset)
+    ctx = build_run_context(None)
+    tools = await searchable.get_tools(ctx)
+
+    assert is_active(tools['square'].tool_def)
+    assert not is_active(tools['upper'].tool_def)
+
+
+async def test_searchable_toolset_searches_and_loads_deferred_after_search():
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool
+    def square(x: int) -> int:
+        return x * 2
+
+    @base_toolset.tool(defer_loading=True)
+    def upper(y: str) -> str:
+        return y.upper()
+
+    searchable = SearchableToolset[None](base_toolset)
+    ctx = build_run_context(None)
+
+    initial_tools = await searchable.get_tools(ctx)
+    assert not is_active(initial_tools['upper'].tool_def)
+
+    search_tool = [t for t in initial_tools.values() if is_search_tool(t.tool_def)][0]
+
+    result = await searchable.call_tool(search_tool.tool_def.name, {'regex': 'upp'}, ctx, search_tool)
+    assert result == ['upper']
+
+    final_tools = await searchable.get_tools(ctx)
+    assert is_active(final_tools['upper'].tool_def)
+
+
+async def test_searchable_toolset_search_by_description():
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool(defer_loading=True)
+    def query_users(name: str) -> str:
+        """Search for users in the system"""
+        return f'User: {name}'
+
+    @base_toolset.tool(defer_loading=True)
+    def create_account(email: str) -> str:
+        """Create a new user account"""
+        return f'Created: {email}'
+
+    searchable = SearchableToolset[None](base_toolset)
+    ctx = build_run_context(None)
+
+    search_result = await searchable.search_tools(ctx, 'user')
+
+    # Expect to find create_account based on 'user' being in the description.
+    assert set(search_result) == {'query_users', 'create_account'}
+
+    search_result2 = await searchable.search_tools(ctx, '^query')
+    assert search_result2 == ['query_users']
+
+
+async def test_searchable_toolset_call_tool():
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool
+    def regular_tool(x: int) -> int:
+        return x * 2
+
+    @base_toolset.tool(defer_loading=True)
+    def deferred_tool(y: int) -> int:
+        """A deferred tool"""
+        return y * 3
+
+    searchable = SearchableToolset[None](base_toolset)
+    ctx = build_run_context(None)
+    tools = await searchable.get_tools(ctx)
+
+    result = await searchable.call_tool('regular_tool', {'x': 5}, ctx, tools['regular_tool'])
+    assert result == 10
+
+    await searchable.search_tools(ctx, 'deferred')
+
+    result = await searchable.call_tool('deferred_tool', {'y': 5}, ctx, tools['deferred_tool'])
+    assert result == 15
+
+
+async def test_searchable_toolset_no_search_tool_without_deferred():
+    from pydantic_ai import SearchableToolset
+
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool
+    def tool1(x: int) -> int:
+        return x
+
+    searchable = SearchableToolset[None](base_toolset)
+    ctx = build_run_context(None)
+    tools = await searchable.get_tools(ctx)
+
+    assert len([t for t in tools.values() if is_search_tool(t.tool_def)]) == 0
