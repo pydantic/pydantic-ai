@@ -2733,6 +2733,124 @@ def test_agent_message_history_includes_run_id() -> None:
     assert len({*run_ids}) == snapshot(1)
 
 
+async def test_agent_run_result_metadata_available() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='metadata output'),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    result = await agent.run('metadata prompt')
+    assert result.output == 'metadata output'
+    assert result.metadata == {'prompt': 'metadata prompt'}
+
+
+async def test_agent_iter_metadata_surfaces_on_result() -> None:
+    agent = Agent(TestModel(custom_output_text='iter metadata output'), metadata={'env': 'tests'})
+
+    async with agent.iter('iter metadata prompt') as agent_run:
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.metadata == {'env': 'tests'}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'env': 'tests'}
+
+
+async def test_agent_metadata_persisted_when_run_fails() -> None:
+    agent = Agent(
+        TestModel(),
+        metadata=lambda ctx: {'prompt': ctx.prompt},
+    )
+
+    @agent.tool
+    def explode(_: RunContext) -> str:
+        raise RuntimeError('explode')
+
+    failing_prompt = 'metadata failure prompt'
+    captured_run = None
+
+    with pytest.raises(RuntimeError, match='explode'):
+        async with agent.iter(failing_prompt) as agent_run:
+            captured_run = agent_run
+            async for _ in agent_run:
+                pass
+
+    assert captured_run is not None
+    assert captured_run.metadata == {'prompt': failing_prompt}
+    assert captured_run.result is None
+
+
+async def test_agent_metadata_recomputed_on_successful_run() -> None:
+    agent = Agent(
+        TestModel(custom_output_text='recomputed metadata'),
+        metadata=lambda ctx: {'requests': ctx.usage.requests},
+    )
+
+    async with agent.iter('recompute metadata prompt') as agent_run:
+        initial_metadata = agent_run.metadata
+        async for _ in agent_run:
+            pass
+
+    assert initial_metadata == {'requests': 0}
+    assert agent_run.metadata == {'requests': 1}
+    assert agent_run.result is not None
+    assert agent_run.result.metadata == {'requests': 1}
+
+
+async def test_agent_metadata_override_with_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='override dict base'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override'}):
+        result = await agent.run('override dict prompt')
+
+    assert result.metadata == {'env': 'override'}
+
+
+async def test_agent_metadata_override_with_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='override callable base'), metadata={'env': 'base'})
+
+    with agent.override(metadata=lambda ctx: {'computed': ctx.prompt}):
+        result = await agent.run('callable override prompt')
+
+    assert result.metadata == {'computed': 'callable override prompt'}
+
+
+async def test_agent_run_metadata_kwarg_dict() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg dict output'))
+
+    result = await agent.run('kwarg dict prompt', metadata={'env': 'run'})
+
+    assert result.metadata == {'env': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_callable() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg callable output'))
+
+    def run_meta(ctx: RunContext[None]) -> dict[str, Any]:
+        return {'prompt': ctx.prompt}
+
+    result = await agent.run('kwarg callable prompt', metadata=run_meta)
+
+    assert result.metadata == {'prompt': 'kwarg callable prompt'}
+
+
+async def test_agent_run_metadata_kwarg_merges_agent_metadata() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg merge output'), metadata={'env': 'base', 'shared': 'agent'})
+
+    result = await agent.run('kwarg merge prompt', metadata={'run': 'value', 'shared': 'run'})
+
+    assert result.metadata == {'env': 'base', 'run': 'value', 'shared': 'run'}
+
+
+async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
+    agent = Agent(TestModel(custom_output_text='kwarg override output'), metadata={'env': 'base'})
+
+    with agent.override(metadata={'env': 'override', 'override_only': True}):
+        result = await agent.run('kwarg override prompt', metadata={'run_only': True})
+
+    assert result.metadata == {'env': 'override', 'override_only': True}
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
