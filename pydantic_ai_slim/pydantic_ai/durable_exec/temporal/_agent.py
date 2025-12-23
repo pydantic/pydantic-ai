@@ -196,7 +196,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         ]
         activity_config['retry_policy'] = retry_policy
         self.activity_config = activity_config
-        self._named_toolsets: Mapping[str, AbstractToolset[AgentDepsT]] | None = None
 
         model_activity_config = model_activity_config or {}
         toolset_activity_config = toolset_activity_config or {}
@@ -264,14 +263,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
 
         # Process additional toolsets (if provided)
-        if toolsets:
-            # Temporalize named toolsets and store the mapping
-            self._named_toolsets = {
-                name: toolset.visit_and_replace(temporalize_toolset) for name, toolset in toolsets.items()
-            }
-            # Named toolsets are not added to active toolsets by default
-        else:
-            self._named_toolsets = {}
+        # Temporalize named toolsets and store the mapping
+        self._named_toolsets: Mapping[str, AbstractToolset[AgentDepsT]] = {
+            name: toolset.visit_and_replace(temporalize_toolset) for name, toolset in (toolsets or {}).items()
+        }
 
         self._temporal_activities = activities
 
@@ -371,9 +366,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> Sequence[AbstractToolset[AgentDepsT]] | None:
         if toolsets is None:
             return None
-
-        # self._named_toolsets is always initialized in __init__, but type checkers might not know that
-        assert self._named_toolsets is not None
 
         resolved_toolsets: list[AbstractToolset[AgentDepsT]] = []
         for t in toolsets:
