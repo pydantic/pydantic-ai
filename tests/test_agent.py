@@ -6719,6 +6719,26 @@ def test_tool_requires_approval_error():
             pass
 
 
+async def test_tool_decorator_defer_loading():
+    agent = Agent('test')
+
+    @agent.tool(defer_loading=True)
+    def search_database(ctx: RunContext[None], query: str) -> str:
+        return 'OK'
+
+    assert agent._function_toolset.tools['search_database'].defer_loading is True
+
+
+async def test_tool_decorator_plain_defer_loading():
+    agent = Agent('test')
+
+    @agent.tool_plain(defer_loading=True)
+    def calculate_sum(x: int, y: int) -> int:
+        return x + y
+
+    assert agent._function_toolset.tools['calculate_sum'].defer_loading is True
+
+
 async def test_consecutive_model_responses_in_history():
     received_messages: list[ModelMessage] | None = None
 

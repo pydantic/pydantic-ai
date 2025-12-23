@@ -1148,6 +1148,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool = False,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
@@ -1167,6 +1168,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool = False,
         timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -1217,6 +1219,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            defer_loading: If True, hide the tool by default and only activate it when the model searches for tools. Defaults to False.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
@@ -1239,6 +1242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                defer_loading=defer_loading,
                 timeout=timeout,
             )
             return func_
@@ -1264,6 +1268,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool = False,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
@@ -1283,6 +1288,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool = False,
         timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
@@ -1333,6 +1339,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            defer_loading: If True, hide the tool by default and only activate it when the model searches for tools. Defaults to False.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
@@ -1353,6 +1360,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                defer_loading=defer_loading,
                 timeout=timeout,
             )
             return func_
