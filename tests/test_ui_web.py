@@ -12,7 +12,9 @@ from pydantic_ai import Agent
 
 from .conftest import try_import
 
-with try_import() as starlette_import_successful:
+with try_import() as imports_successful:
+    # Used on a test in this file.
+    import openai  # pyright: ignore[reportUnusedImport] # noqa: F401
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
 
@@ -20,9 +22,7 @@ with try_import() as starlette_import_successful:
     from pydantic_ai.ui._web import create_web_app
 
 
-pytestmark = [
-    pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
-]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='starlette not installed')]
 
 
 def test_agent_to_web():
