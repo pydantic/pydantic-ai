@@ -411,9 +411,9 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
 !!! note "Limiting tool executions"
-    You can cap the total number of successful tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). For finer control, you can limit how many times a *specific* tool can be successfully called by setting the `max_uses` parameter when registering the tool (e.g., `@agent.tool(max_uses=3)` or `Tool(func, max_uses=3)`). Once a tool reaches its `max_uses` limit, it is automatically removed from the available tools for subsequent steps in the run. Both the `tool_calls` counter and `max_uses` tracking increment only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+    You can cap the total number of successful tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). This is a "hard" limit that raises an error when exceeded. The `tool_calls` counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
-    For a "soft" limit that lets the model decide how to proceed instead of raising an error, use the [`max_tools_uses`](agents.md#soft-tool-use-limits-with-max_tools_uses) parameter on the agent or run method.
+    For finer control over individual tools, or for "soft" limits that let the model decide how to proceed instead of raising an error, see [Soft Tool Usage Limits](#soft-tool-usage-limits) below.
 
 #### Raising Hard Errors on Tool Usage Limits
 
@@ -447,36 +447,28 @@ In this example, when `limited_tool` is called more than twice, a `UsageLimitExc
 
 #### Soft Tool Usage Counter
 
-Instead of raising an error when a tool reaches its limit, you may want to inform the model how many more times it can call a tool. This provides a "soft" notification that helps the model plan its tool usage more effectively:
+Instead of raising an error when a tool reaches its limit, you can append a counter to the tool's result that tells the model how many more times it can call the tool. This helps the model plan its tool usage more effectively:
 
 ```python {title="tool_usage_counter.py"}
-from dataclasses import replace
-from typing import Any
-
-from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai import Agent, RunContext
 
 agent = Agent('test')
 
 
-async def add_usage_counter(
-    ctx: RunContext[Any], tool_def: ToolDefinition
-) -> ToolDefinition | None:
-    if ctx.max_uses:
-        remaining = ctx.max_uses - ctx.tool_use
-        if remaining > 0:
-            # Add a note to the tool description about remaining uses
-            counter_note = f'\n\nNote: This tool can only be called {remaining} more time{"s" if remaining != 1 else ""}.'
-            return replace(
-                tool_def,
-                description=(tool_def.description or '') + counter_note,
-            )
-    return tool_def
-
-
-@agent.tool(max_uses=3, prepare=add_usage_counter)
+@agent.tool(max_uses=3)
 def search_database(ctx: RunContext[None], query: str) -> str:
     """Search the database for information."""
-    return f'Results for: {query}'
+    result = f'Results for: {query}'
+
+    # Append usage counter to help model plan ahead
+    if ctx.max_uses:
+        remaining = ctx.max_uses - ctx.tool_use - 1  # -1 because this call counts
+        if remaining > 0:
+            result += f' (This tool can only be called {remaining} more time{"s" if remaining != 1 else ""}.)'
+        elif remaining == 0:
+            result += ' (This was the last allowed call to this tool.)'
+
+    return result
 
 
 result = agent.run_sync('Search for users named John, then Jane, then Bob')
@@ -486,7 +478,80 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-In this example, the model will see the tool description updated at each step to show how many more times it can call the tool. This approach works like a counter that increases during the run of the conversation, helping the model make informed decisions about tool usage without hitting hard limits unexpectedly.
+In this example, the model receives feedback after each tool call showing how many uses remain. This approach works like a counter that increases during the run of the conversation, helping the model make informed decisions about tool usage without hitting hard limits unexpectedly.
+
+### Soft Tool Usage Limits
+
+Pydantic AI provides two soft limit mechanisms that let the model decide how to proceed instead of raising an error.
+
+#### Per-Tool Limits with `max_uses`
+
+Limit how many times a *specific* tool can be called by setting `max_uses` when registering the tool. Once reached, the tool is automatically removed from available tools for subsequent steps:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('test')
+
+
+@agent.tool_plain(max_uses=3)
+def fetch_record(record_id: int) -> str:
+    """Fetch a record by ID. Limited to 3 calls per run."""
+    return f'Record {record_id}: data...'
+
+
+# The tool will be available for the first 3 calls, then removed
+result = agent.run_sync('Fetch records 1, 2, 3, and 4')
+print(result.output)
+#> {"fetch_record":"Record 0: data..."}
+```
+
+This is useful when you want to limit specific expensive or rate-limited tools while leaving others unrestricted.
+
+#### Limiting All Tools with `max_tools_uses`
+
+Limit the total number of tool calls across all tools within a run using the `max_tools_uses` parameter on the agent or run method. When exceeded, the agent returns a message to the model instead of executing the tool, allowing it to adapt gracefully:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-sonnet-4-5', max_tools_uses=5)
+
+
+@agent.tool_plain
+def search(query: str) -> str:
+    return f'Results for: {query}'
+
+
+@agent.tool_plain
+def fetch(url: str) -> str:
+    return f'Content from: {url}'
+
+
+# Combined tool calls across both tools are limited to 5
+result = agent.run_sync('Search for Python docs, then fetch the top 3 results')
+print(result.output)
+#> I found the Python documentation and fetched the top 3 results...
+```
+
+You can override the limit per-run:
+
+```python
+# Use a stricter limit for this specific run
+result = agent.run_sync('Quick search only', max_tools_uses=2)
+```
+
+For more details on `max_tools_uses`, see [Usage Limits](agents.md#soft-tool-use-limits-with-max_tools_uses).
+
+#### Choosing the Right Limit
+
+All three options count only **successful** tool invocations:
+
+| Parameter | Scope | Behavior | Use Case |
+| --------- | ----- | -------- | -------- |
+| `max_uses` | Per-tool | Tool removed from available tools | Limit specific expensive/rate-limited tools |
+| `max_tools_uses` | All tools | Returns message to model | Soft limit; model adapts gracefully |
+| `tool_calls_limit` | All tools | Raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | Hard stop to prevent runaway costs |
 
 #### Output Tool Calls
 
