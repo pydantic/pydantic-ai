@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import datetime
 import os
 from collections.abc import AsyncIterator
+from datetime import timezone
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
-from .conftest import TestEnv
+from .conftest import IsNow, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1442,7 +1442,7 @@ class TestFileStoreProcessorUserContentUrlHandling:
                                 _identifier='d68146.png',
                             )
                         ],
-                        timestamp=datetime.datetime(2025, 12, 23, 14, 12, 53, 842941, tzinfo=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 )
             )
@@ -1483,7 +1483,7 @@ class TestFileStoreProcessorUserContentUrlHandling:
                 parts=(
                     UserPromptPart(
                         content=[BinaryContent(data=b'retrieved image data', media_type='image/png')],
-                        timestamp=datetime.datetime(2025, 12, 23, 14, 12, 53, 971144, tzinfo=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 )
             )
@@ -1524,7 +1524,7 @@ class TestFileStoreProcessorUserContentUrlHandling:
                 parts=[
                     SystemPromptPart(
                         content='You are a helpful assistant',
-                        timestamp=datetime.datetime(2025, 12, 23, 14, 12, 54, 226306, tzinfo=datetime.timezone.utc),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             )
