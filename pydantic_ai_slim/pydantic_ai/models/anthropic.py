@@ -594,7 +594,6 @@ class AnthropicModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.message.model,
             _response=peekable_response,
-            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
         )
@@ -1179,9 +1178,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     _model_name: AnthropicModelName
     _response: AsyncIterable[BetaRawMessageStreamEvent]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
