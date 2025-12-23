@@ -25,6 +25,12 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
+if not imports_successful():
+    # Define placeholders so the module can be loaded for test collection
+    AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
+    GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    DeepSeekModelName = GrokModelName = MoonshotAIModelName = None
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
     pytest.mark.vcr,
@@ -95,7 +101,16 @@ def test_known_model_names():  # pragma: lax no cover
     generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
     known_model_names = sorted(get_args(KnownModelName.__value__))
-    assert generated_names == known_model_names
+
+    if generated_names != known_model_names:
+        errors: list[str] = []
+        missing_names = set(generated_names) - set(known_model_names)
+        if missing_names:
+            errors.append(f'Missing names: {missing_names}')
+        extra_names = set(known_model_names) - set(generated_names)
+        if extra_names:
+            errors.append(f'Extra names: {extra_names}')
+        raise AssertionError('\n'.join(errors))
 
 
 class HerokuModel(TypedDict):

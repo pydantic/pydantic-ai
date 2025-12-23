@@ -6,7 +6,7 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.exceptions import ModelAPIError
 
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
@@ -175,9 +175,6 @@ class CohereModel(Model):
     ) -> V2ChatResponse:
         tools = self._get_tools(model_request_parameters)
 
-        if model_request_parameters.builtin_tools:
-            raise UserError('Cohere does not support built-in tools')
-
         cohere_messages = self._map_messages(messages, model_request_parameters)
         try:
             return await self.client.chat(
@@ -225,6 +222,7 @@ class CohereModel(Model):
             usage=_map_usage(response),
             model_name=self._model_name,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -271,7 +269,8 @@ class CohereModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in cohere_messages if isinstance(m, SystemChatMessageV2))
+            cohere_messages.insert(system_prompt_count, SystemChatMessageV2(role='system', content=instructions))
         return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:

@@ -17,12 +17,7 @@ jobs:
 
       - run: uv sync --group docs
 
-      # always build docs to check it works without insiders packages
       - run: make docs
-
-      - run: make docs-insiders
-        env:
-          PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
       - run: tree -sh site
       - uses: actions/setup-node@v4

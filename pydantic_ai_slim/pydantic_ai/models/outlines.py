@@ -8,8 +8,8 @@ from __future__ import annotations
 import io
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from typing_extensions import assert_never
@@ -298,12 +298,9 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[Chat, JsonSchema | None, dict[str, Any]]:
         """Build the generation arguments for the model."""
-        if (
-            model_request_parameters.function_tools
-            or model_request_parameters.builtin_tools
-            or model_request_parameters.output_tools
-        ):
-            raise UserError('Outlines does not support function tools and builtin tools yet.')
+        # the builtin_tool check now happens in `Model.prepare_request()`
+        if model_request_parameters.function_tools or model_request_parameters.output_tools:
+            raise UserError('Outlines does not support function tools yet.')
 
         if model_request_parameters.output_object:
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)
@@ -518,23 +515,13 @@ class OutlinesModel(Model):
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        timestamp = datetime.now(tz=timezone.utc)
         return OutlinesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=timestamp,
             _provider_name='outlines',
         )
-
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        """Customize the model request parameters for the model."""
-        if model_request_parameters.output_mode in ('auto', 'native'):
-            # This way the JSON schema will be included in the instructions.
-            return replace(model_request_parameters, output_mode='prompted')
-        else:
-            return model_request_parameters
 
 
 @dataclass
@@ -544,8 +531,9 @@ class OutlinesStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[str]
-    _timestamp: datetime
     _provider_name: str
+    _provider_url: str | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for content in self._response:
@@ -566,6 +554,11 @@ class OutlinesStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

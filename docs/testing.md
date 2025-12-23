@@ -124,6 +124,7 @@ async def test_forecast():
                 ),
             ],
             instructions='Providing a weather forecast at the locations the user provides.',
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         ),
         ModelResponse(
@@ -155,6 +156,7 @@ async def test_forecast():
                 ),
             ],
             instructions='Providing a weather forecast at the locations the user provides.',
+            timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
         ),
         ModelResponse(

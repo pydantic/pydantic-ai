@@ -15,7 +15,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..builtin_tools import WebSearchTool
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
@@ -63,33 +63,26 @@ except ImportError as _import_error:
     ) from _import_error
 
 ProductionGroqModelNames = Literal[
-    'distil-whisper-large-v3-en',
-    'gemma2-9b-it',
-    'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
-    'llama-guard-3-8b',
-    'llama3-70b-8192',
-    'llama3-8b-8192',
+    'llama-3.3-70b-versatile',
+    'meta-llama/llama-guard-4-12b',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'whisper-large-v3',
     'whisper-large-v3-turbo',
 ]
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
 PreviewGroqModelNames = Literal[
+    'meta-llama/llama-4-maverick-17b-128e-instruct',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'meta-llama/llama-prompt-guard-2-22m',
+    'meta-llama/llama-prompt-guard-2-86m',
+    'moonshotai/kimi-k2-instruct-0905',
+    'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
-    'qwen-qwq-32b',
-    'mistral-saba-24b',
-    'qwen-2.5-coder-32b',
-    'qwen-2.5-32b',
-    'deepseek-r1-distill-qwen-32b',
-    'deepseek-r1-distill-llama-70b',
-    'llama-3.3-70b-specdec',
-    'llama-3.2-1b-preview',
-    'llama-3.2-3b-preview',
-    'llama-3.2-11b-vision-preview',
-    'llama-3.2-90b-vision-preview',
-    'moonshotai/kimi-k2-instruct',
+    'qwen/qwen-3-32b',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -179,6 +172,11 @@ class GroqModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool})
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -207,8 +205,8 @@ class GroqModel(Model):
                     return ModelResponse(
                         parts=[tool_call_part],
                         model_name=e.model_name,
-                        timestamp=_utils.now_utc(),
                         provider_name=self._provider.name,
+                        provider_url=self.base_url,
                         finish_reason='error',
                     )
                 except ValidationError:
@@ -320,7 +318,6 @@ class GroqModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.reasoning is not None:
@@ -340,15 +337,17 @@ class GroqModel(Model):
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
 
         raw_finish_reason = choice.finish_reason
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if response.created:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(response.created)
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -369,8 +368,9 @@ class GroqModel(Model):
             _response=peekable_response,
             _model_name=first_chunk.model,
             _model_profile=self.profile,
-            _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
+            _provider_timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -384,7 +384,7 @@ class GroqModel(Model):
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
-            else:
+            else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
                 )
@@ -428,7 +428,10 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            groq_messages.insert(
+                system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
+            )
         return groq_messages
 
     @staticmethod
@@ -522,14 +525,18 @@ class GroqStreamedResponse(StreamedResponse):
     _model_name: GroqModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
-    _timestamp: datetime
     _provider_name: str
+    _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
             executed_tool_call_id: str | None = None
             reasoning_index = 0
             reasoning = False
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -542,7 +549,7 @@ class GroqStreamedResponse(StreamedResponse):
                     continue
 
                 if raw_finish_reason := choice.finish_reason:
-                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
                 if choice.delta.reasoning is not None:
@@ -620,6 +627,11 @@ class GroqStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

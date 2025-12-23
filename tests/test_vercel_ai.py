@@ -385,13 +385,13 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":null,"type":"search"}',
+                'inputTextDelta': '{"type":"search"}',
             },
             {
                 'type': 'tool-input-available',
-                'toolCallId': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
+                'toolCallId': IsStr(),
                 'toolName': 'web_search',
-                'input': {'query': None, 'type': 'search'},
+                'input': {'type': 'search'},
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
@@ -407,13 +407,13 @@ I'd be happy to help you use a tool! However, I need more information about what
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
-                'inputTextDelta': '{"query":null,"type":"search"}',
+                'inputTextDelta': '{"type":"search"}',
             },
             {
                 'type': 'tool-input-available',
                 'toolCallId': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
                 'toolName': 'web_search',
-                'input': {'query': None, 'type': 'search'},
+                'input': {'type': 'search'},
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
             },
@@ -1039,7 +1039,7 @@ Want me to tailor\
             {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'stop'},
             '[DONE]',
         ]
     )
@@ -1488,7 +1488,7 @@ Fix the errors and try again.\
             {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
             {'type': 'error', 'errorText': 'Exceeded maximum retries (1) for output validation'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1531,7 +1531,7 @@ async def test_run_stream_request_error():
             },
             {'type': 'error', 'errorText': 'Unknown tool'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1572,7 +1572,7 @@ async def test_run_stream_on_complete_error():
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'error', 'errorText': 'Faulty on_complete'},
             {'type': 'finish-step'},
-            {'type': 'finish'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
         ]
     )
@@ -1617,6 +1617,38 @@ async def test_run_stream_on_complete():
             '[DONE]',
         ]
     )
+
+
+async def test_data_chunk_with_id_and_transient():
+    """Test DataChunk supports optional id and transient fields for AI SDK compatibility."""
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    async def on_complete(run_result: AgentRunResult[Any]) -> AsyncIterator[BaseChunk]:
+        # Yield a data chunk with id for reconciliation
+        yield DataChunk(type='data-task', id='task-123', data={'status': 'complete'})
+        # Yield a transient data chunk (not persisted to history)
+        yield DataChunk(type='data-progress', data={'percent': 100}, transient=True)
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(on_complete=on_complete))
+    ]
+
+    # Verify the data chunks are present in the events with correct fields
+    assert {'type': 'data-task', 'id': 'task-123', 'data': {'status': 'complete'}} in events
+    assert {'type': 'data-progress', 'data': {'percent': 100}, 'transient': True} in events
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
@@ -2505,14 +2537,52 @@ async def test_adapter_dump_load_roundtrip():
             for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
                 if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                     new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):  # pragma: no branch
+                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
     # Load back to Pydantic AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
     sync_timestamps(original_messages, reloaded_messages)
 
     assert reloaded_messages == original_messages
+
+
+async def test_adapter_dump_load_roundtrip_without_timestamps():
+    """Test that dump_messages and load_messages work when messages don't have timestamps."""
+    original_messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='User message'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Response text'),
+            ]
+        ),
+    ]
+
+    for msg in original_messages:
+        delattr(msg, 'timestamp')
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+
+    def sync_timestamps(original: list[ModelRequest | ModelResponse], new: list[ModelRequest | ModelResponse]) -> None:
+        for orig_msg, new_msg in zip(original, new):
+            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
+                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
+                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
+                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+
+    sync_timestamps(original_messages, reloaded_messages)
+
+    for msg in reloaded_messages:
+        if hasattr(msg, 'timestamp'):  # pragma: no branch
+            delattr(msg, 'timestamp')
+
+    assert len(reloaded_messages) == len(original_messages)
 
 
 async def test_adapter_dump_messages_text_before_thinking():
@@ -2744,7 +2814,7 @@ async def test_adapter_dump_messages_thinking_with_metadata():
 
     # Sync timestamps for comparison (ModelResponse always has timestamp)
     for orig_msg, new_msg in zip(original_messages, reloaded_messages):
-        new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+        new_msg.timestamp = orig_msg.timestamp
 
     assert reloaded_messages == original_messages
 

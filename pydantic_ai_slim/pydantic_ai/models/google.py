@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -13,7 +14,14 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
+from ..builtin_tools import (
+    AbstractBuiltinTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -63,6 +71,7 @@ try:
         ExecutableCode,
         ExecutableCodeDict,
         FileDataDict,
+        FileSearchDict,
         FinishReason as GoogleFinishReason,
         FunctionCallDict,
         FunctionCallingConfigDict,
@@ -95,6 +104,10 @@ except ImportError as _import_error:
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+
+_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+
+
 LatestGoogleModelNames = Literal[
     'gemini-flash-latest',
     'gemini-flash-lite-latest',
@@ -106,6 +119,7 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite',
     'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
+    'gemini-3-flash-preview',
     'gemini-3-pro-preview',
     'gemini-3-pro-image-preview',
 ]
@@ -136,6 +150,12 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
     GoogleFinishReason.NO_IMAGE: 'error',
 }
+
+_GOOGLE_IMAGE_SIZE = Literal['1K', '2K', '4K']
+_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
+
+_GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
+_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
 class GoogleModelSettings(ModelSettings, total=False):
@@ -229,6 +249,11 @@ class GoogleModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -336,6 +361,48 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
+    def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
+        """Build ImageConfigDict from ImageGenerationTool with validation."""
+        image_config = ImageConfigDict()
+
+        if tool.aspect_ratio is not None:
+            image_config['aspect_ratio'] = tool.aspect_ratio
+
+        if tool.size is not None:
+            if tool.size not in _GOOGLE_IMAGE_SIZES:
+                raise UserError(
+                    f'Google image generation only supports `size` values: {_GOOGLE_IMAGE_SIZES}. '
+                    f'Got: {tool.size!r}. Omit `size` to use the default (1K).'
+                )
+            image_config['image_size'] = tool.size
+
+        if self.system == 'google-vertex':
+            if tool.output_format is not None:
+                if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
+                    raise UserError(
+                        f'Google image generation only supports `output_format` values: {_GOOGLE_IMAGE_OUTPUT_FORMATS}. '
+                        f'Got: {tool.output_format!r}.'
+                    )
+                image_config['output_mime_type'] = f'image/{tool.output_format}'
+
+            output_compression = tool.output_compression
+            if output_compression is not None:
+                if not (0 <= output_compression <= 100):
+                    raise UserError(
+                        f'Google image generation `output_compression` must be between 0 and 100. '
+                        f'Got: {output_compression}.'
+                    )
+                if tool.output_format not in (None, 'jpeg'):
+                    raise UserError(
+                        f'Google image generation `output_compression` is only supported for JPEG format. '
+                        f'Got format: {tool.output_format!r}. Either set `output_format="jpeg"` or remove `output_compression`.'
+                    )
+                image_config['output_compression_quality'] = output_compression
+                if tool.output_format is None:
+                    image_config['output_mime_type'] = 'image/jpeg'
+
+        return image_config
+
     def _get_tools(
         self, model_request_parameters: ModelRequestParameters
     ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
@@ -357,13 +424,15 @@ class GoogleModel(Model):
                     tools.append(ToolDict(url_context=UrlContextDict()))
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+                elif isinstance(tool, FileSearchTool):
+                    file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
+                    tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
-                    if tool.aspect_ratio:
-                        image_config = ImageConfigDict(aspect_ratio=tool.aspect_ratio)
+                    image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
@@ -495,12 +564,16 @@ class GoogleModel(Model):
         candidate = response.candidates[0]
 
         vendor_id = response.response_id
-        vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
+        vendor_details: dict[str, Any] = {}
+
         raw_finish_reason = candidate.finish_reason
         if raw_finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': raw_finish_reason.value}
+            vendor_details['finish_reason'] = raw_finish_reason.value
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        if response.create_time is not None:  # pragma: no branch
+            vendor_details['timestamp'] = response.create_time
 
         if candidate.content is None or candidate.content.parts is None:
             if finish_reason == 'content_filter' and raw_finish_reason:
@@ -517,9 +590,10 @@ class GoogleModel(Model):
             candidate.grounding_metadata,
             response.model_version or self._model_name,
             self._provider.name,
+            self._provider.base_url,
             usage,
             vendor_id=vendor_id,
-            vendor_details=vendor_details,
+            vendor_details=vendor_details or None,
             finish_reason=finish_reason,
             url_context_metadata=candidate.url_context_metadata,
         )
@@ -537,9 +611,9 @@ class GoogleModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
-            _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_timestamp=first_chunk.create_time,
         )
 
     async def _map_messages(
@@ -597,7 +671,7 @@ class GoogleModel(Model):
             contents = [{'role': 'user', 'parts': [{'text': ''}]}]
 
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.insert(0, {'text': instructions})
+            system_parts.append({'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents
@@ -616,10 +690,18 @@ class GoogleModel(Model):
                     if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
-                elif isinstance(item, VideoUrl) and item.is_youtube:
+                elif isinstance(item, VideoUrl) and (
+                    item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
+                ):
+                    # YouTube URLs work on both google-gla and google-vertex
+                    # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
+                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
+                    # Other URLs fall through to FileUrl handling (download for google-gla)
+                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
+                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:  # pragma: no branch
+                    if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
                 elif isinstance(item, FileUrl):
@@ -634,10 +716,18 @@ class GoogleModel(Model):
                             'data': downloaded_item['data'],
                             'mime_type': downloaded_item['data_type'],
                         }
-                        content.append({'inline_data': inline_data})
+                        part_dict: PartDict = {'inline_data': inline_data}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                        part_dict: PartDict = {'file_data': file_data_dict}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass
@@ -661,12 +751,16 @@ class GeminiStreamedResponse(StreamedResponse):
 
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
-    _timestamp: datetime
     _provider_name: str
     _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _file_search_tool_call_id: str | None = field(default=None, init=False)
+    _code_execution_tool_call_id: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        code_execution_tool_call_id: str | None = None
+        if self._provider_timestamp is not None:
+            self.provider_details = {'timestamp': self._provider_timestamp}  # pragma: no cover
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
@@ -678,9 +772,8 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
-            raw_finish_reason = candidate.finish_reason
-            if raw_finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+            if raw_finish_reason := candidate.finish_reason:
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Google streams the grounding metadata (including the web search queries and results)
@@ -765,19 +858,88 @@ class GeminiStreamedResponse(StreamedResponse):
                         part=FilePart(content=BinaryContent.narrow_type(content), provider_details=provider_details),
                     )
                 elif part.executable_code is not None:
-                    code_execution_tool_call_id = _utils.generate_tool_call_id()
-                    part = _map_executable_code(part.executable_code, self.provider_name, code_execution_tool_call_id)
-                    part.provider_details = provider_details
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+                    part_obj = self._handle_executable_code_streaming(part.executable_code)
+                    part_obj.provider_details = provider_details
+                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
                 elif part.code_execution_result is not None:
-                    assert code_execution_tool_call_id is not None
-                    part = _map_code_execution_result(
-                        part.code_execution_result, self.provider_name, code_execution_tool_call_id
-                    )
+                    part = self._map_code_execution_result(part.code_execution_result)
                     part.provider_details = provider_details
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+
+            # Grounding metadata is attached to the final text chunk, so
+            # we emit the `BuiltinToolReturnPart` after the text delta so
+            # that the delta is properly added to the same `TextPart` as earlier chunks
+            file_search_part = self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata)
+            if file_search_part is not None:
+                yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+
+    def _handle_file_search_grounding_metadata_streaming(
+        self, grounding_metadata: GroundingMetadata | None
+    ) -> BuiltinToolReturnPart | None:
+        """Handle file search grounding metadata for streaming responses.
+
+        Returns a BuiltinToolReturnPart if file search results are available in the grounding metadata.
+        """
+        if not self._file_search_tool_call_id or not grounding_metadata:
+            return None
+
+        grounding_chunks = grounding_metadata.grounding_chunks
+        retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
+        if retrieved_contexts:  # pragma: no branch
+            part = BuiltinToolReturnPart(
+                provider_name=self.provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=self._file_search_tool_call_id,
+                content=retrieved_contexts,
+            )
+            self._file_search_tool_call_id = None
+            return part
+        return None  # pragma: no cover
+
+    def _map_code_execution_result(self, code_execution_result: CodeExecutionResult) -> BuiltinToolReturnPart:
+        """Map code execution result to a BuiltinToolReturnPart using instance state."""
+        assert self._code_execution_tool_call_id is not None
+        return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
+
+    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart:
+        """Handle executable code for streaming responses.
+
+        Returns a BuiltinToolCallPart for file search or code execution.
+        Sets self._code_execution_tool_call_id or self._file_search_tool_call_id as appropriate.
+        """
+        code = executable_code.code
+        has_file_search_tool = any(
+            isinstance(tool, FileSearchTool) for tool in self.model_request_parameters.builtin_tools
+        )
+
+        if code and has_file_search_tool and (file_search_query := self._extract_file_search_query(code)):
+            self._file_search_tool_call_id = _utils.generate_tool_call_id()
+            return BuiltinToolCallPart(
+                provider_name=self.provider_name,
+                tool_name=FileSearchTool.kind,
+                tool_call_id=self._file_search_tool_call_id,
+                args={'query': file_search_query},
+            )
+
+        self._code_execution_tool_call_id = _utils.generate_tool_call_id()
+        return _map_executable_code(executable_code, self.provider_name, self._code_execution_tool_call_id)
+
+    def _extract_file_search_query(self, code: str) -> str | None:
+        """Extract the query from file_search.query() executable code.
+
+        Handles escaped quotes in the query string.
+
+        Example: 'print(file_search.query(query="what is the capital of France?"))'
+        Returns: 'what is the capital of France?'
+        """
+        match = _FILE_SEARCH_QUERY_PATTERN.search(code)
+        if match:
+            query = match.group(2)
+            query = query.replace('\\\\', '\\').replace('\\"', '"').replace("\\'", "'")
+            return query
+        return None  # pragma: no cover
 
     @property
     def model_name(self) -> GoogleModelName:
@@ -788,6 +950,11 @@ class GeminiStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
@@ -867,6 +1034,7 @@ def _process_response_from_parts(
     grounding_metadata: GroundingMetadata | None,
     model_name: GoogleModelName,
     provider_name: str,
+    provider_url: str,
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
@@ -880,6 +1048,10 @@ def _process_response_from_parts(
         items.append(web_search_call)
         items.append(web_search_return)
 
+    file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
+    if file_search_call and file_search_return:
+        items.append(file_search_call)
+        items.append(file_search_return)
     web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
     if web_fetch_call and web_fetch_return:
         items.append(web_fetch_call)
@@ -936,6 +1108,7 @@ def _process_response_from_parts(
         provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
+        provider_url=provider_url,
         finish_reason=finish_reason,
     )
 
@@ -1036,6 +1209,64 @@ def _map_grounding_metadata(
         )
     else:
         return None, None
+
+
+def _extract_file_search_retrieved_contexts(
+    grounding_chunks: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Extract retrieved contexts from grounding chunks for file search.
+
+    Returns an empty list if no retrieved contexts are found.
+    """
+    if not grounding_chunks:  # pragma: no cover
+        return []
+    retrieved_contexts: list[dict[str, Any]] = []
+    for chunk in grounding_chunks:
+        if not chunk.retrieved_context:
+            continue
+        context_dict: dict[str, Any] = chunk.retrieved_context.model_dump(
+            mode='json', exclude_none=True, by_alias=False
+        )
+        # The SDK type may not define file_search_store yet, but model_dump includes it.
+        # Check both snake_case and camelCase since the field name varies.
+        file_search_store = context_dict.get('file_search_store')
+        if file_search_store is None:  # pragma: lax no cover
+            context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
+                mode='json', exclude_none=True, by_alias=True
+            )
+            file_search_store = context_dict_with_aliases.get('fileSearchStore')
+        if file_search_store is not None:  # pragma: lax no cover
+            context_dict['file_search_store'] = file_search_store
+        retrieved_contexts.append(context_dict)
+    return retrieved_contexts
+
+
+def _map_file_search_grounding_metadata(
+    grounding_metadata: GroundingMetadata | None, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    if not grounding_metadata or not (grounding_chunks := grounding_metadata.grounding_chunks):
+        return None, None
+
+    retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
+
+    if not retrieved_contexts:
+        return None, None
+
+    tool_call_id = _utils.generate_tool_call_id()
+    return (
+        BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            args={},
+        ),
+        BuiltinToolReturnPart(
+            provider_name=provider_name,
+            tool_name=FileSearchTool.kind,
+            tool_call_id=tool_call_id,
+            content=retrieved_contexts,
+        ),
+    )
 
 
 def _map_url_context_metadata(

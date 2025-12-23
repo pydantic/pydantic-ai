@@ -237,7 +237,11 @@ RouterFailure(explanation='I am not equipped to provide travel information, such
 
 #### Text output
 
-If you provide an output function that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.output.TextOutput] marker class. If desired, this marker class can be used alongside one or more [`ToolOutput`](#tool-output) marker classes (or unmarked types or functions) in a list provided to `output_type`.
+If you provide an output function that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.output.TextOutput] marker class.
+
+If desired, this marker class can be used alongside one or more [`ToolOutput`](#tool-output) marker classes (or unmarked types or functions) in a list provided to `output_type`.
+
+Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
 ```python {title="text_output_function.py"}
 from pydantic_ai import Agent, TextOutput
@@ -257,6 +261,51 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+#### Handling partial output in output functions
+
+When streaming with `run_stream()` or `run_stream_sync()`, output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when your output function has **side effects** (e.g., sending notifications, logging, database updates) that should only execute on the final output.
+
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agents.md#running-agents), `partial_output` is always `False` as the function is only called once with the complete output.
+
+```python {title="output_function_with_side_effects.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class DatabaseRecord(BaseModel):
+    name: str
+    value: int | None = None  # Make optional to allow partial output
+
+
+def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
+    """Output function with side effect - only save final output to database."""
+    if ctx.partial_output:
+        # Skip side effects for partial outputs
+        return record
+
+    # Only execute side effect for the final output
+    print(f'Saving to database: {record.name} = {record.value}')
+    #> Saving to database: test = 42
+    return record
+
+
+agent = Agent('openai:gpt-5', output_type=save_to_database)
+
+
+async def main():
+    async with agent.run_stream('Create a record with name "test" and value 42') as result:
+        async for output in result.stream_output(debounce_by=None):
+            print(output)
+            #> name='test' value=None
+            #> name='test' value=42
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### Output modes
 
@@ -305,6 +354,21 @@ print(repr(result.output))
 1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle`. However, as `ToolOutput` is an object rather than a type, we have to use a list.
 
 _(This example is complete, it can be run "as is")_
+
+##### Parallel Output Tool Calls
+
+When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
+
+- `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+- `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+
+The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
+
+!!! warning "Priority of output and deferred tools in streaming methods"
+    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
+
+    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agents.md#running-agents) would have prioritized the tool output.
+
 
 #### Native Output
 
@@ -418,7 +482,7 @@ result = agent.run_sync('Create a person')
 
 ### Validation context {#validation-context}
 
-Some validation relies on an extra Pydantic [context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) object. You can pass such an object to an `Agent` at definition-time via its [`validation_context`][pydantic_ai.Agent.__init__] parameter. It will be used in the validation of both structured outputs and [tool arguments](tools-advanced.md#tool-retries).
+Some validation relies on an extra Pydantic [context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) object. You can pass such an object to an `Agent` at definition-time via its [`validation_context`][pydantic_ai.agent.Agent.__init__] parameter. It will be used in the validation of both structured outputs and [tool arguments](tools-advanced.md#tool-retries).
 
 This validation context can be either:
 
@@ -474,7 +538,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Output validators {#output-validator-functions}
 
-Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. Pydantic AI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.
+Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. Pydantic AI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.agent.Agent.output_validator] decorator.
 
 If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
 If you want the model to output plain text, do your own processing or validation, and then have the agent's final output be the result of your function, it's recommended to use an [output function](#output-functions) with the [`TextOutput` marker class](#text-output).
@@ -526,23 +590,29 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling partial output in output validators {#partial-output}
+#### Handling partial output in output validators
 
-You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
+When streaming with `run_stream()` or `run_stream_sync()`, output validators are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when you want to **validate only the complete result**, not intermediate partial values.
+
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agents.md#running-agents), `partial_output` is always `False` as the validator is only called once with the complete output.
 
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 agent = Agent('openai:gpt-5')
 
+
 @agent.output_validator
 def validate_output(ctx: RunContext, output: str) -> str:
     if ctx.partial_output:
         return output
-    else:
-        if len(output) < 50:
-            raise ModelRetry('Output is too short.')
-        return output
+
+    if len(output) < 50:
+        raise ModelRetry('Output is too short.')
+    return output
 
 
 async def main():

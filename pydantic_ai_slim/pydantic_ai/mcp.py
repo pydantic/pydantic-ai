@@ -387,6 +387,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         cache_resources: bool = True,
         *,
         id: str | None = None,
+        client_info: mcp_types.Implementation | None = None,
     ):
         self.tool_prefix = tool_prefix
         self.log_level = log_level
@@ -400,6 +401,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.elicitation_callback = elicitation_callback
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
+        self.client_info = client_info
 
         self._id = id or tool_prefix
 
@@ -685,6 +687,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if self._running_count == 0:
                 async with AsyncExitStack() as exit_stack:
                     self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
+
                     client = ClientSession(
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
@@ -693,6 +696,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                         message_handler=self._handle_notification,
+                        client_info=self.client_info,
                     )
                     self._client = await exit_stack.enter_async_context(client)
 
@@ -774,7 +778,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     pass
             return text
         elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
         elif isinstance(part, mcp_types.AudioContent):
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
@@ -795,8 +799,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         if isinstance(resource, mcp_types.TextResourceContents):
             return resource.text
         elif isinstance(resource, mcp_types.BlobResourceContents):
-            return messages.BinaryContent(
-                data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+            return messages.BinaryContent.narrow_type(
+                messages.BinaryContent(
+                    data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+                )
             )
         else:
             assert_never(resource)
@@ -879,6 +885,7 @@ class MCPServerStdio(MCPServer):
         cache_tools: bool = True,
         cache_resources: bool = True,
         id: str | None = None,
+        client_info: mcp_types.Implementation | None = None,
     ):
         """Build a new MCP server.
 
@@ -902,6 +909,7 @@ class MCPServerStdio(MCPServer):
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
+            client_info: Information describing the MCP client implementation.
         """
         self.command = command
         self.args = args
@@ -922,6 +930,7 @@ class MCPServerStdio(MCPServer):
             cache_tools,
             cache_resources,
             id=id,
+            client_info=client_info,
         )
 
     @classmethod
@@ -1042,6 +1051,7 @@ class _MCPServerHTTP(MCPServer):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        client_info: mcp_types.Implementation | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Build a new MCP server.
@@ -1065,6 +1075,7 @@ class _MCPServerHTTP(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
+            client_info: Information describing the MCP client implementation.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
             if read_timeout is not None:
@@ -1098,6 +1109,7 @@ class _MCPServerHTTP(MCPServer):
             cache_tools,
             cache_resources,
             id=id,
+            client_info=client_info,
         )
 
     @property

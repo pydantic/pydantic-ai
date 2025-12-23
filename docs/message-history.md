@@ -48,6 +48,7 @@ print(result.all_messages())
             )
         ],
         instructions='Be a helpful assistant.',
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -89,6 +90,7 @@ async def main():
                     )
                 ],
                 instructions='Be a helpful assistant.',
+                timestamp=datetime.datetime(...),
                 run_id='...',
             )
         ]
@@ -113,6 +115,7 @@ async def main():
                     )
                 ],
                 instructions='Be a helpful assistant.',
+                timestamp=datetime.datetime(...),
                 run_id='...',
             ),
             ModelResponse(
@@ -166,6 +169,7 @@ print(result2.all_messages())
             )
         ],
         instructions='Be a helpful assistant.',
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -187,6 +191,7 @@ print(result2.all_messages())
             )
         ],
         instructions='Be a helpful assistant.',
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -289,6 +294,7 @@ print(result2.all_messages())
             )
         ],
         instructions='Be a helpful assistant.',
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(
@@ -310,6 +316,7 @@ print(result2.all_messages())
             )
         ],
         instructions='Be a helpful assistant.',
+        timestamp=datetime.datetime(...),
         run_id='...',
     ),
     ModelResponse(

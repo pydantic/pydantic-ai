@@ -278,17 +278,17 @@ Note that the OpenTelemetry Semantic Conventions are still experimental and are 
 
 ### Setting OpenTelemetry SDK providers
 
-By default, the global `TracerProvider` and `EventLoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
+By default, the global `TracerProvider` and `LoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
 ```python {title="instrumentation_settings_providers.py"}
-from opentelemetry.sdk._events import EventLoggerProvider
+from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
 from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
-    event_logger_provider=EventLoggerProvider(),
+    logger_provider=LoggerProvider(),
 )
 
 agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
@@ -321,9 +321,9 @@ Agent.instrument_all(instrumentation_settings)
 
 ### Excluding prompts and completions
 
-For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
+For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content.
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
@@ -337,3 +337,9 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Adding Custom Metadata
+
+Use the agent's `metadata` parameter to attach additional data to the agent's span.
+When instrumentation is enabled, the computed metadata is recorded on the agent span under the `metadata` attribute.
+See the [usage and metadata example in the agents guide](agents.md#run-metadata) for details and usage.

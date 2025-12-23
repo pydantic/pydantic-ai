@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, TypeAlias
 
+from starlette.requests import Request
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
 MYPY = False
@@ -157,7 +159,7 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[call-overload]
+union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
 assert_type(union_agent, Agent[None, Foo | Bar])
 
 
@@ -191,6 +193,10 @@ async def foobar_plain(x: int, y: int) -> int:
 
 
 def str_to_regex(text: str) -> re.Pattern[str]:
+    return re.compile(text)
+
+
+def str_to_regex_with_ctx(ctx: RunContext[int], text: str) -> re.Pattern[str]:
     return re.compile(text)
 
 
@@ -281,6 +287,16 @@ Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,re
 # since deps are not set, they default to `None`, so can't be `int`
 Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
 
+# TextOutput with RunContext uses RunContext[Any], so deps_type is not checked.
+# This is intentional: type checking deps in output functions isn't feasible because
+# ToolOutput and plain output functions take arbitrary args, so the type checker
+# treats RunContext as just another arg rather than enforcing deps_type compatibility.
+text_output_with_ctx = TextOutput(str_to_regex_with_ctx)
+assert_type(text_output_with_ctx, TextOutput[re.Pattern[str]])
+Agent('test', output_type=text_output_with_ctx, deps_type=int)
+Agent('test', output_type=text_output_with_ctx, deps_type=str)
+Agent('test', output_type=text_output_with_ctx)
+
 # prepare example from docs:
 
 
@@ -310,3 +326,12 @@ if not MYPY:
 partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
 assert_type(partial_agent, Agent[MyDeps, str])
 assert_type(partial_agent, Agent[MyDeps])
+
+req = Request({})
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test'))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test', deps_type=MyDeps), deps=MyDeps(foo=1, bar=2))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test', output_type=Foo))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test'), output_type=Foo)
+coro = VercelAIAdapter.dispatch_request(
+    req, agent=Agent('test', deps_type=MyDeps, output_type=Foo), deps=MyDeps(foo=1, bar=2)
+)
