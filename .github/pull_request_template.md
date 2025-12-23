@@ -2,7 +2,7 @@
 
 <!-- Please add the issue number that should be closed when this PR is merged. -->
 <!-- If there is no issue, please create one first, even for simple bug fixes. -->
-Closes #<issue>
+- Closes #<issue>
 
 ### Pre-Review Checklist
 
