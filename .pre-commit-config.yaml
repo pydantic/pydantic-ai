@@ -8,6 +8,16 @@ repos:
       - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
+      - id: check-added-large-files
+        args:
+          - --maxkb=1024 # 1MB
+          - --enforce-all # Allow to run in the whole source code, instead of only the changed files.
+        exclude: |
+          (?x)^(
+              tests/models/cassettes/.*|
+              tests/cassettes/.*|
+              uv.lock
+          )$
 
   - repo: https://github.com/sirosen/texthooks
     rev: 0.6.8
@@ -27,9 +37,15 @@ repos:
         args: ["--skip", "tests/models/cassettes/*"]
         additional_dependencies:
           - tomli
-
   - repo: local
     hooks:
+      - id: clai-help
+        name: clai help output
+        entry: uv
+        args: [run, pytest, "clai/update_readme.py"]
+        language: system
+        types_or: [python, markdown]
+        pass_filenames: false
       - id: format
         name: Format
         entry: make

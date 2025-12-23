@@ -19,13 +19,14 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
+from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -90,6 +91,7 @@ class GraphAgentState:
     retries: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
+    metadata: dict[str, Any] | None = None
 
     def increment_retries(
         self,
@@ -380,7 +382,7 @@ async def _prepare_request_parameters(
     output_schema = ctx.deps.output_schema
 
     prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
+        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
     function_tools: list[ToolDefinition] = []
@@ -447,25 +449,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        async with ctx.deps.model.request_stream(
-            message_history, model_settings, model_request_parameters, run_context
-        ) as streamed_response:
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            agent_stream = result.AgentStream[DepsT, T](
-                _raw_stream_response=streamed_response,
-                _output_schema=ctx.deps.output_schema,
-                _model_request_parameters=model_request_parameters,
-                _output_validators=ctx.deps.output_validators,
-                _run_ctx=build_run_context(ctx),
-                _usage_limits=ctx.deps.usage_limits,
-                _tool_manager=ctx.deps.tool_manager,
-            )
-            yield agent_stream
-            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-            # otherwise usage won't be properly counted:
-            async for _ in agent_stream:
-                pass
+        with set_current_run_context(run_context):
+            async with ctx.deps.model.request_stream(
+                message_history, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                agent_stream = result.AgentStream[DepsT, T](
+                    _raw_stream_response=streamed_response,
+                    _output_schema=ctx.deps.output_schema,
+                    _model_request_parameters=model_request_parameters,
+                    _output_validators=ctx.deps.output_validators,
+                    _run_ctx=build_run_context(ctx),
+                    _usage_limits=ctx.deps.usage_limits,
+                    _tool_manager=ctx.deps.tool_manager,
+                    _metadata_getter=lambda: ctx.state.metadata,
+                )
+                yield agent_stream
+                # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+                # otherwise usage won't be properly counted:
+                async for _ in agent_stream:
+                    pass
 
         model_response = streamed_response.get()
 
@@ -478,8 +482,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
-        model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        with set_current_run_context(run_context):
+            model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 
         return self._finish_handling(ctx, model_response)
@@ -487,6 +492,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
+        self.request.timestamp = now_utc()
         self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
@@ -778,9 +784,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
-        # For backwards compatibility, append a new ModelRequest using the tool returns and retries
+        # To allow this message history to be used in a future run without dangling tool calls,
+        # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
+            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id, timestamp=now_utc()))
 
         return End(final_result)
 
@@ -816,6 +823,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
+        metadata=ctx.state.metadata,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1331,6 +1339,10 @@ async def _process_message_history(
     if not isinstance(messages[-1], _messages.ModelRequest):
         raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
+    # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
+    if messages[-1].timestamp is None:
+        messages[-1].timestamp = now_utc()
+
     return messages
 
 
@@ -1359,6 +1371,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
+                    timestamp=message.timestamp or last_message.timestamp,
                 )
                 clean_messages[-1] = merged_message
             else:

@@ -92,7 +92,7 @@ from pydantic_ai.durable_exec.temporal import (
 )
 
 agent = Agent(
-    'gpt-5',
+    'openai:gpt-5',
     instructions="You're an expert in geography.",
     name='geography',  # (10)!
 )
@@ -159,6 +159,8 @@ To ensure that Temporal knows what code to run when an activity fails or is inte
 
 When `TemporalAgent` dynamically creates activities for the wrapped agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPServer`][pydantic_ai.mcp.MCPServer]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
+For dynamic toolsets created with the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator, the `id` parameter must be set explicitly. Note that with Temporal, `per_run_step=False` is not respected, as the toolset always needs to be created on-the-fly in the activity.
+
 Other than that, any agent and toolset will just work!
 
 ### Agent Run Context and Dependencies
@@ -167,7 +169,7 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](../dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
 
-Specifically, only the `deps`, `run_id`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
+Specifically, only the `deps`, `run_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, `max_retries`, `run_step`, `usage`, and `partial_output` fields are available by default, and trying to access `model`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
 
 ### Streaming
@@ -181,6 +183,86 @@ As the streaming model request activity, workflow, and workflow execution call a
 
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
+
+### Model Selection at Runtime
+
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.2'`) and model instances. However, `TemporalAgent` does not support arbitrary model instances because they cannot be serialized for Temporal's replay mechanism.
+
+To use model instances with `TemporalAgent`, you need to pre-register them by passing a dict of model instances to `TemporalAgent(models={...})`. You can then reference them by name or by passing the registered instance directly. If the wrapped agent doesn't have a model set, the first registered model will be used as the default.
+
+Model strings work as expected. For scenarios where you need to customize the provider used by the model string (e.g., inject API keys from deps), you can pass a `provider_factory` to `TemporalAgent`, which is passed the [`RunContext`][pydantic_ai.tools.RunContext] and provider name.
+
+Here's an example showing how to pre-register and use multiple models:
+
+```python {title="multi_model_temporal.py" test="skip"}
+from dataclasses import dataclass
+from typing import Any
+
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalAgent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers import Provider
+from pydantic_ai.tools import RunContext
+
+
+@dataclass
+class Deps:
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+
+
+# Create models from different providers
+default_model = OpenAIResponsesModel('gpt-5.2')
+fast_model = AnthropicModel('claude-sonnet-4-5')
+reasoning_model = GoogleModel('gemini-2.5-pro')
+
+
+# Optional: provider factory for dynamic model configuration
+def my_provider_factory(run_context: RunContext[Deps], provider_name: str) -> Provider[Any]:
+    """Create providers with custom configuration based on run context."""
+    if provider_name == 'openai':
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        return OpenAIProvider(api_key=run_context.deps.openai_api_key)
+    elif provider_name == 'anthropic':
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+
+        return AnthropicProvider(api_key=run_context.deps.anthropic_api_key)
+    else:
+        raise ValueError(f'Unknown provider: {provider_name}')
+
+
+agent = Agent(default_model, name='multi_model_agent', deps_type=Deps)
+
+temporal_agent = TemporalAgent(
+    agent,
+    models={
+        'fast': fast_model,
+        'reasoning': reasoning_model,
+    },
+    provider_factory=my_provider_factory,  # Optional
+)
+
+
+@workflow.defn
+class MultiModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, use_reasoning: bool, use_fast: bool) -> str:
+        if use_reasoning:
+            # Select by registered name
+            result = await temporal_agent.run(prompt, model='reasoning')
+        elif use_fast:
+            # Or pass the registered instance directly
+            result = await temporal_agent.run(prompt, model=fast_model)
+        else:
+            # Or pass a model string (uses provider_factory if set)
+            result = await temporal_agent.run(prompt, model='openai:gpt-4.1-mini')
+        return result.output
+```
 
 ## Activity Configuration
 
