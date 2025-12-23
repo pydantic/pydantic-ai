@@ -690,10 +690,18 @@ class GoogleModel(Model):
                     if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
-                elif isinstance(item, VideoUrl) and item.is_youtube:
+                elif isinstance(item, VideoUrl) and (
+                    item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
+                ):
+                    # YouTube URLs work on both google-gla and google-vertex
+                    # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
+                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
+                    # Other URLs fall through to FileUrl handling (download for google-gla)
+                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
+                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:  # pragma: no branch
+                    if item.vendor_metadata:
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
                 elif isinstance(item, FileUrl):
@@ -708,10 +716,18 @@ class GoogleModel(Model):
                             'data': downloaded_item['data'],
                             'mime_type': downloaded_item['data_type'],
                         }
-                        content.append({'inline_data': inline_data})
+                        part_dict: PartDict = {'inline_data': inline_data}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                        part_dict: PartDict = {'file_data': file_data_dict}
+                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
+                        if isinstance(item, VideoUrl) and item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass

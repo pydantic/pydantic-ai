@@ -4674,6 +4674,104 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
+# =============================================================================
+# GCS VideoUrl tests for google-vertex
+#
+# GCS URIs (gs://...) with vendor_metadata (video offsets) only work on
+# google-vertex because Vertex AI can access GCS buckets directly.
+#
+# Regression test for https://github.com/pydantic/pydantic-ai/issues/3805
+# =============================================================================
+
+
+async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: MockerFixture):
+    """GCS URIs use file_uri with video_metadata on google-vertex.
+
+    This is the main fix - GCS URIs were previously falling through to FileUrl
+    handling which doesn't pass vendor_metadata as video_metadata.
+    """
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    video = VideoUrl(
+        url='gs://bucket/video.mp4',
+        vendor_metadata={'start_offset': '300s', 'end_offset': '330s'},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '300s', 'end_offset': '330s'},
+    }
+
+
+async def test_gcs_video_url_raises_error_on_google_gla():
+    """GCS URIs on google-gla fall through to FileUrl and raise a clear error.
+
+    google-gla cannot access GCS buckets, so attempting to use gs:// URLs
+    should fail with a helpful error message rather than a cryptic API error.
+    """
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    # google-gla is the default for GoogleProvider with api_key, but be explicit
+    assert model.system == 'google-gla'
+
+    video = VideoUrl(url='gs://bucket/video.mp4')
+
+    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported'):
+        await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+
+# =============================================================================
+# HTTP VideoUrl fallback tests (not YouTube, not GCS)
+#
+# HTTP VideoUrls fall through to FileUrl handling, which is provider-specific:
+# - google-gla: downloads the video and sends inline_data
+# - google-vertex: uses file_uri directly (no download)
+# =============================================================================
+
+
+async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
+    """HTTP VideoUrls are downloaded on google-gla with video_metadata preserved."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    mock_download = mocker.patch(
+        'pydantic_ai.models.google.download_item',
+        return_value={'data': b'fake video data', 'data_type': 'video/mp4'},
+    )
+
+    video = VideoUrl(
+        url='https://example.com/video.mp4',
+        vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert len(content) == 1
+    assert 'inline_data' in content[0]
+    assert 'file_data' not in content[0]
+    # video_metadata is preserved even when video is downloaded
+    assert content[0].get('video_metadata') == {'start_offset': '10s', 'end_offset': '20s'}
+
+
+async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
+    """HTTP VideoUrls use file_uri directly on google-vertex with video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    video = VideoUrl(
+        url='https://example.com/video.mp4',
+        vendor_metadata={'start_offset': '10s', 'end_offset': '20s'},
+    )
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '10s', 'end_offset': '20s'},
+    }
+
+
 async def test_thinking_with_tool_calls_from_other_model(
     allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
 ):
