@@ -430,6 +430,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_1'),
         ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_2'),
     ],
+    'Please call the tool three times': [
+        ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_1'),
+        ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_2'),
+        ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_3'),
+    ],
+    'Calculate something': ToolCallPart(tool_name='calculate', args={'x': 5}, tool_call_id='pyd_ai_tool_call_id'),
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -785,7 +791,15 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
+        if 'Tool use limit reached' in m.content:
+            return ModelResponse(
+                parts=[TextPart('I was able to call the tool twice, but the third call reached the limit.')]
+            )
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate':
+        if 'Tool use limit reached' in m.content:
+            return ModelResponse(parts=[TextPart('I calculated once but reached the limit.')])
+        return ModelResponse(parts=[TextPart(f'The result is {m.content}.')])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]

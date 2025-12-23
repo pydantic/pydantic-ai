@@ -1090,9 +1090,10 @@ async def _call_tools(
     # For each tool, check how many calls are going to be made
     tool_call_counts = Counter(call.tool_name for call in tool_calls)
 
-    _handle_tool_calls_parts(
+    for event in _handle_tool_calls_parts(
         tool_calls, can_make_tool_calls, output_parts, tool_manager, tool_call_counts, calls_to_run
-    )
+    ):
+        yield event
 
     with tracer.start_as_current_span(
         'running tools',
