@@ -992,3 +992,25 @@ async def test_searchable_toolset_no_search_tool_without_deferred():
     tools = await searchable.get_tools(ctx)
 
     assert len([t for t in tools.values() if is_search_tool(t.tool_def)]) == 0
+
+
+async def test_searchable_toolset_load_tools_name_conflict():
+    """Test that using the reserved 'load_tools' name raises UserError."""
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool
+    def load_tools(x: int) -> int:
+        """A tool that conflicts with the reserved name"""
+        return x
+
+    searchable = SearchableToolset[None](base_toolset)
+    ctx = build_run_context(None)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Tool name 'load_tools' is reserved by Pydantic AI for implementing defer_loading=True tools. "
+            "Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid the conflict."
+        ),
+    ):
+        await searchable.get_tools(ctx)
