@@ -46,7 +46,7 @@ from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 
-def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]], context: str = 'at runtime') -> None:
+def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]]) -> None:
     """Validate that all leaf toolsets requiring temporal wrapping are properly wrapped.
 
     This function recursively traverses the toolset hierarchy and checks that any leaf
@@ -55,17 +55,11 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
 
     Args:
         toolsets: The toolsets to validate.
-        context: A string describing the context (e.g., 'at runtime', 'contextually').
 
     Raises:
         UserError: If an unwrapped leaf toolset is found that requires temporal wrapping.
+            The error message includes the toolset label for identification.
     """
-    if context == 'contextually':
-        error_msg = 'Toolsets cannot be contextually overridden inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`.'
-    else:
-        error_msg = (
-            'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
-        )
 
     def validate_toolset(t: AbstractToolset[AgentDepsT]) -> None:
         # If we encounter a TemporalWrapperToolset, we don't need to check its children
@@ -74,13 +68,13 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
             return
 
         if isinstance(t, FunctionToolset):
-            raise UserError(error_msg)
+            raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
 
         # Check if this is a DynamicToolset that needs wrapping
         from pydantic_ai.toolsets._dynamic import DynamicToolset
 
         if isinstance(t, DynamicToolset):
-            raise UserError(error_msg)
+            raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
 
         # Check if this is an MCPServer that needs wrapping
         try:
@@ -89,7 +83,7 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
             pass
         else:
             if isinstance(t, MCPServer):
-                raise UserError(error_msg)
+                raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
 
         # Check if this is a FastMCPToolset that needs wrapping
         try:
@@ -98,7 +92,7 @@ def _validate_temporal_toolsets(toolsets: Sequence[AbstractToolset[AgentDepsT]],
             pass
         else:
             if isinstance(t, FastMCPToolset):
-                raise UserError(error_msg)
+                raise UserError(f'Toolset {t.label} must be wrapped in a `TemporalWrapperToolset`.')
 
         # For other toolsets (like CombinedToolset, WrapperToolset, etc.),
         # we return them unchanged - apply will handle recursion
@@ -374,7 +368,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             if workflow.in_workflow():
                 # If toolsets are provided as strings, we can't validate them directly here as they are resolved later.
                 # We only validate if they are already AbstractToolset instances.
-                _validate_temporal_toolsets([t for t in toolsets if not isinstance(t, str)])
+                try:
+                    _validate_temporal_toolsets([t for t in toolsets if not isinstance(t, str)])
+                except UserError as e:
+                    raise UserError(
+                        f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
+                    ) from e
 
             resolved_toolsets = self._resolve_toolsets(toolsets)
             assert resolved_toolsets is not None
@@ -1077,7 +1076,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
             if toolsets is not None:  # pragma: no cover - defensive check for workflow execution path
-                _validate_temporal_toolsets(toolsets)
+                try:
+                    _validate_temporal_toolsets(toolsets)
+                except UserError as e:
+                    raise UserError(
+                        f'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. {e}'
+                    ) from e
 
             resolved_model = None
         else:
@@ -1131,7 +1135,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
                 )
             if _utils.is_set(toolsets):
-                _validate_temporal_toolsets(toolsets, context='contextually')
+                try:
+                    _validate_temporal_toolsets(toolsets)
+                except UserError as e:
+                    raise UserError(
+                        f'Toolsets cannot be contextually overridden inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`. {e}'
+                    ) from e
             if _utils.is_set(tools):
                 raise UserError(
                     'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'

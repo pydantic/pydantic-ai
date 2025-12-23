@@ -1660,7 +1660,7 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. Toolset FunctionToolset must be wrapped in a `TemporalWrapperToolset`.'
             ),
         ):
             await client.execute_workflow(
@@ -1718,7 +1718,7 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets cannot be contextually overridden inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`.'
+                'Toolsets cannot be contextually overridden inside a Temporal workflow, unless they are wrapped in a `TemporalWrapperToolset`. Toolset FunctionToolset must be wrapped in a `TemporalWrapperToolset`.'
             ),
         ):
             await client.execute_workflow(
@@ -3250,7 +3250,7 @@ async def test_temporal_agent_run_with_unwrapped_dynamic_toolset_error(allow_mod
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                "Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. Toolset DynamicToolset 'dynamic' must be wrapped in a `TemporalWrapperToolset`."
             ),
         ):
             await client.execute_workflow(
@@ -3285,7 +3285,7 @@ async def test_temporal_agent_run_with_unwrapped_mcp_server_error(client: Client
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                "Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. Toolset MCPServerStdio 'mcp' must be wrapped in a `TemporalWrapperToolset`."
             ),
         ):
             await client.execute_workflow(
@@ -3320,7 +3320,7 @@ async def test_temporal_agent_run_with_unwrapped_fastmcp_toolset_error(allow_mod
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`.'
+                "Toolsets provided at runtime inside a Temporal workflow must be wrapped in a `TemporalWrapperToolset`. Toolset FastMCPToolset 'deepwiki' must be wrapped in a `TemporalWrapperToolset`."
             ),
         ):
             await client.execute_workflow(
