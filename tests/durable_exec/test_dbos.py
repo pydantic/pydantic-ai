@@ -44,7 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, IsStr
+from ..conftest import IsDatetime, IsNow, IsStr
 
 try:
     import importlib.metadata

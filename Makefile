@@ -51,7 +51,20 @@ typecheck: typecheck-pyright ## Run static type checking
 typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
-test: ## Run tests and collect coverage data
+test: ## Run tests and collect coverage data (excludes durable execution tests)
+	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -m "not durable" -n auto --dist=loadgroup --durations=20
+	@uv run coverage combine
+	@uv run coverage report
+
+.PHONY: test-durable
+test-durable: ## Run durable execution tests (temporal, dbos, prefect)
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -m durable -n auto --dist=loadgroup --durations=20
+	@uv run coverage combine
+	@uv run coverage report
+
+.PHONY: test-all
+test-all: ## Run all tests including durable execution tests
 	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
 	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine

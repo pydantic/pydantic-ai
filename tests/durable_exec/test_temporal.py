@@ -115,7 +115,7 @@ with workflow.unsafe.imports_passed_through():
     from inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsStr
+    from ..conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,

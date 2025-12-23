@@ -110,6 +110,16 @@ else:
                 return other == self._first_other
 
 
+DURABLE_EXEC_DIR = Path(__file__).parent / 'durable_exec'
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        # Mark tests in the `durable_exec` directory with the `durable` marker.
+        if DURABLE_EXEC_DIR in Path(item.fspath).parents:
+            item.add_marker(pytest.mark.durable)
+
+
 class TestEnv:
     __test__ = False
 
