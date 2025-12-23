@@ -52,6 +52,7 @@ _mime_types.add_type('video/x-matroska', '.mkv')
 _mime_types.add_type('video/x-ms-wmv', '.wmv')
 
 # Audio types
+_mime_types.add_type('audio/aac', '.aac')
 _mime_types.add_type('audio/aiff', '.aiff')
 _mime_types.add_type('audio/flac', '.flac')
 _mime_types.add_type('audio/ogg', '.oga')
