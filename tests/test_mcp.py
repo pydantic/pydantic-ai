@@ -1702,9 +1702,25 @@ def test_map_from_pai_messages_with_binary_content():
         map_from_pai_messages([message_with_video])
 
 
-def test_map_from_model_response():
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
-        map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
+def test_map_from_model_response_unexpected_part_raises_error():
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ToolCallPart, expected TextPart'):
+        map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
+
+
+def test_map_from_model_response_mixed_parts():
+    result = map_from_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(content='Hello '),
+                ThinkingPart(content='Should I say world?'),
+                TextPart(content='world!'),
+                ThinkingPart(content='That sounded good.'),
+            ]
+        )
+    )
+    assert result.model_dump(by_alias=True) == snapshot(
+        {'type': 'text', 'text': 'Hello world!', 'annotations': None, '_meta': None}
+    )
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
