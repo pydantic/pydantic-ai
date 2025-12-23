@@ -266,7 +266,7 @@ _(This example is complete, it can be run "as is")_
 
 When streaming with `run_stream()` or `run_stream_sync()`, output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
 
-You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when your output function has **side effects** (e.g., sending notifications, logging, database updates) that should only execute on the final output
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when your output function has **side effects** (e.g., sending notifications, logging, database updates) that should only execute on the final output.
 
 When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
 For all [other run methods](agents.md#running-agents), `partial_output` is always `False` as the function is only called once with the complete output.
