@@ -369,7 +369,7 @@ def openai_api_key() -> str:
 
 @pytest.fixture(scope='session')
 def gemini_api_key() -> str:
-    return os.getenv('GEMINI_API_KEY', 'mock-api-key')
+    return os.getenv('GEMINI_API_KEY', os.getenv('GOOGLE_API_KEY', 'mock-api-key'))
 
 
 @pytest.fixture(scope='session')
