@@ -56,7 +56,7 @@ def test_github_pass_openai_client() -> None:
 def test_cerebras_provider_model_profile(mocker: MockerFixture):
     provider = CerebrasProvider(api_key='api-key')
 
-    ns = 'pydantic_ai.providers.cerebras'
+    ns = 'pydantic_ai.profiles.cerebras'
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     harmony_model_profile_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)

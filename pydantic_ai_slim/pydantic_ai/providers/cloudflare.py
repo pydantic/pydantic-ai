@@ -9,17 +9,16 @@ from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.cerebras import cerebras_provider_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.groq import groq_provider_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.perplexity import perplexity_model_profile
 from pydantic_ai.providers import Provider
-
-from .cerebras import cerebras_provider_model_profile
-from .groq import groq_provider_model_profile
 
 try:
     from openai import AsyncOpenAI

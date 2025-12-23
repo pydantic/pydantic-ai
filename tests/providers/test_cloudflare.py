@@ -101,10 +101,6 @@ def test_cloudflare_pass_openai_client() -> None:
 
 
 def test_cloudflare_provider_model_profile(mocker: MockerFixture, env: TestEnv):
-    # Set dummy API keys so we can use real GroqProvider and CerebrasProvider
-    env.set('GROQ_API_KEY', 'test-groq-key')
-    env.set('CEREBRAS_API_KEY', 'test-cerebras-key')
-
     provider = CloudflareProvider(account_id='test-account-id', gateway_id='test-gateway-id', api_key='api-key')
 
     ns = 'pydantic_ai.providers.cloudflare'
@@ -118,9 +114,6 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture, env: TestEnv):
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
     perplexity_mock = mocker.patch(f'{ns}.perplexity_model_profile', wraps=perplexity_model_profile)
-
-    # Use real GroqProvider and CerebrasProvider - they don't make API calls for model_profile()
-    # We just need dummy API keys which are set via env vars above
 
     # Test openai provider
     profile = provider.model_profile('openai/gpt-4o')
@@ -170,14 +163,12 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture, env: TestEnv):
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-    # Test groq provider with llama model (delegates to GroqProvider which returns meta profile)
-    # meta_model_profile uses InlineDefsJsonSchemaTransformer
+    # Test groq provider with llama model
     profile = provider.model_profile('groq/llama-3.3-70b-versatile')
     assert profile is not None
     assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
-    # Test groq provider with gemma model (delegates to GroqProvider which returns google profile)
-    # google_model_profile uses GoogleJsonSchemaTransformer
+    # Test groq provider with gemma model
     profile = provider.model_profile('groq/gemma-7b-it')
     assert profile is not None
     assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
@@ -194,14 +185,12 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture, env: TestEnv):
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-    # Test cerebras provider with llama model (delegates to CerebrasProvider which returns meta profile)
-    # meta_model_profile uses InlineDefsJsonSchemaTransformer, wrapped by CerebrasProvider's OpenAIModelProfile
+    # Test cerebras provider with llama model
     profile = provider.model_profile('cerebras/llama3.1-8b')
     assert profile is not None
     assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
-    # Test cerebras provider with qwen model (delegates to CerebrasProvider which returns qwen profile)
-    # qwen_model_profile uses InlineDefsJsonSchemaTransformer, wrapped by CerebrasProvider's OpenAIModelProfile
+    # Test cerebras provider with qwen model
     profile = provider.model_profile('cerebras/qwen3.5-8b')
     assert profile is not None
     assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
@@ -236,7 +225,6 @@ def test_cloudflare_provider_unknown_provider():
 def test_cloudflare_default_headers():
     provider = CloudflareProvider(account_id='test-account-id', gateway_id='test-gateway-id', api_key='api-key')
 
-    # Check that default headers are set
     assert provider.client.default_headers['http-referer'] == 'https://ai.pydantic.dev/'
     assert provider.client.default_headers['x-title'] == 'pydantic-ai'
 
@@ -283,7 +271,7 @@ def test_cloudflare_documented_patterns():
     """
     from pydantic_ai.models.openai import OpenAIChatModel
 
-    # Example 1: Basic BYOK mode (from docs)
+    # Example 1: User-managed mode
     model = OpenAIChatModel(
         'openai/gpt-4o',
         provider=CloudflareProvider(
@@ -296,7 +284,7 @@ def test_cloudflare_documented_patterns():
     assert isinstance(agent.model, OpenAIChatModel)
     assert agent.model.model_name == 'openai/gpt-4o'
 
-    # Example 2: Stored keys mode (from docs)
+    # Example 2: CF-managed keys mode
     model = OpenAIChatModel(
         'anthropic/claude-3-5-sonnet',
         provider=CloudflareProvider(

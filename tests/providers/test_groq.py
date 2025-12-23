@@ -71,7 +71,7 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     groq_client = AsyncGroq(api_key='api-key')
     provider = GroqProvider(groq_client=groq_client)
 
-    ns = 'pydantic_ai.providers.groq'
+    ns = 'pydantic_ai.profiles.groq'
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)

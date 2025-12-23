@@ -13,7 +13,7 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.groq import groq_provider_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
@@ -58,7 +58,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
             'bedrock': amazon_model_profile,
             'meta-llama': meta_model_profile,
             'meta': meta_model_profile,
-            'groq': groq_model_profile,
+            'groq': groq_provider_model_profile,
             'deepseek': deepseek_model_profile,
             'moonshotai': moonshotai_model_profile,
             'x-ai': grok_model_profile,

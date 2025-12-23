@@ -80,7 +80,7 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
         'cohere': mocker.patch('pydantic_ai.providers.litellm.cohere_model_profile', return_value=MockProfile()),
         'amazon': mocker.patch('pydantic_ai.providers.litellm.amazon_model_profile', return_value=MockProfile()),
         'deepseek': mocker.patch('pydantic_ai.providers.litellm.deepseek_model_profile', return_value=MockProfile()),
-        'groq': mocker.patch('pydantic_ai.providers.litellm.groq_model_profile', return_value=MockProfile()),
+        'groq': mocker.patch('pydantic_ai.providers.litellm.groq_provider_model_profile', return_value=MockProfile()),
         'grok': mocker.patch('pydantic_ai.providers.litellm.grok_model_profile', return_value=MockProfile()),
         'moonshotai': mocker.patch(
             'pydantic_ai.providers.litellm.moonshotai_model_profile', return_value=MockProfile()
