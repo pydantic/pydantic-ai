@@ -227,7 +227,7 @@ def file_store_processor(
             elif isinstance(message, ModelRequest):
                 processed = await _process_request(message, store, url_support, uploaded_keys)
                 result.append(processed)
-            else:
+            else:  # pragma: no cover
                 result.append(message)
 
         return result

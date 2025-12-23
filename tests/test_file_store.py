@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -19,6 +20,7 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     UserPromptPart,
     VideoUrl,
@@ -313,6 +315,57 @@ class TestS3FileStoreOperations:
         with pytest.raises(S3Error, match='S3 Error 404'):
             await store.retrieve('nonexistent.png')
 
+    async def test_context_manager(self, store: S3FileStore, mocker: Any):
+        """Test async context manager properly initializes and closes client."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.is_closed = False
+        mock_response = httpx.Response(200, content=b'test data')
+        mock_client.request = AsyncMock(return_value=mock_response)
+
+        mocker.patch('httpx.AsyncClient', return_value=mock_client)
+
+        async with store as s:
+            assert s is store
+            await s.retrieve('test.png')
+
+        mock_client.aclose.assert_called_once()
+
+    async def test_close_is_idempotent(self, store: S3FileStore, mocker: Any):
+        """Calling close() multiple times is safe."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.is_closed = False
+
+        mocker.patch('httpx.AsyncClient', return_value=mock_client)
+
+        # Force client creation
+        await store._get_client()  # pyright: ignore[reportPrivateUsage]
+
+        # Close multiple times should not raise
+        await store.close()
+        mock_client.aclose.assert_called_once()
+
+        # Client is now None, second close should be no-op
+        await store.close()
+        mock_client.aclose.assert_called_once()  # Still just once
+
+    async def test_close_when_client_not_created(self, store: S3FileStore):
+        """Calling close() before any operations is safe."""
+        # Should not raise even though no client was created
+        await store.close()
+
+    async def test_verify_access_returns_false_on_unexpected_status(self, store: S3FileStore, mocker: Any):
+        """verify_access returns False for unexpected non-error status codes."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.is_closed = False
+        # Use 204 No Content - a success code that's not 200
+        mock_response = httpx.Response(204, content=b'')
+        mock_client.request = AsyncMock(return_value=mock_response)
+
+        mocker.patch.object(store, '_get_client', return_value=mock_client)
+
+        result = await store.verify_access()
+        assert result is False
+
 
 class TestS3FileStoreDownloadURI:
     """Tests for get_download_uri with different configurations."""
@@ -575,6 +628,12 @@ class TestGetUrlSupport:
         model._system = 'unknown-provider'  # pyright: ignore[reportPrivateUsage]
         return model
 
+    @pytest.fixture
+    def bedrock_model(self):
+        model = TestModel()
+        model._system = 'bedrock'  # pyright: ignore[reportPrivateUsage]
+        return model
+
     def test_openai_supports_image_urls(self, openai_model: TestModel):
         from pydantic_ai._file_store import _get_url_support  # pyright: ignore[reportPrivateUsage]
 
@@ -604,6 +663,12 @@ class TestGetUrlSupport:
 
         support = _get_url_support(unknown_model)
         assert support == snapshot({'image': False, 'audio': False, 'video': False, 'document': False})
+
+    def test_bedrock_supports_image_urls_only(self, bedrock_model: TestModel):
+        from pydantic_ai._file_store import _get_url_support  # pyright: ignore[reportPrivateUsage]
+
+        support = _get_url_support(bedrock_model)
+        assert support == snapshot({'image': True, 'audio': False, 'video': False, 'document': False})
 
 
 class TestFileStoreProcessor:
@@ -1312,3 +1377,156 @@ class TestFileStoreProcessorLiveIntegration:
             assert exists is True
         finally:
             await live_store.delete(generate_file_key(content1))
+
+
+class TestFileStoreProcessorUserContentUrlHandling:
+    """Tests for file_store_processor handling of user content with URL types and conversions."""
+
+    @pytest.fixture
+    def mock_store(self) -> AsyncMock:
+        store = AsyncMock()
+        store.store = AsyncMock(side_effect=lambda key, data: key)  # pyright: ignore[reportUnknownLambdaType]
+        store.retrieve = AsyncMock(return_value=b'retrieved image data')
+        store.get_download_uri = lambda key: f'https://cdn.example.com/{key}'  # pyright: ignore[reportUnknownLambdaType]
+        return store
+
+    @pytest.fixture
+    def openai_model(self):
+        model = TestModel()
+        model._system = 'openai'  # pyright: ignore[reportPrivateUsage]
+        return model
+
+    @pytest.fixture
+    def google_gla_model(self):
+        model = TestModel()
+        model._system = 'google-gla'  # pyright: ignore[reportPrivateUsage]
+        return model
+
+    async def test_image_url_in_user_content_refreshed_for_url_supporting_model(
+        self, mock_store: AsyncMock, openai_model: TestModel
+    ):
+        """ImageUrl in user content gets URL refreshed when model supports URLs."""
+        processor = file_store_processor(mock_store)
+
+        ctx = RunContext(deps=None, model=openai_model, usage=RunUsage())
+
+        # First, upload content via a response to track the file
+        content = BinaryContent(data=b'image data', media_type='image/png')
+        key = generate_file_key(content)
+        response = ModelResponse(parts=[FilePart(content=content)])
+        await processor(ctx, [response])
+
+        # Now create an ImageUrl with an old URL but same identifier
+        image_url = ImageUrl(
+            url='https://old-url.example.com/image.png',  # Old/expired URL
+            media_type='image/png',
+            identifier=key,  # Same key = uploaded by processor
+        )
+
+        request = ModelRequest(
+            parts=[UserPromptPart(content=[image_url])],
+        )
+
+        # Process the request with the URL
+        result = await processor(ctx, [request])
+
+        processed_request = result[0]
+        assert processed_request == snapshot(
+            ModelRequest(
+                parts=(
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://cdn.example.com/d68146.png',
+                                _media_type='image/png',
+                                _identifier='d68146.png',
+                            )
+                        ],
+                        timestamp=datetime.datetime(2025, 12, 23, 14, 12, 53, 842941, tzinfo=datetime.timezone.utc),
+                    ),
+                )
+            )
+        )
+
+    async def test_image_url_in_user_content_converted_to_bytes_for_bytes_model(
+        self, mock_store: AsyncMock, google_gla_model: TestModel
+    ):
+        """ImageUrl in user content is converted to BinaryContent when model needs bytes."""
+        processor = file_store_processor(mock_store)
+
+        # First, upload content via a response to track the file
+        content = BinaryContent(data=b'image data', media_type='image/png')
+        key = generate_file_key(content)
+        response = ModelResponse(parts=[FilePart(content=content)])
+
+        openai_model = TestModel()
+        openai_model._system = 'openai'  # pyright: ignore[reportPrivateUsage]
+        ctx = RunContext(deps=None, model=openai_model, usage=RunUsage())
+        await processor(ctx, [response])
+
+        # Now, simulate replaying with a model that needs bytes
+        image_url = ImageUrl(
+            url='https://cdn.example.com/' + key,
+            media_type='image/png',
+            identifier=key,
+        )
+        request = ModelRequest(
+            parts=[UserPromptPart(content=[image_url])],
+        )
+
+        ctx2 = RunContext(deps=None, model=google_gla_model, usage=RunUsage())
+        result = await processor(ctx2, [request])
+
+        processed_request = result[0]
+        assert processed_request == snapshot(
+            ModelRequest(
+                parts=(
+                    UserPromptPart(
+                        content=[BinaryContent(data=b'retrieved image data', media_type='image/png')],
+                        timestamp=datetime.datetime(2025, 12, 23, 14, 12, 53, 971144, tzinfo=datetime.timezone.utc),
+                    ),
+                )
+            )
+        )
+
+    async def test_deduplication_within_single_call(self, mock_store: AsyncMock, openai_model: TestModel):
+        """Same content in same processor call is only uploaded once."""
+        processor = file_store_processor(mock_store)
+
+        # Same data appearing in two FileParts in same response
+        content1 = BinaryContent(data=b'duplicate image', media_type='image/png')
+        content2 = BinaryContent(data=b'duplicate image', media_type='image/png')
+        assert content1.identifier == content2.identifier  # Same content = same ID
+
+        response = ModelResponse(parts=[FilePart(content=content1), FilePart(content=content2)])
+
+        ctx = RunContext(deps=None, model=openai_model, usage=RunUsage())
+        await processor(ctx, [response])
+
+        # Should only be uploaded once despite appearing twice
+        assert mock_store.store.call_count == 1
+
+    async def test_non_user_prompt_part_passes_through(self, mock_store: AsyncMock, openai_model: TestModel):
+        """Non-UserPromptPart parts in ModelRequest pass through unchanged."""
+        processor = file_store_processor(mock_store)
+
+        # Create request with SystemPromptPart (not UserPromptPart)
+        system_part = SystemPromptPart(content='You are a helpful assistant')
+        request = ModelRequest(parts=[system_part])
+
+        ctx = RunContext(deps=None, model=openai_model, usage=RunUsage())
+        result = await processor(ctx, [request])
+
+        # Should pass through unchanged
+        processed_request = result[0]
+        assert processed_request == snapshot(
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant',
+                        timestamp=datetime.datetime(2025, 12, 23, 14, 12, 54, 226306, tzinfo=datetime.timezone.utc),
+                    )
+                ]
+            )
+        )
+        mock_store.store.assert_not_called()
