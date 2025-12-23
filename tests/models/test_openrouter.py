@@ -289,7 +289,8 @@ async def test_openrouter_video_url_mapping() -> None:
     ]
 
     mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-    content = mapped_messages[0]['content']
+    content = mapped_messages[0].get('content')
+    assert content is not None
     assert isinstance(content, list)
 
     assert content[0] == {'type': 'text', 'text': 'Count the students.'}
@@ -324,7 +325,8 @@ async def test_openrouter_video_url_force_download() -> None:
         mapped_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
             messages, ModelRequestParameters()
         )
-        content = mapped_messages[0]['content']
+        content = mapped_messages[0].get('content')
+        assert content is not None
         assert isinstance(content, list)
 
         assert content[1] == {'type': 'video_url', 'video_url': {'url': 'data:video/mp4;base64,AAAA'}}
@@ -359,7 +361,8 @@ async def test_openrouter_video_url_no_force_download() -> None:
         mapped_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
             messages, ModelRequestParameters()
         )
-        content = mapped_messages[0]['content']
+        content = mapped_messages[0].get('content')
+        assert content is not None
         assert isinstance(content, list)
 
         assert content[1] == {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}}
